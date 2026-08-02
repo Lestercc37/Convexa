@@ -5,7 +5,8 @@ from fastapi import APIRouter, Request
 from backend.api.schemas import GammaResponse, TriggerCalculationResponse
 from backend.api.serializers import gamma_response
 from backend.core.container import Container
-from backend.domain.entities import MarketPrice, SCHEMA_VERSION
+from backend.domain.entities import SCHEMA_VERSION, MarketPrice
+from backend.domain.use_cases import capture_daily_gamma_reference
 
 router = APIRouter(prefix="/internal", tags=["internal"])
 
@@ -35,7 +36,9 @@ def trigger_calculation(
     )
 
     aggregate = container.calculate_gamma_exposure_orchestrator.execute(symbol)
-    gamma_payload = GammaResponse.model_validate(gamma_response(aggregate))
+    capture_daily_gamma_reference(container.storage, aggregate, market)
+    derived_metrics = container.calculate_derived_metrics_use_case.execute(symbol)
+    gamma_payload = GammaResponse.model_validate(gamma_response(aggregate, derived_metrics))
     return TriggerCalculationResponse(
         schema_version=SCHEMA_VERSION,
         symbol=aggregate.symbol,

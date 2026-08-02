@@ -5,7 +5,6 @@ from datetime import date, datetime, timezone
 from decimal import Decimal
 from enum import StrEnum
 
-
 SCHEMA_VERSION = 1
 
 
@@ -188,9 +187,7 @@ class MaxPain:
             raise InvalidOptionError("max pain symbol is required")
         object.__setattr__(self, "symbol", self.symbol.upper())
         if self.max_pain_strike:
-            _ensure_positive_decimal(
-                self.max_pain_strike, InvalidStrikeError, "max_pain_strike"
-            )
+            _ensure_positive_decimal(self.max_pain_strike, InvalidStrikeError, "max_pain_strike")
         for name in ("total_call_pain", "total_put_pain", "total_pain"):
             _ensure_finite_decimal(getattr(self, name), InvalidOptionError, name)
             if getattr(self, name) < 0:
@@ -313,6 +310,44 @@ class GammaAggregate:
 
 
 @dataclass(frozen=True, slots=True)
+class DailyGammaReference:
+    date: date
+    symbol: str
+    net_gamma: Decimal
+    pc_oi_ratio: Decimal
+    skew_25d: Decimal
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "symbol", self.symbol.upper())
+        for name in ("net_gamma", "pc_oi_ratio", "skew_25d"):
+            _ensure_finite_decimal(getattr(self, name), InvalidOptionError, name)
+        if self.pc_oi_ratio < 0:
+            raise InvalidOptionError("pc_oi_ratio cannot be negative")
+
+
+@dataclass(frozen=True, slots=True)
+class DerivedMetricValue:
+    value: Decimal | None
+    provisional: bool
+    days_accumulated: int
+
+
+@dataclass(frozen=True, slots=True)
+class MarketBiasMetric:
+    score: Decimal | None
+    label: str | None
+    provisional: bool
+    days_accumulated: int
+
+
+@dataclass(frozen=True, slots=True)
+class DerivedMetrics:
+    dealer_impact_score: DerivedMetricValue
+    signal_alignment_score: DerivedMetricValue
+    market_bias: MarketBiasMetric
+
+
+@dataclass(frozen=True, slots=True)
 class GammaFlip:
     gamma_flip_price: Decimal | None = None
     lower_strike: Decimal | None = None
@@ -335,9 +370,7 @@ class GammaFlip:
             if value is not None:
                 _ensure_finite_decimal(value, InvalidOptionError, name)
         if self.gamma_flip_price is not None:
-            _ensure_positive_decimal(
-                self.gamma_flip_price, InvalidStrikeError, "gamma_flip_price"
-            )
+            _ensure_positive_decimal(self.gamma_flip_price, InvalidStrikeError, "gamma_flip_price")
         if self.lower_strike is not None:
             _ensure_positive_decimal(self.lower_strike, InvalidStrikeError, "lower_strike")
         if self.upper_strike is not None:
@@ -414,6 +447,8 @@ class MarketSnapshot:
     as_of: datetime
     price: Decimal
     volume: int
+    pc_oi_ratio: Decimal = Decimal("0")
+    skew_25d: Decimal = Decimal("0")
     gamma: GammaAggregate | None = None
     recent_flow: tuple[FlowEvent, ...] = field(default_factory=tuple)
     state: MarketState = MarketState.UNKNOWN
@@ -423,8 +458,12 @@ class MarketSnapshot:
             raise InvalidOptionError("market snapshot symbol is required")
         object.__setattr__(self, "symbol", self.symbol.upper())
         _ensure_finite_decimal(self.price, InvalidOptionError, "price")
+        _ensure_finite_decimal(self.pc_oi_ratio, InvalidOptionError, "pc_oi_ratio")
+        _ensure_finite_decimal(self.skew_25d, InvalidOptionError, "skew_25d")
         if self.price < 0 or self.volume < 0:
             raise InvalidOptionError("price and volume cannot be negative")
+        if self.pc_oi_ratio < 0:
+            raise InvalidOptionError("pc_oi_ratio cannot be negative")
 
 
 def utc_now() -> datetime:

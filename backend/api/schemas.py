@@ -15,7 +15,6 @@ from backend.domain.entities import (
     OptionContract,
 )
 
-
 Number = int | float
 
 
@@ -109,7 +108,26 @@ class GammaAggregateResponse(BaseModel):
     items: list[GammaAggregateItemResponse]
 
 
-class GammaResponse(BaseModel):
+class DerivedMetricValueResponse(BaseModel):
+    value: Number | None
+    provisional: bool
+    days_accumulated: int
+
+
+class MarketBiasResponse(BaseModel):
+    score: Number | None
+    label: Literal["bullish", "bearish", "neutral"] | None
+    provisional: bool
+    days_accumulated: int
+
+
+class DerivedMetricsResponse(BaseModel):
+    dealer_impact_score: DerivedMetricValueResponse
+    signal_alignment_score: DerivedMetricValueResponse
+    market_bias: MarketBiasResponse
+
+
+class GammaSummaryResponse(BaseModel):
     schema_version: int = Field(examples=[1])
     symbol: str = Field(examples=["SPY"])
     as_of: str = Field(examples=["2026-01-15T14:30:00Z"])
@@ -121,10 +139,14 @@ class GammaResponse(BaseModel):
     dealer_position: Literal["long_gamma", "short_gamma"]
 
 
+class GammaResponse(GammaSummaryResponse):
+    derived_metrics: DerivedMetricsResponse
+
+
 class GammaHistoryResponse(BaseModel):
     schema_version: int = Field(examples=[1])
     symbol: str = Field(examples=["SPY"])
-    items: list[GammaResponse]
+    items: list[GammaSummaryResponse]
 
 
 class UnderlyingResponse(BaseModel):

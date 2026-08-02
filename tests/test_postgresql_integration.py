@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterator
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from uuid import uuid4
 
@@ -14,6 +14,7 @@ from backend.adapters.storage.postgresql import PostgreSQLStorage
 from backend.core.settings import Settings
 from backend.domain.entities import (
     AggressorSide,
+    DailyGammaReference,
     FlowEvent,
     FlowEventType,
     GammaAggregate,
@@ -132,6 +133,31 @@ def test_market_price_and_underlying_round_trip_against_postgresql(
     assert any(item.symbol == symbol for item in storage.list_underlyings())
 
 
+def test_daily_gamma_reference_upsert_and_read_against_postgresql(
+    postgresql_storage: tuple[PostgreSQLStorage, Engine, str],
+) -> None:
+    storage, _, symbol = postgresql_storage
+    original = DailyGammaReference(
+        date=date(2026, 8, 1),
+        symbol=symbol,
+        net_gamma=Decimal("100"),
+        pc_oi_ratio=Decimal("1.10"),
+        skew_25d=Decimal("0.03"),
+    )
+    replacement = DailyGammaReference(
+        date=original.date,
+        symbol=symbol,
+        net_gamma=Decimal("125"),
+        pc_oi_ratio=Decimal("1.20"),
+        skew_25d=Decimal("0.04"),
+    )
+
+    storage.save_daily_gamma_reference(original)
+    storage.save_daily_gamma_reference(replacement)
+
+    assert storage.get_daily_gamma_references(symbol) == [replacement]
+
+
 def _delete_test_data(engine: Engine, symbol: str) -> None:
     with engine.begin() as connection:
         underlying_id = connection.execute(
@@ -140,6 +166,10 @@ def _delete_test_data(engine: Engine, symbol: str) -> None:
         ).scalar_one_or_none()
         if underlying_id is None:
             return
+        connection.execute(
+            text("DELETE FROM daily_gamma_reference WHERE underlying_id = :id"),
+            {"id": underlying_id},
+        )
         connection.execute(
             text(
                 """

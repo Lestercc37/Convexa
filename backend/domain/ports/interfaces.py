@@ -4,16 +4,17 @@ from datetime import date, datetime
 from typing import AsyncIterator, Protocol
 
 from backend.domain.entities import (
+    DailyGammaReference,
     FlowEvent,
     GammaAggregate,
     GammaExposure,
     GammaFlip,
-    Walls,
     MarketPrice,
     MarketSnapshot,
     MaxPain,
     OptionChain,
     Underlying,
+    Walls,
 )
 
 
@@ -67,6 +68,10 @@ class IStorage(Protocol):
         self, underlying: str, since: datetime | None = None, limit: int = 100
     ) -> list[FlowEvent]: ...
     def get_recent_flow(self, underlying: str, limit: int = 20) -> list[FlowEvent]: ...
+    def save_daily_gamma_reference(self, reference: DailyGammaReference) -> None: ...
+    def get_daily_gamma_references(
+        self, underlying: str, limit: int = 60
+    ) -> list[DailyGammaReference]: ...
 
 
 class INotificationService(Protocol):

@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from backend.domain.entities import (
     AggressorSide,
     ContractType,
+    DailyGammaReference,
     FlowEvent,
     FlowEventType,
     GammaAggregate,
@@ -209,9 +210,10 @@ class PostgreSQLStorage:
 
     def get_latest_gamma_aggregate(self, underlying: str) -> GammaAggregate | None:
         with self.session_factory() as session:
-            row = session.execute(
-                text(
-                    """
+            row = (
+                session.execute(
+                    text(
+                        """
                     SELECT g.time, u.symbol, g.gamma_flip, g.call_wall,
                            g.put_wall, g.max_pain, g.net_gamma,
                            g.dealer_gamma_notional
@@ -221,9 +223,12 @@ class PostgreSQLStorage:
                     ORDER BY g.time DESC
                     LIMIT 1
                     """
-                ),
-                {"symbol": underlying.upper()},
-            ).mappings().one_or_none()
+                    ),
+                    {"symbol": underlying.upper()},
+                )
+                .mappings()
+                .one_or_none()
+            )
         return self._gamma_from_row(row) if row is not None else None
 
     def get_gamma_history(
@@ -267,9 +272,10 @@ class PostgreSQLStorage:
 
     def get_latest_price(self, underlying: str) -> MarketPrice | None:
         with self.session_factory() as session:
-            row = session.execute(
-                text(
-                    """
+            row = (
+                session.execute(
+                    text(
+                        """
                     SELECT m.time, u.symbol, m.price, m.volume
                     FROM market_snapshots AS m
                     JOIN underlyings AS u ON u.id = m.underlying_id
@@ -277,9 +283,12 @@ class PostgreSQLStorage:
                     ORDER BY m.time DESC
                     LIMIT 1
                     """
-                ),
-                {"symbol": underlying.upper()},
-            ).mappings().one_or_none()
+                    ),
+                    {"symbol": underlying.upper()},
+                )
+                .mappings()
+                .one_or_none()
+            )
         if row is None:
             return None
         return MarketPrice(
@@ -368,6 +377,62 @@ class PostgreSQLStorage:
 
     def get_recent_flow(self, underlying: str, limit: int = 20) -> list[FlowEvent]:
         return self.get_flow_events(underlying, limit=limit)
+
+    def save_daily_gamma_reference(self, reference: DailyGammaReference) -> None:
+        with self.session_factory.begin() as session:
+            underlying_id = self._ensure_underlying(session, reference.symbol)
+            session.execute(
+                text(
+                    """
+                    INSERT INTO daily_gamma_reference (
+                        date, underlying_id, net_gamma, pc_oi_ratio, skew_25d
+                    )
+                    VALUES (
+                        :date, :underlying_id, :net_gamma, :pc_oi_ratio, :skew_25d
+                    )
+                    ON CONFLICT (underlying_id, date) DO UPDATE SET
+                        net_gamma = EXCLUDED.net_gamma,
+                        pc_oi_ratio = EXCLUDED.pc_oi_ratio,
+                        skew_25d = EXCLUDED.skew_25d
+                    """
+                ),
+                {
+                    "date": reference.date,
+                    "underlying_id": underlying_id,
+                    "net_gamma": reference.net_gamma,
+                    "pc_oi_ratio": reference.pc_oi_ratio,
+                    "skew_25d": reference.skew_25d,
+                },
+            )
+
+    def get_daily_gamma_references(
+        self, underlying: str, limit: int = 60
+    ) -> list[DailyGammaReference]:
+        with self.session_factory() as session:
+            rows = session.execute(
+                text(
+                    """
+                    SELECT r.date, u.symbol, r.net_gamma,
+                           r.pc_oi_ratio, r.skew_25d
+                    FROM daily_gamma_reference AS r
+                    JOIN underlyings AS u ON u.id = r.underlying_id
+                    WHERE u.symbol = :symbol
+                    ORDER BY r.date DESC
+                    LIMIT :limit
+                    """
+                ),
+                {"symbol": underlying.upper(), "limit": limit},
+            ).mappings()
+            return [
+                DailyGammaReference(
+                    date=row["date"],
+                    symbol=str(row["symbol"]),
+                    net_gamma=Decimal(row["net_gamma"]),
+                    pc_oi_ratio=Decimal(row["pc_oi_ratio"]),
+                    skew_25d=Decimal(row["skew_25d"]),
+                )
+                for row in rows
+            ]
 
     @staticmethod
     def _ensure_underlying(session: Session, symbol: str) -> int:
