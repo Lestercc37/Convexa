@@ -6,8 +6,11 @@ import pytest
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
-from backend.core.container import build_container
+import backend.core.container as container_module
 from backend.adapters.storage.memory import InMemoryStorage
+from backend.adapters.storage.postgresql import PostgreSQLStorage
+from backend.core.container import build_container
+from backend.core.settings import Settings
 from backend.infrastructure.database.engine import create_engine
 from backend.infrastructure.database.session import create_session_factory
 
@@ -44,6 +47,26 @@ async def test_container_registers_in_memory_storage_adapter() -> None:
     try:
         assert isinstance(container.storage, InMemoryStorage)
     finally:
+        await container.database_engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_container_registers_postgresql_storage_when_configured(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings = Settings(
+        _env_file=None,
+        DATABASE_URL="postgresql+asyncpg://user:password@localhost/convexa",
+    )
+    monkeypatch.setattr(container_module, "get_settings", lambda: settings)
+    container = build_container()
+
+    try:
+        assert isinstance(container.storage, PostgreSQLStorage)
+        assert container.storage_engine is not None
+    finally:
+        if container.storage_engine is not None:
+            container.storage_engine.dispose()
         await container.database_engine.dispose()
 
 
@@ -103,4 +126,33 @@ def test_theta_vega_migration_backfills_before_not_null(monkeypatch) -> None:
         ("execute", "UPDATE option_chain_snapshots SET vega = 0 WHERE vega IS NULL"),
         ("alter", "option_chain_snapshots.theta:False"),
         ("alter", "option_chain_snapshots.vega:False"),
+    ]
+
+
+def test_spot_price_migration_adds_mandatory_snapshot_column(monkeypatch) -> None:
+    migration = import_module("backend.db.migrations.0004_add_spot_price")
+    added_columns = []
+    altered_columns = []
+    monkeypatch.setattr(
+        migration.op,
+        "add_column",
+        lambda table, column: added_columns.append((table, column)),
+    )
+    monkeypatch.setattr(
+        migration.op,
+        "alter_column",
+        lambda table, column, **kwargs: altered_columns.append(
+            (table, column, kwargs)
+        ),
+    )
+
+    migration.upgrade()
+
+    assert len(added_columns) == 1
+    table, column = added_columns[0]
+    assert table == "option_chain_snapshots"
+    assert column.name == "spot_price"
+    assert column.nullable is False
+    assert altered_columns == [
+        ("option_chain_snapshots", "spot_price", {"server_default": None})
     ]

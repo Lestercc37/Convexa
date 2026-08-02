@@ -17,7 +17,22 @@ depends_on = None
 
 def upgrade() -> None:
     """Create the documented PostgreSQL + TimescaleDB schema."""
-    op.execute("CREATE EXTENSION IF NOT EXISTS timescaledb")
+    # Temporary compatibility path: local development may use plain PostgreSQL.
+    # Once TimescaleDB is installed, a later migration can convert these regular
+    # tables to hypertables without changing their logical schema.
+    op.execute(
+        """
+        DO $$
+        BEGIN
+            IF EXISTS (
+                SELECT 1 FROM pg_available_extensions WHERE name = 'timescaledb'
+            ) THEN
+                CREATE EXTENSION IF NOT EXISTS timescaledb;
+            END IF;
+        END
+        $$
+        """
+    )
     op.execute(
         """
         CREATE TABLE IF NOT EXISTS underlyings (
@@ -58,7 +73,7 @@ def upgrade() -> None:
         )
         """
     )
-    op.execute("SELECT create_hypertable('option_chain_snapshots', 'time', if_not_exists => TRUE)")
+    _create_hypertable_if_available("option_chain_snapshots")
     op.execute(
         """
         CREATE INDEX IF NOT EXISTS idx_option_chain_snapshots_contract_time
@@ -79,7 +94,7 @@ def upgrade() -> None:
         )
         """
     )
-    op.execute("SELECT create_hypertable('gamma_aggregates', 'time', if_not_exists => TRUE)")
+    _create_hypertable_if_available("gamma_aggregates")
     op.execute(
         """
         CREATE INDEX IF NOT EXISTS idx_gamma_aggregates_underlying_time
@@ -96,7 +111,7 @@ def upgrade() -> None:
         )
         """
     )
-    op.execute("SELECT create_hypertable('market_snapshots', 'time', if_not_exists => TRUE)")
+    _create_hypertable_if_available("market_snapshots")
     op.execute(
         """
         CREATE TABLE IF NOT EXISTS flow_events (
@@ -109,7 +124,26 @@ def upgrade() -> None:
         )
         """
     )
-    op.execute("SELECT create_hypertable('flow_events', 'time', if_not_exists => TRUE)")
+    _create_hypertable_if_available("flow_events")
+
+
+def _create_hypertable_if_available(table_name: str) -> None:
+    """Convert a table only when TimescaleDB is installed in this database."""
+    op.execute(
+        f"""
+        DO $$
+        BEGIN
+            IF EXISTS (
+                SELECT 1 FROM pg_extension WHERE extname = 'timescaledb'
+            ) THEN
+                PERFORM create_hypertable(
+                    '{table_name}', 'time', if_not_exists => TRUE
+                );
+            END IF;
+        END
+        $$
+        """
+    )
 
 
 def downgrade() -> None:

@@ -2,27 +2,18 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from sqlalchemy import Engine
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
+from backend.adapters.providers.mock import MockDataProvider
 from backend.adapters.providers.mock.fake import FakeGreeksCalculator
 from backend.adapters.providers.mock.gamma_aggregate import FakeGammaAggregateCalculator
 from backend.adapters.providers.mock.gamma_exposure import FakeGammaExposureCalculator
 from backend.adapters.providers.mock.gamma_flip import FakeGammaFlipCalculator
 from backend.adapters.providers.mock.max_pain import FakeMaxPainCalculator
 from backend.adapters.providers.mock.walls import FakeWallCalculator
-from backend.adapters.providers.mock import MockDataProvider
 from backend.adapters.storage.memory import InMemoryStorage
-from backend.domain.use_cases import (
-    CalculateGammaAggregateUseCase,
-    CalculateGammaExposureUseCase,
-    CalculateGammaExposureOrchestrator,
-    CalculateGammaFlipUseCase,
-    CalculateGreeksUseCase,
-    CalculateMaxPainUseCase,
-    CalculateWallsUseCase,
-    GetMarketSnapshotUseCase,
-    LoadOptionChainUseCase,
-)
+from backend.adapters.storage.postgresql import PostgreSQLStorage
 from backend.core.settings import Settings, get_settings
 from backend.domain.ports import (
     IDataProvider,
@@ -31,7 +22,19 @@ from backend.domain.ports import (
     IGammaFlipCalculator,
     IGreeksCalculator,
     IMaxPainCalculator,
+    IStorage,
     IWallCalculator,
+)
+from backend.domain.use_cases import (
+    CalculateGammaAggregateUseCase,
+    CalculateGammaExposureOrchestrator,
+    CalculateGammaExposureUseCase,
+    CalculateGammaFlipUseCase,
+    CalculateGreeksUseCase,
+    CalculateMaxPainUseCase,
+    CalculateWallsUseCase,
+    GetMarketSnapshotUseCase,
+    LoadOptionChainUseCase,
 )
 
 
@@ -46,7 +49,8 @@ class Container:
     settings: Settings
     database_engine: AsyncEngine
     session_factory: async_sessionmaker[AsyncSession]
-    storage: InMemoryStorage
+    storage_engine: Engine | None
+    storage: IStorage
     market_data_provider: IDataProvider
     greeks_calculator: IGreeksCalculator
     gamma_exposure_calculator: IGammaExposureCalculator
@@ -67,12 +71,24 @@ class Container:
 
 def build_container() -> Container:
     settings = get_settings()
-    from backend.infrastructure.database.engine import create_engine
-    from backend.infrastructure.database.session import create_session_factory
+    from backend.infrastructure.database.engine import create_engine, create_sync_engine
+    from backend.infrastructure.database.session import (
+        create_session_factory,
+        create_sync_session_factory,
+    )
 
     database_engine = create_engine(settings.database_url, echo=settings.database_echo)
     session_factory = create_session_factory(database_engine)
-    storage = InMemoryStorage()
+    if settings.database_url.startswith("postgresql"):
+        storage_engine = create_sync_engine(
+            settings.database_url, echo=settings.database_echo
+        )
+        storage: IStorage = PostgreSQLStorage(
+            create_sync_session_factory(storage_engine)
+        )
+    else:
+        storage_engine = None
+        storage = InMemoryStorage()
     market_data_provider = MockDataProvider()
     greeks_calculator = FakeGreeksCalculator()
     gamma_exposure_calculator = FakeGammaExposureCalculator()
@@ -104,6 +120,7 @@ def build_container() -> Container:
         settings=settings,
         database_engine=database_engine,
         session_factory=session_factory,
+        storage_engine=storage_engine,
         storage=storage,
         market_data_provider=market_data_provider,
         greeks_calculator=greeks_calculator,
