@@ -1,53 +1,397 @@
 from __future__ import annotations
 
 from datetime import date, datetime
+from decimal import Decimal
 
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from sqlalchemy import text
+from sqlalchemy.engine import RowMapping
+from sqlalchemy.orm import Session, sessionmaker
 
-from backend.domain.entities import FlowEvent, GammaAggregate, MarketPrice, OptionChain, Underlying
+from backend.domain.entities import (
+    AggressorSide,
+    ContractType,
+    FlowEvent,
+    FlowEventType,
+    GammaAggregate,
+    Greeks,
+    MarketPrice,
+    OptionChain,
+    OptionContract,
+    Underlying,
+    UnderlyingKind,
+)
 
 
 class PostgreSQLStorage:
-    """PostgreSQL/TimescaleDB storage adapter scaffold for IStorage."""
+    """Synchronous PostgreSQL implementation of the domain storage port."""
 
-    def __init__(self, session_factory: async_sessionmaker[AsyncSession]) -> None:
+    def __init__(self, session_factory: sessionmaker[Session]) -> None:
         self.session_factory = session_factory
 
     def list_underlyings(self) -> list[Underlying]:
-        raise NotImplementedError
+        with self.session_factory() as session:
+            rows = session.execute(
+                text(
+                    """
+                    SELECT symbol, kind, is_priority
+                    FROM underlyings
+                    ORDER BY symbol
+                    """
+                )
+            ).mappings()
+            return [
+                Underlying(
+                    symbol=str(row["symbol"]),
+                    kind=UnderlyingKind(str(row["kind"])),
+                    is_priority=bool(row["is_priority"]),
+                )
+                for row in rows
+            ]
 
     def save_chain_snapshot(self, chain: OptionChain) -> None:
-        raise NotImplementedError
+        with self.session_factory.begin() as session:
+            underlying_id = self._ensure_underlying(session, chain.symbol)
+            for contract in chain.contracts:
+                contract_id = session.execute(
+                    text(
+                        """
+                        INSERT INTO option_contracts (
+                            underlying_id, strike, expiration, contract_type, occ_symbol
+                        )
+                        VALUES (
+                            :underlying_id, :strike, :expiration, :contract_type, :occ_symbol
+                        )
+                        ON CONFLICT (occ_symbol) DO UPDATE SET
+                            underlying_id = EXCLUDED.underlying_id,
+                            strike = EXCLUDED.strike,
+                            expiration = EXCLUDED.expiration,
+                            contract_type = EXCLUDED.contract_type
+                        RETURNING id
+                        """
+                    ),
+                    {
+                        "underlying_id": underlying_id,
+                        "strike": contract.strike,
+                        "expiration": contract.expiration,
+                        "contract_type": contract.contract_type.value,
+                        "occ_symbol": contract.occ_symbol,
+                    },
+                ).scalar_one()
+                session.execute(
+                    text(
+                        """
+                        INSERT INTO option_chain_snapshots (
+                            time, contract_id, bid, ask, last, volume,
+                            open_interest, iv, delta, gamma, theta, vega,
+                            charm, vanna, spot_price
+                        )
+                        VALUES (
+                            :time, :contract_id, :bid, :ask, :last, :volume,
+                            :open_interest, :iv, :delta, :gamma, :theta, :vega,
+                            :charm, :vanna, :spot_price
+                        )
+                        """
+                    ),
+                    {
+                        "time": chain.as_of,
+                        "contract_id": contract_id,
+                        "bid": contract.bid,
+                        "ask": contract.ask,
+                        "last": contract.last,
+                        "volume": contract.volume,
+                        "open_interest": contract.open_interest,
+                        "iv": contract.iv,
+                        "delta": contract.greeks.delta,
+                        "gamma": contract.greeks.gamma,
+                        "theta": contract.greeks.theta,
+                        "vega": contract.greeks.vega,
+                        "charm": contract.greeks.charm,
+                        "vanna": contract.greeks.vanna,
+                        "spot_price": chain.spot_price,
+                    },
+                )
 
     def get_latest_chain_snapshot(
         self, underlying: str, expiration: date | None = None
     ) -> OptionChain | None:
-        raise NotImplementedError
+        expiration_filter = "AND oc.expiration = :expiration" if expiration else ""
+        statement = text(
+            f"""
+            WITH latest AS (
+                SELECT MAX(s.time) AS time
+                FROM option_chain_snapshots AS s
+                JOIN option_contracts AS oc ON oc.id = s.contract_id
+                JOIN underlyings AS u ON u.id = oc.underlying_id
+                WHERE u.symbol = :symbol
+                {expiration_filter}
+            )
+            SELECT
+                s.time, s.spot_price, oc.strike, oc.expiration,
+                oc.contract_type, oc.occ_symbol, s.bid, s.ask, s.last,
+                s.volume, s.open_interest, s.iv, s.delta, s.gamma,
+                s.theta, s.vega, s.charm, s.vanna
+            FROM option_chain_snapshots AS s
+            JOIN option_contracts AS oc ON oc.id = s.contract_id
+            JOIN underlyings AS u ON u.id = oc.underlying_id
+            JOIN latest ON latest.time = s.time
+            WHERE u.symbol = :symbol
+            {expiration_filter}
+            ORDER BY oc.expiration, oc.strike, oc.contract_type
+            """
+        )
+        parameters: dict[str, str | date] = {"symbol": underlying.upper()}
+        if expiration is not None:
+            parameters["expiration"] = expiration
+
+        with self.session_factory() as session:
+            rows = list(session.execute(statement, parameters).mappings())
+        if not rows:
+            return None
+
+        contracts = tuple(
+            OptionContract(
+                underlying=underlying,
+                strike=Decimal(row["strike"]),
+                expiration=row["expiration"],
+                contract_type=ContractType(str(row["contract_type"])),
+                occ_symbol=str(row["occ_symbol"]),
+                bid=Decimal(row["bid"]),
+                ask=Decimal(row["ask"]),
+                last=Decimal(row["last"]),
+                volume=int(row["volume"]),
+                open_interest=int(row["open_interest"]),
+                iv=Decimal(row["iv"]),
+                greeks=Greeks(
+                    delta=Decimal(row["delta"]),
+                    gamma=Decimal(row["gamma"]),
+                    theta=Decimal(row["theta"]),
+                    vega=Decimal(row["vega"]),
+                    charm=Decimal(row["charm"]),
+                    vanna=Decimal(row["vanna"]),
+                ),
+            )
+            for row in rows
+        )
+        return OptionChain(
+            symbol=underlying,
+            as_of=rows[0]["time"],
+            spot_price=Decimal(rows[0]["spot_price"]),
+            contracts=contracts,
+        )
 
     def save_gamma_aggregate(self, gamma: GammaAggregate) -> None:
-        raise NotImplementedError
+        with self.session_factory.begin() as session:
+            underlying_id = self._ensure_underlying(session, gamma.symbol)
+            session.execute(
+                text(
+                    """
+                    INSERT INTO gamma_aggregates (
+                        time, underlying_id, gamma_flip, call_wall, put_wall,
+                        max_pain, net_gamma, dealer_gamma_notional
+                    )
+                    VALUES (
+                        :time, :underlying_id, :gamma_flip, :call_wall, :put_wall,
+                        :max_pain, :net_gamma, :dealer_gamma_notional
+                    )
+                    """
+                ),
+                {
+                    "time": gamma.as_of,
+                    "underlying_id": underlying_id,
+                    "gamma_flip": gamma.gamma_flip,
+                    "call_wall": gamma.call_wall,
+                    "put_wall": gamma.put_wall,
+                    "max_pain": gamma.max_pain,
+                    "net_gamma": gamma.net_gamma,
+                    "dealer_gamma_notional": gamma.dealer_gamma_notional,
+                },
+            )
 
     def get_latest_gamma_aggregate(self, underlying: str) -> GammaAggregate | None:
-        raise NotImplementedError
+        with self.session_factory() as session:
+            row = session.execute(
+                text(
+                    """
+                    SELECT g.time, u.symbol, g.gamma_flip, g.call_wall,
+                           g.put_wall, g.max_pain, g.net_gamma,
+                           g.dealer_gamma_notional
+                    FROM gamma_aggregates AS g
+                    JOIN underlyings AS u ON u.id = g.underlying_id
+                    WHERE u.symbol = :symbol
+                    ORDER BY g.time DESC
+                    LIMIT 1
+                    """
+                ),
+                {"symbol": underlying.upper()},
+            ).mappings().one_or_none()
+        return self._gamma_from_row(row) if row is not None else None
 
     def get_gamma_history(
         self, underlying: str, start: datetime, end: datetime
     ) -> list[GammaAggregate]:
-        raise NotImplementedError
+        with self.session_factory() as session:
+            rows = session.execute(
+                text(
+                    """
+                    SELECT g.time, u.symbol, g.gamma_flip, g.call_wall,
+                           g.put_wall, g.max_pain, g.net_gamma,
+                           g.dealer_gamma_notional
+                    FROM gamma_aggregates AS g
+                    JOIN underlyings AS u ON u.id = g.underlying_id
+                    WHERE u.symbol = :symbol
+                      AND g.time BETWEEN :start AND :end
+                    ORDER BY g.time
+                    """
+                ),
+                {"symbol": underlying.upper(), "start": start, "end": end},
+            ).mappings()
+            return [self._gamma_from_row(row) for row in rows]
 
     def save_market_price(self, price: MarketPrice) -> None:
-        raise NotImplementedError
+        with self.session_factory.begin() as session:
+            underlying_id = self._ensure_underlying(session, price.symbol)
+            session.execute(
+                text(
+                    """
+                    INSERT INTO market_snapshots (time, underlying_id, price, volume)
+                    VALUES (:time, :underlying_id, :price, :volume)
+                    """
+                ),
+                {
+                    "time": price.as_of,
+                    "underlying_id": underlying_id,
+                    "price": price.price,
+                    "volume": price.volume,
+                },
+            )
 
     def get_latest_price(self, underlying: str) -> MarketPrice | None:
-        raise NotImplementedError
+        with self.session_factory() as session:
+            row = session.execute(
+                text(
+                    """
+                    SELECT m.time, u.symbol, m.price, m.volume
+                    FROM market_snapshots AS m
+                    JOIN underlyings AS u ON u.id = m.underlying_id
+                    WHERE u.symbol = :symbol
+                    ORDER BY m.time DESC
+                    LIMIT 1
+                    """
+                ),
+                {"symbol": underlying.upper()},
+            ).mappings().one_or_none()
+        if row is None:
+            return None
+        return MarketPrice(
+            symbol=str(row["symbol"]),
+            as_of=row["time"],
+            price=Decimal(row["price"]),
+            volume=int(row["volume"]),
+        )
 
     def save_flow_event(self, event: FlowEvent) -> None:
-        raise NotImplementedError
+        with self.session_factory.begin() as session:
+            contract_id = session.execute(
+                text(
+                    """
+                    SELECT oc.id
+                    FROM option_contracts AS oc
+                    JOIN underlyings AS u ON u.id = oc.underlying_id
+                    WHERE u.symbol = :symbol AND oc.occ_symbol = :occ_symbol
+                    """
+                ),
+                {"symbol": event.symbol.upper(), "occ_symbol": event.occ_symbol},
+            ).scalar_one_or_none()
+            if contract_id is None:
+                raise ValueError(
+                    f"Option contract {event.occ_symbol} must exist before flow is saved"
+                )
+            session.execute(
+                text(
+                    """
+                    INSERT INTO flow_events (
+                        time, contract_id, event_type, premium, size, aggressor_side
+                    )
+                    VALUES (
+                        :time, :contract_id, :event_type, :premium, :size,
+                        :aggressor_side
+                    )
+                    """
+                ),
+                {
+                    "time": event.as_of,
+                    "contract_id": contract_id,
+                    "event_type": event.event_type.value,
+                    "premium": event.premium,
+                    "size": event.size,
+                    "aggressor_side": event.aggressor_side.value,
+                },
+            )
 
     def get_flow_events(
         self, underlying: str, since: datetime | None = None, limit: int = 100
     ) -> list[FlowEvent]:
-        raise NotImplementedError
+        since_filter = "AND f.time >= :since" if since is not None else ""
+        statement = text(
+            f"""
+            SELECT f.time, u.symbol, oc.occ_symbol, f.event_type,
+                   f.premium, f.size, f.aggressor_side
+            FROM flow_events AS f
+            JOIN option_contracts AS oc ON oc.id = f.contract_id
+            JOIN underlyings AS u ON u.id = oc.underlying_id
+            WHERE u.symbol = :symbol
+            {since_filter}
+            ORDER BY f.time DESC
+            LIMIT :limit
+            """
+        )
+        parameters: dict[str, str | int | datetime] = {
+            "symbol": underlying.upper(),
+            "limit": limit,
+        }
+        if since is not None:
+            parameters["since"] = since
+        with self.session_factory() as session:
+            rows = session.execute(statement, parameters).mappings()
+            return [
+                FlowEvent(
+                    symbol=str(row["symbol"]),
+                    occ_symbol=str(row["occ_symbol"]),
+                    as_of=row["time"],
+                    event_type=FlowEventType(str(row["event_type"])),
+                    premium=Decimal(row["premium"]),
+                    size=int(row["size"]),
+                    aggressor_side=AggressorSide(str(row["aggressor_side"])),
+                )
+                for row in rows
+            ]
 
     def get_recent_flow(self, underlying: str, limit: int = 20) -> list[FlowEvent]:
-        raise NotImplementedError
+        return self.get_flow_events(underlying, limit=limit)
+
+    @staticmethod
+    def _ensure_underlying(session: Session, symbol: str) -> int:
+        return session.execute(
+            text(
+                """
+                INSERT INTO underlyings (symbol, kind, is_priority)
+                VALUES (:symbol, 'equity', false)
+                ON CONFLICT (symbol) DO UPDATE SET symbol = EXCLUDED.symbol
+                RETURNING id
+                """
+            ),
+            {"symbol": symbol.upper()},
+        ).scalar_one()
+
+    @staticmethod
+    def _gamma_from_row(mapping: RowMapping) -> GammaAggregate:
+        return GammaAggregate(
+            symbol=str(mapping["symbol"]),
+            as_of=mapping["time"],
+            gamma_flip=Decimal(mapping["gamma_flip"]),
+            call_wall=Decimal(mapping["call_wall"]),
+            put_wall=Decimal(mapping["put_wall"]),
+            max_pain=Decimal(mapping["max_pain"]),
+            net_gamma=Decimal(mapping["net_gamma"]),
+            dealer_gamma_notional=Decimal(mapping["dealer_gamma_notional"]),
+        )

@@ -1,0 +1,177 @@
+from __future__ import annotations
+
+from collections.abc import Iterator
+from datetime import datetime, timedelta, timezone
+from decimal import Decimal
+from uuid import uuid4
+
+import pytest
+from sqlalchemy import Engine, text
+from sqlalchemy.exc import SQLAlchemyError
+
+from backend.adapters.providers.mock.provider import MockDataProvider
+from backend.adapters.storage.postgresql import PostgreSQLStorage
+from backend.core.settings import Settings
+from backend.domain.entities import (
+    AggressorSide,
+    FlowEvent,
+    FlowEventType,
+    GammaAggregate,
+    MarketPrice,
+)
+from backend.infrastructure.database.engine import create_sync_engine
+from backend.infrastructure.database.session import create_sync_session_factory
+
+pytestmark = pytest.mark.integration
+
+
+@pytest.fixture
+def postgresql_storage() -> Iterator[tuple[PostgreSQLStorage, Engine, str]]:
+    settings = Settings(_env_file=".env")
+    if not settings.database_url.startswith("postgresql"):
+        pytest.skip("DATABASE_URL does not point to PostgreSQL")
+
+    engine = create_sync_engine(settings.database_url)
+    try:
+        with engine.connect() as connection:
+            connection.execute(text("SELECT 1"))
+    except SQLAlchemyError as exc:
+        engine.dispose()
+        pytest.skip(f"PostgreSQL is unavailable: {type(exc).__name__}")
+
+    symbol = f"T{uuid4().hex[:7]}".upper()
+    storage = PostgreSQLStorage(create_sync_session_factory(engine))
+    try:
+        yield storage, engine, symbol
+    finally:
+        _delete_test_data(engine, symbol)
+        engine.dispose()
+
+
+def test_option_chain_round_trip_against_postgresql(
+    postgresql_storage: tuple[PostgreSQLStorage, Engine, str],
+) -> None:
+    storage, _, symbol = postgresql_storage
+    source = MockDataProvider().get_option_chain(symbol)
+
+    storage.save_chain_snapshot(source)
+    loaded = storage.get_latest_chain_snapshot(symbol)
+
+    assert loaded is not None
+    assert loaded.symbol == symbol
+    assert loaded.as_of == source.as_of
+    assert loaded.spot_price == source.spot_price
+    assert loaded.contracts == source.contracts
+
+
+def test_gamma_aggregate_round_trip_against_postgresql(
+    postgresql_storage: tuple[PostgreSQLStorage, Engine, str],
+) -> None:
+    storage, _, symbol = postgresql_storage
+    aggregate = GammaAggregate(
+        symbol=symbol,
+        as_of=datetime.now(timezone.utc),
+        gamma_flip=Decimal("551.5"),
+        call_wall=Decimal("555"),
+        put_wall=Decimal("545"),
+        max_pain=Decimal("550"),
+        net_gamma=Decimal("-1250000"),
+        dealer_gamma_notional=Decimal("-125000000"),
+    )
+
+    storage.save_gamma_aggregate(aggregate)
+    loaded = storage.get_latest_gamma_aggregate(symbol)
+    history = storage.get_gamma_history(
+        symbol,
+        aggregate.as_of - timedelta(seconds=1),
+        aggregate.as_of + timedelta(seconds=1),
+    )
+
+    assert loaded == aggregate
+    assert history == [aggregate]
+    assert loaded.items == ()
+
+
+def test_flow_event_round_trip_against_postgresql(
+    postgresql_storage: tuple[PostgreSQLStorage, Engine, str],
+) -> None:
+    storage, _, symbol = postgresql_storage
+    chain = MockDataProvider().get_option_chain(symbol)
+    storage.save_chain_snapshot(chain)
+    event = FlowEvent(
+        symbol=symbol,
+        occ_symbol=chain.contracts[0].occ_symbol,
+        as_of=datetime.now(timezone.utc),
+        event_type=FlowEventType.UNUSUAL,
+        premium=Decimal("750000"),
+        size=125,
+        aggressor_side=AggressorSide.BUY,
+    )
+
+    storage.save_flow_event(event)
+    loaded = storage.get_flow_events(symbol)
+
+    assert loaded == [event]
+    assert storage.get_recent_flow(symbol) == [event]
+
+
+def test_market_price_and_underlying_round_trip_against_postgresql(
+    postgresql_storage: tuple[PostgreSQLStorage, Engine, str],
+) -> None:
+    storage, _, symbol = postgresql_storage
+    price = MarketPrice(
+        symbol=symbol,
+        as_of=datetime.now(timezone.utc),
+        price=Decimal("552.25"),
+        volume=1_250_000,
+    )
+
+    storage.save_market_price(price)
+
+    assert storage.get_latest_price(symbol) == price
+    assert any(item.symbol == symbol for item in storage.list_underlyings())
+
+
+def _delete_test_data(engine: Engine, symbol: str) -> None:
+    with engine.begin() as connection:
+        underlying_id = connection.execute(
+            text("SELECT id FROM underlyings WHERE symbol = :symbol"),
+            {"symbol": symbol},
+        ).scalar_one_or_none()
+        if underlying_id is None:
+            return
+        connection.execute(
+            text(
+                """
+                DELETE FROM flow_events
+                WHERE contract_id IN (
+                    SELECT id FROM option_contracts WHERE underlying_id = :id
+                )
+                """
+            ),
+            {"id": underlying_id},
+        )
+        connection.execute(
+            text(
+                """
+                DELETE FROM option_chain_snapshots
+                WHERE contract_id IN (
+                    SELECT id FROM option_contracts WHERE underlying_id = :id
+                )
+                """
+            ),
+            {"id": underlying_id},
+        )
+        for table_name in ("gamma_aggregates", "market_snapshots"):
+            connection.execute(
+                text(f"DELETE FROM {table_name} WHERE underlying_id = :id"),
+                {"id": underlying_id},
+            )
+        connection.execute(
+            text("DELETE FROM option_contracts WHERE underlying_id = :id"),
+            {"id": underlying_id},
+        )
+        connection.execute(
+            text("DELETE FROM underlyings WHERE id = :id"),
+            {"id": underlying_id},
+        )
