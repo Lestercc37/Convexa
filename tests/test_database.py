@@ -195,3 +195,28 @@ def test_vega_theta_exposure_migration_adds_mandatory_columns(monkeypatch) -> No
         ("gamma_aggregates", "vega_exposure", {"server_default": None}),
         ("gamma_aggregates", "theta_exposure", {"server_default": None}),
     ]
+
+
+def test_charm_exposure_migration_adds_mandatory_column(monkeypatch) -> None:
+    migration = import_module("backend.db.migrations.0007_add_charm_exposure")
+    added_columns = []
+    altered_columns = []
+    monkeypatch.setattr(
+        migration.op,
+        "add_column",
+        lambda table, column: added_columns.append((table, column)),
+    )
+    monkeypatch.setattr(
+        migration.op,
+        "alter_column",
+        lambda table, column, **kwargs: altered_columns.append((table, column, kwargs)),
+    )
+
+    migration.upgrade()
+
+    assert len(added_columns) == 1
+    table, column = added_columns[0]
+    assert table == "gamma_aggregates"
+    assert column.name == "charm_exposure"
+    assert column.nullable is False
+    assert altered_columns == [("gamma_aggregates", "charm_exposure", {"server_default": None})]

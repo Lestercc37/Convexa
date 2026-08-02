@@ -279,6 +279,7 @@ class GammaAggregate:
     dealer_gamma_notional: Decimal = Decimal("0")
     vega_exposure: Decimal = Decimal(0)
     theta_exposure: Decimal = Decimal(0)
+    charm_exposure: Decimal = Decimal(0)
     peak_gamma_strike: Decimal = Decimal("0")
     peak_gamma_value: Decimal = Decimal("0")
 
@@ -299,6 +300,7 @@ class GammaAggregate:
             "dealer_gamma_notional",
             "vega_exposure",
             "theta_exposure",
+            "charm_exposure",
             "peak_gamma_strike",
             "peak_gamma_value",
         ):

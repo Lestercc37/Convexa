@@ -185,6 +185,7 @@ def gamma_response(
         "net_gamma": _num(gamma.net_gamma),
         "vega_exposure": _num(gamma.vega_exposure),
         "theta_exposure": _num(gamma.theta_exposure),
+        "charm_exposure": _num(gamma.charm_exposure),
         "dealer_position": gamma.dealer_position,
     }
     if derived_metrics is not None:
