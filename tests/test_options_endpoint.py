@@ -103,41 +103,6 @@ def test_options_post_request_bodies_use_option_chain_request_schema() -> None:
     assert "additionalProp1" not in str(gamma_flip_body)
 
 
-def test_dealer_positioning_swagger_example_returns_200() -> None:
-    with TestClient(app) as client:
-        openapi_response = client.get("/openapi.json")
-
-    assert openapi_response.status_code == 200
-    request_body = openapi_response.json()["paths"]["/options/dealer-positioning"]["post"][
-        "requestBody"
-    ]["content"]["application/json"]
-    swagger_example = request_body["examples"]["dealer_positioning"]["value"]
-    assert "gamma_flip" not in swagger_example
-
-    with TestClient(app) as client:
-        response = client.post("/options/dealer-positioning", json=swagger_example)
-
-    assert response.status_code == 200
-    payload = response.json()
-    assert payload["schema_version"] == 1
-    assert payload["symbol"] == "SPY"
-
-
-def test_dealer_positioning_rejects_non_positive_gamma_flip_price() -> None:
-    with TestClient(app) as client:
-        openapi_response = client.get("/openapi.json")
-
-    swagger_example = openapi_response.json()["paths"]["/options/dealer-positioning"]["post"][
-        "requestBody"
-    ]["content"]["application/json"]["examples"]["dealer_positioning"]["value"]
-    swagger_example["gamma_flip"] = {"gamma_flip_price": 0, "flip_found": True}
-
-    with TestClient(app) as client:
-        response = client.post("/options/dealer-positioning", json=swagger_example)
-
-    assert response.status_code == 422
-
-
 def test_greeks_endpoint_rejects_domain_invalid_payload_with_422() -> None:
     payload = {
         "symbol": "SPY",
@@ -178,7 +143,6 @@ def test_openapi_documents_option_response_models() -> None:
         ("/options/gamma-exposure", "post"): "GammaExposureResponse",
         ("/options/gamma-aggregate", "post"): "GammaAggregateResponse",
         ("/options/gamma-flip", "post"): "GammaFlipResponse",
-        ("/options/dealer-positioning", "post"): "DealerPositioningResponse",
         ("/options/max-pain", "post"): "MaxPainResponse",
     }
     for (path, method), schema_name in expected_refs.items():
@@ -201,6 +165,8 @@ def test_openapi_documents_option_response_models() -> None:
     assert schemas["GammaAggregateResponse"]["properties"]["items"]["items"]["$ref"].endswith(
         "/GammaAggregateItemResponse"
     )
-    assert schemas["GammaFlipResponse"]["properties"]["gamma_flip_price"]["anyOf"][1][
-        "type"
-    ] == "null"
+    gamma_flip_types = {
+        item["type"]
+        for item in schemas["GammaFlipResponse"]["properties"]["gamma_flip_price"]["anyOf"]
+    }
+    assert "null" in gamma_flip_types

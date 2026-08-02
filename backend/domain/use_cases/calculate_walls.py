@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from backend.domain.models import GammaAggregate, Walls
+from backend.domain.entities import GammaAggregate, Walls
 from backend.domain.ports import IWallCalculator
 
 

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from decimal import Decimal
 
-from backend.domain.models import ContractType, MaxPain, MaxPainStrikePain, OptionChain
+from backend.domain.entities import ContractType, MaxPain, MaxPainStrikePain, OptionChain
 from backend.domain.ports import IMaxPainCalculator
 
 

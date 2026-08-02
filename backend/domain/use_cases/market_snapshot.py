@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from backend.domain.models import MarketSnapshot
+from backend.domain.entities import MarketSnapshot
 from backend.domain.ports import IDataProvider
 
 

@@ -4,14 +4,12 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import Any
 
-from backend.domain.models import (
+from backend.domain.entities import (
     ContractType,
-    DealerPositioning,
     FlowEvent,
     GammaAggregate,
     GammaExposure,
     GammaFlip,
-    InstitutionalAnalysis,
     Greeks,
     MarketSnapshot,
     MaxPain,
@@ -35,18 +33,16 @@ def underlyings_response(items: list[Underlying]) -> dict[str, Any]:
 
 
 def chain_response(chain: OptionChain) -> dict[str, Any]:
-    return {"schema_version": SCHEMA_VERSION, "symbol": chain.symbol, "as_of": _dt(chain.as_of), "contracts": [{"occ_symbol": c.occ_symbol, "strike": _num(c.strike), "type": c.contract_type.value, "bid": _num(c.bid), "ask": _num(c.ask), "iv": _num(c.iv), "delta": _num(c.greeks.delta), "gamma": _num(c.greeks.gamma), "open_interest": c.open_interest, "volume": c.volume} for c in chain.contracts]}
+    return {"schema_version": SCHEMA_VERSION, "symbol": chain.symbol, "as_of": _dt(chain.as_of), "spot_price": _num(chain.spot_price), "contracts": [{"occ_symbol": c.occ_symbol, "strike": _num(c.strike), "type": c.contract_type.value, "bid": _num(c.bid), "ask": _num(c.ask), "iv": _num(c.iv), "delta": _num(c.greeks.delta), "gamma": _num(c.greeks.gamma), "open_interest": c.open_interest, "volume": c.volume} for c in chain.contracts]}
 
 
 def greeks_chain_response(chain: OptionChain) -> dict[str, Any]:
     payload = chain_response(chain)
     for contract_payload, contract in zip(payload["contracts"], chain.contracts, strict=True):
-        contract_payload["theta"] = (
-            _num(contract.greeks.theta) if contract.greeks.theta is not None else None
-        )
-        contract_payload["vega"] = (
-            _num(contract.greeks.vega) if contract.greeks.vega is not None else None
-        )
+        contract_payload["theta"] = _num(contract.greeks.theta)
+        contract_payload["vega"] = _num(contract.greeks.vega)
+        contract_payload["charm"] = _num(contract.greeks.charm)
+        contract_payload["vanna"] = _num(contract.greeks.vanna)
     return payload
 
 
@@ -117,20 +113,6 @@ def gamma_flip_response(flip: GammaFlip) -> dict[str, Any]:
     }
 
 
-def dealer_positioning_response(positioning: DealerPositioning) -> dict[str, Any]:
-    return {
-        "schema_version": SCHEMA_VERSION,
-        "symbol": positioning.symbol,
-        "as_of": _dt(positioning.as_of),
-        "dealer_state": positioning.dealer_state,
-        "dealer_bias": positioning.dealer_bias,
-        "hedging_pressure": _num(positioning.hedging_pressure),
-        "expected_volatility": positioning.expected_volatility,
-        "liquidity_regime": positioning.liquidity_regime,
-        "confidence_score": _num(positioning.confidence_score),
-    }
-
-
 def max_pain_response(max_pain: MaxPain) -> dict[str, Any]:
     return {
         "schema_version": SCHEMA_VERSION,
@@ -153,29 +135,11 @@ def max_pain_response(max_pain: MaxPain) -> dict[str, Any]:
 
 
 
-def institutional_analysis_response(analysis: InstitutionalAnalysis) -> dict[str, Any]:
-    return {
-        "schema_version": analysis.schema_version,
-        "timestamp": _dt(analysis.timestamp),
-        "overall_bias": analysis.overall_bias,
-        "confidence_score": _num(analysis.confidence_score),
-        "market_regime": analysis.market_regime,
-        "market_snapshot": market_response(analysis.market_snapshot),
-        "option_chain": greeks_chain_response(analysis.option_chain),
-        "gamma_exposure": gamma_exposure_response(analysis.gamma_exposure),
-        "gamma_aggregate": gamma_aggregate_response(analysis.gamma_aggregate),
-        "peak_gamma_strike": _num(analysis.gamma_aggregate.peak_gamma_strike),
-        "gamma_flip": gamma_flip_response(analysis.gamma_flip),
-        "call_wall": _wall_response(analysis.walls.call_wall),
-        "put_wall": _wall_response(analysis.walls.put_wall),
-        "max_pain": max_pain_response(analysis.max_pain),
-        "dealer_positioning": dealer_positioning_response(analysis.dealer_positioning),
-    }
-
 def option_chain_from_payload(payload: dict[str, Any]) -> OptionChain:
     return OptionChain(
         symbol=str(payload["symbol"]),
         as_of=_parse_datetime(str(payload["as_of"])),
+        spot_price=Decimal(str(payload["spot_price"])),
         contracts=tuple(
             _contract_from_payload(str(payload["symbol"]), item)
             for item in payload.get("contracts", ())
@@ -215,7 +179,6 @@ def _wall_response(wall: Any) -> dict[str, Any] | None:
         "gamma": _num(wall.gamma),
         "open_interest": wall.open_interest,
         "volume": wall.volume,
-        "confidence_score": _num(wall.confidence_score),
     }
 
 
@@ -237,8 +200,10 @@ def _contract_from_payload(default_symbol: str, payload: dict[str, Any]) -> Opti
         greeks=Greeks(
             delta=Decimal(str(greeks_payload.get("delta", "0"))),
             gamma=Decimal(str(greeks_payload.get("gamma", "0"))),
-            theta=_optional_decimal(greeks_payload.get("theta")),
-            vega=_optional_decimal(greeks_payload.get("vega")),
+            theta=Decimal(str(greeks_payload["theta"])),
+            vega=Decimal(str(greeks_payload["vega"])),
+            charm=Decimal(str(greeks_payload["charm"])),
+            vanna=Decimal(str(greeks_payload["vanna"])),
         ),
     )
 

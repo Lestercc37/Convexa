@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from backend.domain.models import GammaAggregate, GammaFlip
+from backend.domain.entities import GammaAggregate, GammaFlip
 from backend.domain.ports import IGammaFlipCalculator
 
 

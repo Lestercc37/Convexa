@@ -1,13 +1,14 @@
 from __future__ import annotations
 
-from datetime import date, datetime, timezone
+from dataclasses import replace
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 
 from fastapi.testclient import TestClient
 
-from backend.adapters.greeks.fake import FakeGreeksCalculator
-from backend.application.use_cases import CalculateGreeksUseCase
-from backend.domain.models import ContractType, Greeks, OptionChain, OptionContract
+from backend.adapters.providers.mock.fake import FakeGreeksCalculator
+from backend.domain.use_cases import CalculateGreeksUseCase
+from backend.domain.entities import ContractType, Greeks, OptionChain, OptionContract
 from backend.domain.ports import IGreeksCalculator
 from backend.main import app
 
@@ -19,18 +20,49 @@ def test_fake_greeks_calculator_enriches_chain_deterministically() -> None:
 
     assert enriched is not chain
     assert len(enriched.contracts) == len(chain.contracts)
-    assert enriched.contracts[0].greeks == Greeks(
-        delta=Decimal("0.45"),
-        gamma=Decimal("0.030"),
-        theta=Decimal("-0.015"),
-        vega=Decimal("0.120"),
+    assert enriched.contracts[0].greeks.delta > Decimal("0.5")
+    assert enriched.contracts[1].greeks.delta < Decimal("0")
+    assert enriched.contracts[0].greeks.gamma > Decimal("0")
+    assert enriched.contracts[0].greeks.theta < Decimal("0")
+    assert enriched.contracts[0].greeks.vega > Decimal("0")
+    assert enriched.contracts[0].greeks.charm != Decimal("0")
+    assert enriched.contracts[0].greeks.vanna != Decimal("0")
+
+
+def test_fake_greeks_vary_with_moneyness_and_expiration() -> None:
+    chain = _chain()
+    base = chain.contracts[0]
+    varied_chain = replace(
+        chain,
+        contracts=(
+            base,
+            replace(
+                base,
+                occ_symbol="SPY260320C00560000",
+                strike=Decimal("560"),
+                expiration=base.expiration + timedelta(days=28),
+            ),
+        ),
     )
-    assert enriched.contracts[1].greeks == Greeks(
-        delta=Decimal("-0.55"),
-        gamma=Decimal("0.030"),
-        theta=Decimal("-0.016"),
-        vega=Decimal("0.118"),
-    )
+
+    result = FakeGreeksCalculator().calculate(varied_chain)
+
+    assert result.contracts[0].greeks != result.contracts[1].greeks
+    assert result.contracts[0].greeks.charm != result.contracts[1].greeks.charm
+    assert result.contracts[0].greeks.vanna != result.contracts[1].greeks.vanna
+
+
+def test_fake_greeks_generates_deterministic_charm_and_vanna() -> None:
+    chain = _chain()
+    calculator = FakeGreeksCalculator()
+
+    first = calculator.calculate(chain)
+    second = calculator.calculate(chain)
+
+    assert first.contracts[0].greeks.charm == second.contracts[0].greeks.charm
+    assert first.contracts[0].greeks.vanna == second.contracts[0].greeks.vanna
+    assert first.contracts[0].greeks.charm != Decimal("0")
+    assert first.contracts[0].greeks.vanna != Decimal("0")
 
 
 def test_calculate_greeks_use_case_depends_only_on_port() -> None:
@@ -60,20 +92,21 @@ def test_greeks_endpoint_returns_enriched_chain() -> None:
     payload = response.json()
     assert payload["symbol"] == "SPY"
     assert len(payload["contracts"]) == 2
-    assert payload["contracts"][0]["delta"] == 0.45
-    assert payload["contracts"][0]["gamma"] == 0.03
-    assert payload["contracts"][0]["theta"] == -0.015
-    assert payload["contracts"][0]["vega"] == 0.12
-    assert payload["contracts"][1]["delta"] == -0.55
-    assert payload["contracts"][1]["gamma"] == 0.03
-    assert payload["contracts"][1]["theta"] == -0.016
-    assert payload["contracts"][1]["vega"] == 0.118
+    assert payload["spot_price"] == 550
+    assert payload["contracts"][0]["delta"] > 0.5
+    assert payload["contracts"][0]["gamma"] > 0
+    assert payload["contracts"][0]["theta"] < 0
+    assert payload["contracts"][0]["vega"] > 0
+    assert payload["contracts"][0]["charm"] != 0
+    assert payload["contracts"][0]["vanna"] != 0
+    assert payload["contracts"][1]["delta"] < 0
 
 
 def _chain() -> OptionChain:
     return OptionChain(
         symbol="SPY",
         as_of=datetime(2026, 1, 15, 14, 30, tzinfo=timezone.utc),
+        spot_price=Decimal("550"),
         contracts=(
             _contract(ContractType.CALL, "SPY260220C00540000"),
             _contract(ContractType.PUT, "SPY260220P00540000"),
@@ -94,7 +127,14 @@ def _contract(contract_type: ContractType, occ_symbol: str) -> OptionContract:
         volume=3400,
         open_interest=8000,
         iv=Decimal("0.18"),
-        greeks=Greeks(delta=Decimal("0"), gamma=Decimal("0")),
+        greeks=Greeks(
+            delta=Decimal("0"),
+            gamma=Decimal("0"),
+            theta=Decimal("0"),
+            vega=Decimal("0"),
+            charm=Decimal("0"),
+            vanna=Decimal("0"),
+        ),
     )
 
 
@@ -102,6 +142,7 @@ def _chain_payload() -> dict[str, object]:
     return {
         "symbol": "SPY",
         "as_of": "2026-01-15T14:30:00Z",
+        "spot_price": 550,
         "contracts": [
             {
                 "occ_symbol": "SPY260220C00540000",
@@ -115,6 +156,10 @@ def _chain_payload() -> dict[str, object]:
                 "iv": 0.18,
                 "delta": 0,
                 "gamma": 0,
+                "theta": 0,
+                "vega": 0,
+                "charm": 0,
+                "vanna": 0,
                 "open_interest": 8000,
                 "volume": 3400,
             },
@@ -130,6 +175,10 @@ def _chain_payload() -> dict[str, object]:
                 "iv": 0.18,
                 "delta": 0,
                 "gamma": 0,
+                "theta": 0,
+                "vega": 0,
+                "charm": 0,
+                "vanna": 0,
                 "open_interest": 8000,
                 "volume": 3400,
             },

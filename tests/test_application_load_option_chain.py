@@ -1,13 +1,13 @@
 from datetime import date
 from decimal import Decimal
 
-from backend.adapters.providers.fake import FakeMarketDataProvider
-from backend.application.use_cases import LoadOptionChainUseCase
-from backend.domain.models import ContractType
+from backend.adapters.providers.mock import MockDataProvider
+from backend.domain.use_cases import LoadOptionChainUseCase
+from backend.domain.entities import ContractType
 
 
 def test_load_option_chain_use_case_returns_deterministic_chain() -> None:
-    use_case = LoadOptionChainUseCase(FakeMarketDataProvider())
+    use_case = LoadOptionChainUseCase(MockDataProvider())
 
     chain = use_case.execute("spy")
 
@@ -27,7 +27,7 @@ def test_load_option_chain_use_case_returns_deterministic_chain() -> None:
 
 
 def test_load_option_chain_use_case_forwards_expiration_filter() -> None:
-    use_case = LoadOptionChainUseCase(FakeMarketDataProvider())
+    use_case = LoadOptionChainUseCase(MockDataProvider())
 
     chain = use_case.execute("qqq", expiration=date(2026, 3, 20))
 

@@ -4,9 +4,9 @@ from datetime import date, datetime, timezone
 from decimal import Decimal
 
 
-from backend.adapters.greeks.max_pain import FakeMaxPainCalculator
-from backend.application.use_cases import CalculateMaxPainUseCase
-from backend.domain.models import (
+from backend.adapters.providers.mock.max_pain import FakeMaxPainCalculator
+from backend.domain.use_cases import CalculateMaxPainUseCase
+from backend.domain.entities import (
     ContractType,
     Greeks,
     MaxPain,
@@ -88,6 +88,7 @@ def _chain() -> OptionChain:
     return OptionChain(
         symbol="SPY",
         as_of=datetime(2026, 1, 15, 14, 30, tzinfo=timezone.utc),
+        spot_price=Decimal("550"),
         contracts=tuple(
             _contract(strike, contract_type, open_interest)
             for strike, contract_type, open_interest in (
@@ -114,7 +115,14 @@ def _contract(strike: str, contract_type: ContractType, open_interest: int) -> O
         volume=100,
         open_interest=open_interest,
         iv=Decimal("0.2"),
-        greeks=Greeks(delta=Decimal("0"), gamma=Decimal("0")),
+        greeks=Greeks(
+            delta=Decimal("0"),
+            gamma=Decimal("0"),
+            theta=Decimal("0"),
+            vega=Decimal("0"),
+            charm=Decimal("0"),
+            vanna=Decimal("0"),
+        ),
     )
 
 
@@ -122,6 +130,7 @@ def _chain_payload() -> dict[str, object]:
     return {
         "symbol": "SPY",
         "as_of": "2026-01-15T14:30:00Z",
+        "spot_price": 550,
         "contracts": [
             {
                 "occ_symbol": contract.occ_symbol,
@@ -135,6 +144,10 @@ def _chain_payload() -> dict[str, object]:
                 "iv": 0.2,
                 "delta": 0,
                 "gamma": 0,
+                "theta": 0,
+                "vega": 0,
+                "charm": 0,
+                "vanna": 0,
                 "open_interest": contract.open_interest,
                 "volume": contract.volume,
             }

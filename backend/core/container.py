@@ -4,19 +4,16 @@ from dataclasses import dataclass
 
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
-from backend.adapters.greeks.dealer_positioning import FakeDealerPositioningCalculator
-from backend.adapters.greeks.fake import FakeGreeksCalculator
-from backend.adapters.greeks.gamma_aggregate import FakeGammaAggregateCalculator
-from backend.adapters.greeks.gamma_exposure import FakeGammaExposureCalculator
-from backend.adapters.greeks.gamma_flip import FakeGammaFlipCalculator
-from backend.adapters.greeks.max_pain import FakeMaxPainCalculator
-from backend.adapters.greeks.walls import FakeWallCalculator
-from backend.adapters.providers.fake import FakeMarketDataProvider
+from backend.adapters.providers.mock.fake import FakeGreeksCalculator
+from backend.adapters.providers.mock.gamma_aggregate import FakeGammaAggregateCalculator
+from backend.adapters.providers.mock.gamma_exposure import FakeGammaExposureCalculator
+from backend.adapters.providers.mock.gamma_flip import FakeGammaFlipCalculator
+from backend.adapters.providers.mock.max_pain import FakeMaxPainCalculator
+from backend.adapters.providers.mock.walls import FakeWallCalculator
+from backend.adapters.providers.mock import MockDataProvider
 from backend.adapters.storage.postgresql import PostgreSQLStorage
-from backend.application.use_cases import (
-    CalculateDealerPositioningUseCase,
+from backend.domain.use_cases import (
     CalculateGammaAggregateUseCase,
-    CalculateInstitutionalAnalysisUseCase,
     CalculateGammaExposureUseCase,
     CalculateGammaFlipUseCase,
     CalculateGreeksUseCase,
@@ -28,7 +25,6 @@ from backend.application.use_cases import (
 from backend.core.settings import Settings, get_settings
 from backend.domain.ports import (
     IDataProvider,
-    IDealerPositioningCalculator,
     IGammaAggregateCalculator,
     IGammaExposureCalculator,
     IGammaFlipCalculator,
@@ -51,7 +47,6 @@ class Container:
     session_factory: async_sessionmaker[AsyncSession]
     storage: PostgreSQLStorage
     market_data_provider: IDataProvider
-    dealer_positioning_calculator: IDealerPositioningCalculator
     greeks_calculator: IGreeksCalculator
     gamma_exposure_calculator: IGammaExposureCalculator
     gamma_aggregate_calculator: IGammaAggregateCalculator
@@ -60,14 +55,12 @@ class Container:
     max_pain_calculator: IMaxPainCalculator
     get_market_snapshot_use_case: GetMarketSnapshotUseCase
     load_option_chain_use_case: LoadOptionChainUseCase
-    calculate_dealer_positioning_use_case: CalculateDealerPositioningUseCase
     calculate_greeks_use_case: CalculateGreeksUseCase
     calculate_gamma_exposure_use_case: CalculateGammaExposureUseCase
     calculate_gamma_aggregate_use_case: CalculateGammaAggregateUseCase
     calculate_gamma_flip_use_case: CalculateGammaFlipUseCase
     calculate_walls_use_case: CalculateWallsUseCase
     calculate_max_pain_use_case: CalculateMaxPainUseCase
-    calculate_institutional_analysis_use_case: CalculateInstitutionalAnalysisUseCase
 
 
 def build_container() -> Container:
@@ -78,8 +71,7 @@ def build_container() -> Container:
     database_engine = create_engine(settings.database_url, echo=settings.database_echo)
     session_factory = create_session_factory(database_engine)
     storage = PostgreSQLStorage(session_factory)
-    market_data_provider = FakeMarketDataProvider()
-    dealer_positioning_calculator = FakeDealerPositioningCalculator()
+    market_data_provider = MockDataProvider()
     greeks_calculator = FakeGreeksCalculator()
     gamma_exposure_calculator = FakeGammaExposureCalculator()
     gamma_aggregate_calculator = FakeGammaAggregateCalculator()
@@ -88,9 +80,6 @@ def build_container() -> Container:
     max_pain_calculator = FakeMaxPainCalculator()
     get_market_snapshot_use_case = GetMarketSnapshotUseCase(market_data_provider)
     load_option_chain_use_case = LoadOptionChainUseCase(market_data_provider)
-    calculate_dealer_positioning_use_case = CalculateDealerPositioningUseCase(
-        dealer_positioning_calculator
-    )
     calculate_greeks_use_case = CalculateGreeksUseCase(greeks_calculator)
     calculate_gamma_exposure_use_case = CalculateGammaExposureUseCase(
         gamma_exposure_calculator
@@ -101,23 +90,12 @@ def build_container() -> Container:
     calculate_gamma_flip_use_case = CalculateGammaFlipUseCase(gamma_flip_calculator)
     calculate_walls_use_case = CalculateWallsUseCase(wall_calculator)
     calculate_max_pain_use_case = CalculateMaxPainUseCase(max_pain_calculator)
-    calculate_institutional_analysis_use_case = CalculateInstitutionalAnalysisUseCase(
-        get_market_snapshot_use_case=get_market_snapshot_use_case,
-        calculate_greeks_use_case=calculate_greeks_use_case,
-        calculate_gamma_exposure_use_case=calculate_gamma_exposure_use_case,
-        calculate_gamma_aggregate_use_case=calculate_gamma_aggregate_use_case,
-        calculate_gamma_flip_use_case=calculate_gamma_flip_use_case,
-        calculate_walls_use_case=calculate_walls_use_case,
-        calculate_max_pain_use_case=calculate_max_pain_use_case,
-        calculate_dealer_positioning_use_case=calculate_dealer_positioning_use_case,
-    )
     return Container(
         settings=settings,
         database_engine=database_engine,
         session_factory=session_factory,
         storage=storage,
         market_data_provider=market_data_provider,
-        dealer_positioning_calculator=dealer_positioning_calculator,
         greeks_calculator=greeks_calculator,
         gamma_exposure_calculator=gamma_exposure_calculator,
         gamma_aggregate_calculator=gamma_aggregate_calculator,
@@ -126,12 +104,10 @@ def build_container() -> Container:
         max_pain_calculator=max_pain_calculator,
         get_market_snapshot_use_case=get_market_snapshot_use_case,
         load_option_chain_use_case=load_option_chain_use_case,
-        calculate_dealer_positioning_use_case=calculate_dealer_positioning_use_case,
         calculate_greeks_use_case=calculate_greeks_use_case,
         calculate_gamma_exposure_use_case=calculate_gamma_exposure_use_case,
         calculate_gamma_aggregate_use_case=calculate_gamma_aggregate_use_case,
         calculate_gamma_flip_use_case=calculate_gamma_flip_use_case,
         calculate_walls_use_case=calculate_walls_use_case,
         calculate_max_pain_use_case=calculate_max_pain_use_case,
-        calculate_institutional_analysis_use_case=calculate_institutional_analysis_use_case,
     )

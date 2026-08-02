@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import date, datetime, timezone
 
-from backend.domain.models import MarketSnapshot, OptionChain
+from backend.domain.entities import MarketSnapshot, OptionChain
 from backend.domain.ports import IDataProvider, IStorage
 from backend.domain.use_cases.errors import NotFoundError
 

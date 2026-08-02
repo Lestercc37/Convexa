@@ -1,4 +1,4 @@
-from backend.domain.models import FlowEvent, GammaAggregate
+from backend.domain.entities import FlowEvent, GammaAggregate
 
 
 class NoopNotificationService:

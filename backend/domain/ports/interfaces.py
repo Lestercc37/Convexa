@@ -3,9 +3,7 @@ from __future__ import annotations
 from datetime import date, datetime
 from typing import AsyncIterator, Protocol
 
-from backend.domain.models import (
-    DealerPositioning,
-    DealerPositioningInput,
+from backend.domain.entities import (
     FlowEvent,
     GammaAggregate,
     GammaExposure,
@@ -49,10 +47,6 @@ class IWallCalculator(Protocol):
 
 class IMaxPainCalculator(Protocol):
     def calculate(self, chain: OptionChain) -> MaxPain: ...
-
-
-class IDealerPositioningCalculator(Protocol):
-    def calculate(self, positioning_input: DealerPositioningInput) -> DealerPositioning: ...
 
 
 class IStorage(Protocol):
