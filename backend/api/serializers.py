@@ -33,7 +33,31 @@ def underlyings_response(items: list[Underlying]) -> dict[str, Any]:
 
 
 def chain_response(chain: OptionChain) -> dict[str, Any]:
-    return {"schema_version": SCHEMA_VERSION, "symbol": chain.symbol, "as_of": _dt(chain.as_of), "spot_price": _num(chain.spot_price), "contracts": [{"occ_symbol": c.occ_symbol, "strike": _num(c.strike), "type": c.contract_type.value, "bid": _num(c.bid), "ask": _num(c.ask), "iv": _num(c.iv), "delta": _num(c.greeks.delta), "gamma": _num(c.greeks.gamma), "open_interest": c.open_interest, "volume": c.volume} for c in chain.contracts]}
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "symbol": chain.symbol,
+        "as_of": _dt(chain.as_of),
+        "spot_price": _num(chain.spot_price),
+        "contracts": [
+            {
+                "occ_symbol": contract.occ_symbol,
+                "strike": _num(contract.strike),
+                "type": contract.contract_type.value,
+                "bid": _num(contract.bid),
+                "ask": _num(contract.ask),
+                "iv": _num(contract.iv),
+                "delta": _num(contract.greeks.delta),
+                "gamma": _num(contract.greeks.gamma),
+                "theta": _num(contract.greeks.theta),
+                "vega": _num(contract.greeks.vega),
+                "charm": _num(contract.greeks.charm),
+                "vanna": _num(contract.greeks.vanna),
+                "open_interest": contract.open_interest,
+                "volume": contract.volume,
+            }
+            for contract in chain.contracts
+        ],
+    }
 
 
 def greeks_chain_response(chain: OptionChain) -> dict[str, Any]:

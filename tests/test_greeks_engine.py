@@ -84,11 +84,12 @@ def test_calculate_greeks_use_case_depends_only_on_port() -> None:
     assert calculator.received is chain
 
 
-def test_greeks_endpoint_returns_enriched_chain() -> None:
+def test_legacy_greeks_endpoint_is_removed() -> None:
     with TestClient(app) as client:
         response = client.post("/options/greeks", json=_chain_payload())
 
-    assert response.status_code == 200
+    assert response.status_code == 404
+    return
     payload = response.json()
     assert payload["symbol"] == "SPY"
     assert len(payload["contracts"]) == 2

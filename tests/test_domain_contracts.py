@@ -3,7 +3,12 @@ from decimal import Decimal
 
 import pytest
 
-from backend.adapters.notifications.noop import NoopNotificationService
+from backend.adapters.providers.mock.fake import FakeGreeksCalculator
+from backend.adapters.providers.mock.gamma_aggregate import FakeGammaAggregateCalculator
+from backend.adapters.providers.mock.gamma_exposure import FakeGammaExposureCalculator
+from backend.adapters.providers.mock.gamma_flip import FakeGammaFlipCalculator
+from backend.adapters.providers.mock.max_pain import FakeMaxPainCalculator
+from backend.adapters.providers.mock.walls import FakeWallCalculator
 from backend.adapters.providers.mock.provider import MockDataProvider
 from backend.adapters.storage.memory import InMemoryStorage
 from backend.api.serializers import chain_response, gamma_response, websocket_message
@@ -23,6 +28,12 @@ from backend.domain.entities import (
     utc_now,
 )
 from backend.domain.use_cases import (
+    CalculateGammaAggregateUseCase,
+    CalculateGammaExposureOrchestrator,
+    CalculateGammaFlipUseCase,
+    CalculateGreeksUseCase,
+    CalculateMaxPainUseCase,
+    CalculateWallsUseCase,
     build_market_snapshot,
     calculate_gamma_exposure,
     get_option_chain,
@@ -71,9 +82,27 @@ def test_gamma_response_derives_dealer_position() -> None:
     assert "dealer_gamma_notional" not in payload
 
 
-def test_calculate_gamma_exposure_is_scaffold_only() -> None:
-    with pytest.raises(NotImplementedError):
-        calculate_gamma_exposure(InMemoryStorage(), NoopNotificationService(), "SPY")
+def test_calculate_gamma_exposure_orchestrates_and_persists() -> None:
+    storage = InMemoryStorage()
+    storage.save_chain_snapshot(MockDataProvider().get_option_chain("SPY"))
+    exposure = FakeGammaExposureCalculator()
+    orchestrator = CalculateGammaExposureOrchestrator(
+        storage=storage,
+        greeks=CalculateGreeksUseCase(FakeGreeksCalculator()),
+        aggregate=CalculateGammaAggregateUseCase(
+            exposure, FakeGammaAggregateCalculator()
+        ),
+        gamma_flip=CalculateGammaFlipUseCase(FakeGammaFlipCalculator()),
+        walls=CalculateWallsUseCase(FakeWallCalculator()),
+        max_pain=CalculateMaxPainUseCase(FakeMaxPainCalculator()),
+    )
+
+    result = calculate_gamma_exposure(orchestrator, "SPY")
+
+    assert storage.get_latest_gamma_aggregate("SPY") is result
+    assert result.call_wall > 0
+    assert result.put_wall > 0
+    assert result.max_pain > 0
 
 
 def test_market_snapshot_is_projection_not_persisted_table_model() -> None:

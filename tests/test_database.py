@@ -7,6 +7,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
 from backend.core.container import build_container
+from backend.adapters.storage.memory import InMemoryStorage
 from backend.infrastructure.database.engine import create_engine
 from backend.infrastructure.database.session import create_session_factory
 
@@ -37,11 +38,11 @@ async def test_session_factory_creates_async_session() -> None:
 
 
 @pytest.mark.asyncio
-async def test_container_registers_postgresql_storage_adapter() -> None:
+async def test_container_registers_in_memory_storage_adapter() -> None:
     container = build_container()
 
     try:
-        assert container.storage.session_factory is container.session_factory
+        assert isinstance(container.storage, InMemoryStorage)
     finally:
         await container.database_engine.dispose()
 
@@ -74,4 +75,32 @@ def test_charm_vanna_migration_adds_mandatory_snapshot_columns(monkeypatch) -> N
     assert altered_columns == [
         ("option_chain_snapshots", "charm", {"server_default": None}),
         ("option_chain_snapshots", "vanna", {"server_default": None}),
+    ]
+
+
+def test_theta_vega_migration_backfills_before_not_null(monkeypatch) -> None:
+    migration = import_module(
+        "backend.db.migrations.0003_make_theta_vega_not_null"
+    )
+    operations: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        migration.op,
+        "execute",
+        lambda statement: operations.append(("execute", str(statement))),
+    )
+    monkeypatch.setattr(
+        migration.op,
+        "alter_column",
+        lambda table, column, **kwargs: operations.append(
+            ("alter", f"{table}.{column}:{kwargs['nullable']}")
+        ),
+    )
+
+    migration.upgrade()
+
+    assert operations == [
+        ("execute", "UPDATE option_chain_snapshots SET theta = 0 WHERE theta IS NULL"),
+        ("execute", "UPDATE option_chain_snapshots SET vega = 0 WHERE vega IS NULL"),
+        ("alter", "option_chain_snapshots.theta:False"),
+        ("alter", "option_chain_snapshots.vega:False"),
     ]

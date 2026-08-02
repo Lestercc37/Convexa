@@ -3,170 +3,100 @@ from fastapi.testclient import TestClient
 from backend.main import app
 
 
-def test_options_endpoint_returns_option_chain() -> None:
+def test_chain_get_uses_versioned_path_and_returns_all_greeks() -> None:
     with TestClient(app) as client:
-        response = client.get("/options/spy")
+        response = client.get("/api/v1/chain/spy")
 
     assert response.status_code == 200
     payload = response.json()
     assert payload["schema_version"] == 1
     assert payload["symbol"] == "SPY"
-    assert payload["as_of"] == "2026-01-15T14:30:00Z"
-    assert len(payload["contracts"]) == 6
-    assert payload["contracts"][0] == {
-        "occ_symbol": "SPY260220C00540000",
-        "strike": 540,
-        "type": "call",
-        "bid": 1.2,
-        "ask": 1.25,
-        "iv": 0.18,
-        "delta": 0.42,
-        "gamma": 0.03,
-        "open_interest": 8000,
-        "volume": 3400,
+    assert payload["spot_price"] == 552.25
+    contract = payload["contracts"][0]
+    assert {"delta", "gamma", "theta", "vega", "charm", "vanna"} <= contract.keys()
+
+
+def test_chain_get_keeps_documented_provider_fallback_and_expiration() -> None:
+    with TestClient(app) as client:
+        response = client.get("/api/v1/chain/qqq?expiration=2026-03-20")
+        stored = app.state.container.storage.get_latest_chain_snapshot("QQQ")
+
+    assert response.status_code == 200
+    assert stored is not None
+    assert {contract["occ_symbol"][3:9] for contract in response.json()["contracts"]} == {
+        "260320"
     }
 
 
-def test_options_endpoint_accepts_expiration_query() -> None:
+def test_gamma_get_is_read_only_and_returns_uniform_not_found() -> None:
     with TestClient(app) as client:
-        response = client.get("/options/qqq?expiration=2026-03-20")
+        response = client.get("/api/v1/gamma/spy")
 
+    assert response.status_code == 404
+    assert response.json() == {
+        "schema_version": 1,
+        "error": {
+            "code": "NOT_FOUND",
+            "message": "No gamma aggregate found for SPY",
+        },
+    }
+
+
+def test_internal_trigger_persists_consolidated_gamma_for_public_get() -> None:
+    with TestClient(app) as client:
+        trigger = client.post("/internal/trigger-calculation/spy")
+        response = client.get("/api/v1/gamma/spy")
+
+    assert trigger.status_code == 200
     assert response.status_code == 200
     payload = response.json()
-    assert payload["symbol"] == "QQQ"
-    assert {contract["occ_symbol"][3:9] for contract in payload["contracts"]} == {"260320"}
+    assert payload["schema_version"] == 1
+    assert payload["symbol"] == "SPY"
+    assert {"gamma_flip", "call_wall", "put_wall", "max_pain", "net_gamma"} <= payload.keys()
+    assert payload["dealer_position"] in {"long_gamma", "short_gamma"}
 
 
-def test_greeks_endpoint_rejects_missing_option_chain_fields() -> None:
+def test_underlyings_history_and_flow_are_storage_backed_gets() -> None:
     with TestClient(app) as client:
-        response = client.post("/options/greeks", json={"additionalProp1": {}})
+        underlyings = client.get("/api/v1/underlyings")
+        client.post("/internal/trigger-calculation/spy")
+        history = client.get("/api/v1/gamma/spy/history")
+        flow = client.get("/api/v1/flow/spy")
 
-    assert response.status_code == 422
-    assert response.status_code != 500
-
-
-def test_gamma_exposure_endpoint_rejects_missing_option_chain_fields() -> None:
-    with TestClient(app) as client:
-        response = client.post("/options/gamma-exposure", json={"additionalProp1": {}})
-
-    assert response.status_code == 422
-    assert response.status_code != 500
-
-
-def test_gamma_aggregate_endpoint_rejects_missing_option_chain_fields() -> None:
-    with TestClient(app) as client:
-        response = client.post("/options/gamma-aggregate", json={"additionalProp1": {}})
-
-    assert response.status_code == 422
-    assert response.status_code != 500
+    assert underlyings.status_code == 200
+    assert {item["symbol"] for item in underlyings.json()["underlyings"]} >= {
+        "SPY",
+        "QQQ",
+        "SPX",
+    }
+    assert len(history.json()["items"]) == 1
+    assert flow.json() == {"schema_version": 1, "symbol": "SPY", "events": []}
 
 
-def test_gamma_flip_endpoint_rejects_missing_gamma_aggregate_fields() -> None:
-    with TestClient(app) as client:
-        response = client.post("/options/gamma-flip", json={"additionalProp1": {}})
-
-    assert response.status_code == 422
-    assert response.status_code != 500
-
-
-def test_option_chain_request_schema_includes_valid_swagger_example() -> None:
-    with TestClient(app) as client:
-        response = client.get("/openapi.json")
-
-    assert response.status_code == 200
-    schema = response.json()["components"]["schemas"]["OptionChainRequest"]
-    assert schema["example"]["symbol"] == "SPY"
-    assert schema["example"]["contracts"][0]["occ_symbol"] == "SPY260220C00540000"
-
-
-def test_options_post_request_bodies_use_option_chain_request_schema() -> None:
-    with TestClient(app) as client:
-        response = client.get("/openapi.json")
-
-    assert response.status_code == 200
-    paths = response.json()["paths"]
-    for path in (
+def test_public_calculation_posts_are_removed_and_absent_from_openapi() -> None:
+    legacy_paths = (
         "/options/greeks",
         "/options/gamma-exposure",
         "/options/gamma-aggregate",
+        "/options/gamma-flip",
+        "/options/walls",
         "/options/max-pain",
-    ):
-        request_body = paths[path]["post"]["requestBody"]["content"]["application/json"]
-        assert request_body["schema"]["$ref"].endswith("/OptionChainRequest")
-        assert request_body["examples"]["option_chain"]["value"]["symbol"] == "SPY"
-        assert "additionalProp1" not in str(request_body)
-    gamma_flip_body = paths["/options/gamma-flip"]["post"]["requestBody"]["content"][
-        "application/json"
-    ]
-    assert gamma_flip_body["schema"]["$ref"].endswith("/GammaFlipRequest")
-    assert gamma_flip_body["examples"]["gamma_aggregate"]["value"]["symbol"] == "SPY"
-    assert "additionalProp1" not in str(gamma_flip_body)
-
-
-def test_greeks_endpoint_rejects_domain_invalid_payload_with_422() -> None:
-    payload = {
-        "symbol": "SPY",
-        "as_of": "2026-01-15T14:30:00Z",
-        "contracts": [
-            {
-                "occ_symbol": "SPY260220C00540000",
-                "strike": 540,
-                "expiration": "2026-02-20",
-                "type": "call",
-                "bid": 1.25,
-                "ask": 1.2,
-                "iv": 0.18,
-                "open_interest": 8000,
-                "volume": 3400,
-            }
-        ],
-    }
-
+    )
     with TestClient(app) as client:
-        response = client.post("/options/greeks", json=payload)
+        statuses = [client.post(path).status_code for path in legacy_paths]
+        paths = client.get("/openapi.json").json()["paths"]
 
-    assert response.status_code == 422
-    assert response.status_code != 500
+    assert statuses == [404] * len(legacy_paths)
+    assert all(path not in paths for path in legacy_paths)
+    assert "/internal/trigger-calculation/{symbol}" not in paths
+    assert "/api/v1/chain/{symbol}" in paths
+    assert "/api/v1/gamma/{symbol}" in paths
 
 
-def test_openapi_documents_option_response_models() -> None:
+def test_health_endpoints_remain_unversioned() -> None:
     with TestClient(app) as client:
-        response = client.get("/openapi.json")
+        health = client.get("/health")
+        versioned_health = client.get("/api/v1/health")
 
-    assert response.status_code == 200
-    openapi = response.json()
-    paths = openapi["paths"]
-
-    expected_refs = {
-        ("/options/{symbol}", "get"): "OptionChainResponse",
-        ("/options/greeks", "post"): "GreeksResponse",
-        ("/options/gamma-exposure", "post"): "GammaExposureResponse",
-        ("/options/gamma-aggregate", "post"): "GammaAggregateResponse",
-        ("/options/gamma-flip", "post"): "GammaFlipResponse",
-        ("/options/max-pain", "post"): "MaxPainResponse",
-    }
-    for (path, method), schema_name in expected_refs.items():
-        response_schema = paths[path][method]["responses"]["200"]["content"]["application/json"][
-            "schema"
-        ]
-        assert response_schema["$ref"].endswith(f"/{schema_name}")
-        assert "additionalProp1" not in str(response_schema)
-
-    schemas = openapi["components"]["schemas"]
-    assert schemas["OptionChainResponse"]["properties"]["contracts"]["items"]["$ref"].endswith(
-        "/OptionContractResponse"
-    )
-    assert schemas["GreeksResponse"]["properties"]["contracts"]["items"]["$ref"].endswith(
-        "/GreeksContractResponse"
-    )
-    assert schemas["GammaExposureResponse"]["properties"]["items"]["items"]["$ref"].endswith(
-        "/GammaExposureItemResponse"
-    )
-    assert schemas["GammaAggregateResponse"]["properties"]["items"]["items"]["$ref"].endswith(
-        "/GammaAggregateItemResponse"
-    )
-    gamma_flip_types = {
-        item["type"]
-        for item in schemas["GammaFlipResponse"]["properties"]["gamma_flip_price"]["anyOf"]
-    }
-    assert "null" in gamma_flip_types
+    assert health.status_code == 200
+    assert versioned_health.status_code == 404

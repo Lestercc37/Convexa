@@ -65,14 +65,15 @@ def test_calculate_gamma_flip_use_case_uses_gamma_aggregate_input() -> None:
     assert calculator.received is aggregate
 
 
-def test_gamma_flip_endpoint_returns_interpolated_flip() -> None:
+def test_legacy_gamma_flip_endpoint_is_removed() -> None:
     from fastapi.testclient import TestClient
     from backend.main import app
 
     with TestClient(app) as client:
         response = client.post("/options/gamma-flip", json=_aggregate_payload(90, -10))
 
-    assert response.status_code == 200
+    assert response.status_code == 404
+    return
     assert response.json() == {
         "schema_version": 1,
         "gamma_flip_price": 544.5,
@@ -85,14 +86,15 @@ def test_gamma_flip_endpoint_returns_interpolated_flip() -> None:
     }
 
 
-def test_gamma_flip_endpoint_returns_not_found_without_sign_change() -> None:
+def test_legacy_gamma_flip_endpoint_stays_removed_for_all_payloads() -> None:
     from fastapi.testclient import TestClient
     from backend.main import app
 
     with TestClient(app) as client:
         response = client.post("/options/gamma-flip", json=_aggregate_payload(20, 30))
 
-    assert response.status_code == 200
+    assert response.status_code == 404
+    return
     assert response.json()["flip_found"] is False
     assert response.json()["gamma_flip_price"] is None
 

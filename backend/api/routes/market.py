@@ -5,6 +5,7 @@ from fastapi import APIRouter, Request
 from backend.api.schemas import MarketSnapshotResponse
 from backend.api.serializers import market_response
 from backend.core.container import Container
+from backend.domain.use_cases import build_market_snapshot
 
 router = APIRouter(tags=["market"])
 
@@ -16,5 +17,5 @@ router = APIRouter(tags=["market"])
 )
 def get_market_snapshot(symbol: str, request: Request) -> MarketSnapshotResponse:
     container: Container = request.app.state.container
-    snapshot = container.get_market_snapshot_use_case.execute(symbol)
+    snapshot = build_market_snapshot(container.storage, symbol)
     return MarketSnapshotResponse.model_validate(market_response(snapshot))

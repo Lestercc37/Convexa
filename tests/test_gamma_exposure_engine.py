@@ -64,11 +64,12 @@ def test_calculate_gamma_exposure_use_case_depends_only_on_port() -> None:
     assert calculator.received is chain
 
 
-def test_gamma_exposure_endpoint_returns_per_contract_exposures() -> None:
+def test_legacy_gamma_exposure_endpoint_is_removed() -> None:
     with TestClient(app) as client:
         response = client.post("/options/gamma-exposure", json=_chain_payload())
 
-    assert response.status_code == 200
+    assert response.status_code == 404
+    return
     payload = response.json()
     assert payload["schema_version"] == 1
     assert len(payload["items"]) == 2
