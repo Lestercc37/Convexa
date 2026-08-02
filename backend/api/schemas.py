@@ -121,10 +121,18 @@ class MarketBiasResponse(BaseModel):
     days_accumulated: int
 
 
+class VolatilityRegimeResponse(BaseModel):
+    iv_rank: Number | None
+    label: Literal["low", "moderate", "high"] | None
+    provisional: bool
+    days_accumulated: int
+
+
 class DerivedMetricsResponse(BaseModel):
     dealer_impact_score: DerivedMetricValueResponse
     signal_alignment_score: DerivedMetricValueResponse
     market_bias: MarketBiasResponse
+    volatility_regime: VolatilityRegimeResponse
 
 
 class GammaSummaryResponse(BaseModel):

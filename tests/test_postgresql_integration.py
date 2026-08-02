@@ -146,6 +146,7 @@ def test_daily_gamma_reference_upsert_and_read_against_postgresql(
         net_gamma=Decimal("100"),
         pc_oi_ratio=Decimal("1.10"),
         skew_25d=Decimal("0.03"),
+        atm_iv=Decimal("0.20"),
     )
     replacement = DailyGammaReference(
         date=original.date,
@@ -153,6 +154,7 @@ def test_daily_gamma_reference_upsert_and_read_against_postgresql(
         net_gamma=Decimal("125"),
         pc_oi_ratio=Decimal("1.20"),
         skew_25d=Decimal("0.04"),
+        atm_iv=Decimal("0.25"),
     )
 
     storage.save_daily_gamma_reference(original)

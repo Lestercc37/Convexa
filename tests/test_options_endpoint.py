@@ -78,6 +78,12 @@ def test_internal_trigger_persists_consolidated_gamma_for_public_get() -> None:
             "provisional": True,
             "days_accumulated": 0,
         },
+        "volatility_regime": {
+            "iv_rank": None,
+            "label": None,
+            "provisional": True,
+            "days_accumulated": 0,
+        },
     }
 
 

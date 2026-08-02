@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 
+from backend.adapters.providers.mock.provider import MockDataProvider
 from backend.adapters.storage.memory import InMemoryStorage
 from backend.domain.entities import (
     DailyGammaReference,
@@ -12,10 +13,12 @@ from backend.domain.entities import (
 )
 from backend.domain.use_cases.calculate_derived_metrics import (
     CalculateDerivedMetricsUseCase,
+    calculate_iv_rank,
     capture_daily_gamma_reference,
     freshness_component,
     market_bias_label,
     percentile_rank,
+    volatility_regime_label,
 )
 
 
@@ -33,9 +36,12 @@ def test_derived_metrics_are_provisional_before_twenty_days() -> None:
     assert metrics.signal_alignment_score.value == Decimal("100")
     assert metrics.signal_alignment_score.provisional is True
     assert metrics.signal_alignment_score.days_accumulated == 19
+    assert metrics.volatility_regime.iv_rank is None
+    assert metrics.volatility_regime.label is None
+    assert metrics.volatility_regime.provisional is True
 
 
-def test_all_three_formulas_match_known_twenty_day_case() -> None:
+def test_all_derived_formulas_match_known_twenty_day_case() -> None:
     storage = _storage_with_current_state(freshness_seconds=120)
     _seed_references(storage, 20)
 
@@ -49,6 +55,10 @@ def test_all_three_formulas_match_known_twenty_day_case() -> None:
     assert metrics.market_bias.label == "bullish"
     assert metrics.market_bias.provisional is False
     assert metrics.market_bias.days_accumulated == 20
+    assert metrics.volatility_regime.iv_rank == Decimal("50")
+    assert metrics.volatility_regime.label == "moderate"
+    assert metrics.volatility_regime.provisional is False
+    assert metrics.volatility_regime.days_accumulated == 20
 
 
 def test_percentile_freshness_and_market_threshold_boundaries() -> None:
@@ -64,6 +74,19 @@ def test_percentile_freshness_and_market_threshold_boundaries() -> None:
     assert market_bias_label(Decimal("65.01")) == "bullish"
     assert market_bias_label(Decimal("35")) == "neutral"
     assert market_bias_label(Decimal("34.99")) == "bearish"
+    assert volatility_regime_label(Decimal("29.99")) == "low"
+    assert volatility_regime_label(Decimal("30")) == "moderate"
+    assert volatility_regime_label(Decimal("70")) == "moderate"
+    assert volatility_regime_label(Decimal("70.01")) == "high"
+    assert calculate_iv_rank(Decimal("0.25"), [Decimal("0.25"), Decimal("0.25")]) == Decimal("50")
+
+
+def test_mock_provider_supplies_deterministic_atm_iv() -> None:
+    first = MockDataProvider().get_underlying_snapshot("SPY")
+    second = MockDataProvider().get_underlying_snapshot("SPY")
+
+    assert first.atm_iv == Decimal("0.22")
+    assert second.atm_iv == Decimal("0.22")
 
 
 def test_daily_reference_is_captured_only_during_0935_eastern() -> None:
@@ -76,6 +99,7 @@ def test_daily_reference_is_captured_only_during_0935_eastern() -> None:
         volume=1000,
         pc_oi_ratio=Decimal("1.25"),
         skew_25d=Decimal("0.06"),
+        atm_iv=Decimal("0.25"),
     )
     outside = MarketSnapshot(
         symbol="SPY",
@@ -84,6 +108,7 @@ def test_daily_reference_is_captured_only_during_0935_eastern() -> None:
         volume=1000,
         pc_oi_ratio=Decimal("1.30"),
         skew_25d=Decimal("0.07"),
+        atm_iv=Decimal("0.30"),
     )
 
     assert capture_daily_gamma_reference(storage, gamma, inside) is True
@@ -95,6 +120,7 @@ def test_daily_reference_is_captured_only_during_0935_eastern() -> None:
             net_gamma=Decimal("-20"),
             pc_oi_ratio=Decimal("1.25"),
             skew_25d=Decimal("0.06"),
+            atm_iv=Decimal("0.25"),
         )
     ]
 
@@ -135,10 +161,12 @@ def _seed_references(storage: InMemoryStorage, days: int) -> None:
             net_gamma = Decimal("-20")
             pc_oi_ratio = Decimal("1")
             skew_25d = Decimal("1")
+            atm_iv = Decimal("10")
         else:
             net_gamma = Decimal(rank_value)
             pc_oi_ratio = Decimal(rank_value + 1)
             skew_25d = Decimal(rank_value + 1)
+            atm_iv = Decimal(offset)
         storage.save_daily_gamma_reference(
             DailyGammaReference(
                 date=today - timedelta(days=offset),
@@ -146,5 +174,6 @@ def _seed_references(storage: InMemoryStorage, days: int) -> None:
                 net_gamma=net_gamma,
                 pc_oi_ratio=pc_oi_ratio,
                 skew_25d=skew_25d,
+                atm_iv=atm_iv,
             )
         )

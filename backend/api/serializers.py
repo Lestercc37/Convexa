@@ -211,6 +211,12 @@ def derived_metrics_response(metrics: DerivedMetrics) -> dict[str, Any]:
             "provisional": metrics.market_bias.provisional,
             "days_accumulated": metrics.market_bias.days_accumulated,
         },
+        "volatility_regime": {
+            "iv_rank": _optional_num(metrics.volatility_regime.iv_rank),
+            "label": metrics.volatility_regime.label,
+            "provisional": metrics.volatility_regime.provisional,
+            "days_accumulated": metrics.volatility_regime.days_accumulated,
+        },
     }
 
 

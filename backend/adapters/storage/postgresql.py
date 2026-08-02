@@ -392,15 +392,18 @@ class PostgreSQLStorage:
                 text(
                     """
                     INSERT INTO daily_gamma_reference (
-                        date, underlying_id, net_gamma, pc_oi_ratio, skew_25d
+                        date, underlying_id, net_gamma, pc_oi_ratio, skew_25d,
+                        atm_iv
                     )
                     VALUES (
-                        :date, :underlying_id, :net_gamma, :pc_oi_ratio, :skew_25d
+                        :date, :underlying_id, :net_gamma, :pc_oi_ratio, :skew_25d,
+                        :atm_iv
                     )
                     ON CONFLICT (underlying_id, date) DO UPDATE SET
                         net_gamma = EXCLUDED.net_gamma,
                         pc_oi_ratio = EXCLUDED.pc_oi_ratio,
-                        skew_25d = EXCLUDED.skew_25d
+                        skew_25d = EXCLUDED.skew_25d,
+                        atm_iv = EXCLUDED.atm_iv
                     """
                 ),
                 {
@@ -409,6 +412,7 @@ class PostgreSQLStorage:
                     "net_gamma": reference.net_gamma,
                     "pc_oi_ratio": reference.pc_oi_ratio,
                     "skew_25d": reference.skew_25d,
+                    "atm_iv": reference.atm_iv,
                 },
             )
 
@@ -420,7 +424,7 @@ class PostgreSQLStorage:
                 text(
                     """
                     SELECT r.date, u.symbol, r.net_gamma,
-                           r.pc_oi_ratio, r.skew_25d
+                           r.pc_oi_ratio, r.skew_25d, r.atm_iv
                     FROM daily_gamma_reference AS r
                     JOIN underlyings AS u ON u.id = r.underlying_id
                     WHERE u.symbol = :symbol
@@ -437,6 +441,7 @@ class PostgreSQLStorage:
                     net_gamma=Decimal(row["net_gamma"]),
                     pc_oi_ratio=Decimal(row["pc_oi_ratio"]),
                     skew_25d=Decimal(row["skew_25d"]),
+                    atm_iv=Decimal(row["atm_iv"]),
                 )
                 for row in rows
             ]

@@ -322,13 +322,16 @@ class DailyGammaReference:
     net_gamma: Decimal
     pc_oi_ratio: Decimal
     skew_25d: Decimal
+    atm_iv: Decimal
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "symbol", self.symbol.upper())
-        for name in ("net_gamma", "pc_oi_ratio", "skew_25d"):
+        for name in ("net_gamma", "pc_oi_ratio", "skew_25d", "atm_iv"):
             _ensure_finite_decimal(getattr(self, name), InvalidOptionError, name)
         if self.pc_oi_ratio < 0:
             raise InvalidOptionError("pc_oi_ratio cannot be negative")
+        if self.atm_iv < 0:
+            raise InvalidOptionError("atm_iv cannot be negative")
 
 
 @dataclass(frozen=True, slots=True)
@@ -347,10 +350,19 @@ class MarketBiasMetric:
 
 
 @dataclass(frozen=True, slots=True)
+class VolatilityRegimeMetric:
+    iv_rank: Decimal | None
+    label: str | None
+    provisional: bool
+    days_accumulated: int
+
+
+@dataclass(frozen=True, slots=True)
 class DerivedMetrics:
     dealer_impact_score: DerivedMetricValue
     signal_alignment_score: DerivedMetricValue
     market_bias: MarketBiasMetric
+    volatility_regime: VolatilityRegimeMetric
 
 
 @dataclass(frozen=True, slots=True)
@@ -455,6 +467,7 @@ class MarketSnapshot:
     volume: int
     pc_oi_ratio: Decimal = Decimal("0")
     skew_25d: Decimal = Decimal("0")
+    atm_iv: Decimal = Decimal("0")
     gamma: GammaAggregate | None = None
     recent_flow: tuple[FlowEvent, ...] = field(default_factory=tuple)
     state: MarketState = MarketState.UNKNOWN
@@ -466,10 +479,13 @@ class MarketSnapshot:
         _ensure_finite_decimal(self.price, InvalidOptionError, "price")
         _ensure_finite_decimal(self.pc_oi_ratio, InvalidOptionError, "pc_oi_ratio")
         _ensure_finite_decimal(self.skew_25d, InvalidOptionError, "skew_25d")
+        _ensure_finite_decimal(self.atm_iv, InvalidOptionError, "atm_iv")
         if self.price < 0 or self.volume < 0:
             raise InvalidOptionError("price and volume cannot be negative")
         if self.pc_oi_ratio < 0:
             raise InvalidOptionError("pc_oi_ratio cannot be negative")
+        if self.atm_iv < 0:
+            raise InvalidOptionError("atm_iv cannot be negative")
 
 
 def utc_now() -> datetime:

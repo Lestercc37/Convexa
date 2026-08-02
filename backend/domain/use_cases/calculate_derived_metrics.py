@@ -11,6 +11,7 @@ from backend.domain.entities import (
     GammaAggregate,
     MarketBiasMetric,
     MarketSnapshot,
+    VolatilityRegimeMetric,
 )
 from backend.domain.ports import IStorage
 from backend.domain.use_cases.errors import NotFoundError
@@ -70,6 +71,8 @@ class CalculateDerivedMetricsUseCase:
 
         market_score: Decimal | None = None
         market_label: str | None = None
+        iv_rank: Decimal | None = None
+        volatility_label: str | None = None
         if has_history:
             pc_percentile = percentile_rank(
                 references[0].pc_oi_ratio,
@@ -83,6 +86,9 @@ class CalculateDerivedMetricsUseCase:
                 Decimal("100") - skew_percentile
             )
             market_label = market_bias_label(market_score)
+            iv_values = [reference.atm_iv for reference in references]
+            iv_rank = calculate_iv_rank(references[0].atm_iv, iv_values)
+            volatility_label = volatility_regime_label(iv_rank)
 
         return DerivedMetrics(
             dealer_impact_score=DerivedMetricValue(
@@ -98,6 +104,12 @@ class CalculateDerivedMetricsUseCase:
             market_bias=MarketBiasMetric(
                 score=market_score,
                 label=market_label,
+                provisional=not has_history,
+                days_accumulated=days,
+            ),
+            volatility_regime=VolatilityRegimeMetric(
+                iv_rank=iv_rank,
+                label=volatility_label,
                 provisional=not has_history,
                 days_accumulated=days,
             ),
@@ -135,6 +147,25 @@ def market_bias_label(score: Decimal) -> str:
     return "neutral"
 
 
+def calculate_iv_rank(current: Decimal, values: list[Decimal]) -> Decimal:
+    """Calculate IV Rank, using the documented midpoint for a flat window."""
+    if not values:
+        raise ValueError("IV Rank requires at least one value")
+    minimum = min(values)
+    maximum = max(values)
+    if maximum == minimum:
+        return Decimal("50")
+    return (current - minimum) / (maximum - minimum) * Decimal("100")
+
+
+def volatility_regime_label(iv_rank: Decimal) -> str:
+    if iv_rank < 30:
+        return "low"
+    if iv_rank > 70:
+        return "high"
+    return "moderate"
+
+
 def capture_daily_gamma_reference(
     storage: IStorage,
     gamma: GammaAggregate,
@@ -154,6 +185,7 @@ def capture_daily_gamma_reference(
             net_gamma=gamma.net_gamma,
             pc_oi_ratio=market.pc_oi_ratio,
             skew_25d=market.skew_25d,
+            atm_iv=market.atm_iv,
         )
     )
     return True
