@@ -277,6 +277,8 @@ class GammaAggregate:
     max_pain: Decimal = Decimal("0")
     net_gamma: Decimal = Decimal("0")
     dealer_gamma_notional: Decimal = Decimal("0")
+    vega_exposure: Decimal = Decimal(0)
+    theta_exposure: Decimal = Decimal(0)
     peak_gamma_strike: Decimal = Decimal("0")
     peak_gamma_value: Decimal = Decimal("0")
 
@@ -295,6 +297,8 @@ class GammaAggregate:
             "max_pain",
             "net_gamma",
             "dealer_gamma_notional",
+            "vega_exposure",
+            "theta_exposure",
             "peak_gamma_strike",
             "peak_gamma_value",
         ):

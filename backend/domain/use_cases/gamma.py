@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 from datetime import datetime
+from decimal import Decimal
 
 from backend.domain.entities import GammaAggregate
 from backend.domain.ports import IStorage
@@ -57,6 +58,21 @@ class CalculateGammaExposureOrchestrator:
         gamma_flip = self._gamma_flip.execute(aggregate)
         walls = self._walls.execute(aggregate)
         max_pain = self._max_pain.execute(enriched_chain)
+        contract_multiplier = Decimal(100)
+        vega_exposure = sum(
+            (
+                contract.greeks.vega * Decimal(contract.open_interest) * contract_multiplier
+                for contract in enriched_chain.contracts
+            ),
+            Decimal(0),
+        )
+        theta_exposure = sum(
+            (
+                contract.greeks.theta * Decimal(contract.open_interest) * contract_multiplier
+                for contract in enriched_chain.contracts
+            ),
+            Decimal(0),
+        )
 
         result = replace(
             aggregate,
@@ -64,10 +80,10 @@ class CalculateGammaExposureOrchestrator:
             call_wall=(
                 walls.call_wall.strike if walls.call_wall is not None else aggregate.call_wall
             ),
-            put_wall=(
-                walls.put_wall.strike if walls.put_wall is not None else aggregate.put_wall
-            ),
+            put_wall=(walls.put_wall.strike if walls.put_wall is not None else aggregate.put_wall),
             max_pain=max_pain.max_pain_strike,
+            vega_exposure=vega_exposure,
+            theta_exposure=theta_exposure,
         )
         self._storage.save_gamma_aggregate(result)
         return result

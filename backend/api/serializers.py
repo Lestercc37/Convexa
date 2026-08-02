@@ -183,6 +183,8 @@ def gamma_response(
         "put_wall": _num(gamma.put_wall),
         "max_pain": _num(gamma.max_pain),
         "net_gamma": _num(gamma.net_gamma),
+        "vega_exposure": _num(gamma.vega_exposure),
+        "theta_exposure": _num(gamma.theta_exposure),
         "dealer_position": gamma.dealer_position,
     }
     if derived_metrics is not None:

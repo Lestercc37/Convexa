@@ -166,3 +166,32 @@ def test_daily_gamma_reference_migration_creates_one_row_per_day(monkeypatch) ->
     assert "PRIMARY KEY (underlying_id, date)" in schema
     assert "pc_oi_ratio numeric NOT NULL" in schema
     assert "skew_25d numeric NOT NULL" in schema
+
+
+def test_vega_theta_exposure_migration_adds_mandatory_columns(monkeypatch) -> None:
+    migration = import_module("backend.db.migrations.0006_add_vega_theta_exposure")
+    added_columns = []
+    altered_columns = []
+    monkeypatch.setattr(
+        migration.op,
+        "add_column",
+        lambda table, column: added_columns.append((table, column)),
+    )
+    monkeypatch.setattr(
+        migration.op,
+        "alter_column",
+        lambda table, column, **kwargs: altered_columns.append((table, column, kwargs)),
+    )
+
+    migration.upgrade()
+
+    assert [column.name for _, column in added_columns] == [
+        "vega_exposure",
+        "theta_exposure",
+    ]
+    assert all(table == "gamma_aggregates" for table, _ in added_columns)
+    assert all(column.nullable is False for _, column in added_columns)
+    assert altered_columns == [
+        ("gamma_aggregates", "vega_exposure", {"server_default": None}),
+        ("gamma_aggregates", "theta_exposure", {"server_default": None}),
+    ]
