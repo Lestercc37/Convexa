@@ -42,6 +42,7 @@ class MockDataProvider:
             volume=1_250_000,
             pc_oi_ratio=Decimal("1.10"),
             skew_25d=Decimal("0.04"),
+            atm_iv=Decimal("0.22"),
         )
 
     async def stream_trades(self, underlying: str) -> AsyncIterator[FlowEvent]:
