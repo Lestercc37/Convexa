@@ -38,6 +38,10 @@ class OptionContractResponse(BaseModel):
     iv: Number = Field(examples=[0.18])
     delta: Number = Field(examples=[0.42])
     gamma: Number = Field(examples=[0.03])
+    theta: Number = Field(examples=[-0.015])
+    vega: Number = Field(examples=[0.12])
+    charm: Number = Field(examples=[-0.001])
+    vanna: Number = Field(examples=[0.02])
     open_interest: int = Field(examples=[8000])
     volume: int = Field(examples=[3400])
 
@@ -51,10 +55,7 @@ class OptionChainResponse(BaseModel):
 
 
 class GreeksContractResponse(OptionContractResponse):
-    theta: Number = Field(examples=[-0.015])
-    vega: Number = Field(examples=[0.12])
-    charm: Number = Field(examples=[-0.001])
-    vanna: Number = Field(examples=[0.02])
+    pass
 
 
 class GreeksResponse(BaseModel):
@@ -106,6 +107,57 @@ class GammaAggregateResponse(BaseModel):
     peak_gamma_strike: Number = Field(examples=[545])
     peak_gamma_value: Number = Field(examples=[190])
     items: list[GammaAggregateItemResponse]
+
+
+class GammaResponse(BaseModel):
+    schema_version: int = Field(examples=[1])
+    symbol: str = Field(examples=["SPY"])
+    as_of: str = Field(examples=["2026-01-15T14:30:00Z"])
+    gamma_flip: Number = Field(examples=[548.5])
+    call_wall: Number = Field(examples=[555])
+    put_wall: Number = Field(examples=[540])
+    max_pain: Number = Field(examples=[550])
+    net_gamma: Number = Field(examples=[-1250000])
+    dealer_position: Literal["long_gamma", "short_gamma"]
+
+
+class GammaHistoryResponse(BaseModel):
+    schema_version: int = Field(examples=[1])
+    symbol: str = Field(examples=["SPY"])
+    items: list[GammaResponse]
+
+
+class UnderlyingResponse(BaseModel):
+    symbol: str
+    kind: Literal["equity", "index"]
+    is_priority: bool
+
+
+class UnderlyingsResponse(BaseModel):
+    schema_version: int = Field(examples=[1])
+    underlyings: list[UnderlyingResponse]
+
+
+class FlowEventResponse(BaseModel):
+    as_of: str
+    occ_symbol: str
+    event_type: Literal["sweep", "block", "unusual"]
+    premium: Number
+    size: int
+    aggressor_side: Literal["buy", "sell", "unknown"]
+
+
+class FlowResponse(BaseModel):
+    schema_version: int = Field(examples=[1])
+    symbol: str
+    events: list[FlowEventResponse]
+
+
+class TriggerCalculationResponse(BaseModel):
+    schema_version: int = Field(examples=[1])
+    symbol: str
+    status: Literal["calculated"]
+    gamma: GammaResponse
 
 
 class GammaFlipRequest(BaseModel):

@@ -11,10 +11,11 @@ from backend.adapters.providers.mock.gamma_flip import FakeGammaFlipCalculator
 from backend.adapters.providers.mock.max_pain import FakeMaxPainCalculator
 from backend.adapters.providers.mock.walls import FakeWallCalculator
 from backend.adapters.providers.mock import MockDataProvider
-from backend.adapters.storage.postgresql import PostgreSQLStorage
+from backend.adapters.storage.memory import InMemoryStorage
 from backend.domain.use_cases import (
     CalculateGammaAggregateUseCase,
     CalculateGammaExposureUseCase,
+    CalculateGammaExposureOrchestrator,
     CalculateGammaFlipUseCase,
     CalculateGreeksUseCase,
     CalculateMaxPainUseCase,
@@ -45,7 +46,7 @@ class Container:
     settings: Settings
     database_engine: AsyncEngine
     session_factory: async_sessionmaker[AsyncSession]
-    storage: PostgreSQLStorage
+    storage: InMemoryStorage
     market_data_provider: IDataProvider
     greeks_calculator: IGreeksCalculator
     gamma_exposure_calculator: IGammaExposureCalculator
@@ -61,6 +62,7 @@ class Container:
     calculate_gamma_flip_use_case: CalculateGammaFlipUseCase
     calculate_walls_use_case: CalculateWallsUseCase
     calculate_max_pain_use_case: CalculateMaxPainUseCase
+    calculate_gamma_exposure_orchestrator: CalculateGammaExposureOrchestrator
 
 
 def build_container() -> Container:
@@ -70,7 +72,7 @@ def build_container() -> Container:
 
     database_engine = create_engine(settings.database_url, echo=settings.database_echo)
     session_factory = create_session_factory(database_engine)
-    storage = PostgreSQLStorage(session_factory)
+    storage = InMemoryStorage()
     market_data_provider = MockDataProvider()
     greeks_calculator = FakeGreeksCalculator()
     gamma_exposure_calculator = FakeGammaExposureCalculator()
@@ -90,6 +92,14 @@ def build_container() -> Container:
     calculate_gamma_flip_use_case = CalculateGammaFlipUseCase(gamma_flip_calculator)
     calculate_walls_use_case = CalculateWallsUseCase(wall_calculator)
     calculate_max_pain_use_case = CalculateMaxPainUseCase(max_pain_calculator)
+    calculate_gamma_exposure_orchestrator = CalculateGammaExposureOrchestrator(
+        storage=storage,
+        greeks=calculate_greeks_use_case,
+        aggregate=calculate_gamma_aggregate_use_case,
+        gamma_flip=calculate_gamma_flip_use_case,
+        walls=calculate_walls_use_case,
+        max_pain=calculate_max_pain_use_case,
+    )
     return Container(
         settings=settings,
         database_engine=database_engine,
@@ -110,4 +120,5 @@ def build_container() -> Container:
         calculate_gamma_flip_use_case=calculate_gamma_flip_use_case,
         calculate_walls_use_case=calculate_walls_use_case,
         calculate_max_pain_use_case=calculate_max_pain_use_case,
+        calculate_gamma_exposure_orchestrator=calculate_gamma_exposure_orchestrator,
     )

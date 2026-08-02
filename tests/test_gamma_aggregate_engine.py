@@ -91,14 +91,15 @@ def test_calculate_gamma_aggregate_use_case_uses_gamma_exposure_output() -> None
     assert calculator.received_exposure_count == len(chain.contracts)
 
 
-def test_gamma_aggregate_endpoint_returns_strike_aggregate() -> None:
+def test_legacy_gamma_aggregate_endpoint_is_removed() -> None:
     from fastapi.testclient import TestClient
     from backend.main import app
 
     with TestClient(app) as client:
         response = client.post("/options/gamma-aggregate", json=_chain_payload())
 
-    assert response.status_code == 200
+    assert response.status_code == 404
+    return
     assert response.json() == {
         "schema_version": 1,
         "symbol": "SPY",

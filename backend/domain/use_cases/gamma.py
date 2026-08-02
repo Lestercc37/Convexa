@@ -1,16 +1,24 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import datetime
 
 from backend.domain.entities import GammaAggregate
-from backend.domain.ports import INotificationService, IStorage
+from backend.domain.ports import IStorage
+from backend.domain.use_cases.calculate_gamma_aggregate import (
+    CalculateGammaAggregateUseCase,
+)
+from backend.domain.use_cases.calculate_gamma_flip import CalculateGammaFlipUseCase
+from backend.domain.use_cases.calculate_greeks import CalculateGreeksUseCase
+from backend.domain.use_cases.calculate_max_pain import CalculateMaxPainUseCase
+from backend.domain.use_cases.calculate_walls import CalculateWallsUseCase
 from backend.domain.use_cases.errors import NotFoundError
 
 
 def get_gamma_exposure(storage: IStorage, underlying: str) -> GammaAggregate:
     gamma = storage.get_latest_gamma_aggregate(underlying)
     if gamma is None:
-        raise NotFoundError(f"No gamma aggregate found for {underlying}")
+        raise NotFoundError(f"No gamma aggregate found for {underlying.upper()}")
     return gamma
 
 
@@ -20,11 +28,53 @@ def get_gamma_history(
     return storage.get_gamma_history(underlying, start, end)
 
 
-def calculate_gamma_exposure(
-    storage: IStorage, notifications: INotificationService, underlying: str
-) -> GammaAggregate:
-    """Internal GammaAggregate calculation scaffold.
+class CalculateGammaExposureOrchestrator:
+    """Build and persist the consolidated gamma result from a stored chain."""
 
-    The documented calculation contract exists, but real gamma formulas are intentionally deferred.
-    """
-    raise NotImplementedError
+    def __init__(
+        self,
+        storage: IStorage,
+        greeks: CalculateGreeksUseCase,
+        aggregate: CalculateGammaAggregateUseCase,
+        gamma_flip: CalculateGammaFlipUseCase,
+        walls: CalculateWallsUseCase,
+        max_pain: CalculateMaxPainUseCase,
+    ) -> None:
+        self._storage = storage
+        self._greeks = greeks
+        self._aggregate = aggregate
+        self._gamma_flip = gamma_flip
+        self._walls = walls
+        self._max_pain = max_pain
+
+    def execute(self, underlying: str) -> GammaAggregate:
+        chain = self._storage.get_latest_chain_snapshot(underlying)
+        if chain is None:
+            raise NotFoundError(f"No option chain found for {underlying.upper()}")
+
+        enriched_chain = self._greeks.execute(chain)
+        aggregate = self._aggregate.execute(enriched_chain)
+        gamma_flip = self._gamma_flip.execute(aggregate)
+        walls = self._walls.execute(aggregate)
+        max_pain = self._max_pain.execute(enriched_chain)
+
+        result = replace(
+            aggregate,
+            gamma_flip=gamma_flip.gamma_flip_price or aggregate.gamma_flip,
+            call_wall=(
+                walls.call_wall.strike if walls.call_wall is not None else aggregate.call_wall
+            ),
+            put_wall=(
+                walls.put_wall.strike if walls.put_wall is not None else aggregate.put_wall
+            ),
+            max_pain=max_pain.max_pain_strike,
+        )
+        self._storage.save_gamma_aggregate(result)
+        return result
+
+
+def calculate_gamma_exposure(
+    orchestrator: CalculateGammaExposureOrchestrator, underlying: str
+) -> GammaAggregate:
+    """Run the internal storage-backed gamma orchestration."""
+    return orchestrator.execute(underlying)

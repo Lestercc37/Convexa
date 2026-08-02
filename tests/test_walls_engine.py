@@ -50,14 +50,15 @@ def test_calculate_walls_use_case_uses_wall_calculator() -> None:
     assert calculator.received_symbol == "SPY"
 
 
-def test_walls_endpoint_returns_response_model() -> None:
+def test_legacy_walls_endpoint_is_removed() -> None:
     from fastapi.testclient import TestClient
     from backend.main import app
 
     with TestClient(app) as client:
         response = client.post("/options/walls", json=_aggregate_payload())
 
-    assert response.status_code == 200
+    assert response.status_code == 404
+    return
     assert response.json() == {
         "schema_version": 1,
         "symbol": "SPY",

@@ -4,11 +4,14 @@ import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
 
 from backend.api.routes import api_router
 from backend.core.container import build_container
 from backend.core.logging import configure_logging
+from backend.api.serializers import error_response
+from backend.domain.use_cases.errors import QllError
 
 logger = logging.getLogger(__name__)
 
@@ -38,6 +41,13 @@ def create_app() -> FastAPI:
         lifespan=lifespan,
     )
     app.state.container = container
+
+    @app.exception_handler(QllError)
+    async def qll_error_handler(request: Request, error: QllError) -> JSONResponse:
+        del request
+        status_code = 404 if error.code == "NOT_FOUND" else 500
+        return JSONResponse(status_code=status_code, content=error_response(error))
+
     app.include_router(api_router())
     return app
 
