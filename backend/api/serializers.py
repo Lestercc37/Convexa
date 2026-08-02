@@ -5,7 +5,9 @@ from decimal import Decimal
 from typing import Any
 
 from backend.domain.entities import (
+    SCHEMA_VERSION,
     ContractType,
+    DerivedMetrics,
     FlowEvent,
     GammaAggregate,
     GammaExposure,
@@ -15,7 +17,6 @@ from backend.domain.entities import (
     MaxPain,
     OptionChain,
     OptionContract,
-    SCHEMA_VERSION,
     Underlying,
     Walls,
 )
@@ -26,8 +27,7 @@ def underlyings_response(items: list[Underlying]) -> dict[str, Any]:
     return {
         "schema_version": SCHEMA_VERSION,
         "underlyings": [
-            {"symbol": i.symbol, "kind": i.kind.value, "is_priority": i.is_priority}
-            for i in items
+            {"symbol": i.symbol, "kind": i.kind.value, "is_priority": i.is_priority} for i in items
         ],
     }
 
@@ -158,7 +158,6 @@ def max_pain_response(max_pain: MaxPain) -> dict[str, Any]:
     }
 
 
-
 def option_chain_from_payload(payload: dict[str, Any]) -> OptionChain:
     return OptionChain(
         symbol=str(payload["symbol"]),
@@ -171,24 +170,94 @@ def option_chain_from_payload(payload: dict[str, Any]) -> OptionChain:
     )
 
 
-def gamma_response(gamma: GammaAggregate) -> dict[str, Any]:
-    return {"schema_version": SCHEMA_VERSION, "symbol": gamma.symbol, "as_of": _dt(gamma.as_of), "gamma_flip": _num(gamma.gamma_flip), "call_wall": _num(gamma.call_wall), "put_wall": _num(gamma.put_wall), "max_pain": _num(gamma.max_pain), "net_gamma": _num(gamma.net_gamma), "dealer_position": gamma.dealer_position}
+def gamma_response(
+    gamma: GammaAggregate,
+    derived_metrics: DerivedMetrics | None = None,
+) -> dict[str, Any]:
+    response = {
+        "schema_version": SCHEMA_VERSION,
+        "symbol": gamma.symbol,
+        "as_of": _dt(gamma.as_of),
+        "gamma_flip": _num(gamma.gamma_flip),
+        "call_wall": _num(gamma.call_wall),
+        "put_wall": _num(gamma.put_wall),
+        "max_pain": _num(gamma.max_pain),
+        "net_gamma": _num(gamma.net_gamma),
+        "dealer_position": gamma.dealer_position,
+    }
+    if derived_metrics is not None:
+        response["derived_metrics"] = derived_metrics_response(derived_metrics)
+    return response
+
+
+def derived_metrics_response(metrics: DerivedMetrics) -> dict[str, Any]:
+    return {
+        "dealer_impact_score": {
+            "value": _optional_num(metrics.dealer_impact_score.value),
+            "provisional": metrics.dealer_impact_score.provisional,
+            "days_accumulated": metrics.dealer_impact_score.days_accumulated,
+        },
+        "signal_alignment_score": {
+            "value": _optional_num(metrics.signal_alignment_score.value),
+            "provisional": metrics.signal_alignment_score.provisional,
+            "days_accumulated": metrics.signal_alignment_score.days_accumulated,
+        },
+        "market_bias": {
+            "score": _optional_num(metrics.market_bias.score),
+            "label": metrics.market_bias.label,
+            "provisional": metrics.market_bias.provisional,
+            "days_accumulated": metrics.market_bias.days_accumulated,
+        },
+    }
 
 
 def gamma_history_response(symbol: str, items: list[GammaAggregate]) -> dict[str, Any]:
-    return {"schema_version": SCHEMA_VERSION, "symbol": symbol.upper(), "items": [gamma_response(item) for item in items]}
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "symbol": symbol.upper(),
+        "items": [gamma_response(item) for item in items],
+    }
 
 
 def market_response(snapshot: MarketSnapshot) -> dict[str, Any]:
-    return {"schema_version": SCHEMA_VERSION, "symbol": snapshot.symbol, "as_of": _dt(snapshot.as_of), "price": _num(snapshot.price), "volume": snapshot.volume}
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "symbol": snapshot.symbol,
+        "as_of": _dt(snapshot.as_of),
+        "price": _num(snapshot.price),
+        "volume": snapshot.volume,
+    }
 
 
 def flow_response(symbol: str, events: list[FlowEvent]) -> dict[str, Any]:
-    return {"schema_version": SCHEMA_VERSION, "symbol": symbol.upper(), "events": [{"as_of": _dt(e.as_of), "occ_symbol": e.occ_symbol, "event_type": e.event_type.value, "premium": _num(e.premium), "size": e.size, "aggressor_side": e.aggressor_side.value} for e in events]}
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "symbol": symbol.upper(),
+        "events": [
+            {
+                "as_of": _dt(e.as_of),
+                "occ_symbol": e.occ_symbol,
+                "event_type": e.event_type.value,
+                "premium": _num(e.premium),
+                "size": e.size,
+                "aggressor_side": e.aggressor_side.value,
+            }
+            for e in events
+        ],
+    }
 
 
-def websocket_message(channel: str, symbol: str, payload: dict[str, Any], as_of: datetime) -> dict[str, Any]:
-    return {"schema_version": SCHEMA_VERSION, "channel": channel, "type": "update", "symbol": symbol.upper(), "payload": payload, "as_of": _dt(as_of)}
+def websocket_message(
+    channel: str, symbol: str, payload: dict[str, Any], as_of: datetime
+) -> dict[str, Any]:
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "channel": channel,
+        "type": "update",
+        "symbol": symbol.upper(),
+        "payload": payload,
+        "as_of": _dt(as_of),
+    }
 
 
 def error_response(error: QllError) -> dict[str, Any]:

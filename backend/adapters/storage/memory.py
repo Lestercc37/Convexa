@@ -2,7 +2,15 @@ from __future__ import annotations
 
 from datetime import date, datetime
 
-from backend.domain.entities import FlowEvent, GammaAggregate, MarketPrice, OptionChain, Underlying, UnderlyingKind
+from backend.domain.entities import (
+    DailyGammaReference,
+    FlowEvent,
+    GammaAggregate,
+    MarketPrice,
+    OptionChain,
+    Underlying,
+    UnderlyingKind,
+)
 
 
 class InMemoryStorage:
@@ -16,6 +24,7 @@ class InMemoryStorage:
         self._gamma: dict[str, list[GammaAggregate]] = {}
         self._prices: dict[str, MarketPrice] = {}
         self._flow: dict[str, list[FlowEvent]] = {}
+        self._daily_gamma: dict[str, dict[date, DailyGammaReference]] = {}
 
     def list_underlyings(self) -> list[Underlying]:
         return sorted(self._underlyings.values(), key=lambda item: item.symbol)
@@ -23,20 +32,32 @@ class InMemoryStorage:
     def save_chain_snapshot(self, chain: OptionChain) -> None:
         self._chains.setdefault(chain.symbol, []).append(chain)
 
-    def get_latest_chain_snapshot(self, underlying: str, expiration: date | None = None) -> OptionChain | None:
+    def get_latest_chain_snapshot(
+        self, underlying: str, expiration: date | None = None
+    ) -> OptionChain | None:
         chains = self._chains.get(underlying.upper(), [])
         if expiration is not None:
-            chains = [c for c in chains if any(contract.expiration == expiration for contract in c.contracts)]
+            chains = [
+                c
+                for c in chains
+                if any(contract.expiration == expiration for contract in c.contracts)
+            ]
         return max(chains, key=lambda chain: chain.as_of, default=None)
 
     def save_gamma_aggregate(self, gamma: GammaAggregate) -> None:
         self._gamma.setdefault(gamma.symbol, []).append(gamma)
 
     def get_latest_gamma_aggregate(self, underlying: str) -> GammaAggregate | None:
-        return max(self._gamma.get(underlying.upper(), []), key=lambda item: item.as_of, default=None)
+        return max(
+            self._gamma.get(underlying.upper(), []), key=lambda item: item.as_of, default=None
+        )
 
-    def get_gamma_history(self, underlying: str, start: datetime, end: datetime) -> list[GammaAggregate]:
-        return [item for item in self._gamma.get(underlying.upper(), []) if start <= item.as_of <= end]
+    def get_gamma_history(
+        self, underlying: str, start: datetime, end: datetime
+    ) -> list[GammaAggregate]:
+        return [
+            item for item in self._gamma.get(underlying.upper(), []) if start <= item.as_of <= end
+        ]
 
     def save_market_price(self, price: MarketPrice) -> None:
         self._prices[price.symbol] = price
@@ -47,7 +68,9 @@ class InMemoryStorage:
     def save_flow_event(self, event: FlowEvent) -> None:
         self._flow.setdefault(event.symbol, []).append(event)
 
-    def get_flow_events(self, underlying: str, since: datetime | None = None, limit: int = 100) -> list[FlowEvent]:
+    def get_flow_events(
+        self, underlying: str, since: datetime | None = None, limit: int = 100
+    ) -> list[FlowEvent]:
         events = self._flow.get(underlying.upper(), [])
         if since is not None:
             events = [event for event in events if event.as_of >= since]
@@ -55,3 +78,13 @@ class InMemoryStorage:
 
     def get_recent_flow(self, underlying: str, limit: int = 20) -> list[FlowEvent]:
         return self.get_flow_events(underlying, limit=limit)
+
+    def save_daily_gamma_reference(self, reference: DailyGammaReference) -> None:
+        references = self._daily_gamma.setdefault(reference.symbol, {})
+        references[reference.date] = reference
+
+    def get_daily_gamma_references(
+        self, underlying: str, limit: int = 60
+    ) -> list[DailyGammaReference]:
+        references = self._daily_gamma.get(underlying.upper(), {}).values()
+        return sorted(references, key=lambda item: item.date, reverse=True)[:limit]

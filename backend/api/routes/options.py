@@ -57,7 +57,8 @@ def get_chain(
 def get_gamma(symbol: str, request: Request) -> GammaResponse:
     container: Container = request.app.state.container
     gamma = get_gamma_exposure(container.storage, symbol)
-    return GammaResponse.model_validate(gamma_response(gamma))
+    derived_metrics = container.calculate_derived_metrics_use_case.execute(symbol)
+    return GammaResponse.model_validate(gamma_response(gamma, derived_metrics))
 
 
 @router.get("/gamma/{symbol}/history", response_model=GammaHistoryResponse)

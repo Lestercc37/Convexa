@@ -26,6 +26,7 @@ from backend.domain.ports import (
     IWallCalculator,
 )
 from backend.domain.use_cases import (
+    CalculateDerivedMetricsUseCase,
     CalculateGammaAggregateUseCase,
     CalculateGammaExposureOrchestrator,
     CalculateGammaExposureUseCase,
@@ -67,6 +68,7 @@ class Container:
     calculate_walls_use_case: CalculateWallsUseCase
     calculate_max_pain_use_case: CalculateMaxPainUseCase
     calculate_gamma_exposure_orchestrator: CalculateGammaExposureOrchestrator
+    calculate_derived_metrics_use_case: CalculateDerivedMetricsUseCase
 
 
 def build_container() -> Container:
@@ -80,12 +82,8 @@ def build_container() -> Container:
     database_engine = create_engine(settings.database_url, echo=settings.database_echo)
     session_factory = create_session_factory(database_engine)
     if settings.database_url.startswith("postgresql"):
-        storage_engine = create_sync_engine(
-            settings.database_url, echo=settings.database_echo
-        )
-        storage: IStorage = PostgreSQLStorage(
-            create_sync_session_factory(storage_engine)
-        )
+        storage_engine = create_sync_engine(settings.database_url, echo=settings.database_echo)
+        storage: IStorage = PostgreSQLStorage(create_sync_session_factory(storage_engine))
     else:
         storage_engine = None
         storage = InMemoryStorage()
@@ -99,9 +97,7 @@ def build_container() -> Container:
     get_market_snapshot_use_case = GetMarketSnapshotUseCase(market_data_provider)
     load_option_chain_use_case = LoadOptionChainUseCase(market_data_provider)
     calculate_greeks_use_case = CalculateGreeksUseCase(greeks_calculator)
-    calculate_gamma_exposure_use_case = CalculateGammaExposureUseCase(
-        gamma_exposure_calculator
-    )
+    calculate_gamma_exposure_use_case = CalculateGammaExposureUseCase(gamma_exposure_calculator)
     calculate_gamma_aggregate_use_case = CalculateGammaAggregateUseCase(
         gamma_exposure_calculator, gamma_aggregate_calculator
     )
@@ -116,6 +112,7 @@ def build_container() -> Container:
         walls=calculate_walls_use_case,
         max_pain=calculate_max_pain_use_case,
     )
+    calculate_derived_metrics_use_case = CalculateDerivedMetricsUseCase(storage)
     return Container(
         settings=settings,
         database_engine=database_engine,
@@ -138,4 +135,5 @@ def build_container() -> Container:
         calculate_walls_use_case=calculate_walls_use_case,
         calculate_max_pain_use_case=calculate_max_pain_use_case,
         calculate_gamma_exposure_orchestrator=calculate_gamma_exposure_orchestrator,
+        calculate_derived_metrics_use_case=calculate_derived_metrics_use_case,
     )

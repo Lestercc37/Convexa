@@ -85,9 +85,7 @@ def test_charm_vanna_migration_adds_mandatory_snapshot_columns(monkeypatch) -> N
     monkeypatch.setattr(
         migration.op,
         "alter_column",
-        lambda table, column, **kwargs: altered_columns.append(
-            (table, column, kwargs)
-        ),
+        lambda table, column, **kwargs: altered_columns.append((table, column, kwargs)),
     )
 
     migration.upgrade()
@@ -102,9 +100,7 @@ def test_charm_vanna_migration_adds_mandatory_snapshot_columns(monkeypatch) -> N
 
 
 def test_theta_vega_migration_backfills_before_not_null(monkeypatch) -> None:
-    migration = import_module(
-        "backend.db.migrations.0003_make_theta_vega_not_null"
-    )
+    migration = import_module("backend.db.migrations.0003_make_theta_vega_not_null")
     operations: list[tuple[str, str]] = []
     monkeypatch.setattr(
         migration.op,
@@ -141,9 +137,7 @@ def test_spot_price_migration_adds_mandatory_snapshot_column(monkeypatch) -> Non
     monkeypatch.setattr(
         migration.op,
         "alter_column",
-        lambda table, column, **kwargs: altered_columns.append(
-            (table, column, kwargs)
-        ),
+        lambda table, column, **kwargs: altered_columns.append((table, column, kwargs)),
     )
 
     migration.upgrade()
@@ -153,6 +147,22 @@ def test_spot_price_migration_adds_mandatory_snapshot_column(monkeypatch) -> Non
     assert table == "option_chain_snapshots"
     assert column.name == "spot_price"
     assert column.nullable is False
-    assert altered_columns == [
-        ("option_chain_snapshots", "spot_price", {"server_default": None})
-    ]
+    assert altered_columns == [("option_chain_snapshots", "spot_price", {"server_default": None})]
+
+
+def test_daily_gamma_reference_migration_creates_one_row_per_day(monkeypatch) -> None:
+    migration = import_module("backend.db.migrations.0005_create_daily_gamma_reference")
+    statements: list[str] = []
+    monkeypatch.setattr(
+        migration.op,
+        "execute",
+        lambda statement: statements.append(str(statement)),
+    )
+
+    migration.upgrade()
+
+    schema = " ".join(statements)
+    assert "CREATE TABLE IF NOT EXISTS daily_gamma_reference" in schema
+    assert "PRIMARY KEY (underlying_id, date)" in schema
+    assert "pc_oi_ratio numeric NOT NULL" in schema
+    assert "skew_25d numeric NOT NULL" in schema

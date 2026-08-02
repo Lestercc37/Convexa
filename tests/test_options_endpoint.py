@@ -23,9 +23,7 @@ def test_chain_get_keeps_documented_provider_fallback_and_expiration() -> None:
 
     assert response.status_code == 200
     assert stored is not None
-    assert {contract["occ_symbol"][3:9] for contract in response.json()["contracts"]} == {
-        "260320"
-    }
+    assert {contract["occ_symbol"][3:9] for contract in response.json()["contracts"]} == {"260320"}
 
 
 def test_gamma_get_is_read_only_and_returns_uniform_not_found() -> None:
@@ -54,6 +52,24 @@ def test_internal_trigger_persists_consolidated_gamma_for_public_get() -> None:
     assert payload["symbol"] == "SPY"
     assert {"gamma_flip", "call_wall", "put_wall", "max_pain", "net_gamma"} <= payload.keys()
     assert payload["dealer_position"] in {"long_gamma", "short_gamma"}
+    assert payload["derived_metrics"] == {
+        "dealer_impact_score": {
+            "value": None,
+            "provisional": True,
+            "days_accumulated": 0,
+        },
+        "signal_alignment_score": {
+            "value": 60,
+            "provisional": True,
+            "days_accumulated": 0,
+        },
+        "market_bias": {
+            "score": None,
+            "label": None,
+            "provisional": True,
+            "days_accumulated": 0,
+        },
+    }
 
 
 def test_underlyings_history_and_flow_are_storage_backed_gets() -> None:

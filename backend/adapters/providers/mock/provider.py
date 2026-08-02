@@ -4,7 +4,15 @@ from datetime import date, datetime, timezone
 from decimal import Decimal
 from typing import AsyncIterator
 
-from backend.domain.entities import ContractType, FlowEvent, Greeks, MarketSnapshot, OptionChain, OptionContract, utc_now
+from backend.domain.entities import (
+    ContractType,
+    FlowEvent,
+    Greeks,
+    MarketSnapshot,
+    OptionChain,
+    OptionContract,
+    utc_now,
+)
 
 
 class MockDataProvider:
@@ -27,14 +35,23 @@ class MockDataProvider:
         )
 
     def get_underlying_snapshot(self, underlying: str) -> MarketSnapshot:
-        return MarketSnapshot(symbol=underlying.upper(), as_of=utc_now(), price=Decimal("552.25"), volume=1_250_000)
+        return MarketSnapshot(
+            symbol=underlying.upper(),
+            as_of=utc_now(),
+            price=Decimal("552.25"),
+            volume=1_250_000,
+            pc_oi_ratio=Decimal("1.10"),
+            skew_25d=Decimal("0.04"),
+        )
 
     async def stream_trades(self, underlying: str) -> AsyncIterator[FlowEvent]:
         if False:
             yield
 
 
-def _contract(symbol: str, strike: Decimal, expiration: date, contract_type: ContractType) -> OptionContract:
+def _contract(
+    symbol: str, strike: Decimal, expiration: date, contract_type: ContractType
+) -> OptionContract:
     suffix = "C" if contract_type == ContractType.CALL else "P"
     return OptionContract(
         underlying=symbol,
@@ -49,17 +66,11 @@ def _contract(symbol: str, strike: Decimal, expiration: date, contract_type: Con
         open_interest=8000,
         iv=Decimal("0.18"),
         greeks=Greeks(
-            delta=Decimal("0.42")
-            if contract_type == ContractType.CALL
-            else Decimal("-0.40"),
+            delta=Decimal("0.42") if contract_type == ContractType.CALL else Decimal("-0.40"),
             gamma=Decimal("0.03"),
             theta=Decimal("-0.015"),
             vega=Decimal("0.12"),
-            charm=Decimal("-0.001")
-            if contract_type == ContractType.CALL
-            else Decimal("0.001"),
-            vanna=Decimal("0.02")
-            if contract_type == ContractType.CALL
-            else Decimal("-0.02"),
+            charm=Decimal("-0.001") if contract_type == ContractType.CALL else Decimal("0.001"),
+            vanna=Decimal("0.02") if contract_type == ContractType.CALL else Decimal("-0.02"),
         ),
     )
