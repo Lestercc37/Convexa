@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import date
 
-from backend.domain.models import OptionChain
+from backend.domain.entities import OptionChain
 from backend.domain.ports import IDataProvider
 
 

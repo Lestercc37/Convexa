@@ -4,7 +4,7 @@ from datetime import date, datetime
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from backend.domain.models import FlowEvent, GammaAggregate, MarketPrice, OptionChain, Underlying
+from backend.domain.entities import FlowEvent, GammaAggregate, MarketPrice, OptionChain, Underlying
 
 
 class PostgreSQLStorage:

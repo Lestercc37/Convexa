@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from backend.domain.models import GammaAggregate
+from backend.domain.entities import GammaAggregate
 from backend.domain.ports import INotificationService, IStorage
 from backend.domain.use_cases.errors import NotFoundError
 

@@ -3,9 +3,9 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from decimal import Decimal
 
-from backend.adapters.greeks.walls import FakeWallCalculator
-from backend.application.use_cases import CalculateWallsUseCase
-from backend.domain.models import CallWall, GammaAggregate, GammaAggregateItem, PutWall, Walls
+from backend.adapters.providers.mock.walls import FakeWallCalculator
+from backend.domain.use_cases import CalculateWallsUseCase
+from backend.domain.entities import CallWall, GammaAggregate, GammaAggregateItem, PutWall, Walls
 from backend.domain.ports import IWallCalculator
 
 
@@ -22,14 +22,12 @@ def test_fake_wall_calculator_selects_largest_call_and_put_gamma_by_magnitude() 
             gamma=Decimal("240"),
             open_interest=14000,
             volume=6800,
-            confidence_score=Decimal("0.5454545454545454545454545455"),
         ),
         put_wall=PutWall(
             strike=Decimal("540"),
             gamma=Decimal("-150"),
             open_interest=14000,
             volume=6800,
-            confidence_score=Decimal("0.9375"),
         ),
     )
 
@@ -69,14 +67,12 @@ def test_walls_endpoint_returns_response_model() -> None:
             "gamma": 240,
             "open_interest": 14000,
             "volume": 6800,
-            "confidence_score": 0.5454545454545454,
         },
         "put_wall": {
             "strike": 540,
             "gamma": -150,
             "open_interest": 14000,
             "volume": 6800,
-            "confidence_score": 0.9375,
         },
     }
 

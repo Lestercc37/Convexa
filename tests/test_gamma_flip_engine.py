@@ -3,9 +3,9 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from decimal import Decimal
 
-from backend.adapters.greeks.gamma_flip import FakeGammaFlipCalculator
-from backend.application.use_cases import CalculateGammaFlipUseCase
-from backend.domain.models import GammaAggregate, GammaAggregateItem, GammaFlip
+from backend.adapters.providers.mock.gamma_flip import FakeGammaFlipCalculator
+from backend.domain.use_cases import CalculateGammaFlipUseCase
+from backend.domain.entities import GammaAggregate, GammaAggregateItem, GammaFlip
 from backend.domain.ports import IGammaFlipCalculator
 
 

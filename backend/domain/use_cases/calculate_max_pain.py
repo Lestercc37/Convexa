@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from backend.domain.models import MaxPain, OptionChain
+from backend.domain.entities import MaxPain, OptionChain
 from backend.domain.ports import IMaxPainCalculator
 
 

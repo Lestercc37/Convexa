@@ -5,9 +5,9 @@ from decimal import Decimal
 
 from fastapi.testclient import TestClient
 
-from backend.adapters.greeks.gamma_exposure import FakeGammaExposureCalculator
-from backend.application.use_cases import CalculateGammaExposureUseCase
-from backend.domain.models import ContractType, GammaExposure, Greeks, OptionChain, OptionContract
+from backend.adapters.providers.mock.gamma_exposure import FakeGammaExposureCalculator
+from backend.domain.use_cases import CalculateGammaExposureUseCase
+from backend.domain.entities import ContractType, GammaExposure, Greeks, OptionChain, OptionContract
 from backend.domain.ports import IGammaExposureCalculator
 from backend.main import app
 
@@ -29,7 +29,7 @@ def test_fake_gamma_exposure_calculator_returns_one_result_per_contract_determin
             expiration=date(2026, 2, 20),
             gamma=Decimal("0.030"),
             open_interest=8000,
-            dealer_gamma_exposure=Decimal("240.000"),
+            dealer_gamma_exposure=Decimal("72600000.000"),
             sign=Decimal("1"),
         ),
         GammaExposure(
@@ -39,7 +39,7 @@ def test_fake_gamma_exposure_calculator_returns_one_result_per_contract_determin
             expiration=date(2026, 2, 20),
             gamma=Decimal("0.025"),
             open_interest=6000,
-            dealer_gamma_exposure=Decimal("-150.000"),
+            dealer_gamma_exposure=Decimal("-45375000.000"),
             sign=Decimal("-1"),
         ),
     )
@@ -80,7 +80,7 @@ def test_gamma_exposure_endpoint_returns_per_contract_exposures() -> None:
             "expiration": "2026-02-20",
             "gamma": 0.03,
             "open_interest": 8000,
-            "dealer_gamma_exposure": 240,
+            "dealer_gamma_exposure": 72600000,
             "sign": 1,
         },
         {
@@ -90,7 +90,7 @@ def test_gamma_exposure_endpoint_returns_per_contract_exposures() -> None:
             "expiration": "2026-02-20",
             "gamma": 0.025,
             "open_interest": 6000,
-            "dealer_gamma_exposure": -150,
+            "dealer_gamma_exposure": -45375000,
             "sign": -1,
         },
     ]
@@ -100,6 +100,7 @@ def _chain() -> OptionChain:
     return OptionChain(
         symbol="SPY",
         as_of=datetime(2026, 1, 15, 14, 30, tzinfo=timezone.utc),
+        spot_price=Decimal("550"),
         contracts=(
             _contract(ContractType.CALL, "SPY260220C00540000", Decimal("0.030"), 8000),
             _contract(ContractType.PUT, "SPY260220P00540000", Decimal("0.025"), 6000),
@@ -125,7 +126,14 @@ def _contract(
         volume=3400,
         open_interest=open_interest,
         iv=Decimal("0.18"),
-        greeks=Greeks(delta=Decimal("0"), gamma=gamma),
+        greeks=Greeks(
+            delta=Decimal("0"),
+            gamma=gamma,
+            theta=Decimal("0"),
+            vega=Decimal("0"),
+            charm=Decimal("0"),
+            vanna=Decimal("0"),
+        ),
     )
 
 
@@ -133,6 +141,7 @@ def _chain_payload() -> dict[str, object]:
     return {
         "symbol": "SPY",
         "as_of": "2026-01-15T14:30:00Z",
+        "spot_price": 550,
         "contracts": [
             {
                 "occ_symbol": "SPY260220C00540000",
@@ -146,6 +155,10 @@ def _chain_payload() -> dict[str, object]:
                 "iv": 0.18,
                 "delta": 0,
                 "gamma": 0.03,
+                "theta": 0,
+                "vega": 0,
+                "charm": 0,
+                "vanna": 0,
                 "open_interest": 8000,
                 "volume": 3400,
             },
@@ -161,6 +174,10 @@ def _chain_payload() -> dict[str, object]:
                 "iv": 0.18,
                 "delta": 0,
                 "gamma": 0.025,
+                "theta": 0,
+                "vega": 0,
+                "charm": 0,
+                "vanna": 0,
                 "open_interest": 6000,
                 "volume": 3400,
             },

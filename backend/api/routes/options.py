@@ -6,13 +6,10 @@ from typing import Annotated
 from fastapi import APIRouter, Body, HTTPException, Request
 
 from backend.api.schemas import (
-    DealerPositioningRequest,
-    DealerPositioningResponse,
     GammaAggregateResponse,
     GammaExposureResponse,
     GammaFlipRequest,
     GammaFlipResponse,
-    InstitutionalAnalysisResponse,
     MaxPainResponse,
     WallsResponse,
     GreeksResponse,
@@ -21,21 +18,20 @@ from backend.api.schemas import (
 )
 from backend.api.serializers import (
     chain_response,
-    dealer_positioning_response,
     gamma_aggregate_response,
     gamma_exposure_response,
     gamma_flip_response,
-    institutional_analysis_response,
     max_pain_response,
     walls_response,
     greeks_chain_response,
 )
 from backend.core.container import Container
-from backend.domain.models import DomainError, OptionChain
+from backend.domain.entities import DomainError, OptionChain
 
 OPTION_CHAIN_REQUEST_EXAMPLE = {
     "symbol": "SPY",
     "as_of": "2026-01-15T14:30:00Z",
+    "spot_price": 552.25,
     "contracts": [
         {
             "occ_symbol": "SPY260220C00540000",
@@ -51,6 +47,8 @@ OPTION_CHAIN_REQUEST_EXAMPLE = {
             "gamma": 0.03,
             "theta": -0.015,
             "vega": 0.12,
+            "charm": -0.001,
+            "vanna": 0.02,
             "open_interest": 8000,
             "volume": 3400,
         }
@@ -195,20 +193,6 @@ def calculate_walls(payload: GammaFlipBody, request: Request) -> WallsResponse:
 
 
 @router.post(
-    "/options/dealer-positioning",
-    response_model=DealerPositioningResponse,
-    summary="Calculate institutional Dealer Positioning",
-)
-def calculate_dealer_positioning(
-    payload: DealerPositioningRequest, request: Request
-) -> DealerPositioningResponse:
-    container: Container = request.app.state.container
-    positioning_input = _dealer_positioning_from_request(payload)
-    positioning = container.calculate_dealer_positioning_use_case.execute(positioning_input)
-    return DealerPositioningResponse.model_validate(dealer_positioning_response(positioning))
-
-
-@router.post(
     "/options/gamma-flip",
     response_model=GammaFlipResponse,
     summary="Calculate Gamma Flip from Gamma Aggregate",
@@ -218,22 +202,6 @@ def calculate_gamma_flip(payload: GammaFlipBody, request: Request) -> GammaFlipR
     aggregate = _gamma_aggregate_from_request(payload)
     gamma_flip = container.calculate_gamma_flip_use_case.execute(aggregate)
     return GammaFlipResponse.model_validate(gamma_flip_response(gamma_flip))
-
-
-@router.post(
-    "/options/institutional-analysis",
-    response_model=InstitutionalAnalysisResponse,
-    summary="Run the complete institutional options analysis engine",
-)
-def calculate_institutional_analysis(
-    payload: OptionChainBody, request: Request
-) -> InstitutionalAnalysisResponse:
-    container: Container = request.app.state.container
-    chain = _chain_from_request(payload)
-    analysis = container.calculate_institutional_analysis_use_case.execute(chain)
-    return InstitutionalAnalysisResponse.model_validate(
-        institutional_analysis_response(analysis)
-    )
 
 
 def _chain_from_request(payload: OptionChainRequest) -> OptionChain:
@@ -250,8 +218,3 @@ def _gamma_aggregate_from_request(payload: GammaFlipRequest):
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
-def _dealer_positioning_from_request(payload: DealerPositioningRequest):
-    try:
-        return payload.to_domain()
-    except DomainError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc

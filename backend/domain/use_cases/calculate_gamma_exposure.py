@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from backend.domain.models import GammaExposure, OptionChain
+from backend.domain.entities import GammaExposure, OptionChain
 from backend.domain.ports import IGammaExposureCalculator
 
 

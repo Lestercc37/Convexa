@@ -2,24 +2,34 @@ from __future__ import annotations
 
 from decimal import Decimal
 
-from backend.domain.models import ContractType, GammaExposure, OptionChain, OptionContract
+from backend.domain.entities import ContractType, GammaExposure, OptionChain, OptionContract
 from backend.domain.ports import IGammaExposureCalculator
 
 
 class FakeGammaExposureCalculator(IGammaExposureCalculator):
     """Deterministic per-contract Gamma Exposure calculator.
 
-    The fake implementation intentionally uses only values already present on
-    each option contract. It assigns a positive sign to calls, a negative sign
-    to puts, and computes dealer_gamma_exposure as gamma * open_interest * sign.
+    It applies the documented per-one-percent-move dealer GEX formula.
     """
 
     def calculate(self, chain: OptionChain) -> tuple[GammaExposure, ...]:
-        return tuple(self._calculate_contract_exposure(contract) for contract in chain.contracts)
+        return tuple(
+            self._calculate_contract_exposure(contract, chain.spot_price)
+            for contract in chain.contracts
+        )
 
-    def _calculate_contract_exposure(self, contract: OptionContract) -> GammaExposure:
+    def _calculate_contract_exposure(
+        self, contract: OptionContract, spot_price: Decimal
+    ) -> GammaExposure:
         sign = Decimal("1") if contract.contract_type == ContractType.CALL else Decimal("-1")
-        dealer_gamma_exposure = contract.greeks.gamma * Decimal(contract.open_interest) * sign
+        dealer_gamma_exposure = (
+            contract.greeks.gamma
+            * Decimal(contract.open_interest)
+            * Decimal("100")
+            * spot_price**2
+            * Decimal("0.01")
+            * sign
+        )
         return GammaExposure(
             occ_symbol=contract.occ_symbol,
             strike=contract.strike,

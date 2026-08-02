@@ -4,7 +4,7 @@ from collections import defaultdict
 from datetime import datetime
 from decimal import Decimal
 
-from backend.domain.models import (
+from backend.domain.entities import (
     ContractType,
     GammaAggregate,
     GammaAggregateItem,

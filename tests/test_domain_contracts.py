@@ -7,7 +7,7 @@ from backend.adapters.notifications.noop import NoopNotificationService
 from backend.adapters.providers.mock.provider import MockDataProvider
 from backend.adapters.storage.memory import InMemoryStorage
 from backend.api.serializers import chain_response, gamma_response, websocket_message
-from backend.domain.models import (
+from backend.domain.entities import (
     Expiration,
     GammaAggregate,
     InvalidExpirationError,
@@ -153,7 +153,21 @@ def test_domain_model_rejects_invalid_contract_quote_and_greeks() -> None:
         )
 
     with pytest.raises(InvalidOptionError):
-        OptionGreeks(delta=Decimal("1.1"), gamma=Decimal("0.01"))
+        OptionGreeks(
+            delta=Decimal("1.1"),
+            gamma=Decimal("0.01"),
+            theta=Decimal("0"),
+            vega=Decimal("0"),
+            charm=Decimal("0"),
+            vanna=Decimal("0"),
+        )
 
     with pytest.raises(InvalidOptionError):
-        OptionGreeks(delta=Decimal("0.5"), gamma=Decimal("NaN"))
+        OptionGreeks(
+            delta=Decimal("0.5"),
+            gamma=Decimal("NaN"),
+            theta=Decimal("0"),
+            vega=Decimal("0"),
+            charm=Decimal("0"),
+            vanna=Decimal("0"),
+        )

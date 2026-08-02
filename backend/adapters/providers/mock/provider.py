@@ -1,21 +1,30 @@
 from __future__ import annotations
 
-from datetime import date, timedelta
+from datetime import date, datetime, timezone
 from decimal import Decimal
 from typing import AsyncIterator
 
-from backend.domain.models import ContractType, FlowEvent, Greeks, MarketSnapshot, OptionChain, OptionContract, utc_now
+from backend.domain.entities import ContractType, FlowEvent, Greeks, MarketSnapshot, OptionChain, OptionContract, utc_now
 
 
 class MockDataProvider:
+    """Deterministic IDataProvider adapter for tests and local development."""
+
     def get_option_chain(self, underlying: str, expiration: date | None = None) -> OptionChain:
         symbol = underlying.upper()
-        exp = expiration or (utc_now().date() + timedelta(days=30))
-        contracts = []
-        for strike in (Decimal("540"), Decimal("545"), Decimal("550"), Decimal("555"), Decimal("560")):
-            contracts.append(_contract(symbol, strike, exp, ContractType.CALL))
-            contracts.append(_contract(symbol, strike, exp, ContractType.PUT))
-        return OptionChain(symbol=symbol, as_of=utc_now(), contracts=tuple(contracts))
+        as_of = datetime(2026, 1, 15, 14, 30, tzinfo=timezone.utc)
+        exp = expiration or date(2026, 2, 20)
+        contracts = tuple(
+            _contract(symbol, strike, exp, contract_type)
+            for strike in (Decimal("540"), Decimal("545"), Decimal("550"))
+            for contract_type in (ContractType.CALL, ContractType.PUT)
+        )
+        return OptionChain(
+            symbol=symbol,
+            as_of=as_of,
+            spot_price=Decimal("552.25"),
+            contracts=contracts,
+        )
 
     def get_underlying_snapshot(self, underlying: str) -> MarketSnapshot:
         return MarketSnapshot(symbol=underlying.upper(), as_of=utc_now(), price=Decimal("552.25"), volume=1_250_000)
@@ -37,7 +46,20 @@ def _contract(symbol: str, strike: Decimal, expiration: date, contract_type: Con
         ask=Decimal("1.25"),
         last=Decimal("1.22"),
         volume=3400,
-        open_interest=12000 if strike == Decimal("555") and contract_type == ContractType.CALL else 8000,
+        open_interest=8000,
         iv=Decimal("0.18"),
-        greeks=Greeks(delta=Decimal("0.42") if contract_type == ContractType.CALL else Decimal("-0.40"), gamma=Decimal("0.03")),
+        greeks=Greeks(
+            delta=Decimal("0.42")
+            if contract_type == ContractType.CALL
+            else Decimal("-0.40"),
+            gamma=Decimal("0.03"),
+            theta=Decimal("-0.015"),
+            vega=Decimal("0.12"),
+            charm=Decimal("-0.001")
+            if contract_type == ContractType.CALL
+            else Decimal("0.001"),
+            vanna=Decimal("0.02")
+            if contract_type == ContractType.CALL
+            else Decimal("-0.02"),
+        ),
     )

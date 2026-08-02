@@ -6,19 +6,13 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from backend.domain.models import (
-    CallWall,
+from backend.domain.entities import (
     ContractType,
-    DealerPositioningInput,
     GammaAggregate,
     GammaAggregateItem,
     Greeks,
     OptionChain,
     OptionContract,
-    PutWall,
-    GammaExposure,
-    GammaFlip,
-    MaxPain,
 )
 
 
@@ -52,18 +46,22 @@ class OptionChainResponse(BaseModel):
     schema_version: int = Field(examples=[1])
     symbol: str = Field(examples=["SPY"])
     as_of: str = Field(examples=["2026-01-15T14:30:00Z"])
+    spot_price: Number = Field(examples=[552.25])
     contracts: list[OptionContractResponse]
 
 
 class GreeksContractResponse(OptionContractResponse):
-    theta: Number | None = Field(default=None, examples=[-0.015])
-    vega: Number | None = Field(default=None, examples=[0.12])
+    theta: Number = Field(examples=[-0.015])
+    vega: Number = Field(examples=[0.12])
+    charm: Number = Field(examples=[-0.001])
+    vanna: Number = Field(examples=[0.02])
 
 
 class GreeksResponse(BaseModel):
     schema_version: int = Field(examples=[1])
     symbol: str = Field(examples=["SPY"])
     as_of: str = Field(examples=["2026-01-15T14:30:00Z"])
+    spot_price: Number = Field(examples=[552.25])
     contracts: list[GreeksContractResponse]
 
 
@@ -170,7 +168,6 @@ class WallResponse(BaseModel):
     gamma: Number = Field(examples=[200])
     open_interest: int = Field(examples=[6000])
     volume: int = Field(examples=[4200])
-    confidence_score: Number = Field(examples=[0.4545])
 
 
 class WallsResponse(BaseModel):
@@ -210,122 +207,10 @@ class MaxPainResponse(BaseModel):
     ranking: list[MaxPainStrikePainResponse] = Field(max_length=5)
 
 
-class DealerPositioningGammaExposureItemRequest(GammaExposureItemResponse):
-    pass
-
-
-class DealerPositioningGammaFlipRequest(BaseModel):
-    gamma_flip_price: Number | None = None
-    lower_strike: Number | None = None
-    upper_strike: Number | None = None
-    lower_gamma: Number | None = None
-    upper_gamma: Number | None = None
-    interpolation_ratio: Number | None = None
-    flip_found: bool = False
-
-    def to_domain(self) -> GammaFlip:
-        return GammaFlip(
-            gamma_flip_price=_optional_decimal(self.gamma_flip_price),
-            lower_strike=_optional_decimal(self.lower_strike),
-            upper_strike=_optional_decimal(self.upper_strike),
-            lower_gamma=_optional_decimal(self.lower_gamma),
-            upper_gamma=_optional_decimal(self.upper_gamma),
-            interpolation_ratio=_optional_decimal(self.interpolation_ratio),
-            flip_found=self.flip_found,
-        )
-
-
-class DealerPositioningMaxPainRequest(MaxPainResponse):
-    def to_domain(self) -> MaxPain:
-        return MaxPain(
-            symbol=self.symbol,
-            as_of=datetime.fromisoformat(self.as_of.replace("Z", "+00:00")),
-            max_pain_strike=Decimal(str(self.max_pain_strike)),
-            total_call_pain=Decimal(str(self.total_call_pain)),
-            total_put_pain=Decimal(str(self.total_put_pain)),
-            total_pain=Decimal(str(self.total_pain)),
-        )
-
-
-class DealerPositioningRequest(BaseModel):
-    symbol: str = Field(min_length=1, examples=["SPY"])
-    as_of: datetime = Field(examples=["2026-01-15T14:30:00Z"])
-    gamma_exposure: list[DealerPositioningGammaExposureItemRequest] = Field(min_length=1)
-    gamma_aggregate: GammaFlipRequest
-    gamma_flip: DealerPositioningGammaFlipRequest
-    call_wall: WallResponse | None = None
-    put_wall: WallResponse | None = None
-    max_pain: DealerPositioningMaxPainRequest
-
-    def to_domain(self) -> DealerPositioningInput:
-        return DealerPositioningInput(
-            gamma_exposure=tuple(
-                GammaExposure(
-                    occ_symbol=item.occ_symbol,
-                    strike=Decimal(str(item.strike)),
-                    contract_type=ContractType(item.contract_type),
-                    expiration=item.expiration,
-                    gamma=Decimal(str(item.gamma)),
-                    open_interest=item.open_interest,
-                    dealer_gamma_exposure=Decimal(str(item.dealer_gamma_exposure)),
-                    sign=Decimal(str(item.sign)),
-                )
-                for item in self.gamma_exposure
-            ),
-            gamma_aggregate=self.gamma_aggregate.to_domain(),
-            gamma_flip=self.gamma_flip.to_domain(),
-            call_wall=_wall_to_domain(self.call_wall, CallWall),
-            put_wall=_wall_to_domain(self.put_wall, PutWall),
-            max_pain=self.max_pain.to_domain(),
-        )
-
-
-class InstitutionalAnalysisResponse(BaseModel):
-    schema_version: int = Field(examples=[1])
-    timestamp: str = Field(examples=["2026-01-15T14:30:00Z"])
-    overall_bias: Literal["Bullish", "Bearish", "Neutral"]
-    confidence_score: Number = Field(examples=[0.85])
-    market_regime: str = Field(examples=["Normal"])
-    market_snapshot: MarketSnapshotResponse
-    option_chain: GreeksResponse
-    gamma_exposure: GammaExposureResponse
-    gamma_aggregate: GammaAggregateResponse
-    peak_gamma_strike: Number = Field(examples=[545])
-    gamma_flip: GammaFlipResponse
-    call_wall: WallResponse | None = None
-    put_wall: WallResponse | None = None
-    max_pain: MaxPainResponse
-    dealer_positioning: "DealerPositioningResponse"
-
-
-class DealerPositioningResponse(BaseModel):
-    schema_version: int = Field(examples=[1])
-    symbol: str = Field(examples=["SPY"])
-    as_of: str = Field(examples=["2026-01-15T14:30:00Z"])
-    dealer_state: Literal["Long Gamma", "Short Gamma", "Neutral"]
-    dealer_bias: Literal["Bullish", "Bearish", "Neutral"]
-    hedging_pressure: Number = Field(examples=[0.75])
-    expected_volatility: Literal["High", "Low", "Normal"]
-    liquidity_regime: Literal["Deep", "Balanced", "Thin"]
-    confidence_score: Number = Field(examples=[0.85])
-
-
 def _optional_decimal(value: Number | None) -> Decimal | None:
     if value is None:
         return None
     return Decimal(str(value))
-
-
-def _wall_to_domain(wall: WallResponse | None, wall_type):  # noqa: ANN001
-    if wall is None:
-        return None
-    return wall_type(
-        strike=Decimal(str(wall.strike)),
-        gamma=Decimal(str(wall.gamma)),
-        open_interest=wall.open_interest,
-        volume=wall.volume,
-        confidence_score=Decimal(str(wall.confidence_score)),
-    )
 
 
 class OptionContractRequest(BaseModel):
@@ -342,8 +227,10 @@ class OptionContractRequest(BaseModel):
     iv: Decimal = Field(ge=0, examples=[0.18])
     delta: Decimal = Field(default=Decimal("0"), ge=-1, le=1, examples=[0])
     gamma: Decimal = Field(default=Decimal("0"), examples=[0.03])
-    theta: Decimal | None = Field(default=None, examples=[-0.015])
-    vega: Decimal | None = Field(default=None, examples=[0.12])
+    theta: Decimal = Field(examples=[-0.015])
+    vega: Decimal = Field(examples=[0.12])
+    charm: Decimal = Field(examples=[-0.001])
+    vanna: Decimal = Field(examples=[0.02])
     open_interest: int = Field(ge=0, examples=[8000])
     volume: int = Field(ge=0, examples=[3400])
 
@@ -371,6 +258,8 @@ class OptionContractRequest(BaseModel):
                 gamma=self.gamma,
                 theta=self.theta,
                 vega=self.vega,
+                charm=self.charm,
+                vanna=self.vanna,
             ),
         )
 
@@ -382,6 +271,7 @@ class OptionChainRequest(BaseModel):
                 {
                     "symbol": "SPY",
                     "as_of": "2026-01-15T14:30:00Z",
+                    "spot_price": 552.25,
                     "contracts": [
                         {
                             "occ_symbol": "SPY260220C00540000",
@@ -397,6 +287,8 @@ class OptionChainRequest(BaseModel):
                             "gamma": 0.03,
                             "theta": -0.015,
                             "vega": 0.12,
+                            "charm": -0.001,
+                            "vanna": 0.02,
                             "open_interest": 8000,
                             "volume": 3400,
                         }
@@ -406,6 +298,7 @@ class OptionChainRequest(BaseModel):
             "example": {
                 "symbol": "SPY",
                 "as_of": "2026-01-15T14:30:00Z",
+                "spot_price": 552.25,
                 "contracts": [
                     {
                         "occ_symbol": "SPY260220C00540000",
@@ -421,6 +314,8 @@ class OptionChainRequest(BaseModel):
                         "gamma": 0.03,
                         "theta": -0.015,
                         "vega": 0.12,
+                        "charm": -0.001,
+                        "vanna": 0.02,
                         "open_interest": 8000,
                         "volume": 3400,
                     }
@@ -431,11 +326,13 @@ class OptionChainRequest(BaseModel):
 
     symbol: str = Field(min_length=1, examples=["SPY"])
     as_of: datetime = Field(examples=["2026-01-15T14:30:00Z"])
+    spot_price: Decimal = Field(gt=0, examples=[552.25])
     contracts: list[OptionContractRequest] = Field(min_length=1)
 
     def to_domain(self) -> OptionChain:
         return OptionChain(
             symbol=self.symbol,
             as_of=self.as_of,
+            spot_price=self.spot_price,
             contracts=tuple(contract.to_domain(self.symbol) for contract in self.contracts),
         )

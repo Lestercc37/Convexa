@@ -77,18 +77,18 @@ class Underlying:
 class OptionGreeks:
     delta: Decimal
     gamma: Decimal
-    theta: Decimal | None = None
-    vega: Decimal | None = None
+    theta: Decimal
+    vega: Decimal
+    charm: Decimal
+    vanna: Decimal
 
     def __post_init__(self) -> None:
         _ensure_finite_decimal(self.delta, InvalidOptionError, "delta")
         _ensure_finite_decimal(self.gamma, InvalidOptionError, "gamma")
         if not Decimal("-1") <= self.delta <= Decimal("1"):
             raise InvalidOptionError("delta must be between -1 and 1")
-        if self.theta is not None:
-            _ensure_finite_decimal(self.theta, InvalidOptionError, "theta")
-        if self.vega is not None:
-            _ensure_finite_decimal(self.vega, InvalidOptionError, "vega")
+        for name in ("theta", "vega", "charm", "vanna"):
+            _ensure_finite_decimal(getattr(self, name), InvalidOptionError, name)
 
 
 Greeks = OptionGreeks
@@ -148,12 +148,14 @@ class OptionContract:
 class OptionChain:
     symbol: str
     as_of: datetime
+    spot_price: Decimal
     contracts: tuple[OptionContract, ...] = field(default_factory=tuple)
 
     def __post_init__(self) -> None:
         if not self.symbol or not self.symbol.strip():
             raise InvalidOptionError("chain symbol is required")
         object.__setattr__(self, "symbol", self.symbol.upper())
+        _ensure_positive_decimal(self.spot_price, InvalidOptionError, "spot_price")
 
 
 @dataclass(frozen=True, slots=True)
@@ -232,16 +234,12 @@ class Wall:
     gamma: Decimal
     open_interest: int
     volume: int
-    confidence_score: Decimal
 
     def __post_init__(self) -> None:
         _ensure_positive_decimal(self.strike, InvalidStrikeError, "strike")
         _ensure_finite_decimal(self.gamma, InvalidOptionError, "gamma")
-        _ensure_finite_decimal(self.confidence_score, InvalidOptionError, "confidence_score")
         if self.open_interest < 0 or self.volume < 0:
             raise InvalidOptionError("open_interest and volume cannot be negative")
-        if not Decimal("0") <= self.confidence_score <= Decimal("1"):
-            raise InvalidOptionError("confidence_score must be between 0 and 1")
 
 
 @dataclass(frozen=True, slots=True)
@@ -377,45 +375,6 @@ class GammaExposure:
 
 
 @dataclass(frozen=True, slots=True)
-class DealerPositioningInput:
-    gamma_exposure: tuple[GammaExposure, ...]
-    gamma_aggregate: GammaAggregate
-    gamma_flip: GammaFlip
-    call_wall: CallWall | None
-    put_wall: PutWall | None
-    max_pain: MaxPain
-
-
-@dataclass(frozen=True, slots=True)
-class DealerPositioning:
-    symbol: str
-    as_of: datetime
-    dealer_state: str
-    dealer_bias: str
-    hedging_pressure: Decimal
-    expected_volatility: str
-    liquidity_regime: str
-    confidence_score: Decimal
-
-    def __post_init__(self) -> None:
-        if not self.symbol or not self.symbol.strip():
-            raise InvalidOptionError("dealer positioning symbol is required")
-        object.__setattr__(self, "symbol", self.symbol.upper())
-        if self.dealer_state not in ("Long Gamma", "Short Gamma", "Neutral"):
-            raise InvalidOptionError("dealer_state must be Long Gamma, Short Gamma, or Neutral")
-        if self.dealer_bias not in ("Bullish", "Bearish", "Neutral"):
-            raise InvalidOptionError("dealer_bias must be Bullish, Bearish, or Neutral")
-        if self.expected_volatility not in ("High", "Low", "Normal"):
-            raise InvalidOptionError("expected_volatility must be High, Low, or Normal")
-        if self.liquidity_regime not in ("Deep", "Balanced", "Thin"):
-            raise InvalidOptionError("liquidity_regime must be Deep, Balanced, or Thin")
-        for name in ("hedging_pressure", "confidence_score"):
-            _ensure_finite_decimal(getattr(self, name), InvalidOptionError, name)
-            if not Decimal("0") <= getattr(self, name) <= Decimal("1"):
-                raise InvalidOptionError(f"{name} must be between 0 and 1")
-
-
-@dataclass(frozen=True, slots=True)
 class MarketPrice:
     symbol: str
     as_of: datetime
@@ -466,32 +425,6 @@ class MarketSnapshot:
         _ensure_finite_decimal(self.price, InvalidOptionError, "price")
         if self.price < 0 or self.volume < 0:
             raise InvalidOptionError("price and volume cannot be negative")
-
-
-@dataclass(frozen=True, slots=True)
-class InstitutionalAnalysis:
-    market_snapshot: MarketSnapshot
-    option_chain: OptionChain
-    gamma_exposure: tuple[GammaExposure, ...]
-    gamma_aggregate: GammaAggregate
-    gamma_flip: GammaFlip
-    walls: Walls
-    max_pain: MaxPain
-    dealer_positioning: DealerPositioning
-    overall_bias: str
-    confidence_score: Decimal
-    market_regime: str
-    timestamp: datetime
-    schema_version: int = SCHEMA_VERSION
-
-    def __post_init__(self) -> None:
-        if self.overall_bias not in ("Bullish", "Bearish", "Neutral"):
-            raise InvalidOptionError("overall_bias must be Bullish, Bearish, or Neutral")
-        _ensure_finite_decimal(self.confidence_score, InvalidOptionError, "confidence_score")
-        if not Decimal("0") <= self.confidence_score <= Decimal("1"):
-            raise InvalidOptionError("confidence_score must be between 0 and 1")
-        if not self.market_regime or not self.market_regime.strip():
-            raise InvalidOptionError("market_regime is required")
 
 
 def utc_now() -> datetime:

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from backend.domain.models import GammaAggregate, OptionChain
+from backend.domain.entities import GammaAggregate, OptionChain
 from backend.domain.ports import IGammaAggregateCalculator, IGammaExposureCalculator
 
 

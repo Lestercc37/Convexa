@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import date, datetime
 
-from backend.domain.models import FlowEvent, GammaAggregate, MarketPrice, OptionChain, Underlying, UnderlyingKind
+from backend.domain.entities import FlowEvent, GammaAggregate, MarketPrice, OptionChain, Underlying, UnderlyingKind
 
 
 class InMemoryStorage:
