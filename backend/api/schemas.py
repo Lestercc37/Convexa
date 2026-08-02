@@ -136,6 +136,8 @@ class GammaSummaryResponse(BaseModel):
     put_wall: Number = Field(examples=[540])
     max_pain: Number = Field(examples=[550])
     net_gamma: Number = Field(examples=[-1250000])
+    vega_exposure: Number = Field(examples=[875000])
+    theta_exposure: Number = Field(examples=[-420000])
     dealer_position: Literal["long_gamma", "short_gamma"]
 
 

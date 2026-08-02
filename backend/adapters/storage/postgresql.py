@@ -188,11 +188,13 @@ class PostgreSQLStorage:
                     """
                     INSERT INTO gamma_aggregates (
                         time, underlying_id, gamma_flip, call_wall, put_wall,
-                        max_pain, net_gamma, dealer_gamma_notional
+                        max_pain, net_gamma, dealer_gamma_notional,
+                        vega_exposure, theta_exposure
                     )
                     VALUES (
                         :time, :underlying_id, :gamma_flip, :call_wall, :put_wall,
-                        :max_pain, :net_gamma, :dealer_gamma_notional
+                        :max_pain, :net_gamma, :dealer_gamma_notional,
+                        :vega_exposure, :theta_exposure
                     )
                     """
                 ),
@@ -205,6 +207,8 @@ class PostgreSQLStorage:
                     "max_pain": gamma.max_pain,
                     "net_gamma": gamma.net_gamma,
                     "dealer_gamma_notional": gamma.dealer_gamma_notional,
+                    "vega_exposure": gamma.vega_exposure,
+                    "theta_exposure": gamma.theta_exposure,
                 },
             )
 
@@ -216,7 +220,8 @@ class PostgreSQLStorage:
                         """
                     SELECT g.time, u.symbol, g.gamma_flip, g.call_wall,
                            g.put_wall, g.max_pain, g.net_gamma,
-                           g.dealer_gamma_notional
+                           g.dealer_gamma_notional, g.vega_exposure,
+                           g.theta_exposure
                     FROM gamma_aggregates AS g
                     JOIN underlyings AS u ON u.id = g.underlying_id
                     WHERE u.symbol = :symbol
@@ -240,7 +245,8 @@ class PostgreSQLStorage:
                     """
                     SELECT g.time, u.symbol, g.gamma_flip, g.call_wall,
                            g.put_wall, g.max_pain, g.net_gamma,
-                           g.dealer_gamma_notional
+                           g.dealer_gamma_notional, g.vega_exposure,
+                           g.theta_exposure
                     FROM gamma_aggregates AS g
                     JOIN underlyings AS u ON u.id = g.underlying_id
                     WHERE u.symbol = :symbol
@@ -459,4 +465,6 @@ class PostgreSQLStorage:
             max_pain=Decimal(mapping["max_pain"]),
             net_gamma=Decimal(mapping["net_gamma"]),
             dealer_gamma_notional=Decimal(mapping["dealer_gamma_notional"]),
+            vega_exposure=Decimal(mapping["vega_exposure"]),
+            theta_exposure=Decimal(mapping["theta_exposure"]),
         )

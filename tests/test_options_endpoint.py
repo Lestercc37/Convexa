@@ -50,7 +50,15 @@ def test_internal_trigger_persists_consolidated_gamma_for_public_get() -> None:
     payload = response.json()
     assert payload["schema_version"] == 1
     assert payload["symbol"] == "SPY"
-    assert {"gamma_flip", "call_wall", "put_wall", "max_pain", "net_gamma"} <= payload.keys()
+    assert {
+        "gamma_flip",
+        "call_wall",
+        "put_wall",
+        "max_pain",
+        "net_gamma",
+        "vega_exposure",
+        "theta_exposure",
+    } <= payload.keys()
     assert payload["dealer_position"] in {"long_gamma", "short_gamma"}
     assert payload["derived_metrics"] == {
         "dealer_impact_score": {

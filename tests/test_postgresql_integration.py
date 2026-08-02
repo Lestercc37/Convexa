@@ -78,6 +78,8 @@ def test_gamma_aggregate_round_trip_against_postgresql(
         max_pain=Decimal("550"),
         net_gamma=Decimal("-1250000"),
         dealer_gamma_notional=Decimal("-125000000"),
+        vega_exposure=Decimal("875000"),
+        theta_exposure=Decimal("-420000"),
     )
 
     storage.save_gamma_aggregate(aggregate)
