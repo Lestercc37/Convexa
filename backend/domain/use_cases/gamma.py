@@ -73,6 +73,13 @@ class CalculateGammaExposureOrchestrator:
             ),
             Decimal(0),
         )
+        charm_exposure = sum(
+            (
+                contract.greeks.charm * Decimal(contract.open_interest) * contract_multiplier
+                for contract in enriched_chain.contracts
+            ),
+            Decimal(0),
+        )
 
         result = replace(
             aggregate,
@@ -84,6 +91,7 @@ class CalculateGammaExposureOrchestrator:
             max_pain=max_pain.max_pain_strike,
             vega_exposure=vega_exposure,
             theta_exposure=theta_exposure,
+            charm_exposure=charm_exposure,
         )
         self._storage.save_gamma_aggregate(result)
         return result

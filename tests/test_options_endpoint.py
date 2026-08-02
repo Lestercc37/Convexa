@@ -58,6 +58,7 @@ def test_internal_trigger_persists_consolidated_gamma_for_public_get() -> None:
         "net_gamma",
         "vega_exposure",
         "theta_exposure",
+        "charm_exposure",
     } <= payload.keys()
     assert payload["dealer_position"] in {"long_gamma", "short_gamma"}
     assert payload["derived_metrics"] == {

@@ -27,7 +27,7 @@ class PreservingGreeksCalculator:
         return chain
 
 
-def test_orchestrator_sums_vega_and_theta_exposure_without_spot_squared() -> None:
+def test_orchestrator_sums_vega_theta_and_charm_exposure_without_spot_squared() -> None:
     storage = InMemoryStorage()
     chain = _known_chain()
     storage.save_chain_snapshot(chain)
@@ -46,14 +46,31 @@ def test_orchestrator_sums_vega_and_theta_exposure_without_spot_squared() -> Non
 
     assert result.vega_exposure == Decimal(800)
     assert result.theta_exposure == Decimal(-500)
+    assert result.charm_exposure == Decimal(10)
     assert storage.get_latest_gamma_aggregate("SPY") == result
 
 
 def _known_chain() -> OptionChain:
     as_of = datetime(2026, 1, 15, 14, 30, tzinfo=UTC)
     contracts = (
-        _contract("SPY260220C00540000", ContractType.CALL, Decimal(540), 10, "0.20", "-0.10"),
-        _contract("SPY260220P00560000", ContractType.PUT, Decimal(560), 20, "0.30", "-0.20"),
+        _contract(
+            "SPY260220C00540000",
+            ContractType.CALL,
+            Decimal(540),
+            10,
+            "0.20",
+            "-0.10",
+            "0.05",
+        ),
+        _contract(
+            "SPY260220P00560000",
+            ContractType.PUT,
+            Decimal(560),
+            20,
+            "0.30",
+            "-0.20",
+            "-0.02",
+        ),
     )
     return OptionChain(
         symbol="SPY",
@@ -70,6 +87,7 @@ def _contract(
     open_interest: int,
     vega: str,
     theta: str,
+    charm: str,
 ) -> OptionContract:
     return OptionContract(
         underlying="SPY",
@@ -88,7 +106,7 @@ def _contract(
             gamma=Decimal("0.01"),
             theta=Decimal(theta),
             vega=Decimal(vega),
-            charm=Decimal(0),
+            charm=Decimal(charm),
             vanna=Decimal(0),
         ),
     )
