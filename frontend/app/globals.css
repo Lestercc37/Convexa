@@ -82,6 +82,9 @@ h1 { margin: 0; font-size: clamp(1.7rem, 3vw, 2.4rem); letter-spacing: -0.04em; 
 .regime-badge { min-height: 284px; padding: 28px; display: flex; flex-direction: column; justify-content: space-between; }
 .regime-badge.long { border-color: rgba(54, 201, 155, 0.42); background: linear-gradient(145deg, var(--calm-soft), var(--surface)); }
 .regime-badge.short { border-color: rgba(255, 122, 69, 0.44); background: linear-gradient(145deg, var(--risk-soft), var(--surface)); }
+.regime-badge.unconfirmed { border-style: dashed; }
+.regime-heading { display: flex; align-items: start; gap: 12px; }
+.regime-warning { color: var(--warning); cursor: help; font-size: 1.05rem; line-height: 1; }
 .regime-label { margin: 0; font-size: clamp(2.15rem, 5vw, 4rem); line-height: 0.94; letter-spacing: -0.06em; }
 .long .regime-label { color: var(--calm); }
 .short .regime-label { color: var(--risk); }

@@ -26,4 +26,7 @@ export type MarketResponse = {
   as_of: string;
   price: number;
   volume: number;
+  dealer_mode: "long_gamma" | "short_gamma";
+  dealer_mode_source: "agree" | "price_vs_flip";
+  dealer_mode_confirmed: boolean;
 };
