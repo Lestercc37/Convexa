@@ -245,3 +245,30 @@ def test_atm_iv_migration_adds_mandatory_daily_reference_column(monkeypatch) -> 
     assert column.name == "atm_iv"
     assert column.nullable is False
     assert altered_columns == [("daily_gamma_reference", "atm_iv", {"server_default": None})]
+
+
+def test_absolute_gamma_strike_migration_adds_mandatory_column(monkeypatch) -> None:
+    migration = import_module("backend.db.migrations.0009_add_absolute_gamma_strike")
+    added_columns = []
+    altered_columns = []
+    monkeypatch.setattr(
+        migration.op,
+        "add_column",
+        lambda table, column: added_columns.append((table, column)),
+    )
+    monkeypatch.setattr(
+        migration.op,
+        "alter_column",
+        lambda table, column, **kwargs: altered_columns.append((table, column, kwargs)),
+    )
+
+    migration.upgrade()
+
+    assert len(added_columns) == 1
+    table, column = added_columns[0]
+    assert table == "gamma_aggregates"
+    assert column.name == "absolute_gamma_strike"
+    assert column.nullable is False
+    assert altered_columns == [
+        ("gamma_aggregates", "absolute_gamma_strike", {"server_default": None})
+    ]

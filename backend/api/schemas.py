@@ -103,7 +103,7 @@ class GammaAggregateResponse(BaseModel):
     total_market_gamma: Number = Field(examples=[280])
     positive_gamma: Number = Field(examples=[280])
     negative_gamma: Number = Field(examples=[0])
-    peak_gamma_strike: Number = Field(examples=[545])
+    absolute_gamma_strike: Number = Field(examples=[545])
     peak_gamma_value: Number = Field(examples=[190])
     items: list[GammaAggregateItemResponse]
 
@@ -142,6 +142,7 @@ class GammaSummaryResponse(BaseModel):
     gamma_flip: Number = Field(examples=[548.5])
     call_wall: Number = Field(examples=[555])
     put_wall: Number = Field(examples=[540])
+    absolute_gamma_strike: Number = Field(examples=[550])
     max_pain: Number = Field(examples=[550])
     net_gamma: Number = Field(examples=[-1250000])
     vega_exposure: Number = Field(examples=[875000])

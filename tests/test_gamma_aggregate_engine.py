@@ -5,7 +5,6 @@ from decimal import Decimal
 
 from backend.adapters.providers.mock.gamma_aggregate import FakeGammaAggregateCalculator
 from backend.adapters.providers.mock.gamma_exposure import FakeGammaExposureCalculator
-from backend.domain.use_cases import CalculateGammaAggregateUseCase
 from backend.domain.entities import (
     ContractType,
     GammaAggregate,
@@ -15,6 +14,7 @@ from backend.domain.entities import (
     OptionContract,
 )
 from backend.domain.ports import IGammaAggregateCalculator
+from backend.domain.use_cases import CalculateGammaAggregateUseCase
 
 
 def test_fake_gamma_aggregate_calculator_groups_gamma_exposure_by_strike() -> None:
@@ -52,7 +52,7 @@ def test_fake_gamma_aggregate_calculator_groups_gamma_exposure_by_strike() -> No
         total_gamma=Decimal("84700000.000"),
         net_gamma=Decimal("84700000.000"),
         dealer_gamma_notional=Decimal("84700000.000"),
-        peak_gamma_strike=Decimal("545"),
+        absolute_gamma_strike=Decimal("545"),
         peak_gamma_value=Decimal("57475000.000"),
     )
 
@@ -65,7 +65,7 @@ def test_fake_gamma_aggregate_calculator_selects_peak_by_absolute_gamma() -> Non
 
     assert aggregate.items[0].absolute_gamma == Decimal("27225000.000")
     assert aggregate.items[1].absolute_gamma == Decimal("57475000.000")
-    assert aggregate.peak_gamma_strike == Decimal("545")
+    assert aggregate.absolute_gamma_strike == Decimal("545")
     assert aggregate.peak_gamma_value == Decimal("57475000.000")
 
 
@@ -93,6 +93,7 @@ def test_calculate_gamma_aggregate_use_case_uses_gamma_exposure_output() -> None
 
 def test_legacy_gamma_aggregate_endpoint_is_removed() -> None:
     from fastapi.testclient import TestClient
+
     from backend.main import app
 
     with TestClient(app) as client:
@@ -107,7 +108,7 @@ def test_legacy_gamma_aggregate_endpoint_is_removed() -> None:
         "total_market_gamma": 84700000,
         "positive_gamma": 84700000,
         "negative_gamma": 0,
-        "peak_gamma_strike": 545,
+        "absolute_gamma_strike": 545,
         "peak_gamma_value": 57475000,
         "items": [
             {
@@ -142,15 +143,29 @@ def _chain() -> OptionChain:
         as_of=datetime(2026, 1, 15, 14, 30, tzinfo=timezone.utc),
         spot_price=Decimal("550"),
         contracts=(
-            _contract(ContractType.CALL, "SPY260220C00540000", Decimal("540"), Decimal("0.030"), 8000),
-            _contract(ContractType.PUT, "SPY260220P00540000", Decimal("540"), Decimal("0.025"), 6000),
-            _contract(ContractType.CALL, "SPY260220C00545000", Decimal("545"), Decimal("0.040"), 5000),
-            _contract(ContractType.PUT, "SPY260220P00545000", Decimal("545"), Decimal("0.010"), 1000),
+            _contract(
+                ContractType.CALL, "SPY260220C00540000", Decimal("540"), Decimal("0.030"), 8000
+            ),
+            _contract(
+                ContractType.PUT, "SPY260220P00540000", Decimal("540"), Decimal("0.025"), 6000
+            ),
+            _contract(
+                ContractType.CALL, "SPY260220C00545000", Decimal("545"), Decimal("0.040"), 5000
+            ),
+            _contract(
+                ContractType.PUT, "SPY260220P00545000", Decimal("545"), Decimal("0.010"), 1000
+            ),
         ),
     )
 
 
-def _contract(contract_type: ContractType, occ_symbol: str, strike: Decimal, gamma: Decimal, open_interest: int) -> OptionContract:
+def _contract(
+    contract_type: ContractType,
+    occ_symbol: str,
+    strike: Decimal,
+    gamma: Decimal,
+    open_interest: int,
+) -> OptionContract:
     return OptionContract(
         underlying="SPY",
         strike=strike,

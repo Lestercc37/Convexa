@@ -78,7 +78,7 @@ def gamma_aggregate_response(gamma: GammaAggregate) -> dict[str, Any]:
         "total_market_gamma": _num(gamma.total_market_gamma),
         "positive_gamma": _num(gamma.positive_gamma),
         "negative_gamma": _num(gamma.negative_gamma),
-        "peak_gamma_strike": _num(gamma.peak_gamma_strike),
+        "absolute_gamma_strike": _num(gamma.absolute_gamma_strike),
         "peak_gamma_value": _num(gamma.peak_gamma_value),
         "items": [
             {
@@ -181,6 +181,7 @@ def gamma_response(
         "gamma_flip": _num(gamma.gamma_flip),
         "call_wall": _num(gamma.call_wall),
         "put_wall": _num(gamma.put_wall),
+        "absolute_gamma_strike": _num(gamma.absolute_gamma_strike),
         "max_pain": _num(gamma.max_pain),
         "net_gamma": _num(gamma.net_gamma),
         "vega_exposure": _num(gamma.vega_exposure),

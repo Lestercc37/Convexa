@@ -44,6 +44,7 @@ def test_internal_trigger_persists_consolidated_gamma_for_public_get() -> None:
     with TestClient(app) as client:
         trigger = client.post("/internal/trigger-calculation/spy")
         response = client.get("/api/v1/gamma/spy")
+        stored = app.state.container.storage.get_latest_gamma_aggregate("SPY")
 
     assert trigger.status_code == 200
     assert response.status_code == 200
@@ -61,6 +62,8 @@ def test_internal_trigger_persists_consolidated_gamma_for_public_get() -> None:
         "charm_exposure",
     } <= payload.keys()
     assert payload["dealer_position"] in {"long_gamma", "short_gamma"}
+    assert stored is not None
+    assert payload["absolute_gamma_strike"] == float(stored.absolute_gamma_strike)
     assert payload["derived_metrics"] == {
         "dealer_impact_score": {
             "value": None,

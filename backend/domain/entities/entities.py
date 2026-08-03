@@ -280,7 +280,7 @@ class GammaAggregate:
     vega_exposure: Decimal = Decimal(0)
     theta_exposure: Decimal = Decimal(0)
     charm_exposure: Decimal = Decimal(0)
-    peak_gamma_strike: Decimal = Decimal("0")
+    absolute_gamma_strike: Decimal = Decimal("0")
     peak_gamma_value: Decimal = Decimal("0")
 
     def __post_init__(self) -> None:
@@ -301,7 +301,7 @@ class GammaAggregate:
             "vega_exposure",
             "theta_exposure",
             "charm_exposure",
-            "peak_gamma_strike",
+            "absolute_gamma_strike",
             "peak_gamma_value",
         ):
             _ensure_finite_decimal(getattr(self, name), InvalidOptionError, name)
