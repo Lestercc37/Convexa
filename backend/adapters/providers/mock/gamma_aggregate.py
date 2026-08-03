@@ -56,9 +56,13 @@ class FakeGammaAggregateCalculator(IGammaAggregateCalculator):
             )
 
         total_market_gamma = sum((item.net_gamma for item in items), Decimal("0"))
-        peak_gamma_item = max(items, key=lambda item: item.absolute_gamma, default=None)
-        peak_gamma_strike = peak_gamma_item.strike if peak_gamma_item is not None else Decimal("0")
-        peak_gamma_value = peak_gamma_item.absolute_gamma if peak_gamma_item is not None else Decimal("0")
+        absolute_gamma_item = max(items, key=lambda item: item.absolute_gamma, default=None)
+        absolute_gamma_strike = (
+            absolute_gamma_item.strike if absolute_gamma_item is not None else Decimal("0")
+        )
+        peak_gamma_value = (
+            absolute_gamma_item.absolute_gamma if absolute_gamma_item is not None else Decimal("0")
+        )
         return GammaAggregate(
             symbol=symbol,
             as_of=as_of,
@@ -69,6 +73,6 @@ class FakeGammaAggregateCalculator(IGammaAggregateCalculator):
             total_gamma=total_market_gamma,
             net_gamma=total_market_gamma,
             dealer_gamma_notional=total_market_gamma,
-            peak_gamma_strike=peak_gamma_strike,
+            absolute_gamma_strike=absolute_gamma_strike,
             peak_gamma_value=peak_gamma_value,
         )
