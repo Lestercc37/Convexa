@@ -24,6 +24,14 @@ class MarketSnapshotResponse(BaseModel):
     as_of: str = Field(examples=["2026-01-15T14:30:00Z"])
     price: Number = Field(examples=[552.25])
     volume: int = Field(examples=[1250000])
+    gamma_flip: Number = Field(examples=[548.5])
+    call_wall: Number = Field(examples=[555])
+    put_wall: Number = Field(examples=[540])
+    absolute_gamma_strike: Number = Field(examples=[550])
+    dealer_mode: Literal["long_gamma", "short_gamma"]
+    dealer_mode_source: Literal["agree", "price_vs_flip"]
+    dealer_mode_confirmed: bool
+    gamma_as_of: str = Field(examples=["2026-01-15T14:29:30Z"])
 
 
 class OptionContractResponse(BaseModel):
