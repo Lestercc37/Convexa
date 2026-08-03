@@ -487,6 +487,35 @@ class MarketSnapshot:
         if self.atm_iv < 0:
             raise InvalidOptionError("atm_iv cannot be negative")
 
+    @property
+    def dealer_mode(self) -> str:
+        gamma = self._required_gamma()
+        if self.dealer_mode_confirmed:
+            return gamma.dealer_position
+        return self._price_dealer_mode()
+
+    @property
+    def dealer_mode_source(self) -> str:
+        return "agree" if self.dealer_mode_confirmed else "price_vs_flip"
+
+    @property
+    def dealer_mode_confirmed(self) -> bool:
+        return self._required_gamma().dealer_position == self._price_dealer_mode()
+
+    @property
+    def gamma_as_of(self) -> datetime:
+        return self._required_gamma().as_of
+
+    def _price_dealer_mode(self) -> str:
+        gamma = self._required_gamma()
+        # Project convention: a price exactly at gamma flip counts as long gamma.
+        return "long_gamma" if self.price >= gamma.gamma_flip else "short_gamma"
+
+    def _required_gamma(self) -> GammaAggregate:
+        if self.gamma is None:
+            raise InvalidOptionError("market snapshot requires a gamma aggregate")
+        return self.gamma
+
 
 def utc_now() -> datetime:
     return datetime.now(timezone.utc)

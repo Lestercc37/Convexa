@@ -8,8 +8,8 @@ from backend.adapters.providers.mock.gamma_aggregate import FakeGammaAggregateCa
 from backend.adapters.providers.mock.gamma_exposure import FakeGammaExposureCalculator
 from backend.adapters.providers.mock.gamma_flip import FakeGammaFlipCalculator
 from backend.adapters.providers.mock.max_pain import FakeMaxPainCalculator
-from backend.adapters.providers.mock.walls import FakeWallCalculator
 from backend.adapters.providers.mock.provider import MockDataProvider
+from backend.adapters.providers.mock.walls import FakeWallCalculator
 from backend.adapters.storage.memory import InMemoryStorage
 from backend.api.serializers import chain_response, gamma_response, websocket_message
 from backend.domain.entities import (
@@ -111,11 +111,20 @@ def test_market_snapshot_is_projection_not_persisted_table_model() -> None:
     storage.save_market_price(
         MarketPrice(symbol="SPY", as_of=now, price=Decimal("552.25"), volume=1000)
     )
+    storage.save_gamma_aggregate(
+        GammaAggregate(
+            symbol="SPY",
+            as_of=now,
+            gamma_flip=Decimal("550"),
+            net_gamma=Decimal("100"),
+        )
+    )
 
     snapshot = build_market_snapshot(storage, "SPY")
 
     assert snapshot.symbol == "SPY"
     assert snapshot.price == Decimal("552.25")
+    assert snapshot.dealer_mode == "long_gamma"
 
 
 def test_websocket_message_always_includes_schema_version() -> None:

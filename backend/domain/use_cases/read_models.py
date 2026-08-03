@@ -26,11 +26,14 @@ def build_market_snapshot(storage: IStorage, underlying: str) -> MarketSnapshot:
     price = storage.get_latest_price(underlying)
     if price is None:
         raise NotFoundError(f"No market price found for {underlying}")
+    gamma = storage.get_latest_gamma_aggregate(underlying)
+    if gamma is None:
+        raise NotFoundError(f"No gamma aggregate found for {underlying}")
     return MarketSnapshot(
         symbol=price.symbol,
         as_of=price.as_of,
         price=price.price,
         volume=price.volume,
-        gamma=storage.get_latest_gamma_aggregate(underlying),
+        gamma=gamma,
         recent_flow=tuple(storage.get_recent_flow(underlying)),
     )

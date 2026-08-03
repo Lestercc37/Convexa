@@ -230,12 +230,23 @@ def gamma_history_response(symbol: str, items: list[GammaAggregate]) -> dict[str
 
 
 def market_response(snapshot: MarketSnapshot) -> dict[str, Any]:
+    gamma = snapshot.gamma
+    if gamma is None:
+        raise ValueError("market snapshot requires a gamma aggregate")
     return {
         "schema_version": SCHEMA_VERSION,
         "symbol": snapshot.symbol,
         "as_of": _dt(snapshot.as_of),
         "price": _num(snapshot.price),
         "volume": snapshot.volume,
+        "gamma_flip": _num(gamma.gamma_flip),
+        "call_wall": _num(gamma.call_wall),
+        "put_wall": _num(gamma.put_wall),
+        "absolute_gamma_strike": _num(gamma.absolute_gamma_strike),
+        "dealer_mode": snapshot.dealer_mode,
+        "dealer_mode_source": snapshot.dealer_mode_source,
+        "dealer_mode_confirmed": snapshot.dealer_mode_confirmed,
+        "gamma_as_of": _dt(snapshot.gamma_as_of),
     }
 
 
