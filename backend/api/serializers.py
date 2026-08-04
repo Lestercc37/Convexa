@@ -234,6 +234,9 @@ def market_response(snapshot: MarketSnapshot) -> dict[str, Any]:
     gamma = snapshot.gamma
     if gamma is None:
         raise ValueError("market snapshot requires a gamma aggregate")
+    expected_move = snapshot.expected_move
+    if expected_move is None:
+        raise ValueError("market snapshot requires expected move")
     return {
         "schema_version": SCHEMA_VERSION,
         "symbol": snapshot.symbol,
@@ -248,6 +251,15 @@ def market_response(snapshot: MarketSnapshot) -> dict[str, Any]:
         "dealer_mode_source": snapshot.dealer_mode_source,
         "dealer_mode_confirmed": snapshot.dealer_mode_confirmed,
         "gamma_as_of": _dt(snapshot.gamma_as_of),
+        "expected_move": {
+            "implied_1sd_dollars": _num(expected_move.implied_1sd_dollars),
+            "implied_1sd_pct": _num(expected_move.implied_1sd_pct),
+            "remaining_1sd_dollars": _num(expected_move.remaining_1sd_dollars),
+            "remaining_1sd_pct": _num(expected_move.remaining_1sd_pct),
+            "upper_bound": _num(expected_move.upper_bound),
+            "lower_bound": _num(expected_move.lower_bound),
+            "atm_iv": _num(expected_move.atm_iv),
+        },
     }
 
 

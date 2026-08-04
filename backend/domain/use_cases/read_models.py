@@ -4,14 +4,24 @@ from datetime import date, datetime, timezone
 
 from backend.domain.entities import MarketSnapshot, OptionChain
 from backend.domain.ports import IDataProvider, IStorage
+from backend.domain.use_cases.calculate_expected_move import calculate_expected_move
 from backend.domain.use_cases.errors import NotFoundError
 
 DEFAULT_FRESHNESS_SECONDS = 60
 
 
-def get_option_chain(storage: IStorage, provider: IDataProvider, underlying: str, expiration: date | None = None, freshness_seconds: int = DEFAULT_FRESHNESS_SECONDS) -> OptionChain:
+def get_option_chain(
+    storage: IStorage,
+    provider: IDataProvider,
+    underlying: str,
+    expiration: date | None = None,
+    freshness_seconds: int = DEFAULT_FRESHNESS_SECONDS,
+) -> OptionChain:
     chain = storage.get_latest_chain_snapshot(underlying, expiration)
-    if chain is not None and (datetime.now(timezone.utc) - chain.as_of).total_seconds() <= freshness_seconds:
+    if (
+        chain is not None
+        and (datetime.now(timezone.utc) - chain.as_of).total_seconds() <= freshness_seconds
+    ):
         return chain
     chain = provider.get_option_chain(underlying, expiration)
     storage.save_chain_snapshot(chain)
@@ -29,11 +39,15 @@ def build_market_snapshot(storage: IStorage, underlying: str) -> MarketSnapshot:
     gamma = storage.get_latest_gamma_aggregate(underlying)
     if gamma is None:
         raise NotFoundError(f"No gamma aggregate found for {underlying}")
+    chain = storage.get_latest_chain_snapshot(underlying)
+    if chain is None:
+        raise NotFoundError(f"No option chain found for {underlying}")
     return MarketSnapshot(
         symbol=price.symbol,
         as_of=price.as_of,
         price=price.price,
         volume=price.volume,
         gamma=gamma,
+        expected_move=calculate_expected_move(chain, price.as_of),
         recent_flow=tuple(storage.get_recent_flow(underlying)),
     )

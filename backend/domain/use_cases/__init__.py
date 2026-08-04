@@ -2,6 +2,10 @@ from backend.domain.use_cases.calculate_derived_metrics import (
     CalculateDerivedMetricsUseCase,
     capture_daily_gamma_reference,
 )
+from backend.domain.use_cases.calculate_expected_move import (
+    calculate_expected_move,
+    calculate_time_to_close_pct,
+)
 from backend.domain.use_cases.calculate_gamma_aggregate import CalculateGammaAggregateUseCase
 from backend.domain.use_cases.calculate_gamma_exposure import CalculateGammaExposureUseCase
 from backend.domain.use_cases.calculate_gamma_flip import CalculateGammaFlipUseCase
@@ -31,6 +35,8 @@ __all__ = [
     "GetMarketSnapshotUseCase",
     "LoadOptionChainUseCase",
     "build_market_snapshot",
+    "calculate_expected_move",
+    "calculate_time_to_close_pct",
     "calculate_gamma_exposure",
     "capture_daily_gamma_reference",
     "get_flow",

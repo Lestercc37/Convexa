@@ -18,6 +18,16 @@ from backend.domain.entities import (
 Number = int | float
 
 
+class ExpectedMoveResponse(BaseModel):
+    implied_1sd_dollars: Number
+    implied_1sd_pct: Number
+    remaining_1sd_dollars: Number
+    remaining_1sd_pct: Number
+    upper_bound: Number
+    lower_bound: Number
+    atm_iv: Number
+
+
 class MarketSnapshotResponse(BaseModel):
     schema_version: int = Field(examples=[1])
     symbol: str = Field(examples=["SPY"])
@@ -32,6 +42,7 @@ class MarketSnapshotResponse(BaseModel):
     dealer_mode_source: Literal["agree", "price_vs_flip"]
     dealer_mode_confirmed: bool
     gamma_as_of: str = Field(examples=["2026-01-15T14:29:30Z"])
+    expected_move: ExpectedMoveResponse
 
 
 class OptionContractResponse(BaseModel):
