@@ -8,6 +8,7 @@ import { DerivedMetricsBar } from "./derived-metrics-bar";
 import { GravityMap } from "./gravity-map";
 import { PriceChart } from "./price-chart";
 import { RegimeBadge } from "./regime-badge";
+import { VolatilitySmile } from "./volatility-smile";
 
 const POLLING_INTERVAL_MS = 30_000;
 
@@ -112,6 +113,7 @@ export function Dashboard() {
           </div>
           <PriceChart key={symbol} symbol={symbol} candles={candles} gamma={gamma} />
           <DerivedMetricsBar metrics={gamma.derived_metrics} />
+          <VolatilitySmile key={symbol} symbol={symbol} marketPrice={market.price} />
         </div>
       ) : (
         <section className="panel status" aria-live="polite">

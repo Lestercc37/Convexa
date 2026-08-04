@@ -9,6 +9,32 @@ export type UnderlyingsResponse = {
   underlyings: Underlying[];
 };
 
+export type OptionContract = {
+  occ_symbol: string;
+  strike: number;
+  expiration: string;
+  type: "call" | "put";
+  bid: number;
+  ask: number;
+  iv: number;
+  delta: number;
+  gamma: number;
+  theta: number;
+  vega: number;
+  charm: number;
+  vanna: number;
+  open_interest: number;
+  volume: number;
+};
+
+export type OptionChainResponse = {
+  schema_version: number;
+  symbol: string;
+  as_of: string;
+  spot_price: number;
+  contracts: OptionContract[];
+};
+
 export type DerivedMetricValue = {
   value: number | null;
   provisional: boolean;

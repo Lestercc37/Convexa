@@ -61,6 +61,7 @@ def test_chain_fetch_persists_and_serializes_contract_shape() -> None:
 
     assert payload["schema_version"] == 1
     assert payload["symbol"] == "SPY"
+    assert payload["contracts"][0]["expiration"] == chain.contracts[0].expiration.isoformat()
 
 
 def test_gamma_response_derives_dealer_position() -> None:
