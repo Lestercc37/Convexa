@@ -119,9 +119,18 @@ export function Dashboard() {
             <RegimeBadge gamma={gamma} market={market} />
             <GravityMap gamma={gamma} market={market} />
           </div>
-          <PriceChart key={symbol} symbol={symbol} candles={candles} gamma={gamma} />
+          <PriceChart
+            key={`price-chart-${symbol}`}
+            symbol={symbol}
+            candles={candles}
+            gamma={gamma}
+          />
           <DerivedMetricsBar metrics={gamma.derived_metrics} />
-          <VolatilitySmile key={symbol} symbol={symbol} marketPrice={market.price} />
+          <VolatilitySmile
+            key={`volatility-smile-${symbol}`}
+            symbol={symbol}
+            marketPrice={market.price}
+          />
         </div>
       ) : (
         <section className="panel status" aria-live="polite">
