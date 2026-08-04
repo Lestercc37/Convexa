@@ -1,4 +1,9 @@
-import type { GammaResponse, MarketResponse, UnderlyingsResponse } from "./types";
+import type {
+  GammaResponse,
+  MarketResponse,
+  OptionChainResponse,
+  UnderlyingsResponse,
+} from "./types";
 
 const API_PREFIX = "/backend/api/v1";
 
@@ -18,4 +23,18 @@ export function getGamma(symbol: string, signal?: AbortSignal) {
 
 export function getMarket(symbol: string, signal?: AbortSignal) {
   return getJson<MarketResponse>(`/market/${encodeURIComponent(symbol)}`, signal);
+}
+
+export function getOptionChain(
+  symbol: string,
+  expiration?: string,
+  signal?: AbortSignal,
+) {
+  const query = expiration
+    ? `?${new URLSearchParams({ expiration }).toString()}`
+    : "";
+  return getJson<OptionChainResponse>(
+    `/chain/${encodeURIComponent(symbol)}${query}`,
+    signal,
+  );
 }

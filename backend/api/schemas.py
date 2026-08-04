@@ -39,6 +39,7 @@ class OptionContractResponse(BaseModel):
 
     occ_symbol: str = Field(examples=["SPY260220C00540000"])
     strike: Number = Field(examples=[540])
+    expiration: date = Field(examples=["2026-02-20"])
     contract_type: Literal["call", "put"] = Field(alias="type", examples=["call"])
     bid: Number = Field(examples=[1.2])
     ask: Number = Field(examples=[1.25])

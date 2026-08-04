@@ -127,6 +127,26 @@ h1 { margin: 0; font-size: clamp(1.7rem, 3vw, 2.4rem); letter-spacing: -0.04em; 
 .metric-progress { display: block; margin-top: 7px; color: var(--muted); font-size: 0.72rem; }
 .metric-card.provisional .metric-value { color: #6f7c8c; }
 
+.smile-panel { padding: 28px; }
+.smile-heading { align-items: center; }
+.smile-role { margin: 7px 0 0; color: var(--muted); font-size: 0.75rem; }
+.expiration-control { display: grid; gap: 6px; min-width: 170px; color: var(--muted); font-size: 0.72rem; }
+.expiration-control select { border: 1px solid var(--line); border-radius: 9px; background: var(--surface-raised); color: var(--text); padding: 8px 10px; }
+.smile-chart-wrap { margin-top: 22px; }
+.smile-chart { display: block; width: 100%; height: auto; max-height: 360px; }
+.smile-axis { stroke: var(--line); stroke-width: 1.5; }
+.smile-axis-label, .smile-atm-label { fill: var(--muted); font-size: 12px; text-anchor: middle; }
+.smile-atm { stroke: var(--warning); stroke-width: 1.5; stroke-dasharray: 5 5; }
+.smile-atm-label { fill: var(--warning); font-size: 11px; }
+.smile-point { stroke: rgba(8, 12, 18, 0.8); stroke-width: 2; }
+.smile-point.call, .legend-dot.call { fill: var(--calm); background: var(--calm); }
+.smile-point.put, .legend-dot.put { fill: var(--risk); background: var(--risk); }
+.smile-legend { display: flex; justify-content: center; gap: 18px; color: var(--muted); font-size: 0.75rem; }
+.smile-legend span { display: inline-flex; align-items: center; gap: 6px; }
+.legend-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; }
+.smile-status { min-height: 260px; display: grid; place-items: center; margin: 0; color: var(--muted); }
+.smile-status.error { color: #ff9c84; }
+
 .status { min-height: 320px; display: grid; place-items: center; color: var(--muted); text-align: center; }
 .status.error { color: #ff9c84; }
 
@@ -142,4 +162,6 @@ h1 { margin: 0; font-size: clamp(1.7rem, 3vw, 2.4rem); letter-spacing: -0.04em; 
   .metrics-bar { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .metric-card:nth-child(2) { border-right: 0; }
   .metric-card:nth-child(-n + 2) { border-bottom: 1px solid var(--line); }
+  .smile-heading { align-items: stretch; flex-direction: column; }
+  .expiration-control { width: 100%; }
 }

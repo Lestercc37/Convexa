@@ -42,6 +42,7 @@ def chain_response(chain: OptionChain) -> dict[str, Any]:
             {
                 "occ_symbol": contract.occ_symbol,
                 "strike": _num(contract.strike),
+                "expiration": contract.expiration.isoformat(),
                 "type": contract.contract_type.value,
                 "bid": _num(contract.bid),
                 "ask": _num(contract.ask),
