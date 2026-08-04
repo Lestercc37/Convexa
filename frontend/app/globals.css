@@ -54,6 +54,7 @@ button, select { font: inherit; }
 }
 
 h1 { margin: 0; font-size: clamp(1.7rem, 3vw, 2.4rem); letter-spacing: -0.04em; }
+.header-logo { display: block; width: auto; height: 40px; margin-bottom: 10px; object-fit: contain; object-position: left center; }
 
 .symbol-control { display: grid; gap: 7px; min-width: 160px; }
 .symbol-control label { color: var(--muted); font-size: 0.78rem; font-weight: 650; }
@@ -115,7 +116,9 @@ h1 { margin: 0; font-size: clamp(1.7rem, 3vw, 2.4rem); letter-spacing: -0.04em; 
 .price-value { display: block; margin-top: 12px; color: var(--warning); font-size: 0.78rem; font-weight: 750; }
 
 .price-chart-panel { position: relative; min-height: 500px; padding: 28px; overflow: hidden; }
-.price-chart { width: 100%; height: 420px; margin-top: 18px; }
+.price-chart-frame { position: relative; margin-top: 18px; }
+.price-chart { width: 100%; height: 420px; }
+.chart-watermark { position: absolute; left: 18px; bottom: 24px; z-index: 2; width: 92px; height: auto; opacity: 0.16; pointer-events: none; user-select: none; }
 .chart-empty { position: absolute; inset: 52% 0 auto; margin: 0; color: var(--muted); text-align: center; pointer-events: none; }
 
 .metrics-bar { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); overflow: hidden; }

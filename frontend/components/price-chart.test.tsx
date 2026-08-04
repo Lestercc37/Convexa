@@ -57,7 +57,7 @@ const gamma: GammaResponse = {
 
 describe("PriceChart", () => {
   it("mounts Lightweight Charts with candles and Gamma overlays", () => {
-    render(
+    const { container } = render(
       <PriceChart
         symbol="SPY"
         gamma={gamma}
@@ -68,8 +68,15 @@ describe("PriceChart", () => {
     );
 
     expect(screen.getByLabelText("Chart de velas para SPY")).toBeInTheDocument();
+    expect(container.querySelector('img[src*="logo-watermark.png"]')).toBeInTheDocument();
     expect(screen.getByText("SPY · Velas de 1 minuto")).toBeInTheDocument();
     expect(chartMocks.createChart).toHaveBeenCalledOnce();
+    expect(chartMocks.createChart).toHaveBeenCalledWith(
+      expect.any(HTMLElement),
+      expect.objectContaining({
+        layout: expect.objectContaining({ attributionLogo: false }),
+      }),
+    );
     expect(chartMocks.setData).toHaveBeenCalledWith([
       { time: 1_786_026_600, open: 548, high: 552, low: 548, close: 550 },
     ]);

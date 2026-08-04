@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import { useEffect, useRef } from "react";
 import {
   CandlestickSeries,
@@ -67,6 +68,7 @@ export function PriceChart({ symbol, candles, gamma }: PriceChartProps) {
       layout: {
         background: { type: ColorType.Solid, color: "transparent" },
         textColor: "#91a0b2",
+        attributionLogo: false,
       },
       grid: {
         vertLines: { color: "rgba(42, 55, 70, 0.42)" },
@@ -128,11 +130,21 @@ export function PriceChart({ symbol, candles, gamma }: PriceChartProps) {
         </div>
         <span className="mode-pill">En vivo</span>
       </div>
-      <div
-        ref={containerRef}
-        className="price-chart"
-        aria-label={`Chart de velas para ${symbol}`}
-      />
+      <div className="price-chart-frame">
+        <div
+          ref={containerRef}
+          className="price-chart"
+          aria-label={`Chart de velas para ${symbol}`}
+        />
+        <Image
+          src="/logo-watermark.png"
+          alt=""
+          width={360}
+          height={215}
+          className="chart-watermark"
+          aria-hidden="true"
+        />
+      </div>
       {!candles.length && <p className="chart-empty">Esperando la primera muestra de precio…</p>}
     </section>
   );
