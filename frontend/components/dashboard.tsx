@@ -1,9 +1,11 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { getGamma, getMarket, getUnderlyings } from "@/lib/api";
+import { aggregateMinuteCandles, type PricePoint } from "@/lib/candles";
 import type { GammaResponse, MarketResponse, Underlying } from "@/lib/types";
 import { GravityMap } from "./gravity-map";
+import { PriceChart } from "./price-chart";
 import { RegimeBadge } from "./regime-badge";
 
 const POLLING_INTERVAL_MS = 30_000;
@@ -13,7 +15,9 @@ export function Dashboard() {
   const [symbol, setSymbol] = useState("");
   const [gamma, setGamma] = useState<GammaResponse | null>(null);
   const [market, setMarket] = useState<MarketResponse | null>(null);
+  const [pricePoints, setPricePoints] = useState<PricePoint[]>([]);
   const [error, setError] = useState("");
+  const candles = useMemo(() => aggregateMinuteCandles(pricePoints), [pricePoints]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -39,6 +43,10 @@ export function Dashboard() {
       ]);
       setGamma(gammaData);
       setMarket(marketData);
+      setPricePoints((current) => [
+        ...current,
+        { timestamp: marketData.as_of, price: marketData.price },
+      ]);
       setError("");
     } catch (reason: unknown) {
       if (!signal?.aborted) {
@@ -77,6 +85,7 @@ export function Dashboard() {
             onChange={(event) => {
               setGamma(null);
               setMarket(null);
+              setPricePoints([]);
               setSymbol(event.target.value);
             }}
             disabled={!underlyings.length}
@@ -95,9 +104,12 @@ export function Dashboard() {
           {error}
         </section>
       ) : gamma && market ? (
-        <div className="content-grid">
-          <RegimeBadge gamma={gamma} market={market} />
-          <GravityMap gamma={gamma} market={market} />
+        <div className="dashboard-content">
+          <div className="content-grid">
+            <RegimeBadge gamma={gamma} market={market} />
+            <GravityMap gamma={gamma} market={market} />
+          </div>
+          <PriceChart key={symbol} symbol={symbol} candles={candles} gamma={gamma} />
         </div>
       ) : (
         <section className="panel status" aria-live="polite">
