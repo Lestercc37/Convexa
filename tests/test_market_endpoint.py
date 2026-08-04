@@ -3,6 +3,7 @@ from decimal import Decimal
 
 from fastapi.testclient import TestClient
 
+from backend.adapters.providers.mock.provider import MockDataProvider
 from backend.domain.entities import GammaAggregate, MarketPrice
 from backend.main import app
 
@@ -51,10 +52,12 @@ def test_market_endpoint_confirms_agreeing_dealer_mode_at_gamma_flip() -> None:
                 net_gamma=Decimal(100),
             )
         )
+        storage.save_chain_snapshot(MockDataProvider().get_option_chain("SPY"))
         response = client.get("/api/v1/market/SPY")
 
     assert response.status_code == 200
-    assert response.json() == {
+    payload = response.json()
+    assert {key: payload[key] for key in payload if key != "expected_move"} == {
         "schema_version": 1,
         "symbol": "SPY",
         "as_of": "2026-08-03T14:31:00Z",
@@ -69,6 +72,7 @@ def test_market_endpoint_confirms_agreeing_dealer_mode_at_gamma_flip() -> None:
         "dealer_mode_confirmed": True,
         "gamma_as_of": "2026-08-03T14:30:00Z",
     }
+    assert payload["expected_move"]["atm_iv"] == 0.18
 
 
 def test_market_endpoint_prefers_price_when_dealer_mode_diverges() -> None:
@@ -92,6 +96,7 @@ def test_market_endpoint_prefers_price_when_dealer_mode_diverges() -> None:
                 net_gamma=Decimal(-100),
             )
         )
+        storage.save_chain_snapshot(MockDataProvider().get_option_chain("SPY"))
         response = client.get("/api/v1/market/SPY")
 
     assert response.status_code == 200

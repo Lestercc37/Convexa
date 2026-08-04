@@ -469,6 +469,7 @@ class MarketSnapshot:
     skew_25d: Decimal = Decimal("0")
     atm_iv: Decimal = Decimal("0")
     gamma: GammaAggregate | None = None
+    expected_move: ExpectedMove | None = None
     recent_flow: tuple[FlowEvent, ...] = field(default_factory=tuple)
     state: MarketState = MarketState.UNKNOWN
 
@@ -515,6 +516,29 @@ class MarketSnapshot:
         if self.gamma is None:
             raise InvalidOptionError("market snapshot requires a gamma aggregate")
         return self.gamma
+
+
+@dataclass(frozen=True, slots=True)
+class ExpectedMove:
+    implied_1sd_dollars: Decimal
+    implied_1sd_pct: Decimal
+    remaining_1sd_dollars: Decimal
+    remaining_1sd_pct: Decimal
+    upper_bound: Decimal
+    lower_bound: Decimal
+    atm_iv: Decimal
+
+    def __post_init__(self) -> None:
+        for name in (
+            "implied_1sd_dollars",
+            "implied_1sd_pct",
+            "remaining_1sd_dollars",
+            "remaining_1sd_pct",
+            "upper_bound",
+            "lower_bound",
+            "atm_iv",
+        ):
+            _ensure_finite_decimal(getattr(self, name), InvalidOptionError, name)
 
 
 def utc_now() -> datetime:

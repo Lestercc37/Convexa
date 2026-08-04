@@ -120,12 +120,14 @@ def test_market_snapshot_is_projection_not_persisted_table_model() -> None:
             net_gamma=Decimal("100"),
         )
     )
+    storage.save_chain_snapshot(MockDataProvider().get_option_chain("SPY"))
 
     snapshot = build_market_snapshot(storage, "SPY")
 
     assert snapshot.symbol == "SPY"
     assert snapshot.price == Decimal("552.25")
     assert snapshot.dealer_mode == "long_gamma"
+    assert snapshot.expected_move is not None
 
 
 def test_websocket_message_always_includes_schema_version() -> None:
