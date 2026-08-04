@@ -71,6 +71,7 @@ h1 { margin: 0; font-size: clamp(1.7rem, 3vw, 2.4rem); letter-spacing: -0.04em; 
 }
 
 .content-grid { display: grid; grid-template-columns: 0.82fr 1.5fr; gap: 18px; }
+.dashboard-content { display: grid; gap: 18px; }
 
 .panel {
   border: 1px solid var(--line);
@@ -112,6 +113,10 @@ h1 { margin: 0; font-size: clamp(1.7rem, 3vw, 2.4rem); letter-spacing: -0.04em; 
 .price-marker { position: absolute; top: 81px; transform: translateX(-50%); text-align: center; width: 110px; }
 .price-dot { display: block; width: 15px; height: 15px; margin: 0 auto; border: 3px solid var(--surface); border-radius: 50%; background: var(--warning); box-shadow: 0 0 0 2px rgba(243, 201, 105, 0.3); }
 .price-value { display: block; margin-top: 12px; color: var(--warning); font-size: 0.78rem; font-weight: 750; }
+
+.price-chart-panel { position: relative; min-height: 500px; padding: 28px; overflow: hidden; }
+.price-chart { width: 100%; height: 420px; margin-top: 18px; }
+.chart-empty { position: absolute; inset: 52% 0 auto; margin: 0; color: var(--muted); text-align: center; pointer-events: none; }
 
 .status { min-height: 320px; display: grid; place-items: center; color: var(--muted); text-align: center; }
 .status.error { color: #ff9c84; }
