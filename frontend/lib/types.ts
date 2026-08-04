@@ -83,4 +83,15 @@ export type MarketResponse = {
   dealer_mode: "long_gamma" | "short_gamma";
   dealer_mode_source: "agree" | "price_vs_flip";
   dealer_mode_confirmed: boolean;
+  expected_move?: ExpectedMove;
+};
+
+export type ExpectedMove = {
+  implied_1sd_dollars: number;
+  implied_1sd_pct: number;
+  remaining_1sd_dollars: number;
+  remaining_1sd_pct: number;
+  upper_bound: number;
+  lower_bound: number;
+  atm_iv: number;
 };

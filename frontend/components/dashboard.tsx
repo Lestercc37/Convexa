@@ -6,6 +6,7 @@ import { getGamma, getMarket, getUnderlyings } from "@/lib/api";
 import { aggregateMinuteCandles, type PricePoint } from "@/lib/candles";
 import type { GammaResponse, MarketResponse, Underlying } from "@/lib/types";
 import { DerivedMetricsBar } from "./derived-metrics-bar";
+import { ExpectedMoveWidget } from "./expected-move-widget";
 import { GravityMap } from "./gravity-map";
 import { PriceChart } from "./price-chart";
 import { RegimeBadge } from "./regime-badge";
@@ -117,6 +118,10 @@ export function Dashboard() {
         <div className="dashboard-content">
           <div className="content-grid">
             <RegimeBadge gamma={gamma} market={market} />
+            <ExpectedMoveWidget
+              key={`expected-move-${symbol}`}
+              expectedMove={market.expected_move}
+            />
             <GravityMap gamma={gamma} market={market} />
           </div>
           <PriceChart
