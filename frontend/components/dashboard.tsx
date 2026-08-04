@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { getGamma, getMarket, getUnderlyings } from "@/lib/api";
 import { aggregateMinuteCandles, type PricePoint } from "@/lib/candles";
@@ -76,7 +77,14 @@ export function Dashboard() {
     <main className="dashboard">
       <header className="topbar">
         <div>
-          <p className="eyebrow">Convexa · Options Intelligence</p>
+          <Image
+            src="/logo-header.png"
+            alt="Convexa — Volatility Exposure Edge"
+            width={485}
+            height={215}
+            className="header-logo"
+            priority
+          />
           <h1>Gamma Dashboard</h1>
         </div>
         <div className="symbol-control">
