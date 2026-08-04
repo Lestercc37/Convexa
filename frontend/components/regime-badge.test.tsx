@@ -1,6 +1,7 @@
 import { render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import type { GammaResponse, MarketResponse } from "@/lib/types";
+import { derivedMetricsFixture } from "@/test/fixtures";
 import { RegimeBadge } from "./regime-badge";
 
 const gamma: GammaResponse = {
@@ -12,6 +13,7 @@ const gamma: GammaResponse = {
   put_wall: 540,
   absolute_gamma_strike: 550,
   dealer_position: "long_gamma",
+  derived_metrics: derivedMetricsFixture,
 };
 
 const market: MarketResponse = {

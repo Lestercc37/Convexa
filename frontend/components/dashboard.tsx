@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { getGamma, getMarket, getUnderlyings } from "@/lib/api";
 import { aggregateMinuteCandles, type PricePoint } from "@/lib/candles";
 import type { GammaResponse, MarketResponse, Underlying } from "@/lib/types";
+import { DerivedMetricsBar } from "./derived-metrics-bar";
 import { GravityMap } from "./gravity-map";
 import { PriceChart } from "./price-chart";
 import { RegimeBadge } from "./regime-badge";
@@ -110,6 +111,7 @@ export function Dashboard() {
             <GravityMap gamma={gamma} market={market} />
           </div>
           <PriceChart key={symbol} symbol={symbol} candles={candles} gamma={gamma} />
+          <DerivedMetricsBar metrics={gamma.derived_metrics} />
         </div>
       ) : (
         <section className="panel status" aria-live="polite">

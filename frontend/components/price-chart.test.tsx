@@ -1,6 +1,7 @@
 import { render, screen } from "@testing-library/react";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { GammaResponse } from "@/lib/types";
+import { derivedMetricsFixture } from "@/test/fixtures";
 import { PriceChart } from "./price-chart";
 
 const chartMocks = vi.hoisted(() => ({
@@ -51,6 +52,7 @@ const gamma: GammaResponse = {
   put_wall: 540,
   absolute_gamma_strike: 550,
   dealer_position: "long_gamma",
+  derived_metrics: derivedMetricsFixture,
 };
 
 describe("PriceChart", () => {

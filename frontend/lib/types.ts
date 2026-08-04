@@ -9,6 +9,33 @@ export type UnderlyingsResponse = {
   underlyings: Underlying[];
 };
 
+export type DerivedMetricValue = {
+  value: number | null;
+  provisional: boolean;
+  days_accumulated: number;
+};
+
+export type MarketBiasMetric = {
+  score: number | null;
+  label: "bullish" | "bearish" | "neutral" | null;
+  provisional: boolean;
+  days_accumulated: number;
+};
+
+export type VolatilityRegimeMetric = {
+  iv_rank: number | null;
+  label: "low" | "moderate" | "high" | null;
+  provisional: boolean;
+  days_accumulated: number;
+};
+
+export type DerivedMetrics = {
+  dealer_impact_score: DerivedMetricValue;
+  signal_alignment_score: DerivedMetricValue;
+  market_bias: MarketBiasMetric;
+  volatility_regime: VolatilityRegimeMetric;
+};
+
 export type GammaResponse = {
   schema_version: number;
   symbol: string;
@@ -18,6 +45,7 @@ export type GammaResponse = {
   put_wall: number;
   absolute_gamma_strike: number;
   dealer_position: "long_gamma" | "short_gamma";
+  derived_metrics: DerivedMetrics;
 };
 
 export type MarketResponse = {
