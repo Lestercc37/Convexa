@@ -71,8 +71,20 @@ h1 { margin: 0; font-size: clamp(1.7rem, 3vw, 2.4rem); letter-spacing: -0.04em; 
   background-repeat: no-repeat;
 }
 
-.content-grid { display: grid; grid-template-columns: 0.82fr 1.5fr; gap: 18px; }
+.content-grid { display: grid; grid-template-columns: 0.82fr 1fr 1.5fr; gap: 18px; }
 .dashboard-content { display: grid; gap: 18px; }
+
+.expected-move {
+  align-content: center;
+  display: grid;
+  gap: 10px;
+  min-height: 160px;
+  padding: 24px;
+}
+
+.expected-move p { margin: 0; }
+.expected-move-primary { color: var(--text); font-size: 1rem; font-weight: 700; line-height: 1.55; }
+.expected-move-remaining { color: var(--muted); font-size: 0.9rem; }
 
 .panel {
   border: 1px solid var(--line);
