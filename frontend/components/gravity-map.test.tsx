@@ -1,6 +1,7 @@
 import { render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import type { GammaResponse, MarketResponse } from "@/lib/types";
+import { derivedMetricsFixture } from "@/test/fixtures";
 import { GravityMap } from "./gravity-map";
 
 const market: MarketResponse = {
@@ -9,6 +10,9 @@ const market: MarketResponse = {
   as_of: "2026-08-03T14:30:05Z",
   price: 549.1,
   volume: 1_000_000,
+  dealer_mode: "long_gamma",
+  dealer_mode_source: "agree",
+  dealer_mode_confirmed: true,
 };
 
 function gamma(absoluteGammaStrike: number): GammaResponse {
@@ -21,6 +25,7 @@ function gamma(absoluteGammaStrike: number): GammaResponse {
     put_wall: 540,
     absolute_gamma_strike: absoluteGammaStrike,
     dealer_position: "short_gamma",
+    derived_metrics: derivedMetricsFixture,
   };
 }
 

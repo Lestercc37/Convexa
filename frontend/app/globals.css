@@ -118,6 +118,15 @@ h1 { margin: 0; font-size: clamp(1.7rem, 3vw, 2.4rem); letter-spacing: -0.04em; 
 .price-chart { width: 100%; height: 420px; margin-top: 18px; }
 .chart-empty { position: absolute; inset: 52% 0 auto; margin: 0; color: var(--muted); text-align: center; pointer-events: none; }
 
+.metrics-bar { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); overflow: hidden; }
+.metric-card { min-width: 0; padding: 20px; border-right: 1px solid var(--line); }
+.metric-card:last-child { border-right: 0; }
+.metric-name { display: block; min-height: 2.3em; color: var(--muted); font-size: 0.74rem; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; }
+.metric-value { display: block; margin-top: 8px; color: var(--text); font-size: 1.35rem; }
+.metric-note { display: block; margin-top: 10px; color: var(--muted); font-size: 0.67rem; line-height: 1.35; }
+.metric-progress { display: block; margin-top: 7px; color: var(--muted); font-size: 0.72rem; }
+.metric-card.provisional .metric-value { color: #6f7c8c; }
+
 .status { min-height: 320px; display: grid; place-items: center; color: var(--muted); text-align: center; }
 .status.error { color: #ff9c84; }
 
@@ -130,4 +139,7 @@ h1 { margin: 0; font-size: clamp(1.7rem, 3vw, 2.4rem); letter-spacing: -0.04em; 
   .gravity-panel { padding: 22px 14px; }
   .gravity-map { margin-inline: 6px; }
   .marker { width: 94px; }
+  .metrics-bar { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .metric-card:nth-child(2) { border-right: 0; }
+  .metric-card:nth-child(-n + 2) { border-bottom: 1px solid var(--line); }
 }
