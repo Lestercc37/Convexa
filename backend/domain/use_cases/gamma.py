@@ -80,6 +80,16 @@ class CalculateGammaExposureOrchestrator:
             ),
             Decimal(0),
         )
+        vanna_exposure = sum(
+            (
+                contract.greeks.vanna
+                * Decimal(contract.open_interest)
+                * contract_multiplier
+                * enriched_chain.spot_price
+                for contract in enriched_chain.contracts
+            ),
+            Decimal(0),
+        )
 
         result = replace(
             aggregate,
@@ -92,6 +102,7 @@ class CalculateGammaExposureOrchestrator:
             vega_exposure=vega_exposure,
             theta_exposure=theta_exposure,
             charm_exposure=charm_exposure,
+            vanna_exposure=vanna_exposure,
         )
         self._storage.save_gamma_aggregate(result)
         return result

@@ -191,12 +191,14 @@ class PostgreSQLStorage:
                         time, underlying_id, gamma_flip, call_wall, put_wall,
                         max_pain, net_gamma, dealer_gamma_notional,
                         vega_exposure, theta_exposure, charm_exposure,
+                        vanna_exposure,
                         absolute_gamma_strike
                     )
                     VALUES (
                         :time, :underlying_id, :gamma_flip, :call_wall, :put_wall,
                         :max_pain, :net_gamma, :dealer_gamma_notional,
                         :vega_exposure, :theta_exposure, :charm_exposure,
+                        :vanna_exposure,
                         :absolute_gamma_strike
                     )
                     """
@@ -213,6 +215,7 @@ class PostgreSQLStorage:
                     "vega_exposure": gamma.vega_exposure,
                     "theta_exposure": gamma.theta_exposure,
                     "charm_exposure": gamma.charm_exposure,
+                    "vanna_exposure": gamma.vanna_exposure,
                     "absolute_gamma_strike": gamma.absolute_gamma_strike,
                 },
             )
@@ -227,6 +230,7 @@ class PostgreSQLStorage:
                            g.put_wall, g.max_pain, g.net_gamma,
                            g.dealer_gamma_notional, g.vega_exposure,
                            g.theta_exposure, g.charm_exposure,
+                           g.vanna_exposure,
                            g.absolute_gamma_strike
                     FROM gamma_aggregates AS g
                     JOIN underlyings AS u ON u.id = g.underlying_id
@@ -253,6 +257,7 @@ class PostgreSQLStorage:
                            g.put_wall, g.max_pain, g.net_gamma,
                            g.dealer_gamma_notional, g.vega_exposure,
                            g.theta_exposure, g.charm_exposure,
+                           g.vanna_exposure,
                            g.absolute_gamma_strike
                     FROM gamma_aggregates AS g
                     JOIN underlyings AS u ON u.id = g.underlying_id
@@ -493,5 +498,6 @@ class PostgreSQLStorage:
             vega_exposure=Decimal(mapping["vega_exposure"]),
             theta_exposure=Decimal(mapping["theta_exposure"]),
             charm_exposure=Decimal(mapping["charm_exposure"]),
+            vanna_exposure=Decimal(mapping["vanna_exposure"]),
             absolute_gamma_strike=Decimal(mapping["absolute_gamma_strike"]),
         )

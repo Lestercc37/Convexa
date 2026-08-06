@@ -37,10 +37,12 @@ Motor: PostgreSQL + extensión TimescaleDB para las tablas de series temporales 
 | iv | numeric | |
 | delta | numeric | MVP — siempre presente |
 | gamma | numeric | MVP — siempre presente |
-| theta | numeric | nullable — se agrega según necesidad (Domain Model v1.1) |
-| vega | numeric | nullable — se agrega según necesidad |
+| theta | numeric | obligatorio |
+| vega | numeric | obligatorio |
+| charm | numeric | obligatorio |
+| vanna | numeric | obligatorio |
 
-Charm/Vanna/Vomma: no tienen columna todavía — se agregan solo cuando el Gamma Engine los necesite para el modelo de Dealer Bias.
+Vomma no tiene columna todavía; se agregará cuando el Gamma Engine lo necesite.
 
 Índice compuesto: `(contract_id, time DESC)`.
 
@@ -57,9 +59,15 @@ Tabla oficial para el histórico de la entidad de dominio `GammaAggregate` (Doma
 | max_pain | numeric | precio |
 | net_gamma | numeric | |
 | dealer_gamma_notional | numeric | |
+| vega_exposure | numeric | Σ(Vega × OI × 100) |
+| theta_exposure | numeric | Σ(Theta × OI × 100) |
+| charm_exposure | numeric | Σ(Charm × OI × 100) |
+| vanna_exposure | numeric | Σ(Vanna × OI × 100 × spot) |
 | peak_gamma_strike | numeric | Absolute Gamma / Peak Gamma Strike |
 
 `dealer_position` (`long_gamma`/`short_gamma`) **no es columna** — es una métrica derivada dentro de `GammaAggregate` a partir del signo de `net_gamma`, tanto en la API como en cualquier consumidor. `GammaExposure[]` nunca se persiste y nunca llega a `IStorage`; solo `GammaAggregate` se almacena en `gamma_aggregates`. `dealer_bias` y demás métricas agregadas se agregan a esta tabla solo cuando el modelo oficial del Gamma Engine las defina.
+
+Vanna se persiste agregada entre vencimientos siguiendo la metodología oficial de FlashAlpha, la fuente de datos real del proyecto. Su exposición se calcula como `Σ(Vanna × open_interest × 100 × spot)` sobre todos los contratos de la cadena. GEXBot utiliza una convención distinta que no agrega Vanna entre vencimientos; se conserva como nota histórica, pero no invalida la convención de FlashAlpha adoptada por el proyecto.
 
 Índice compuesto: `(underlying_id, time DESC)`.
 

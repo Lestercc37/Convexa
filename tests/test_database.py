@@ -222,6 +222,31 @@ def test_charm_exposure_migration_adds_mandatory_column(monkeypatch) -> None:
     assert altered_columns == [("gamma_aggregates", "charm_exposure", {"server_default": None})]
 
 
+def test_vanna_exposure_migration_adds_mandatory_column(monkeypatch) -> None:
+    migration = import_module("backend.db.migrations.0011_add_vanna_exposure")
+    added_columns = []
+    altered_columns = []
+    monkeypatch.setattr(
+        migration.op,
+        "add_column",
+        lambda table, column: added_columns.append((table, column)),
+    )
+    monkeypatch.setattr(
+        migration.op,
+        "alter_column",
+        lambda table, column, **kwargs: altered_columns.append((table, column, kwargs)),
+    )
+
+    migration.upgrade()
+
+    assert len(added_columns) == 1
+    table, column = added_columns[0]
+    assert table == "gamma_aggregates"
+    assert column.name == "vanna_exposure"
+    assert column.nullable is False
+    assert altered_columns == [("gamma_aggregates", "vanna_exposure", {"server_default": None})]
+
+
 def test_atm_iv_migration_adds_mandatory_daily_reference_column(monkeypatch) -> None:
     migration = import_module("backend.db.migrations.0008_add_atm_iv_to_daily_reference")
     added_columns = []

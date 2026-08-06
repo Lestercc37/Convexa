@@ -82,6 +82,7 @@ def test_gamma_aggregate_round_trip_against_postgresql(
         vega_exposure=Decimal("875000"),
         theta_exposure=Decimal("-420000"),
         charm_exposure=Decimal("125000"),
+        vanna_exposure=Decimal("250000"),
         absolute_gamma_strike=Decimal("550"),
     )
 
