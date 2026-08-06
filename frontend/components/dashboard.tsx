@@ -9,6 +9,7 @@ import { DerivedMetricsBar } from "./derived-metrics-bar";
 import { ExpectedMoveWidget } from "./expected-move-widget";
 import { GravityMap } from "./gravity-map";
 import { PriceChart } from "./price-chart";
+import { QuickScreener } from "./quick-screener";
 import { RegimeBadge } from "./regime-badge";
 import { VolatilitySmile } from "./volatility-smile";
 
@@ -142,6 +143,7 @@ export function Dashboard() {
           Cargando régimen y niveles…
         </section>
       )}
+      <QuickScreener />
     </main>
   );
 }

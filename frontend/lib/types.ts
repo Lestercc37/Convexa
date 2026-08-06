@@ -9,6 +9,34 @@ export type UnderlyingsResponse = {
   underlyings: Underlying[];
 };
 
+export type ScreenerPresetName =
+  | "unusual-options-activity"
+  | "negative-gamma-board"
+  | "max-pain-key-levels"
+  | "vanna-exposure-leaders"
+  | "charm-decay-pressure";
+
+export type ScreenerPresetResult = {
+  symbol: string;
+  as_of: string;
+  contract: string | null;
+  alert_type: "WHALE" | "UNUSUAL" | null;
+  amount: number | null;
+  net_gamma: number | null;
+  gamma_flip: number | null;
+  call_wall: number | null;
+  put_wall: number | null;
+  max_pain: number | null;
+  vanna_exposure: number | null;
+  charm_exposure: number | null;
+};
+
+export type ScreenerPresetResponse = {
+  schema_version: number;
+  preset: ScreenerPresetName;
+  results: ScreenerPresetResult[];
+};
+
 export type OptionContract = {
   occ_symbol: string;
   strike: number;

@@ -87,6 +87,33 @@ class EagleAlertsResponse(BaseModel):
     alerts: list[EagleAlertResponse]
 
 
+class ScreenerPresetItemResponse(BaseModel):
+    symbol: str
+    as_of: str
+    contract: str | None = None
+    alert_type: Literal["WHALE", "UNUSUAL"] | None = None
+    amount: Number | None = None
+    net_gamma: Number | None = None
+    gamma_flip: Number | None = None
+    call_wall: Number | None = None
+    put_wall: Number | None = None
+    max_pain: Number | None = None
+    vanna_exposure: Number | None = None
+    charm_exposure: Number | None = None
+
+
+class ScreenerPresetResponse(BaseModel):
+    schema_version: int = Field(examples=[1])
+    preset: Literal[
+        "unusual-options-activity",
+        "negative-gamma-board",
+        "max-pain-key-levels",
+        "vanna-exposure-leaders",
+        "charm-decay-pressure",
+    ]
+    results: list[ScreenerPresetItemResponse]
+
+
 class GreeksContractResponse(OptionContractResponse):
     pass
 

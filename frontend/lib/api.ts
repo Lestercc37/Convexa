@@ -2,6 +2,8 @@ import type {
   GammaResponse,
   MarketResponse,
   OptionChainResponse,
+  ScreenerPresetName,
+  ScreenerPresetResponse,
   UnderlyingsResponse,
 } from "./types";
 
@@ -23,6 +25,16 @@ export function getGamma(symbol: string, signal?: AbortSignal) {
 
 export function getMarket(symbol: string, signal?: AbortSignal) {
   return getJson<MarketResponse>(`/market/${encodeURIComponent(symbol)}`, signal);
+}
+
+export function getScreenerPreset(
+  preset: ScreenerPresetName,
+  signal?: AbortSignal,
+) {
+  return getJson<ScreenerPresetResponse>(
+    `/screener-presets/${encodeURIComponent(preset)}`,
+    signal,
+  );
 }
 
 export function getOptionChain(
