@@ -19,6 +19,7 @@ from backend.domain.entities import (
     FlowEventType,
     GammaAggregate,
     MarketPrice,
+    WhaleThreshold,
 )
 from backend.domain.underlyings import ACTIVE_UNDERLYINGS
 from backend.infrastructure.database.engine import create_sync_engine
@@ -155,6 +156,23 @@ def test_active_underlyings_are_seeded_in_postgresql(
     }
 
 
+def test_whale_threshold_round_trip_against_postgresql(
+    postgresql_storage: tuple[PostgreSQLStorage, Engine, str],
+) -> None:
+    storage, _, symbol = postgresql_storage
+    threshold = WhaleThreshold(
+        symbol=symbol,
+        unusual_min=Decimal("25000"),
+        whale_min=Decimal("125000"),
+        unusual_multiplier=Decimal("2.5"),
+        whale_multiplier=Decimal("5.5"),
+    )
+
+    storage.save_whale_threshold(threshold)
+
+    assert storage.get_whale_thresholds()[symbol] == threshold
+
+
 def test_daily_gamma_reference_upsert_and_read_against_postgresql(
     postgresql_storage: tuple[PostgreSQLStorage, Engine, str],
 ) -> None:
@@ -190,6 +208,10 @@ def _delete_test_data(engine: Engine, symbol: str) -> None:
         ).scalar_one_or_none()
         if underlying_id is None:
             return
+        connection.execute(
+            text("DELETE FROM whale_thresholds WHERE underlying_id = :id"),
+            {"id": underlying_id},
+        )
         connection.execute(
             text("DELETE FROM daily_gamma_reference WHERE underlying_id = :id"),
             {"id": underlying_id},
