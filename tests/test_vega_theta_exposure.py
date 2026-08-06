@@ -27,7 +27,7 @@ class PreservingGreeksCalculator:
         return chain
 
 
-def test_orchestrator_sums_vega_theta_and_charm_exposure_without_spot_squared() -> None:
+def test_orchestrator_sums_vanna_exposure_from_hand_built_chain() -> None:
     storage = InMemoryStorage()
     chain = _known_chain()
     storage.save_chain_snapshot(chain)
@@ -47,6 +47,7 @@ def test_orchestrator_sums_vega_theta_and_charm_exposure_without_spot_squared() 
     assert result.vega_exposure == Decimal(800)
     assert result.theta_exposure == Decimal(-500)
     assert result.charm_exposure == Decimal(10)
+    assert result.vanna_exposure == Decimal(27500)
     assert storage.get_latest_gamma_aggregate("SPY") == result
 
 
@@ -61,6 +62,7 @@ def _known_chain() -> OptionChain:
             "0.20",
             "-0.10",
             "0.05",
+            "0.01",
         ),
         _contract(
             "SPY260220P00560000",
@@ -70,6 +72,7 @@ def _known_chain() -> OptionChain:
             "0.30",
             "-0.20",
             "-0.02",
+            "0.02",
         ),
     )
     return OptionChain(
@@ -88,6 +91,7 @@ def _contract(
     vega: str,
     theta: str,
     charm: str,
+    vanna: str,
 ) -> OptionContract:
     return OptionContract(
         underlying="SPY",
@@ -107,6 +111,6 @@ def _contract(
             theta=Decimal(theta),
             vega=Decimal(vega),
             charm=Decimal(charm),
-            vanna=Decimal(0),
+            vanna=Decimal(vanna),
         ),
     )

@@ -280,6 +280,7 @@ class GammaAggregate:
     vega_exposure: Decimal = Decimal(0)
     theta_exposure: Decimal = Decimal(0)
     charm_exposure: Decimal = Decimal(0)
+    vanna_exposure: Decimal = Decimal(0)
     absolute_gamma_strike: Decimal = Decimal("0")
     peak_gamma_value: Decimal = Decimal("0")
 
@@ -301,6 +302,7 @@ class GammaAggregate:
             "vega_exposure",
             "theta_exposure",
             "charm_exposure",
+            "vanna_exposure",
             "absolute_gamma_strike",
             "peak_gamma_value",
         ):
