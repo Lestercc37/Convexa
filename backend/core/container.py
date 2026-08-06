@@ -34,6 +34,7 @@ from backend.domain.use_cases import (
     CalculateGreeksUseCase,
     CalculateMaxPainUseCase,
     CalculateWallsUseCase,
+    EagleContractsEngine,
     GetMarketSnapshotUseCase,
     LoadOptionChainUseCase,
 )
@@ -69,6 +70,7 @@ class Container:
     calculate_max_pain_use_case: CalculateMaxPainUseCase
     calculate_gamma_exposure_orchestrator: CalculateGammaExposureOrchestrator
     calculate_derived_metrics_use_case: CalculateDerivedMetricsUseCase
+    eagle_contracts_engine: EagleContractsEngine
 
 
 def build_container() -> Container:
@@ -113,6 +115,7 @@ def build_container() -> Container:
         max_pain=calculate_max_pain_use_case,
     )
     calculate_derived_metrics_use_case = CalculateDerivedMetricsUseCase(storage)
+    eagle_contracts_engine = EagleContractsEngine()
     return Container(
         settings=settings,
         database_engine=database_engine,
@@ -136,4 +139,5 @@ def build_container() -> Container:
         calculate_max_pain_use_case=calculate_max_pain_use_case,
         calculate_gamma_exposure_orchestrator=calculate_gamma_exposure_orchestrator,
         calculate_derived_metrics_use_case=calculate_derived_metrics_use_case,
+        eagle_contracts_engine=eagle_contracts_engine,
     )
