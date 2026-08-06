@@ -59,6 +59,9 @@ async def test_container_registers_postgresql_storage_when_configured(
         DATABASE_URL="postgresql+asyncpg://user:password@localhost/convexa",
     )
     monkeypatch.setattr(container_module, "get_settings", lambda: settings)
+    monkeypatch.setattr(
+        PostgreSQLStorage, "get_whale_thresholds", lambda self: {}
+    )
     container = build_container()
 
     try:

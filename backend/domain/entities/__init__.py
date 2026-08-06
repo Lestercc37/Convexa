@@ -36,6 +36,7 @@ from backend.domain.entities.entities import (
     Underlying,
     UnderlyingKind,
     VolatilityRegimeMetric,
+    WhaleThreshold,
     Wall,
     Walls,
     dealer_position,
@@ -82,6 +83,7 @@ __all__ = [
     "Underlying",
     "UnderlyingKind",
     "VolatilityRegimeMetric",
+    "WhaleThreshold",
     "dealer_position",
     "utc_now",
 ]

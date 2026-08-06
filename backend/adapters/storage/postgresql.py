@@ -20,6 +20,7 @@ from backend.domain.entities import (
     OptionContract,
     Underlying,
     UnderlyingKind,
+    WhaleThreshold,
 )
 from backend.domain.underlyings import ACTIVE_UNDERLYINGS_BY_SYMBOL
 
@@ -49,6 +50,60 @@ class PostgreSQLStorage:
                 )
                 for row in rows
             ]
+
+    def save_whale_threshold(self, threshold: WhaleThreshold) -> None:
+        with self.session_factory.begin() as session:
+            underlying_id = self._ensure_underlying(session, threshold.symbol)
+            session.execute(
+                text(
+                    """
+                    INSERT INTO whale_thresholds (
+                        underlying_id, unusual_min, whale_min,
+                        unusual_multiplier, whale_multiplier
+                    )
+                    VALUES (
+                        :underlying_id, :unusual_min, :whale_min,
+                        :unusual_multiplier, :whale_multiplier
+                    )
+                    ON CONFLICT (underlying_id) DO UPDATE SET
+                        unusual_min = EXCLUDED.unusual_min,
+                        whale_min = EXCLUDED.whale_min,
+                        unusual_multiplier = EXCLUDED.unusual_multiplier,
+                        whale_multiplier = EXCLUDED.whale_multiplier
+                    """
+                ),
+                {
+                    "underlying_id": underlying_id,
+                    "unusual_min": str(threshold.unusual_min),
+                    "whale_min": str(threshold.whale_min),
+                    "unusual_multiplier": str(threshold.unusual_multiplier),
+                    "whale_multiplier": str(threshold.whale_multiplier),
+                },
+            )
+
+    def get_whale_thresholds(self) -> dict[str, WhaleThreshold]:
+        with self.session_factory() as session:
+            rows = session.execute(
+                text(
+                    """
+                    SELECT u.symbol, w.unusual_min, w.whale_min,
+                           w.unusual_multiplier, w.whale_multiplier
+                    FROM whale_thresholds AS w
+                    JOIN underlyings AS u ON u.id = w.underlying_id
+                    ORDER BY u.symbol
+                    """
+                )
+            ).mappings()
+            return {
+                str(row["symbol"]): WhaleThreshold(
+                    symbol=str(row["symbol"]),
+                    unusual_min=Decimal(str(row["unusual_min"])),
+                    whale_min=Decimal(str(row["whale_min"])),
+                    unusual_multiplier=Decimal(str(row["unusual_multiplier"])),
+                    whale_multiplier=Decimal(str(row["whale_multiplier"])),
+                )
+                for row in rows
+            }
 
     def save_chain_snapshot(self, chain: OptionChain) -> None:
         with self.session_factory.begin() as session:

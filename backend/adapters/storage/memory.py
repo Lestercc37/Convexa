@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import date, datetime
+from decimal import Decimal
 
 from backend.domain.entities import (
     DailyGammaReference,
@@ -9,6 +10,7 @@ from backend.domain.entities import (
     MarketPrice,
     OptionChain,
     Underlying,
+    WhaleThreshold,
 )
 from backend.domain.underlyings import ACTIVE_UNDERLYINGS
 
@@ -23,9 +25,25 @@ class InMemoryStorage:
         self._prices: dict[str, MarketPrice] = {}
         self._flow: dict[str, list[FlowEvent]] = {}
         self._daily_gamma: dict[str, dict[date, DailyGammaReference]] = {}
+        self._whale_thresholds: dict[str, WhaleThreshold] = {
+            underlying.symbol: WhaleThreshold(
+                symbol=underlying.symbol,
+                unusual_min=Decimal("40000"),
+                whale_min=Decimal("150000"),
+                unusual_multiplier=Decimal("3.0"),
+                whale_multiplier=Decimal("6.0"),
+            )
+            for underlying in ACTIVE_UNDERLYINGS
+        }
 
     def list_underlyings(self) -> list[Underlying]:
         return sorted(self._underlyings.values(), key=lambda item: item.symbol)
+
+    def save_whale_threshold(self, threshold: WhaleThreshold) -> None:
+        self._whale_thresholds[threshold.symbol] = threshold
+
+    def get_whale_thresholds(self) -> dict[str, WhaleThreshold]:
+        return dict(self._whale_thresholds)
 
     def save_chain_snapshot(self, chain: OptionChain) -> None:
         self._chains.setdefault(chain.symbol, []).append(chain)

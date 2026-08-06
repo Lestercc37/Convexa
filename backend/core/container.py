@@ -35,6 +35,7 @@ from backend.domain.use_cases import (
     CalculateMaxPainUseCase,
     CalculateWallsUseCase,
     EagleContractsEngine,
+    EagleThresholds,
     GetMarketSnapshotUseCase,
     LoadOptionChainUseCase,
 )
@@ -71,6 +72,21 @@ class Container:
     calculate_gamma_exposure_orchestrator: CalculateGammaExposureOrchestrator
     calculate_derived_metrics_use_case: CalculateDerivedMetricsUseCase
     eagle_contracts_engine: EagleContractsEngine
+
+
+def build_eagle_contracts_engine(storage: IStorage) -> EagleContractsEngine:
+    """Build Eagle Contracts with persisted per-symbol threshold overrides."""
+    return EagleContractsEngine(
+        thresholds_by_symbol={
+            symbol: EagleThresholds(
+                unusual_min=threshold.unusual_min,
+                whale_min=threshold.whale_min,
+                unusual_multiplier=threshold.unusual_multiplier,
+                whale_multiplier=threshold.whale_multiplier,
+            )
+            for symbol, threshold in storage.get_whale_thresholds().items()
+        }
+    )
 
 
 def build_container() -> Container:
@@ -115,7 +131,7 @@ def build_container() -> Container:
         max_pain=calculate_max_pain_use_case,
     )
     calculate_derived_metrics_use_case = CalculateDerivedMetricsUseCase(storage)
-    eagle_contracts_engine = EagleContractsEngine()
+    eagle_contracts_engine = build_eagle_contracts_engine(storage)
     return Container(
         settings=settings,
         database_engine=database_engine,

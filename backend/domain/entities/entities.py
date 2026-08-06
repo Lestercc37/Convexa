@@ -73,6 +73,30 @@ class Underlying:
 
 
 @dataclass(frozen=True, slots=True)
+class WhaleThreshold:
+    symbol: str
+    unusual_min: Decimal
+    whale_min: Decimal
+    unusual_multiplier: Decimal
+    whale_multiplier: Decimal
+
+    def __post_init__(self) -> None:
+        if not self.symbol or not self.symbol.strip():
+            raise InvalidOptionError("whale threshold symbol is required")
+        object.__setattr__(self, "symbol", self.symbol.upper())
+        for name in (
+            "unusual_min",
+            "whale_min",
+            "unusual_multiplier",
+            "whale_multiplier",
+        ):
+            value = getattr(self, name)
+            _ensure_finite_decimal(value, InvalidOptionError, name)
+            if value <= 0:
+                raise InvalidOptionError(f"{name} must be positive")
+
+
+@dataclass(frozen=True, slots=True)
 class OptionGreeks:
     delta: Decimal
     gamma: Decimal
