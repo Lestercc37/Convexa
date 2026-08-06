@@ -54,6 +54,30 @@ Se dividen en dos categorías según qué los dispara:
 - **Ports usados**: `IDataProvider.stream_trades(...)` → clasifica cada trade (sweep/block/unusual, vía la lógica de detección del Flow Engine) → `IStorage.save_flow_event(...)`.
 - **Efecto secundario**: eventos que superan un umbral de relevancia disparan `INotificationService.notify(...)`.
 
+#### Eagle Contracts / ProcessFlow
+
+Eagle Contracts consume snapshots sucesivos de `OptionChain`, sin depender del proveedor que los
+produzca. Por cada `occ_symbol` conserva el último volumen acumulado de sesión, calcula
+`delta_volume = volumen_actual - volumen_anterior` y convierte el período a dólares mediante
+`monto = delta_volume × last × 100`. Una caída del acumulado se trata como reinicio de sesión:
+se descarta ese período y se reinicia su ventana para evitar falsos positivos.
+
+La evaluación empieza cuando existen cinco períodos anteriores completos. El promedio usa solo
+los montos de esos cinco períodos y excluye el actual, equivalente a `ta.sma(n1m[1], 5)`. Se emite
+una sola alerta por período, dando prioridad a `WHALE`:
+
+| Tipo | Monto mínimo | Múltiplo sobre promedio previo |
+|---|---:|---:|
+| `UNUSUAL` | $40,000 | 3.0× |
+| `WHALE` | $150,000 | 6.0× |
+
+Los valores son defaults configurables por símbolo y fueron calibrados originalmente para IWM.
+Los demás símbolos deben comenzar con estos defaults, pero necesitan recalibración con datos
+reales; no se presupone que una calibración de IWM sea válida, por ejemplo, para SPX.
+
+El ciclo interno que obtiene y persiste el `OptionChain` entrega el mismo snapshot al motor. Las
+alertas recientes se consultan sin disparar cálculo mediante `GET /api/v1/alerts/{symbol}`.
+
 ---
 
 ## Resumen de mapeo a contratos existentes

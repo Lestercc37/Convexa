@@ -73,6 +73,20 @@ class OptionChainResponse(BaseModel):
     contracts: list[OptionContractResponse]
 
 
+class EagleAlertResponse(BaseModel):
+    symbol: str
+    contract: str
+    type: Literal["WHALE", "UNUSUAL"]
+    amount: Number
+    timestamp: str
+
+
+class EagleAlertsResponse(BaseModel):
+    schema_version: int = Field(examples=[1])
+    symbol: str
+    alerts: list[EagleAlertResponse]
+
+
 class GreeksContractResponse(OptionContractResponse):
     pass
 
