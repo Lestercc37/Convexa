@@ -102,6 +102,29 @@ export type GammaResponse = {
   derived_metrics: DerivedMetrics;
 };
 
+export type GammaHistoryItem = {
+  schema_version: number;
+  symbol: string;
+  as_of: string;
+  gamma_flip: number;
+  call_wall: number;
+  put_wall: number;
+  absolute_gamma_strike: number;
+  max_pain: number;
+  net_gamma: number;
+  vega_exposure: number;
+  theta_exposure: number;
+  charm_exposure: number;
+  vanna_exposure: number;
+  dealer_position: "long_gamma" | "short_gamma";
+};
+
+export type GammaHistoryResponse = {
+  schema_version: number;
+  symbol: string;
+  items: GammaHistoryItem[];
+};
+
 export type MarketResponse = {
   schema_version: number;
   symbol: string;

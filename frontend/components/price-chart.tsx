@@ -1,19 +1,21 @@
 "use client";
 
 import Image from "next/image";
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   CandlestickSeries,
   ColorType,
   createChart,
+  LineSeries,
   LineStyle,
   type IChartApi,
   type IPriceLine,
   type ISeriesApi,
   type UTCTimestamp,
 } from "lightweight-charts";
+import { getGammaHistory } from "@/lib/api";
 import type { MinuteCandle } from "@/lib/candles";
-import type { GammaResponse } from "@/lib/types";
+import type { GammaHistoryItem, GammaResponse } from "@/lib/types";
 import { LEVEL_MERGE_THRESHOLD } from "./gravity-map";
 
 type PriceChartProps = {
@@ -27,6 +29,14 @@ type GammaLevel = {
   title: string;
   color: string;
 };
+
+type LevelMode = "static" | "historical";
+
+const HISTORICAL_LEVELS = [
+  { field: "call_wall", title: "Call Wall", color: "#36c99b" },
+  { field: "gamma_flip", title: "Gamma Flip", color: "#f3c969" },
+  { field: "put_wall", title: "Put Wall", color: "#ff7a45" },
+] as const;
 
 function gammaLevels(gamma: GammaResponse): GammaLevel[] {
   const range = gamma.call_wall - gamma.put_wall;
@@ -57,6 +67,8 @@ export function PriceChart({ symbol, candles, gamma }: PriceChartProps) {
   const chartRef = useRef<IChartApi | null>(null);
   const seriesRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
   const initialCandlesRef = useRef(candles);
+  const [levelMode, setLevelMode] = useState<LevelMode>("static");
+  const [history, setHistory] = useState<GammaHistoryItem[]>([]);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -108,8 +120,21 @@ export function PriceChart({ symbol, candles, gamma }: PriceChartProps) {
   }, [candles]);
 
   useEffect(() => {
+    if (levelMode !== "historical") return;
+    const controller = new AbortController();
+    getGammaHistory(symbol, controller.signal)
+      .then(({ items }) => setHistory(items))
+      .catch((reason: unknown) => {
+        if (!controller.signal.aborted) {
+          console.error("No se pudo cargar el histórico de niveles", reason);
+        }
+      });
+    return () => controller.abort();
+  }, [levelMode, symbol]);
+
+  useEffect(() => {
     const series = seriesRef.current;
-    if (!series) return;
+    if (!series || levelMode !== "static") return;
     const lines: IPriceLine[] = gammaLevels(gamma).map((level) =>
       series.createPriceLine({
         ...level,
@@ -119,7 +144,29 @@ export function PriceChart({ symbol, candles, gamma }: PriceChartProps) {
       }),
     );
     return () => lines.forEach((line) => series.removePriceLine(line));
-  }, [gamma]);
+  }, [gamma, levelMode]);
+
+  useEffect(() => {
+    const chart = chartRef.current;
+    if (!chart || levelMode !== "historical" || history.length === 0) return;
+    const levelSeries = HISTORICAL_LEVELS.map((level) => {
+      const line = chart.addSeries(LineSeries, {
+        color: level.color,
+        lineWidth: 2,
+        title: level.title,
+        priceLineVisible: false,
+        lastValueVisible: true,
+      });
+      line.setData(
+        history.map((item) => ({
+          time: Math.floor(new Date(item.as_of).getTime() / 1000) as UTCTimestamp,
+          value: item[level.field],
+        })),
+      );
+      return line;
+    });
+    return () => levelSeries.forEach((line) => chart.removeSeries(line));
+  }, [history, levelMode]);
 
   return (
     <section className="panel price-chart-panel" aria-labelledby="price-chart-title">
@@ -128,7 +175,26 @@ export function PriceChart({ symbol, candles, gamma }: PriceChartProps) {
           <p className="eyebrow">Precio intradía · memoria local</p>
           <h2 id="price-chart-title">{symbol} · Velas de 1 minuto</h2>
         </div>
-        <span className="mode-pill">En vivo</span>
+        <div className="chart-controls">
+          <fieldset className="level-mode-selector" aria-label="Modo de niveles">
+            <legend>Niveles:</legend>
+            <button
+              type="button"
+              aria-pressed={levelMode === "static"}
+              onClick={() => setLevelMode("static")}
+            >
+              Estático
+            </button>
+            <button
+              type="button"
+              aria-pressed={levelMode === "historical"}
+              onClick={() => setLevelMode("historical")}
+            >
+              Histórico
+            </button>
+          </fieldset>
+          <span className="mode-pill">En vivo</span>
+        </div>
       </div>
       <div className="price-chart-frame">
         <div
