@@ -7,6 +7,7 @@ const apiMocks = vi.hoisted(() => ({
   getGamma: vi.fn(),
   getMarket: vi.fn(),
   getOptionChain: vi.fn(),
+  getScreenerPreset: vi.fn(),
   getUnderlyings: vi.fn(),
 }));
 
@@ -76,6 +77,11 @@ beforeEach(() => {
     as_of: "2026-08-03T14:30:00Z",
     spot_price: 549.1,
     contracts: [],
+  });
+  apiMocks.getScreenerPreset.mockResolvedValue({
+    schema_version: 1,
+    preset: "unusual-options-activity",
+    results: [],
   });
 });
 
