@@ -9,16 +9,14 @@ from backend.domain.entities import (
     MarketPrice,
     OptionChain,
     Underlying,
-    UnderlyingKind,
 )
+from backend.domain.underlyings import ACTIVE_UNDERLYINGS
 
 
 class InMemoryStorage:
     def __init__(self) -> None:
         self._underlyings: dict[str, Underlying] = {
-            "SPY": Underlying("SPY", UnderlyingKind.EQUITY, True),
-            "QQQ": Underlying("QQQ", UnderlyingKind.EQUITY, True),
-            "SPX": Underlying("SPX", UnderlyingKind.INDEX, True),
+            underlying.symbol: underlying for underlying in ACTIVE_UNDERLYINGS
         }
         self._chains: dict[str, list[OptionChain]] = {}
         self._gamma: dict[str, list[GammaAggregate]] = {}
