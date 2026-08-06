@@ -20,6 +20,7 @@ from backend.domain.entities import (
     GammaAggregate,
     MarketPrice,
 )
+from backend.domain.underlyings import ACTIVE_UNDERLYINGS
 from backend.infrastructure.database.engine import create_sync_engine
 from backend.infrastructure.database.session import create_sync_session_factory
 
@@ -135,6 +136,22 @@ def test_market_price_and_underlying_round_trip_against_postgresql(
 
     assert storage.get_latest_price(symbol) == price
     assert any(item.symbol == symbol for item in storage.list_underlyings())
+
+
+def test_active_underlyings_are_seeded_in_postgresql(
+    postgresql_storage: tuple[PostgreSQLStorage, Engine, str],
+) -> None:
+    storage, _, _ = postgresql_storage
+    active_symbols = {underlying.symbol for underlying in ACTIVE_UNDERLYINGS}
+    stored_active = {
+        underlying.symbol: underlying
+        for underlying in storage.list_underlyings()
+        if underlying.symbol in active_symbols
+    }
+
+    assert stored_active == {
+        underlying.symbol: underlying for underlying in ACTIVE_UNDERLYINGS
+    }
 
 
 def test_daily_gamma_reference_upsert_and_read_against_postgresql(

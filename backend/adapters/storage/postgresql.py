@@ -21,6 +21,7 @@ from backend.domain.entities import (
     Underlying,
     UnderlyingKind,
 )
+from backend.domain.underlyings import ACTIVE_UNDERLYINGS_BY_SYMBOL
 
 
 class PostgreSQLStorage:
@@ -453,16 +454,29 @@ class PostgreSQLStorage:
 
     @staticmethod
     def _ensure_underlying(session: Session, symbol: str) -> int:
+        normalized_symbol = symbol.upper()
+        configured = ACTIVE_UNDERLYINGS_BY_SYMBOL.get(normalized_symbol)
+        kind = configured.kind.value if configured is not None else UnderlyingKind.EQUITY.value
+        is_priority = configured.is_priority if configured is not None else False
+        conflict_action = (
+            "kind = EXCLUDED.kind, is_priority = EXCLUDED.is_priority"
+            if configured is not None
+            else "symbol = EXCLUDED.symbol"
+        )
         return session.execute(
             text(
-                """
+                f"""
                 INSERT INTO underlyings (symbol, kind, is_priority)
-                VALUES (:symbol, 'equity', false)
-                ON CONFLICT (symbol) DO UPDATE SET symbol = EXCLUDED.symbol
+                VALUES (:symbol, :kind, :is_priority)
+                ON CONFLICT (symbol) DO UPDATE SET {conflict_action}
                 RETURNING id
                 """
             ),
-            {"symbol": symbol.upper()},
+            {
+                "symbol": normalized_symbol,
+                "kind": kind,
+                "is_priority": is_priority,
+            },
         ).scalar_one()
 
     @staticmethod
