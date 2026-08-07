@@ -4,6 +4,10 @@ from datetime import date, datetime, timezone
 
 from backend.domain.entities import MarketSnapshot, OptionChain
 from backend.domain.ports import IDataProvider, IStorage
+from backend.domain.use_cases.calculate_anchored_vwap import (
+    calculate_anchored_vwap,
+    calculate_session_open,
+)
 from backend.domain.use_cases.calculate_expected_move import calculate_expected_move
 from backend.domain.use_cases.errors import NotFoundError
 
@@ -42,6 +46,9 @@ def build_market_snapshot(storage: IStorage, underlying: str) -> MarketSnapshot:
     chain = storage.get_latest_chain_snapshot(underlying)
     if chain is None:
         raise NotFoundError(f"No option chain found for {underlying}")
+    price_history = storage.get_price_history(
+        underlying, calculate_session_open(price.as_of), price.as_of
+    )
     return MarketSnapshot(
         symbol=price.symbol,
         as_of=price.as_of,
@@ -49,5 +56,6 @@ def build_market_snapshot(storage: IStorage, underlying: str) -> MarketSnapshot:
         volume=price.volume,
         gamma=gamma,
         expected_move=calculate_expected_move(chain, price.as_of),
+        anchored_vwap=calculate_anchored_vwap(price_history, price.as_of),
         recent_flow=tuple(storage.get_recent_flow(underlying)),
     )

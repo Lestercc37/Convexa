@@ -28,6 +28,13 @@ class ExpectedMoveResponse(BaseModel):
     atm_iv: Number
 
 
+class AnchoredVwapResponse(BaseModel):
+    value: Number | None
+    provisional: bool
+    anchor_time: str = Field(examples=["2026-01-15T14:30:00Z"])
+    sample_count: int = Field(examples=[42])
+
+
 class MarketSnapshotResponse(BaseModel):
     schema_version: int = Field(examples=[1])
     symbol: str = Field(examples=["SPY"])
@@ -43,6 +50,7 @@ class MarketSnapshotResponse(BaseModel):
     dealer_mode_confirmed: bool
     gamma_as_of: str = Field(examples=["2026-01-15T14:29:30Z"])
     expected_move: ExpectedMoveResponse
+    anchored_vwap: AnchoredVwapResponse
 
 
 class OptionContractResponse(BaseModel):
