@@ -135,6 +135,8 @@ export type MarketResponse = {
   dealer_mode_source: "agree" | "price_vs_flip";
   dealer_mode_confirmed: boolean;
   expected_move?: ExpectedMove;
+  anchored_vwap?: AnchoredVwap;
+  atr_range?: AtrRange;
 };
 
 export type ExpectedMove = {
@@ -145,4 +147,23 @@ export type ExpectedMove = {
   upper_bound: number;
   lower_bound: number;
   atm_iv: number;
+};
+
+export type AnchoredVwap = {
+  value: number | null;
+  provisional: boolean;
+  anchor_time: string;
+  sample_count: number;
+};
+
+export type AtrRange = {
+  atr: number | null;
+  atr_provisional: boolean;
+  daily_bars_count: number;
+  today_open: number | null;
+  bands_provisional: boolean;
+  outer_upper_band: number | null;
+  outer_lower_band: number | null;
+  inner_upper_band: number | null;
+  inner_lower_band: number | null;
 };

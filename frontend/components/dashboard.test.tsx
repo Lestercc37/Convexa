@@ -30,9 +30,15 @@ beforeAll(() => {
       update: vi.fn(),
       createPriceLine: vi.fn(() => ({})),
       removePriceLine: vi.fn(),
+      priceToCoordinate: vi.fn(() => null),
     }),
+    removeSeries: vi.fn(),
     applyOptions: vi.fn(),
-    timeScale: () => ({ fitContent: vi.fn() }),
+    timeScale: () => ({
+      fitContent: vi.fn(),
+      subscribeVisibleLogicalRangeChange: vi.fn(),
+      unsubscribeVisibleLogicalRangeChange: vi.fn(),
+    }),
     remove: vi.fn(),
   });
   vi.stubGlobal(

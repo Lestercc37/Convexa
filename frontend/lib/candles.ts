@@ -3,6 +3,11 @@ export type PricePoint = {
   price: number;
 };
 
+export type VwapPoint = {
+  timestamp: string;
+  value: number;
+};
+
 export type MinuteCandle = {
   time: number;
   open: number;

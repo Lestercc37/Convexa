@@ -3,7 +3,7 @@
 import Image from "next/image";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { getGamma, getMarket, getUnderlyings } from "@/lib/api";
-import { aggregateMinuteCandles, type PricePoint } from "@/lib/candles";
+import { aggregateMinuteCandles, type PricePoint, type VwapPoint } from "@/lib/candles";
 import type { GammaResponse, MarketResponse, Underlying } from "@/lib/types";
 import { DerivedMetricsBar } from "./derived-metrics-bar";
 import { ExpectedMoveWidget } from "./expected-move-widget";
@@ -21,6 +21,7 @@ export function Dashboard() {
   const [gamma, setGamma] = useState<GammaResponse | null>(null);
   const [market, setMarket] = useState<MarketResponse | null>(null);
   const [pricePoints, setPricePoints] = useState<PricePoint[]>([]);
+  const [vwapPoints, setVwapPoints] = useState<VwapPoint[]>([]);
   const [error, setError] = useState("");
   const candles = useMemo(() => aggregateMinuteCandles(pricePoints), [pricePoints]);
 
@@ -52,6 +53,11 @@ export function Dashboard() {
         ...current,
         { timestamp: marketData.as_of, price: marketData.price },
       ]);
+      const anchoredVwap = marketData.anchored_vwap;
+      if (anchoredVwap && !anchoredVwap.provisional && anchoredVwap.value !== null) {
+        const value = anchoredVwap.value;
+        setVwapPoints((current) => [...current, { timestamp: marketData.as_of, value }]);
+      }
       setError("");
     } catch (reason: unknown) {
       if (!signal?.aborted) {
@@ -98,6 +104,7 @@ export function Dashboard() {
               setGamma(null);
               setMarket(null);
               setPricePoints([]);
+              setVwapPoints([]);
               setSymbol(event.target.value);
             }}
             disabled={!underlyings.length}
@@ -130,6 +137,8 @@ export function Dashboard() {
             symbol={symbol}
             candles={candles}
             gamma={gamma}
+            vwapPoints={vwapPoints}
+            atrRange={market.atr_range}
           />
           <DerivedMetricsBar metrics={gamma.derived_metrics} />
           <VolatilitySmile
