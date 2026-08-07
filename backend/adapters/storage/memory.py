@@ -4,6 +4,7 @@ from datetime import date, datetime
 from decimal import Decimal
 
 from backend.domain.entities import (
+    DailyBar,
     DailyGammaReference,
     FlowEvent,
     GammaAggregate,
@@ -26,6 +27,7 @@ class InMemoryStorage:
         self._price_history: dict[str, list[MarketPrice]] = {}
         self._flow: dict[str, list[FlowEvent]] = {}
         self._daily_gamma: dict[str, dict[date, DailyGammaReference]] = {}
+        self._daily_bars: dict[str, dict[date, DailyBar]] = {}
         self._whale_thresholds: dict[str, WhaleThreshold] = {
             underlying.symbol: WhaleThreshold(
                 symbol=underlying.symbol,
@@ -115,3 +117,11 @@ class InMemoryStorage:
     ) -> list[DailyGammaReference]:
         references = self._daily_gamma.get(underlying.upper(), {}).values()
         return sorted(references, key=lambda item: item.date, reverse=True)[:limit]
+
+    def save_daily_bar(self, bar: DailyBar) -> None:
+        bars = self._daily_bars.setdefault(bar.symbol, {})
+        bars[bar.date] = bar
+
+    def get_daily_bars(self, underlying: str, limit: int = 15) -> list[DailyBar]:
+        bars = self._daily_bars.get(underlying.upper(), {}).values()
+        return sorted(bars, key=lambda item: item.date, reverse=True)[:limit]

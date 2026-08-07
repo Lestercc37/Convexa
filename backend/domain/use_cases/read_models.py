@@ -8,6 +8,7 @@ from backend.domain.use_cases.calculate_anchored_vwap import (
     calculate_anchored_vwap,
     calculate_session_open,
 )
+from backend.domain.use_cases.calculate_atr_range import REQUIRED_DAILY_BARS, calculate_atr_range
 from backend.domain.use_cases.calculate_expected_move import calculate_expected_move
 from backend.domain.use_cases.errors import NotFoundError
 
@@ -49,6 +50,7 @@ def build_market_snapshot(storage: IStorage, underlying: str) -> MarketSnapshot:
     price_history = storage.get_price_history(
         underlying, calculate_session_open(price.as_of), price.as_of
     )
+    daily_bars = storage.get_daily_bars(underlying, limit=REQUIRED_DAILY_BARS)
     return MarketSnapshot(
         symbol=price.symbol,
         as_of=price.as_of,
@@ -57,5 +59,6 @@ def build_market_snapshot(storage: IStorage, underlying: str) -> MarketSnapshot:
         gamma=gamma,
         expected_move=calculate_expected_move(chain, price.as_of),
         anchored_vwap=calculate_anchored_vwap(price_history, price.as_of),
+        atr_range=calculate_atr_range(daily_bars, price_history),
         recent_flow=tuple(storage.get_recent_flow(underlying)),
     )

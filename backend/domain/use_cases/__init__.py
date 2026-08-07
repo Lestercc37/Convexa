@@ -2,6 +2,11 @@ from backend.domain.use_cases.calculate_anchored_vwap import (
     calculate_anchored_vwap,
     calculate_session_open,
 )
+from backend.domain.use_cases.calculate_atr_range import (
+    ATR_WINDOW_DAYS,
+    REQUIRED_DAILY_BARS,
+    calculate_atr_range,
+)
 from backend.domain.use_cases.calculate_derived_metrics import (
     CalculateDerivedMetricsUseCase,
     capture_daily_gamma_reference,
@@ -38,6 +43,8 @@ from backend.domain.use_cases.screener_presets import (
 )
 
 __all__ = [
+    "ATR_WINDOW_DAYS",
+    "REQUIRED_DAILY_BARS",
     "CalculateDerivedMetricsUseCase",
     "CalculateGammaAggregateUseCase",
     "CalculateGammaExposureOrchestrator",
@@ -56,6 +63,7 @@ __all__ = [
     "ScreenerPresetResult",
     "build_market_snapshot",
     "calculate_anchored_vwap",
+    "calculate_atr_range",
     "calculate_expected_move",
     "calculate_gamma_exposure",
     "calculate_session_open",

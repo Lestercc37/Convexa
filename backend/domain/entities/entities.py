@@ -361,6 +361,37 @@ class DailyGammaReference:
 
 
 @dataclass(frozen=True, slots=True)
+class DailyBar:
+    """A single closed trading day's OHLC — raw material for True Range/ATR.
+
+    Only ever represents a *closed* day; today's in-progress session is
+    never stored here (see `calculate_atr_range`, which sources today's
+    open from `market_snapshots` instead — same session-open reading
+    `calculate_anchored_vwap` already uses).
+    """
+
+    symbol: str
+    date: date
+    open_price: Decimal
+    high: Decimal
+    low: Decimal
+    close: Decimal
+
+    def __post_init__(self) -> None:
+        if not self.symbol or not self.symbol.strip():
+            raise InvalidOptionError("daily bar symbol is required")
+        object.__setattr__(self, "symbol", self.symbol.upper())
+        for name in ("open_price", "high", "low", "close"):
+            _ensure_finite_decimal(getattr(self, name), InvalidOptionError, name)
+        if self.high < self.low:
+            raise InvalidOptionError("daily bar high cannot be lower than low")
+        if not self.low <= self.open_price <= self.high:
+            raise InvalidOptionError("daily bar open must be within [low, high]")
+        if not self.low <= self.close <= self.high:
+            raise InvalidOptionError("daily bar close must be within [low, high]")
+
+
+@dataclass(frozen=True, slots=True)
 class DerivedMetricValue:
     value: Decimal | None
     provisional: bool
@@ -497,6 +528,7 @@ class MarketSnapshot:
     gamma: GammaAggregate | None = None
     expected_move: ExpectedMove | None = None
     anchored_vwap: AnchoredVwap | None = None
+    atr_range: AtrRange | None = None
     recent_flow: tuple[FlowEvent, ...] = field(default_factory=tuple)
     state: MarketState = MarketState.UNKNOWN
 
@@ -586,6 +618,45 @@ class AnchoredVwap:
             _ensure_finite_decimal(self.value, InvalidOptionError, "value")
         if self.sample_count < 0:
             raise InvalidOptionError("anchored vwap sample_count cannot be negative")
+
+
+@dataclass(frozen=True, slots=True)
+class AtrRange:
+    """ATR-anchored price band for the current session's open.
+
+    Two independent provisional signals (see `docs/dashboard-spec.md`):
+    `atr_provisional` (fewer than 15 days of closed `daily_bars` history —
+    True Range needs a prior close, so 15 closed days yield 14 True Range
+    values) and `bands_provisional` (no `market_snapshots` reading yet for
+    today's session open — the ATR itself may already be available while
+    the bands, which need today's open, are not). Never persisted — same
+    read-only-projection pattern as `AnchoredVwap`.
+    """
+
+    atr: Decimal | None
+    atr_provisional: bool
+    daily_bars_count: int
+    today_open: Decimal | None
+    bands_provisional: bool
+    outer_upper_band: Decimal | None
+    outer_lower_band: Decimal | None
+    inner_upper_band: Decimal | None
+    inner_lower_band: Decimal | None
+
+    def __post_init__(self) -> None:
+        for name in (
+            "atr",
+            "today_open",
+            "outer_upper_band",
+            "outer_lower_band",
+            "inner_upper_band",
+            "inner_lower_band",
+        ):
+            value = getattr(self, name)
+            if value is not None:
+                _ensure_finite_decimal(value, InvalidOptionError, name)
+        if self.daily_bars_count < 0:
+            raise InvalidOptionError("atr range daily_bars_count cannot be negative")
 
 
 def utc_now() -> datetime:

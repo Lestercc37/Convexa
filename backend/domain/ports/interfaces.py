@@ -4,6 +4,7 @@ from datetime import date, datetime
 from typing import AsyncIterator, Protocol
 
 from backend.domain.entities import (
+    DailyBar,
     DailyGammaReference,
     FlowEvent,
     GammaAggregate,
@@ -14,14 +15,15 @@ from backend.domain.entities import (
     MaxPain,
     OptionChain,
     Underlying,
-    WhaleThreshold,
     Walls,
+    WhaleThreshold,
 )
 
 
 class IDataProvider(Protocol):
     def get_option_chain(self, underlying: str, expiration: date | None = None) -> OptionChain: ...
     def get_underlying_snapshot(self, underlying: str) -> MarketSnapshot: ...
+    def get_daily_bars(self, underlying: str, days: int = 20) -> list[DailyBar]: ...
     def stream_trades(self, underlying: str) -> AsyncIterator[FlowEvent]: ...
 
 
@@ -78,6 +80,8 @@ class IStorage(Protocol):
     def get_daily_gamma_references(
         self, underlying: str, limit: int = 60
     ) -> list[DailyGammaReference]: ...
+    def save_daily_bar(self, bar: DailyBar) -> None: ...
+    def get_daily_bars(self, underlying: str, limit: int = 15) -> list[DailyBar]: ...
 
 
 class INotificationService(Protocol):
