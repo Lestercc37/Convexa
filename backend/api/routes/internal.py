@@ -35,6 +35,8 @@ def trigger_calculation(
             volume=market.volume,
         )
     )
+    for bar in container.market_data_provider.get_daily_bars(symbol):
+        container.storage.save_daily_bar(bar)
 
     aggregate = container.calculate_gamma_exposure_orchestrator.execute(symbol)
     capture_daily_gamma_reference(container.storage, aggregate, market)

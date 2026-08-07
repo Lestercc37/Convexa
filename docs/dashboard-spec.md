@@ -166,8 +166,45 @@ VWAP_anclado = Σ(precio_típico × volumen_del_intervalo) desde la apertura de 
 
 **Nota de metodología**: al igual que con el histórico de Gamma (sección 2.1) y Vanna (`vendor-comparison.md`), si se compara este VWAP Anclado contra el de otra plataforma (ThinkOrSwim, NinjaTrader) los números pueden diferir levemente por la resolución de 30s vs. tick a tick de esas plataformas — no es un error de cálculo, es una diferencia de resolución de muestreo ya documentada arriba.
 
-## 11. Fuera de alcance de este documento
+## 11. Rango Histórico Esperado (ATR)
+
+Banda de precio esperado anclada a la apertura del día, basada en el rango de movimiento reciente del subyacente — True Range / ATR clásico de análisis técnico, matemática estándar de la industria y de dominio público. Construcción **propia** de Convexa: inspirada en observar el patrón de un indicador de terceros, pero reconstruida desde el concepto general de ATR, no una copia de ninguna fórmula propietaria.
+
+Complementa (no reemplaza) a Movimiento Esperado (sección 6, basado en IV de opciones) y a VWAP Anclado (sección 10, basado en volumen intradía). Este es un **tercer enfoque**, basado solo en el rango histórico diario de precio — no necesita cadena de opciones ni, para el ATR en sí, snapshots intradía.
+
+**Fórmula (ATR clásico, ventana de 14 días):**
+
+```
+True Range (por día) = max(
+  high_hoy - low_hoy,
+  |high_hoy - close_ayer|,
+  |low_hoy - close_ayer|
+)
+
+ATR = promedio simple de True Range de los últimos 14 días
+
+Banda del día (ancladas a la apertura de HOY):
+  banda_externa_superior = apertura_hoy + ATR
+  banda_externa_inferior = apertura_hoy - ATR
+  banda_interna_superior = apertura_hoy + (ATR / 2)
+  banda_interna_inferior = apertura_hoy - (ATR / 2)
+```
+
+**Corrección sobre el conteo de historial (detectada al implementar)**: calcular 14 valores de True Range requiere **15** días cerrados consecutivos, no 14 — cada True Range usa el cierre del día anterior, así que el día más antiguo de la ventana solo aporta ese cierre de referencia y no genera su propio True Range. El requisito de historial mínimo es **15 días de barras diarias** en `daily_bars`, no 14.
+
+**Fuente de los 15 días cerrados**: tabla nueva `daily_bars` (`underlying_id, date, open, high, low, close`), un registro por día **cerrado** únicamente — nunca contiene una fila para la sesión de hoy en curso. Es la materia prima del True Range/ATR, sin dependencia de datos intradía.
+
+**Fuente de `apertura_hoy` — reutiliza el mecanismo ya existente de VWAP Anclado, sin mecanismo nuevo**: `daily_bars` nunca tiene una fila de "hoy" (el high/low/close del día no existen hasta el cierre), así que la apertura de hoy es un dato intradía, tomado de `market_snapshots` — específicamente, la primera lectura de la sesión desde las 9:30 ET, el mismo dato que ya usa `calculate_anchored_vwap` para anclar el VWAP. El ATR en sí (basado en historial cerrado) es lo único que viene de `daily_bars`.
+
+**Dos condiciones de `provisional` independientes, no colapsadas en una sola:**
+1. `atr_provisional` — menos de 15 días de historial en `daily_bars` → sin valor de ATR (`atr: null`).
+2. `bands_provisional` — todavía no hay ninguna lectura de `market_snapshots` para la sesión de hoy (antes de apertura, o el scheduler interno no ha corrido todavía) → sin valor de banda, **aunque el ATR de 14 días ya esté disponible** (`atr_provisional=false` pero `bands_provisional=true`). No hay apertura de hoy contra qué anclar todavía.
+
+**Caso de uso**: proyección pura (`calculate_atr_range`), no persiste el resultado — mismo patrón que `anchored_vwap`. Se expone en `GET /api/v1/market/{symbol}` como el bloque `atr_range`, con `atr`, `atr_provisional`, `daily_bars_count`, `today_open`, `bands_provisional`, y las cuatro bandas (`outer_upper_band`, `outer_lower_band`, `inner_upper_band`, `inner_lower_band`).
+
+## 12. Fuera de alcance de este documento
 
 - Paleta de colores exacta, tipografía, sistema de diseño general — se resuelve en Etapa 5 junto con el resto del Dashboard, no aquí (evita sobre-especificar antes de tener el resto de la UI para dar contexto).
 - Vista de Options Chain, Flow — tienen su propio documento cuando lleguen esas etapas.
 - Widget de frontend para VWAP Anclado (sección 10) — el backend/API de este PR es la base; el widget visual queda para un PR aparte.
+- Widget de frontend para el Rango Histórico Esperado / ATR (sección 11) — mismo criterio, el backend/API es la base de este PR; el widget visual queda para un PR aparte.

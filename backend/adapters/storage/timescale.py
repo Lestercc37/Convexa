@@ -2,7 +2,14 @@ from __future__ import annotations
 
 from datetime import date, datetime
 
-from backend.domain.entities import FlowEvent, GammaAggregate, MarketPrice, OptionChain, Underlying
+from backend.domain.entities import (
+    DailyBar,
+    FlowEvent,
+    GammaAggregate,
+    MarketPrice,
+    OptionChain,
+    Underlying,
+)
 
 
 class TimescaleStorage:
@@ -53,4 +60,10 @@ class TimescaleStorage:
         raise NotImplementedError
 
     def get_recent_flow(self, underlying: str, limit: int = 20) -> list[FlowEvent]:
+        raise NotImplementedError
+
+    def save_daily_bar(self, bar: DailyBar) -> None:
+        raise NotImplementedError
+
+    def get_daily_bars(self, underlying: str, limit: int = 15) -> list[DailyBar]:
         raise NotImplementedError

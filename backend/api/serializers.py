@@ -241,6 +241,9 @@ def market_response(snapshot: MarketSnapshot) -> dict[str, Any]:
     anchored_vwap = snapshot.anchored_vwap
     if anchored_vwap is None:
         raise ValueError("market snapshot requires anchored vwap")
+    atr_range = snapshot.atr_range
+    if atr_range is None:
+        raise ValueError("market snapshot requires atr range")
     return {
         "schema_version": SCHEMA_VERSION,
         "symbol": snapshot.symbol,
@@ -269,6 +272,17 @@ def market_response(snapshot: MarketSnapshot) -> dict[str, Any]:
             "provisional": anchored_vwap.provisional,
             "anchor_time": _dt(anchored_vwap.anchor_time),
             "sample_count": anchored_vwap.sample_count,
+        },
+        "atr_range": {
+            "atr": _optional_num(atr_range.atr),
+            "atr_provisional": atr_range.atr_provisional,
+            "daily_bars_count": atr_range.daily_bars_count,
+            "today_open": _optional_num(atr_range.today_open),
+            "bands_provisional": atr_range.bands_provisional,
+            "outer_upper_band": _optional_num(atr_range.outer_upper_band),
+            "outer_lower_band": _optional_num(atr_range.outer_lower_band),
+            "inner_upper_band": _optional_num(atr_range.inner_upper_band),
+            "inner_lower_band": _optional_num(atr_range.inner_lower_band),
         },
     }
 

@@ -14,6 +14,7 @@ from backend.adapters.storage.postgresql import PostgreSQLStorage
 from backend.core.settings import Settings
 from backend.domain.entities import (
     AggressorSide,
+    DailyBar,
     DailyGammaReference,
     FlowEvent,
     FlowEventType,
@@ -146,6 +147,24 @@ def test_market_price_and_underlying_round_trip_against_postgresql(
     assert history == [price]
 
 
+def test_daily_bar_round_trip_against_postgresql(
+    postgresql_storage: tuple[PostgreSQLStorage, Engine, str],
+) -> None:
+    storage, _, symbol = postgresql_storage
+    bar = DailyBar(
+        symbol=symbol,
+        date=date(2026, 1, 2),
+        open_price=Decimal("100.00"),
+        high=Decimal("101.00"),
+        low=Decimal("99.00"),
+        close=Decimal("100.50"),
+    )
+
+    storage.save_daily_bar(bar)
+
+    assert storage.get_daily_bars(symbol) == [bar]
+
+
 def test_active_underlyings_are_seeded_in_postgresql(
     postgresql_storage: tuple[PostgreSQLStorage, Engine, str],
 ) -> None:
@@ -220,6 +239,10 @@ def _delete_test_data(engine: Engine, symbol: str) -> None:
         )
         connection.execute(
             text("DELETE FROM daily_gamma_reference WHERE underlying_id = :id"),
+            {"id": underlying_id},
+        )
+        connection.execute(
+            text("DELETE FROM daily_bars WHERE underlying_id = :id"),
             {"id": underlying_id},
         )
         connection.execute(

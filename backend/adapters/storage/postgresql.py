@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from backend.domain.entities import (
     AggressorSide,
     ContractType,
+    DailyBar,
     DailyGammaReference,
     FlowEvent,
     FlowEventType,
@@ -535,6 +536,62 @@ class PostgreSQLStorage:
                     pc_oi_ratio=Decimal(row["pc_oi_ratio"]),
                     skew_25d=Decimal(row["skew_25d"]),
                     atm_iv=Decimal(row["atm_iv"]),
+                )
+                for row in rows
+            ]
+
+    def save_daily_bar(self, bar: DailyBar) -> None:
+        with self.session_factory.begin() as session:
+            underlying_id = self._ensure_underlying(session, bar.symbol)
+            session.execute(
+                text(
+                    """
+                    INSERT INTO daily_bars (
+                        date, underlying_id, open, high, low, close
+                    )
+                    VALUES (
+                        :date, :underlying_id, :open, :high, :low, :close
+                    )
+                    ON CONFLICT (underlying_id, date) DO UPDATE SET
+                        open = EXCLUDED.open,
+                        high = EXCLUDED.high,
+                        low = EXCLUDED.low,
+                        close = EXCLUDED.close
+                    """
+                ),
+                {
+                    "date": bar.date,
+                    "underlying_id": underlying_id,
+                    "open": bar.open_price,
+                    "high": bar.high,
+                    "low": bar.low,
+                    "close": bar.close,
+                },
+            )
+
+    def get_daily_bars(self, underlying: str, limit: int = 15) -> list[DailyBar]:
+        with self.session_factory() as session:
+            rows = session.execute(
+                text(
+                    """
+                    SELECT b.date, u.symbol, b.open, b.high, b.low, b.close
+                    FROM daily_bars AS b
+                    JOIN underlyings AS u ON u.id = b.underlying_id
+                    WHERE u.symbol = :symbol
+                    ORDER BY b.date DESC
+                    LIMIT :limit
+                    """
+                ),
+                {"symbol": underlying.upper(), "limit": limit},
+            ).mappings()
+            return [
+                DailyBar(
+                    date=row["date"],
+                    symbol=str(row["symbol"]),
+                    open_price=Decimal(row["open"]),
+                    high=Decimal(row["high"]),
+                    low=Decimal(row["low"]),
+                    close=Decimal(row["close"]),
                 )
                 for row in rows
             ]

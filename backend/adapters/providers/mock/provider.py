@@ -1,11 +1,12 @@
 from __future__ import annotations
 
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from typing import AsyncIterator
 
 from backend.domain.entities import (
     ContractType,
+    DailyBar,
     FlowEvent,
     Greeks,
     MarketSnapshot,
@@ -44,6 +45,27 @@ class MockDataProvider:
             skew_25d=Decimal("0.04"),
             atm_iv=Decimal("0.22"),
         )
+
+    def get_daily_bars(self, underlying: str, days: int = 20) -> list[DailyBar]:
+        symbol = underlying.upper()
+        end_date = date(2026, 1, 14)  # the day before get_option_chain's fixed as_of
+        base_close = Decimal("550.00")
+        bars = []
+        for offset in range(days - 1, -1, -1):
+            bar_date = end_date - timedelta(days=offset)
+            wobble = Decimal(offset % 5) - Decimal(2)  # deterministic -2..2 oscillation
+            close = base_close + wobble
+            bars.append(
+                DailyBar(
+                    symbol=symbol,
+                    date=bar_date,
+                    open_price=close - Decimal("0.50"),
+                    high=close + Decimal("1.00"),
+                    low=close - Decimal("1.00"),
+                    close=close,
+                )
+            )
+        return bars
 
     async def stream_trades(self, underlying: str) -> AsyncIterator[FlowEvent]:
         if False:

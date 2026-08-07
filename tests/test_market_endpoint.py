@@ -57,7 +57,7 @@ def test_market_endpoint_confirms_agreeing_dealer_mode_at_gamma_flip() -> None:
 
     assert response.status_code == 200
     payload = response.json()
-    excluded_keys = {"expected_move", "anchored_vwap"}
+    excluded_keys = {"expected_move", "anchored_vwap", "atr_range"}
     assert {key: payload[key] for key in payload if key not in excluded_keys} == {
         "schema_version": 1,
         "symbol": "SPY",
@@ -79,6 +79,20 @@ def test_market_endpoint_confirms_agreeing_dealer_mode_at_gamma_flip() -> None:
         "provisional": False,
         "anchor_time": "2026-08-03T13:30:00Z",
         "sample_count": 1,
+    }
+    # No daily_bars saved: ATR itself is provisional, but today's open is
+    # still known from the same market price used above for anchored_vwap —
+    # the two provisional signals are independent (see calculate_atr_range).
+    assert payload["atr_range"] == {
+        "atr": None,
+        "atr_provisional": True,
+        "daily_bars_count": 0,
+        "today_open": 550,
+        "bands_provisional": True,
+        "outer_upper_band": None,
+        "outer_lower_band": None,
+        "inner_upper_band": None,
+        "inner_lower_band": None,
     }
 
 

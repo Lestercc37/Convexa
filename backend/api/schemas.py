@@ -35,6 +35,18 @@ class AnchoredVwapResponse(BaseModel):
     sample_count: int = Field(examples=[42])
 
 
+class AtrRangeResponse(BaseModel):
+    atr: Number | None
+    atr_provisional: bool
+    daily_bars_count: int = Field(examples=[15])
+    today_open: Number | None
+    bands_provisional: bool
+    outer_upper_band: Number | None
+    outer_lower_band: Number | None
+    inner_upper_band: Number | None
+    inner_lower_band: Number | None
+
+
 class MarketSnapshotResponse(BaseModel):
     schema_version: int = Field(examples=[1])
     symbol: str = Field(examples=["SPY"])
@@ -51,6 +63,7 @@ class MarketSnapshotResponse(BaseModel):
     gamma_as_of: str = Field(examples=["2026-01-15T14:29:30Z"])
     expected_move: ExpectedMoveResponse
     anchored_vwap: AnchoredVwapResponse
+    atr_range: AtrRangeResponse
 
 
 class OptionContractResponse(BaseModel):
