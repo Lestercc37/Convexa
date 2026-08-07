@@ -496,6 +496,7 @@ class MarketSnapshot:
     atm_iv: Decimal = Decimal("0")
     gamma: GammaAggregate | None = None
     expected_move: ExpectedMove | None = None
+    anchored_vwap: AnchoredVwap | None = None
     recent_flow: tuple[FlowEvent, ...] = field(default_factory=tuple)
     state: MarketState = MarketState.UNKNOWN
 
@@ -565,6 +566,26 @@ class ExpectedMove:
             "atm_iv",
         ):
             _ensure_finite_decimal(getattr(self, name), InvalidOptionError, name)
+
+
+@dataclass(frozen=True, slots=True)
+class AnchoredVwap:
+    """VWAP anchored to the current session's 9:30 ET open.
+
+    A read-only projection over already-persisted `market_snapshots`
+    (see `calculate_anchored_vwap`) — never persisted itself.
+    """
+
+    value: Decimal | None
+    provisional: bool
+    anchor_time: datetime
+    sample_count: int
+
+    def __post_init__(self) -> None:
+        if self.value is not None:
+            _ensure_finite_decimal(self.value, InvalidOptionError, "value")
+        if self.sample_count < 0:
+            raise InvalidOptionError("anchored vwap sample_count cannot be negative")
 
 
 def utc_now() -> datetime:

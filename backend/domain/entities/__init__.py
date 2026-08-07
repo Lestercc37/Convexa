@@ -1,6 +1,7 @@
 from backend.domain.entities.entities import (
     SCHEMA_VERSION,
     AggressorSide,
+    AnchoredVwap,
     CallWall,
     ContractType,
     DailyGammaReference,
@@ -46,6 +47,7 @@ from backend.domain.entities.entities import (
 __all__ = [
     "SCHEMA_VERSION",
     "AggressorSide",
+    "AnchoredVwap",
     "CallWall",
     "ContractType",
     "DailyGammaReference",

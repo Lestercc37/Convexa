@@ -1,3 +1,7 @@
+from backend.domain.use_cases.calculate_anchored_vwap import (
+    calculate_anchored_vwap,
+    calculate_session_open,
+)
 from backend.domain.use_cases.calculate_derived_metrics import (
     CalculateDerivedMetricsUseCase,
     capture_daily_gamma_reference,
@@ -51,8 +55,10 @@ __all__ = [
     "ScreenerPreset",
     "ScreenerPresetResult",
     "build_market_snapshot",
+    "calculate_anchored_vwap",
     "calculate_expected_move",
     "calculate_gamma_exposure",
+    "calculate_session_open",
     "calculate_time_to_close_pct",
     "capture_daily_gamma_reference",
     "get_flow",

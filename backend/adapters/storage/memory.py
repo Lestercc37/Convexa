@@ -23,6 +23,7 @@ class InMemoryStorage:
         self._chains: dict[str, list[OptionChain]] = {}
         self._gamma: dict[str, list[GammaAggregate]] = {}
         self._prices: dict[str, MarketPrice] = {}
+        self._price_history: dict[str, list[MarketPrice]] = {}
         self._flow: dict[str, list[FlowEvent]] = {}
         self._daily_gamma: dict[str, dict[date, DailyGammaReference]] = {}
         self._whale_thresholds: dict[str, WhaleThreshold] = {
@@ -77,9 +78,19 @@ class InMemoryStorage:
 
     def save_market_price(self, price: MarketPrice) -> None:
         self._prices[price.symbol] = price
+        self._price_history.setdefault(price.symbol, []).append(price)
 
     def get_latest_price(self, underlying: str) -> MarketPrice | None:
         return self._prices.get(underlying.upper())
+
+    def get_price_history(
+        self, underlying: str, start: datetime, end: datetime
+    ) -> list[MarketPrice]:
+        history = self._price_history.get(underlying.upper(), [])
+        return sorted(
+            (price for price in history if start <= price.as_of <= end),
+            key=lambda price: price.as_of,
+        )
 
     def save_flow_event(self, event: FlowEvent) -> None:
         self._flow.setdefault(event.symbol, []).append(event)

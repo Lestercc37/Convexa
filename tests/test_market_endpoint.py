@@ -57,7 +57,8 @@ def test_market_endpoint_confirms_agreeing_dealer_mode_at_gamma_flip() -> None:
 
     assert response.status_code == 200
     payload = response.json()
-    assert {key: payload[key] for key in payload if key != "expected_move"} == {
+    excluded_keys = {"expected_move", "anchored_vwap"}
+    assert {key: payload[key] for key in payload if key not in excluded_keys} == {
         "schema_version": 1,
         "symbol": "SPY",
         "as_of": "2026-08-03T14:31:00Z",
@@ -73,6 +74,12 @@ def test_market_endpoint_confirms_agreeing_dealer_mode_at_gamma_flip() -> None:
         "gamma_as_of": "2026-08-03T14:30:00Z",
     }
     assert payload["expected_move"]["atm_iv"] == 0.18
+    assert payload["anchored_vwap"] == {
+        "value": 550,
+        "provisional": False,
+        "anchor_time": "2026-08-03T13:30:00Z",
+        "sample_count": 1,
+    }
 
 
 def test_market_endpoint_prefers_price_when_dealer_mode_diverges() -> None:

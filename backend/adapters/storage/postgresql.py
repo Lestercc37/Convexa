@@ -371,6 +371,33 @@ class PostgreSQLStorage:
             volume=int(row["volume"]),
         )
 
+    def get_price_history(
+        self, underlying: str, start: datetime, end: datetime
+    ) -> list[MarketPrice]:
+        with self.session_factory() as session:
+            rows = session.execute(
+                text(
+                    """
+                    SELECT m.time, u.symbol, m.price, m.volume
+                    FROM market_snapshots AS m
+                    JOIN underlyings AS u ON u.id = m.underlying_id
+                    WHERE u.symbol = :symbol
+                      AND m.time BETWEEN :start AND :end
+                    ORDER BY m.time
+                    """
+                ),
+                {"symbol": underlying.upper(), "start": start, "end": end},
+            ).mappings()
+            return [
+                MarketPrice(
+                    symbol=str(row["symbol"]),
+                    as_of=row["time"],
+                    price=Decimal(row["price"]),
+                    volume=int(row["volume"]),
+                )
+                for row in rows
+            ]
+
     def save_flow_event(self, event: FlowEvent) -> None:
         with self.session_factory.begin() as session:
             contract_id = session.execute(
