@@ -39,6 +39,11 @@ class TimescaleStorage:
     def get_latest_price(self, underlying: str) -> MarketPrice | None:
         raise NotImplementedError
 
+    def get_price_history(
+        self, underlying: str, start: datetime, end: datetime
+    ) -> list[MarketPrice]:
+        raise NotImplementedError
+
     def save_flow_event(self, event: FlowEvent) -> None:
         raise NotImplementedError
 

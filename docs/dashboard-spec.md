@@ -141,7 +141,33 @@ Panel que traduce la sección "Dinámica de Cierre" de `trading-playbook.md` a e
 
 **Relevancia por usuario**: como el equipo no comparte la misma ventana de trading, este panel es más relevante para quienes operan hasta el cierre — pero no se oculta para el resto, ya que cualquiera podría querer verlo (ej. para evaluar si dejar correr una posición hacia el final del día).
 
-## 10. Fuera de alcance de este documento
+## 10. VWAP Anclado (Anchored VWAP)
+
+Nivel donde el precio suele reaccionar, calculado con matemática estándar de industria — confirmado contra un script de ThinkOrSwim revisado en sesión anterior. La fórmula es de dominio público, no propietaria de ningún proveedor. Se ancla en la apertura de la sesión (9:30 ET) y se reinicia cada día a esa hora, igual que el script original.
+
+**Fórmula (estándar):**
+
+```
+Precio típico (por lectura) = (high + low + close) / 3
+
+VWAP_anclado = Σ(precio_típico × volumen_del_intervalo) desde la apertura de HOY (9:30 ET) hasta ahora
+               ÷
+               Σ(volumen_del_intervalo) desde la apertura de HOY hasta ahora
+```
+
+**Aproximación necesaria, documentada explícitamente — Convexa no tiene datos tick a tick**: `market_snapshots` persiste un punto de precio cada 30 segundos (columnas `price` y `volume`, este último el volumen **acumulado de sesión**, mismo patrón ya resuelto con Eagle Contracts), no OHLC por intervalo. Dos ajustes sobre la fórmula estándar, ninguno escondido:
+
+- **Precio típico del intervalo ≈ `price` de esa lectura** — no hay high/low por ventana de 30s, solo el precio puntual. Es una aproximación razonable a esa resolución temporal, no la fórmula exacta de un candle de 1 minuto.
+- **Volumen del intervalo = `volumen_actual - volumen_lectura_anterior`** — como `volume` es acumulado de sesión (se reinicia a 0 en cada apertura, mismo comportamiento que ya maneja `EagleContractsEngine` al detectar un delta negativo entre sesiones), la primera lectura después de las 9:30 ET no tiene lectura previa dentro de la sesión contra la cual restar: su propio `volume` ya es, por definición, el volumen acumulado desde la apertura hasta ese instante, así que se usa tal cual como volumen de ese primer intervalo (delta implícito contra el cero de apertura).
+
+**Estado provisional**: requiere al menos 1 lectura después de la apertura para tener valor — antes de eso (o si el volumen acumulado del rango es 0, ej. justo a las 9:30:00), `provisional=true` y `value=null`. El campo `sample_count` expone cuántas lecturas de `market_snapshots` entraron al cálculo, para que el frontend pueda mostrar la confianza del nivel sin adivinar.
+
+**Caso de uso**: proyección pura (`calculate_anchored_vwap`), no persiste el resultado — mismo patrón que `dealer_mode` (propiedad derivada) y `derived_metrics` (calculado on-demand desde storage). Lee el historial de `market_snapshots` del underlying desde la apertura de la sesión actual hasta la lectura más reciente vía el nuevo método de storage `get_price_history`, y se expone en `GET /api/v1/market/{symbol}` como el campo `anchored_vwap`.
+
+**Nota de metodología**: al igual que con el histórico de Gamma (sección 2.1) y Vanna (`vendor-comparison.md`), si se compara este VWAP Anclado contra el de otra plataforma (ThinkOrSwim, NinjaTrader) los números pueden diferir levemente por la resolución de 30s vs. tick a tick de esas plataformas — no es un error de cálculo, es una diferencia de resolución de muestreo ya documentada arriba.
+
+## 11. Fuera de alcance de este documento
 
 - Paleta de colores exacta, tipografía, sistema de diseño general — se resuelve en Etapa 5 junto con el resto del Dashboard, no aquí (evita sobre-especificar antes de tener el resto de la UI para dar contexto).
 - Vista de Options Chain, Flow — tienen su propio documento cuando lleguen esas etapas.
+- Widget de frontend para VWAP Anclado (sección 10) — el backend/API de este PR es la base; el widget visual queda para un PR aparte.

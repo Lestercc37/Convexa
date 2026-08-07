@@ -238,6 +238,9 @@ def market_response(snapshot: MarketSnapshot) -> dict[str, Any]:
     expected_move = snapshot.expected_move
     if expected_move is None:
         raise ValueError("market snapshot requires expected move")
+    anchored_vwap = snapshot.anchored_vwap
+    if anchored_vwap is None:
+        raise ValueError("market snapshot requires anchored vwap")
     return {
         "schema_version": SCHEMA_VERSION,
         "symbol": snapshot.symbol,
@@ -260,6 +263,12 @@ def market_response(snapshot: MarketSnapshot) -> dict[str, Any]:
             "upper_bound": _num(expected_move.upper_bound),
             "lower_bound": _num(expected_move.lower_bound),
             "atm_iv": _num(expected_move.atm_iv),
+        },
+        "anchored_vwap": {
+            "value": _optional_num(anchored_vwap.value),
+            "provisional": anchored_vwap.provisional,
+            "anchor_time": _dt(anchored_vwap.anchor_time),
+            "sample_count": anchored_vwap.sample_count,
         },
     }
 

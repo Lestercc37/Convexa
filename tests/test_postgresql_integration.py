@@ -138,6 +138,12 @@ def test_market_price_and_underlying_round_trip_against_postgresql(
 
     assert storage.get_latest_price(symbol) == price
     assert any(item.symbol == symbol for item in storage.list_underlyings())
+    history = storage.get_price_history(
+        symbol,
+        price.as_of - timedelta(seconds=1),
+        price.as_of + timedelta(seconds=1),
+    )
+    assert history == [price]
 
 
 def test_active_underlyings_are_seeded_in_postgresql(
