@@ -1,7 +1,7 @@
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import type { GammaResponse } from "@/lib/types";
+import type { AtrRange, GammaResponse } from "@/lib/types";
 import { derivedMetricsFixture } from "@/test/fixtures";
 import { PriceChart } from "./price-chart";
 
@@ -15,6 +15,9 @@ const chartMocks = vi.hoisted(() => ({
   removePriceLine: vi.fn(),
   removeSeries: vi.fn(),
   remove: vi.fn(),
+  priceToCoordinate: vi.fn(),
+  subscribeVisibleLogicalRangeChange: vi.fn(),
+  unsubscribeVisibleLogicalRangeChange: vi.fn(),
   getGammaHistory: vi.fn(),
 }));
 
@@ -26,7 +29,7 @@ vi.mock("lightweight-charts", () => ({
   CandlestickSeries: "CandlestickSeries",
   LineSeries: "LineSeries",
   ColorType: { Solid: "solid" },
-  LineStyle: { Dashed: 2 },
+  LineStyle: { Dashed: 2, Solid: 0 },
   createChart: chartMocks.createChart,
 }));
 
@@ -38,6 +41,7 @@ beforeAll(() => {
           update: chartMocks.update,
           createPriceLine: chartMocks.createPriceLine,
           removePriceLine: chartMocks.removePriceLine,
+          priceToCoordinate: chartMocks.priceToCoordinate,
         }
       : { setData: chartMocks.lineSetData },
   );
@@ -45,7 +49,11 @@ beforeAll(() => {
     addSeries: chartMocks.addSeries,
     removeSeries: chartMocks.removeSeries,
     applyOptions: vi.fn(),
-    timeScale: () => ({ fitContent: vi.fn() }),
+    timeScale: () => ({
+      fitContent: vi.fn(),
+      subscribeVisibleLogicalRangeChange: chartMocks.subscribeVisibleLogicalRangeChange,
+      unsubscribeVisibleLogicalRangeChange: chartMocks.unsubscribeVisibleLogicalRangeChange,
+    }),
     remove: chartMocks.remove,
   });
   vi.stubGlobal(
@@ -59,6 +67,7 @@ beforeAll(() => {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  chartMocks.priceToCoordinate.mockImplementation(() => null);
   chartMocks.getGammaHistory.mockResolvedValue({
     schema_version: 1,
     symbol: "SPY",
@@ -182,5 +191,128 @@ describe("PriceChart", () => {
     expect(chartMocks.lineSetData).toHaveBeenLastCalledWith([
       { time: 1_785_767_400, value: 540 },
     ]);
+  });
+
+  it("draws the VWAP line and both ATR bands when both are ready", () => {
+    chartMocks.priceToCoordinate.mockImplementation((price: number) => 500 - price);
+    const readyAtrRange: AtrRange = {
+      atr: 20,
+      atr_provisional: false,
+      daily_bars_count: 15,
+      today_open: 500,
+      bands_provisional: false,
+      outer_upper_band: 520,
+      outer_lower_band: 480,
+      inner_upper_band: 510,
+      inner_lower_band: 490,
+    };
+    const { container } = render(
+      <PriceChart
+        symbol="SPY"
+        gamma={gamma}
+        candles={[]}
+        vwapPoints={[
+          { timestamp: "2026-08-03T13:30:00Z", value: 549 },
+          { timestamp: "2026-08-03T13:31:00Z", value: 550 },
+        ]}
+        atrRange={readyAtrRange}
+      />,
+    );
+
+    expect(chartMocks.addSeries).toHaveBeenCalledWith(
+      "LineSeries",
+      expect.objectContaining({ title: "VWAP Anclado", color: "#f3c969", lineStyle: 0 }),
+    );
+    expect(chartMocks.lineSetData).toHaveBeenCalledWith([
+      { time: 1_785_763_800, value: 549 },
+      { time: 1_785_763_860, value: 550 },
+    ]);
+
+    const outer = container.querySelector<HTMLElement>(".atr-band-outer");
+    const inner = container.querySelector<HTMLElement>(".atr-band-inner");
+    expect(outer).not.toBeNull();
+    expect(inner).not.toBeNull();
+    expect(outer?.style.top).toBe("-20px");
+    expect(outer?.style.height).toBe("40px");
+    expect(inner?.style.top).toBe("-10px");
+    expect(inner?.style.height).toBe("20px");
+  });
+
+  it("draws nothing extra when VWAP and ATR are both provisional", () => {
+    const provisionalAtrRange: AtrRange = {
+      atr: null,
+      atr_provisional: true,
+      daily_bars_count: 3,
+      today_open: null,
+      bands_provisional: true,
+      outer_upper_band: null,
+      outer_lower_band: null,
+      inner_upper_band: null,
+      inner_lower_band: null,
+    };
+    const { container } = render(
+      <PriceChart symbol="SPY" gamma={gamma} candles={[]} vwapPoints={[]} atrRange={provisionalAtrRange} />,
+    );
+
+    expect(chartMocks.addSeries).not.toHaveBeenCalledWith(
+      "LineSeries",
+      expect.objectContaining({ title: "VWAP Anclado" }),
+    );
+    expect(container.querySelector(".atr-band-outer")).toBeNull();
+    expect(container.querySelector(".atr-band-inner")).toBeNull();
+  });
+
+  it("hides ATR bands when the ATR itself is ready but today's open is not", () => {
+    const mixedAtrRange: AtrRange = {
+      atr: 20,
+      atr_provisional: false,
+      daily_bars_count: 15,
+      today_open: null,
+      bands_provisional: true,
+      outer_upper_band: null,
+      outer_lower_band: null,
+      inner_upper_band: null,
+      inner_lower_band: null,
+    };
+    const { container } = render(
+      <PriceChart symbol="SPY" gamma={gamma} candles={[]} vwapPoints={[]} atrRange={mixedAtrRange} />,
+    );
+
+    expect(container.querySelector(".atr-band-outer")).toBeNull();
+    expect(container.querySelector(".atr-band-inner")).toBeNull();
+  });
+
+  it("toggles the VWAP and ATR overlays off via their checkboxes", async () => {
+    const user = userEvent.setup();
+    chartMocks.priceToCoordinate.mockImplementation((price: number) => 500 - price);
+    const readyAtrRange: AtrRange = {
+      atr: 20,
+      atr_provisional: false,
+      daily_bars_count: 15,
+      today_open: 500,
+      bands_provisional: false,
+      outer_upper_band: 520,
+      outer_lower_band: 480,
+      inner_upper_band: 510,
+      inner_lower_band: 490,
+    };
+    const { container } = render(
+      <PriceChart
+        symbol="SPY"
+        gamma={gamma}
+        candles={[]}
+        vwapPoints={[{ timestamp: "2026-08-03T13:30:00Z", value: 549 }]}
+        atrRange={readyAtrRange}
+      />,
+    );
+
+    expect(container.querySelector(".atr-band-outer")).not.toBeNull();
+
+    await user.click(screen.getByRole("checkbox", { name: "VWAP Anclado" }));
+    await user.click(screen.getByRole("checkbox", { name: "Rango ATR" }));
+
+    expect(chartMocks.removeSeries).toHaveBeenCalled();
+    expect(container.querySelector(".atr-band-outer")).toBeNull();
+    expect(container.querySelector(".atr-band-inner")).toBeNull();
   });
 });

@@ -14,14 +14,16 @@ import {
   type UTCTimestamp,
 } from "lightweight-charts";
 import { getGammaHistory } from "@/lib/api";
-import type { MinuteCandle } from "@/lib/candles";
-import type { GammaHistoryItem, GammaResponse } from "@/lib/types";
+import type { MinuteCandle, VwapPoint } from "@/lib/candles";
+import type { AtrRange, GammaHistoryItem, GammaResponse } from "@/lib/types";
 import { LEVEL_MERGE_THRESHOLD } from "./gravity-map";
 
 type PriceChartProps = {
   symbol: string;
   candles: MinuteCandle[];
   gamma: GammaResponse;
+  vwapPoints?: VwapPoint[];
+  atrRange?: AtrRange;
 };
 
 type GammaLevel = {
@@ -32,11 +34,18 @@ type GammaLevel = {
 
 type LevelMode = "static" | "historical";
 
+type BandRect = {
+  top: number;
+  height: number;
+};
+
 const HISTORICAL_LEVELS = [
   { field: "call_wall", title: "Call Wall", color: "#36c99b" },
   { field: "gamma_flip", title: "Gamma Flip", color: "#f3c969" },
   { field: "put_wall", title: "Put Wall", color: "#ff7a45" },
 ] as const;
+
+const VWAP_COLOR = "#f3c969";
 
 function gammaLevels(gamma: GammaResponse): GammaLevel[] {
   const range = gamma.call_wall - gamma.put_wall;
@@ -62,13 +71,63 @@ function chartCandle(candle: MinuteCandle) {
   return { ...candle, time: candle.time as UTCTimestamp };
 }
 
-export function PriceChart({ symbol, candles, gamma }: PriceChartProps) {
+type AtrBandValues = {
+  outerUpper: number;
+  outerLower: number;
+  innerUpper: number;
+  innerLower: number;
+};
+
+function atrBands(atrRange: AtrRange | undefined): AtrBandValues | null {
+  if (!atrRange || atrRange.bands_provisional) return null;
+  const { outer_upper_band, outer_lower_band, inner_upper_band, inner_lower_band } = atrRange;
+  if (
+    outer_upper_band === null ||
+    outer_lower_band === null ||
+    inner_upper_band === null ||
+    inner_lower_band === null
+  ) {
+    return null;
+  }
+  return {
+    outerUpper: outer_upper_band,
+    outerLower: outer_lower_band,
+    innerUpper: inner_upper_band,
+    innerLower: inner_lower_band,
+  };
+}
+
+function bandRect(
+  series: ISeriesApi<"Candlestick">,
+  upperPrice: number,
+  lowerPrice: number,
+): BandRect | null {
+  const top = series.priceToCoordinate(upperPrice);
+  const bottom = series.priceToCoordinate(lowerPrice);
+  if (top === null || bottom === null) return null;
+  return { top, height: bottom - top };
+}
+
+export function PriceChart({
+  symbol,
+  candles,
+  gamma,
+  vwapPoints = [],
+  atrRange,
+}: PriceChartProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const seriesRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
   const initialCandlesRef = useRef(candles);
+  const recomputeBandRectsRef = useRef<() => void>(() => {});
   const [levelMode, setLevelMode] = useState<LevelMode>("static");
   const [history, setHistory] = useState<GammaHistoryItem[]>([]);
+  const [showVwap, setShowVwap] = useState(true);
+  const [showAtr, setShowAtr] = useState(true);
+  const [bandRects, setBandRects] = useState<{ outer: BandRect | null; inner: BandRect | null }>({
+    outer: null,
+    inner: null,
+  });
 
   useEffect(() => {
     const container = containerRef.current;
@@ -103,6 +162,7 @@ export function PriceChart({ symbol, candles, gamma }: PriceChartProps) {
 
     const resizeObserver = new ResizeObserver(([entry]) => {
       chart.applyOptions({ width: entry.contentRect.width });
+      recomputeBandRectsRef.current();
     });
     resizeObserver.observe(container);
 
@@ -168,6 +228,55 @@ export function PriceChart({ symbol, candles, gamma }: PriceChartProps) {
     return () => levelSeries.forEach((line) => chart.removeSeries(line));
   }, [history, levelMode]);
 
+  useEffect(() => {
+    const chart = chartRef.current;
+    if (!chart || !showVwap || vwapPoints.length === 0) return;
+    const line = chart.addSeries(LineSeries, {
+      color: VWAP_COLOR,
+      lineWidth: 2,
+      lineStyle: LineStyle.Solid,
+      title: "VWAP Anclado",
+      priceLineVisible: false,
+      lastValueVisible: true,
+    });
+    line.setData(
+      [...vwapPoints]
+        .sort((left, right) => Date.parse(left.timestamp) - Date.parse(right.timestamp))
+        .map((point) => ({
+          time: Math.floor(Date.parse(point.timestamp) / 1000) as UTCTimestamp,
+          value: point.value,
+        })),
+    );
+    return () => chart.removeSeries(line);
+  }, [vwapPoints, showVwap]);
+
+  useEffect(() => {
+    const series = seriesRef.current;
+    const bands = showAtr ? atrBands(atrRange) : null;
+
+    const recompute = () => {
+      if (!series || !bands) {
+        setBandRects({ outer: null, inner: null });
+        return;
+      }
+      setBandRects({
+        outer: bandRect(series, bands.outerUpper, bands.outerLower),
+        inner: bandRect(series, bands.innerUpper, bands.innerLower),
+      });
+    };
+
+    recomputeBandRectsRef.current = recompute;
+    recompute();
+
+    const chart = chartRef.current;
+    const timeScale = chart?.timeScale();
+    timeScale?.subscribeVisibleLogicalRangeChange(recompute);
+    return () => {
+      timeScale?.unsubscribeVisibleLogicalRangeChange(recompute);
+      recomputeBandRectsRef.current = () => {};
+    };
+  }, [atrRange, showAtr, candles]);
+
   return (
     <section className="panel price-chart-panel" aria-labelledby="price-chart-title">
       <div className="panel-heading">
@@ -193,6 +302,25 @@ export function PriceChart({ symbol, candles, gamma }: PriceChartProps) {
               Histórico
             </button>
           </fieldset>
+          <fieldset className="overlay-toggles" aria-label="Overlays">
+            <legend>Overlays:</legend>
+            <label className="chart-toggle">
+              <input
+                type="checkbox"
+                checked={showVwap}
+                onChange={(event) => setShowVwap(event.target.checked)}
+              />
+              VWAP Anclado
+            </label>
+            <label className="chart-toggle">
+              <input
+                type="checkbox"
+                checked={showAtr}
+                onChange={(event) => setShowAtr(event.target.checked)}
+              />
+              Rango ATR
+            </label>
+          </fieldset>
           <span className="mode-pill">En vivo</span>
         </div>
       </div>
@@ -202,6 +330,20 @@ export function PriceChart({ symbol, candles, gamma }: PriceChartProps) {
           className="price-chart"
           aria-label={`Chart de velas para ${symbol}`}
         />
+        {bandRects.outer && (
+          <div
+            className="atr-band atr-band-outer"
+            style={{ top: bandRects.outer.top, height: bandRects.outer.height }}
+            aria-hidden="true"
+          />
+        )}
+        {bandRects.inner && (
+          <div
+            className="atr-band atr-band-inner"
+            style={{ top: bandRects.inner.top, height: bandRects.inner.height }}
+            aria-hidden="true"
+          />
+        )}
         <Image
           src="/logo-watermark.png"
           alt=""
