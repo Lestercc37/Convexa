@@ -203,7 +203,14 @@ export function PriceChart({
         axisLabelVisible: true,
       }),
     );
-    return () => lines.forEach((line) => series.removePriceLine(line));
+    return () => {
+      // The chart-creation effect's cleanup may already have disposed the
+      // chart (and this series with it) — e.g. on a symbol change, which
+      // unmounts this whole component via its `key`. Calling
+      // removePriceLine on an already-disposed series throws.
+      if (seriesRef.current !== series) return;
+      lines.forEach((line) => series.removePriceLine(line));
+    };
   }, [gamma, levelMode]);
 
   useEffect(() => {
@@ -225,7 +232,10 @@ export function PriceChart({
       );
       return line;
     });
-    return () => levelSeries.forEach((line) => chart.removeSeries(line));
+    return () => {
+      if (chartRef.current !== chart) return;
+      levelSeries.forEach((line) => chart.removeSeries(line));
+    };
   }, [history, levelMode]);
 
   useEffect(() => {
@@ -247,7 +257,10 @@ export function PriceChart({
           value: point.value,
         })),
     );
-    return () => chart.removeSeries(line);
+    return () => {
+      if (chartRef.current !== chart) return;
+      chart.removeSeries(line);
+    };
   }, [vwapPoints, showVwap]);
 
   useEffect(() => {
@@ -272,7 +285,9 @@ export function PriceChart({
     const timeScale = chart?.timeScale();
     timeScale?.subscribeVisibleLogicalRangeChange(recompute);
     return () => {
-      timeScale?.unsubscribeVisibleLogicalRangeChange(recompute);
+      if (chartRef.current === chart) {
+        timeScale?.unsubscribeVisibleLogicalRangeChange(recompute);
+      }
       recomputeBandRectsRef.current = () => {};
     };
   }, [atrRange, showAtr, candles]);
