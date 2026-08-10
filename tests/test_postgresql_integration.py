@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterator
+from dataclasses import replace
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from uuid import uuid4
@@ -19,6 +20,7 @@ from backend.domain.entities import (
     FlowEvent,
     FlowEventType,
     GammaAggregate,
+    GammaAggregateItem,
     MarketPrice,
     WhaleThreshold,
 )
@@ -75,6 +77,31 @@ def test_gamma_aggregate_round_trip_against_postgresql(
     aggregate = GammaAggregate(
         symbol=symbol,
         as_of=datetime.now(timezone.utc),
+        # Hand-built per-strike breakdown — the engine already computes this
+        # on every calculation cycle; it was just discarded before this
+        # point. Confirms the full save -> read round trip preserves it.
+        items=(
+            GammaAggregateItem(
+                strike=Decimal("545"),
+                total_gamma_exposure=Decimal("390"),
+                call_gamma_exposure=Decimal("240"),
+                put_gamma_exposure=Decimal("-150"),
+                net_gamma=Decimal("90"),
+                contract_count=2,
+                absolute_gamma=Decimal("90"),
+                open_interest=14000,
+                volume=6800,
+            ),
+            GammaAggregateItem(
+                strike=Decimal("550"),
+                total_gamma_exposure=Decimal("200"),
+                call_gamma_exposure=Decimal("120"),
+                put_gamma_exposure=Decimal("-80"),
+                net_gamma=Decimal("40"),
+                contract_count=3,
+                absolute_gamma=Decimal("40"),
+            ),
+        ),
         gamma_flip=Decimal("551.5"),
         call_wall=Decimal("555"),
         put_wall=Decimal("545"),
@@ -97,8 +124,10 @@ def test_gamma_aggregate_round_trip_against_postgresql(
     )
 
     assert loaded == aggregate
-    assert history == [aggregate]
-    assert loaded.items == ()
+    assert loaded is not None and loaded.items == aggregate.items
+    # get_gamma_history intentionally does not reconstruct items — nothing
+    # reads them from historical rows, only from the latest snapshot.
+    assert history == [replace(aggregate, items=())]
 
 
 def test_flow_event_round_trip_against_postgresql(
@@ -265,6 +294,10 @@ def _delete_test_data(engine: Engine, symbol: str) -> None:
                 )
                 """
             ),
+            {"id": underlying_id},
+        )
+        connection.execute(
+            text("DELETE FROM gamma_aggregate_items WHERE underlying_id = :id"),
             {"id": underlying_id},
         )
         for table_name in ("gamma_aggregates", "market_snapshots"):

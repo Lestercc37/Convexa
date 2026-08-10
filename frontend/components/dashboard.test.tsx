@@ -7,6 +7,7 @@ import { Dashboard } from "./dashboard";
 const apiMocks = vi.hoisted(() => ({
   getAlerts: vi.fn(),
   getGamma: vi.fn(),
+  getGammaProfile: vi.fn(),
   getMarket: vi.fn(),
   getOptionChain: vi.fn(),
   getScreenerPreset: vi.fn(),
@@ -129,6 +130,31 @@ beforeEach(() => {
     results: [],
   });
   apiMocks.getAlerts.mockResolvedValue({ schema_version: 1, symbol: "SPY", alerts: [] });
+  apiMocks.getGammaProfile.mockImplementation((symbol: string) =>
+    Promise.resolve({
+      schema_version: 1,
+      symbol,
+      as_of: "2026-08-07T20:30:00Z",
+      gamma_flip: 548.5,
+      max_pain: 549,
+      total_market_gamma: 280,
+      positive_gamma: 280,
+      negative_gamma: 0,
+      absolute_gamma_strike: 550,
+      peak_gamma_value: 190,
+      items: [
+        {
+          strike: 550,
+          total_gamma_exposure: 200,
+          call_gamma_exposure: 120,
+          put_gamma_exposure: -80,
+          net_gamma: 40,
+          contract_count: 3,
+          absolute_gamma: 40,
+        },
+      ],
+    }),
+  );
 });
 
 describe("Dashboard", () => {
@@ -184,5 +210,22 @@ describe("Dashboard", () => {
     expect(consoleError).not.toHaveBeenCalled();
 
     consoleError.mockRestore();
+  });
+
+  it("switches to the Pre-Sesión view without polling the live chart, and back", async () => {
+    const user = userEvent.setup();
+    render(<Dashboard />);
+    await screen.findByLabelText("Chart de velas para SPY");
+
+    await user.click(screen.getByRole("button", { name: "Pre-Sesión" }));
+
+    expect(await screen.findByText(/Congelado desde el cierre de/)).toBeInTheDocument();
+    expect(screen.queryByLabelText("Chart de velas para SPY")).not.toBeInTheDocument();
+    await waitFor(() =>
+      expect(apiMocks.getGammaProfile).toHaveBeenCalledWith("SPY", expect.any(AbortSignal)),
+    );
+
+    await user.click(screen.getByRole("button", { name: "En vivo" }));
+    expect(await screen.findByLabelText("Chart de velas para SPY")).toBeInTheDocument();
   });
 });

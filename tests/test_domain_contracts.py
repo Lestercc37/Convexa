@@ -15,6 +15,7 @@ from backend.api.serializers import chain_response, gamma_response, websocket_me
 from backend.domain.entities import (
     Expiration,
     GammaAggregate,
+    GammaAggregateItem,
     InvalidExpirationError,
     InvalidOptionError,
     InvalidStrikeError,
@@ -104,6 +105,45 @@ def test_calculate_gamma_exposure_orchestrates_and_persists() -> None:
     assert result.call_wall > 0
     assert result.put_wall > 0
     assert result.max_pain > 0
+
+
+def test_gamma_aggregate_items_round_trip_in_memory() -> None:
+    storage = InMemoryStorage()
+    aggregate = GammaAggregate(
+        symbol="SPY",
+        as_of=utc_now(),
+        items=(
+            GammaAggregateItem(
+                strike=Decimal("545"),
+                total_gamma_exposure=Decimal("390"),
+                call_gamma_exposure=Decimal("240"),
+                put_gamma_exposure=Decimal("-150"),
+                net_gamma=Decimal("90"),
+                contract_count=2,
+                absolute_gamma=Decimal("90"),
+                open_interest=14000,
+                volume=6800,
+            ),
+            GammaAggregateItem(
+                strike=Decimal("550"),
+                total_gamma_exposure=Decimal("200"),
+                call_gamma_exposure=Decimal("120"),
+                put_gamma_exposure=Decimal("-80"),
+                net_gamma=Decimal("40"),
+                contract_count=3,
+                absolute_gamma=Decimal("40"),
+            ),
+        ),
+        gamma_flip=Decimal("548.5"),
+        max_pain=Decimal("550"),
+        net_gamma=Decimal("-1250000"),
+    )
+
+    storage.save_gamma_aggregate(aggregate)
+    loaded = storage.get_latest_gamma_aggregate("SPY")
+
+    assert loaded is not None
+    assert loaded.items == aggregate.items
 
 
 def test_market_snapshot_is_projection_not_persisted_table_model() -> None:

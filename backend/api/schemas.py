@@ -182,6 +182,8 @@ class GammaAggregateResponse(BaseModel):
     schema_version: int = Field(examples=[1])
     symbol: str = Field(examples=["SPY"])
     as_of: str = Field(examples=["2026-01-15T14:30:00Z"])
+    gamma_flip: Number = Field(examples=[548.5])
+    max_pain: Number = Field(examples=[550])
     total_market_gamma: Number = Field(examples=[280])
     positive_gamma: Number = Field(examples=[280])
     negative_gamma: Number = Field(examples=[0])

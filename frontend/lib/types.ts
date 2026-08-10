@@ -131,6 +131,30 @@ export type GammaHistoryResponse = {
   items: GammaHistoryItem[];
 };
 
+export type GammaAggregateItem = {
+  strike: number;
+  total_gamma_exposure: number;
+  call_gamma_exposure: number;
+  put_gamma_exposure: number;
+  net_gamma: number;
+  contract_count: number;
+  absolute_gamma: number;
+};
+
+export type GammaAggregateResponse = {
+  schema_version: number;
+  symbol: string;
+  as_of: string;
+  gamma_flip: number;
+  max_pain: number;
+  total_market_gamma: number;
+  positive_gamma: number;
+  negative_gamma: number;
+  absolute_gamma_strike: number;
+  peak_gamma_value: number;
+  items: GammaAggregateItem[];
+};
+
 export type MarketResponse = {
   schema_version: number;
   symbol: string;

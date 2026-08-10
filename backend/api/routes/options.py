@@ -6,6 +6,7 @@ from fastapi import APIRouter, Query, Request
 
 from backend.api.schemas import (
     FlowResponse,
+    GammaAggregateResponse,
     GammaHistoryResponse,
     GammaResponse,
     OptionChainResponse,
@@ -14,6 +15,7 @@ from backend.api.schemas import (
 from backend.api.serializers import (
     chain_response,
     flow_response,
+    gamma_aggregate_response,
     gamma_history_response,
     gamma_response,
     underlyings_response,
@@ -59,6 +61,13 @@ def get_gamma(symbol: str, request: Request) -> GammaResponse:
     gamma = get_gamma_exposure(container.storage, symbol)
     derived_metrics = container.calculate_derived_metrics_use_case.execute(symbol)
     return GammaResponse.model_validate(gamma_response(gamma, derived_metrics))
+
+
+@router.get("/gamma/{symbol}/profile", response_model=GammaAggregateResponse)
+def gamma_profile(symbol: str, request: Request) -> GammaAggregateResponse:
+    container: Container = request.app.state.container
+    gamma = get_gamma_exposure(container.storage, symbol)
+    return GammaAggregateResponse.model_validate(gamma_aggregate_response(gamma))
 
 
 @router.get("/gamma/{symbol}/history", response_model=GammaHistoryResponse)

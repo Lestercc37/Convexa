@@ -9,6 +9,7 @@ import type { GammaResponse, MarketResponse, Underlying } from "@/lib/types";
 import { AlertsPanel } from "./alerts-panel";
 import { DerivedMetricsBar } from "./derived-metrics-bar";
 import { ExpectedMoveWidget } from "./expected-move-widget";
+import { PreSessionPanel } from "./pre-session-panel";
 import { PriceChart } from "./price-chart";
 import { QuickScreener } from "./quick-screener";
 import { RegimeBadge } from "./regime-badge";
@@ -32,6 +33,7 @@ const EXPOSURE_FORMAT = new Intl.NumberFormat("en-US", {
 export function Dashboard() {
   const [underlyings, setUnderlyings] = useState<Underlying[]>([]);
   const [symbol, setSymbol] = useState("");
+  const [view, setView] = useState<"live" | "pre-session">("live");
   const [gamma, setGamma] = useState<GammaResponse | null>(null);
   const [market, setMarket] = useState<MarketResponse | null>(null);
   const [pricePoints, setPricePoints] = useState<PricePoint[]>([]);
@@ -165,6 +167,22 @@ export function Dashboard() {
             </button>
           ))}
         </div>
+        <div className="tv-view-toggle" role="group" aria-label="Vista">
+          <button
+            type="button"
+            aria-pressed={view === "live"}
+            onClick={() => setView("live")}
+          >
+            En vivo
+          </button>
+          <button
+            type="button"
+            aria-pressed={view === "pre-session"}
+            onClick={() => setView("pre-session")}
+          >
+            Pre-Sesión
+          </button>
+        </div>
         <div className="tv-topbar-right">
           {gamma && market && <RegimeBadge gamma={gamma} market={market} />}
         </div>
@@ -185,14 +203,18 @@ export function Dashboard() {
           </aside>
 
           <div className="tv-center">
-            <PriceChart
-              key={`price-chart-${symbol}`}
-              symbol={symbol}
-              candles={candles}
-              gamma={gamma}
-              vwapPoints={vwapPoints}
-              atrRange={market.atr_range}
-            />
+            {view === "live" ? (
+              <PriceChart
+                key={`price-chart-${symbol}`}
+                symbol={symbol}
+                candles={candles}
+                gamma={gamma}
+                vwapPoints={vwapPoints}
+                atrRange={market.atr_range}
+              />
+            ) : (
+              <PreSessionPanel key={`pre-session-${symbol}`} symbol={symbol} />
+            )}
           </div>
 
           <aside className="tv-sidebar">
