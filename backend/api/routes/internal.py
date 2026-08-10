@@ -24,7 +24,7 @@ def trigger_calculation(
 
     chain = container.market_data_provider.get_option_chain(symbol)
     container.storage.save_chain_snapshot(chain)
-    container.eagle_contracts_engine.process(chain)
+    container.whale_alerts_engine.process(chain)
 
     market = container.market_data_provider.get_underlying_snapshot(symbol)
     container.storage.save_market_price(

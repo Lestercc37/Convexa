@@ -9,13 +9,13 @@ from enum import StrEnum
 from backend.domain.entities import OptionChain
 
 
-class EagleAlertType(StrEnum):
+class WhaleAlertType(StrEnum):
     UNUSUAL = "UNUSUAL"
     WHALE = "WHALE"
 
 
 @dataclass(frozen=True, slots=True)
-class EagleThresholds:
+class WhaleAlertThresholds:
     unusual_min: Decimal = Decimal("40000.0")
     whale_min: Decimal = Decimal("150000.0")
     unusual_multiplier: Decimal = Decimal("3.0")
@@ -23,10 +23,10 @@ class EagleThresholds:
 
 
 @dataclass(frozen=True, slots=True)
-class EagleAlert:
+class WhaleAlert:
     symbol: str
     occ_symbol: str
-    alert_type: EagleAlertType
+    alert_type: WhaleAlertType
     amount: Decimal
     as_of: datetime
 
@@ -37,7 +37,7 @@ class _ContractState:
     previous_amounts: deque[Decimal]
 
 
-class EagleContractsEngine:
+class WhaleAlertsEngine:
     """Detect unusual contract volume from provider-independent chain snapshots."""
 
     _WINDOW_SIZE = 5
@@ -45,20 +45,20 @@ class EagleContractsEngine:
 
     def __init__(
         self,
-        thresholds_by_symbol: dict[str, EagleThresholds] | None = None,
-        default_thresholds: EagleThresholds | None = None,
+        thresholds_by_symbol: dict[str, WhaleAlertThresholds] | None = None,
+        default_thresholds: WhaleAlertThresholds | None = None,
         alert_limit: int = 1000,
     ) -> None:
-        self._default_thresholds = default_thresholds or EagleThresholds()
+        self._default_thresholds = default_thresholds or WhaleAlertThresholds()
         self._thresholds_by_symbol = {
             symbol.upper(): thresholds
             for symbol, thresholds in (thresholds_by_symbol or {}).items()
         }
         self._states: dict[str, _ContractState] = {}
-        self._alerts: deque[EagleAlert] = deque(maxlen=alert_limit)
+        self._alerts: deque[WhaleAlert] = deque(maxlen=alert_limit)
 
-    def process(self, chain: OptionChain) -> tuple[EagleAlert, ...]:
-        generated: list[EagleAlert] = []
+    def process(self, chain: OptionChain) -> tuple[WhaleAlert, ...]:
+        generated: list[WhaleAlert] = []
         thresholds = self._thresholds_by_symbol.get(chain.symbol, self._default_thresholds)
 
         for contract in chain.contracts:
@@ -81,7 +81,7 @@ class EagleContractsEngine:
                 average_amount = sum(state.previous_amounts, Decimal()) / self._WINDOW_SIZE
                 alert_type = self._classify(amount, average_amount, thresholds)
                 if alert_type is not None:
-                    alert = EagleAlert(
+                    alert = WhaleAlert(
                         symbol=chain.symbol,
                         occ_symbol=contract.occ_symbol,
                         alert_type=alert_type,
@@ -95,7 +95,7 @@ class EagleContractsEngine:
 
         return tuple(generated)
 
-    def recent_alerts(self, symbol: str, limit: int = 100) -> tuple[EagleAlert, ...]:
+    def recent_alerts(self, symbol: str, limit: int = 100) -> tuple[WhaleAlert, ...]:
         normalized = symbol.upper()
         matches = (alert for alert in reversed(self._alerts) if alert.symbol == normalized)
         return tuple(alert for _, alert in zip(range(limit), matches, strict=False))
@@ -104,16 +104,16 @@ class EagleContractsEngine:
     def _classify(
         amount: Decimal,
         average_amount: Decimal,
-        thresholds: EagleThresholds,
-    ) -> EagleAlertType | None:
+        thresholds: WhaleAlertThresholds,
+    ) -> WhaleAlertType | None:
         if (
             amount >= thresholds.whale_min
             and amount > average_amount * thresholds.whale_multiplier
         ):
-            return EagleAlertType.WHALE
+            return WhaleAlertType.WHALE
         if (
             amount >= thresholds.unusual_min
             and amount > average_amount * thresholds.unusual_multiplier
         ):
-            return EagleAlertType.UNUSUAL
+            return WhaleAlertType.UNUSUAL
         return None

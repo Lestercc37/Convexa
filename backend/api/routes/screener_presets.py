@@ -29,7 +29,7 @@ def screener_preset(preset_name: str, request: Request) -> ScreenerPresetRespons
         alerts = tuple(
             alert
             for underlying in container.storage.list_underlyings()
-            for alert in container.eagle_contracts_engine.recent_alerts(underlying.symbol)
+            for alert in container.whale_alerts_engine.recent_alerts(underlying.symbol)
         )
     results = get_screener_preset(container.storage, preset, alerts)
     return ScreenerPresetResponse.model_validate(

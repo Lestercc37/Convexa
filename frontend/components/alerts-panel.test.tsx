@@ -1,6 +1,6 @@
 import { render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { EagleAlertsResponse, Underlying } from "@/lib/types";
+import type { Underlying, WhaleAlertsResponse } from "@/lib/types";
 import { AlertsPanel } from "./alerts-panel";
 
 const apiMocks = vi.hoisted(() => ({
@@ -14,7 +14,7 @@ const underlyings: Underlying[] = [
   { symbol: "QQQ", kind: "equity", is_priority: true },
 ];
 
-function alertsResponse(symbol: string, alerts: EagleAlertsResponse["alerts"]): EagleAlertsResponse {
+function alertsResponse(symbol: string, alerts: WhaleAlertsResponse["alerts"]): WhaleAlertsResponse {
   return { schema_version: 1, symbol, alerts };
 }
 

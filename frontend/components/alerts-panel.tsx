@@ -3,13 +3,13 @@
 import { useEffect, useState } from "react";
 import { getAlerts } from "@/lib/api";
 import { POLLING_INTERVAL_MS } from "@/lib/polling";
-import type { EagleAlert, Underlying } from "@/lib/types";
+import type { Underlying, WhaleAlert } from "@/lib/types";
 
 type AlertsPanelProps = {
   underlyings: Underlying[];
 };
 
-const TYPE_LABEL: Record<EagleAlert["type"], string> = {
+const TYPE_LABEL: Record<WhaleAlert["type"], string> = {
   WHALE: "Whale",
   UNUSUAL: "Unusual",
 };
@@ -20,12 +20,12 @@ const CURRENCY_FORMAT = new Intl.NumberFormat("en-US", {
   maximumFractionDigits: 0,
 });
 
-function alertKey(alert: EagleAlert) {
+function alertKey(alert: WhaleAlert) {
   return `${alert.symbol}-${alert.contract}-${alert.timestamp}`;
 }
 
 export function AlertsPanel({ underlyings }: AlertsPanelProps) {
-  const [alerts, setAlerts] = useState<EagleAlert[]>([]);
+  const [alerts, setAlerts] = useState<WhaleAlert[]>([]);
   const [error, setError] = useState("");
 
   useEffect(() => {
@@ -60,7 +60,7 @@ export function AlertsPanel({ underlyings }: AlertsPanelProps) {
   return (
     <section className="panel alerts-panel" aria-labelledby="alerts-panel-title">
       <div className="panel-heading alerts-heading">
-        <p className="eyebrow">Eagle Contracts</p>
+        <p className="eyebrow">Whale Alerts</p>
         <h2 id="alerts-panel-title">Alertas</h2>
       </div>
       {error ? (

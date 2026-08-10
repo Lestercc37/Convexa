@@ -273,7 +273,7 @@ button, select { font: inherit; }
 .screener-empty { min-height: 80px; display: flex; align-items: center; justify-content: center; margin: 0; color: var(--tv-text-dim); font-size: 0.78rem; text-align: center; }
 .screener-empty.error { color: #ff9c84; }
 
-/* ---------- Bottom strip: Eagle Contracts alerts ---------- */
+/* ---------- Bottom strip: Whale Alerts ---------- */
 
 .alerts-panel { border: 0; background: none; }
 .alerts-heading { margin-bottom: 8px; }

@@ -8,9 +8,9 @@ from fastapi.testclient import TestClient
 from backend.adapters.storage.memory import InMemoryStorage
 from backend.domain.entities import GammaAggregate
 from backend.domain.use_cases import (
-    EagleAlert,
-    EagleAlertType,
     ScreenerPreset,
+    WhaleAlert,
+    WhaleAlertType,
     get_screener_preset,
 )
 from backend.domain.underlyings import ACTIVE_UNDERLYINGS
@@ -55,11 +55,11 @@ def _storage() -> InMemoryStorage:
 
 def test_unusual_activity_is_sorted_most_recent_first() -> None:
     alerts = (
-        EagleAlert("SPY", "SPY-C", EagleAlertType.UNUSUAL, Decimal("40000"), AS_OF),
-        EagleAlert(
+        WhaleAlert("SPY", "SPY-C", WhaleAlertType.UNUSUAL, Decimal("40000"), AS_OF),
+        WhaleAlert(
             "QQQ",
             "QQQ-C",
-            EagleAlertType.WHALE,
+            WhaleAlertType.WHALE,
             Decimal("150000"),
             AS_OF + timedelta(minutes=1),
         ),
@@ -70,7 +70,7 @@ def test_unusual_activity_is_sorted_most_recent_first() -> None:
     )
 
     assert [item.symbol for item in results] == ["QQQ", "SPY"]
-    assert results[0].alert_type is EagleAlertType.WHALE
+    assert results[0].alert_type is WhaleAlertType.WHALE
 
 
 def test_negative_gamma_filters_and_sorts_by_absolute_value() -> None:

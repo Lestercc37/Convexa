@@ -54,9 +54,9 @@ Se dividen en dos categorías según qué los dispara:
 - **Ports usados**: `IDataProvider.stream_trades(...)` → clasifica cada trade (sweep/block/unusual, vía la lógica de detección del Flow Engine) → `IStorage.save_flow_event(...)`.
 - **Efecto secundario**: eventos que superan un umbral de relevancia disparan `INotificationService.notify(...)`.
 
-#### Eagle Contracts / ProcessFlow
+#### Whale Alerts / ProcessFlow
 
-Eagle Contracts consume snapshots sucesivos de `OptionChain`, sin depender del proveedor que los
+Whale Alerts consume snapshots sucesivos de `OptionChain`, sin depender del proveedor que los
 produzca. Por cada `occ_symbol` conserva el último volumen acumulado de sesión, calcula
 `delta_volume = volumen_actual - volumen_anterior` y convierte el período a dólares mediante
 `monto = delta_volume × last × 100`. Una caída del acumulado se trata como reinicio de sesión:
