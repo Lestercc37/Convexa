@@ -7,6 +7,7 @@ import { aggregateMinuteCandles, type PricePoint, type VwapPoint } from "@/lib/c
 import { POLLING_INTERVAL_MS } from "@/lib/polling";
 import type { GammaResponse, MarketResponse, Underlying } from "@/lib/types";
 import { AlertsPanel } from "./alerts-panel";
+import { ClosingDynamicsPanel } from "./closing-dynamics-panel";
 import { DerivedMetricsBar } from "./derived-metrics-bar";
 import { ExpectedMoveWidget } from "./expected-move-widget";
 import { PreSessionPanel } from "./pre-session-panel";
@@ -236,6 +237,12 @@ export function Dashboard() {
                 </div>
               </div>
             </section>
+            {/* Right after the raw Charm/Vanna Exposure numbers above, since
+                this panel is their translated, closing-window-scoped
+                interpretation — conditional by design (dashboard-spec.md
+                section 9), not a toggle, so it renders nothing outside the
+                closing window. */}
+            <ClosingDynamicsPanel closingDynamics={market.closing_dynamics} />
             <ExpectedMoveWidget key={`expected-move-${symbol}`} expectedMove={market.expected_move} />
             <VolatilitySmile
               key={`volatility-smile-${symbol}`}
