@@ -41,6 +41,8 @@ beforeAll(() => {
       fitContent: vi.fn(),
       subscribeVisibleLogicalRangeChange: vi.fn(),
       unsubscribeVisibleLogicalRangeChange: vi.fn(),
+      subscribeSizeChange: vi.fn(),
+      unsubscribeSizeChange: vi.fn(),
     }),
     remove: vi.fn(),
   });
