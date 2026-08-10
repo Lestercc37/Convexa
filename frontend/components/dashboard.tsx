@@ -56,7 +56,17 @@ export function Dashboard() {
       const anchoredVwap = marketData.anchored_vwap;
       if (anchoredVwap && !anchoredVwap.provisional && anchoredVwap.value !== null) {
         const value = anchoredVwap.value;
-        setVwapPoints((current) => [...current, { timestamp: marketData.as_of, value }]);
+        setVwapPoints((current) =>
+          // No live backend scheduler writes market_snapshots yet (see
+          // dashboard-spec.md section 2.2), so consecutive polls can return
+          // the exact same as_of when no new data has landed. Appending it
+          // again would give the chart two points with an identical
+          // timestamp, which lightweight-charts rejects (data must be
+          // strictly ascending by time).
+          current.at(-1)?.timestamp === marketData.as_of
+            ? current
+            : [...current, { timestamp: marketData.as_of, value }],
+        );
       }
       setError("");
     } catch (reason: unknown) {
