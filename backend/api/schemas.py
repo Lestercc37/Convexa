@@ -47,6 +47,16 @@ class AtrRangeResponse(BaseModel):
     inner_lower_band: Number | None
 
 
+class ClosingDynamicsResponse(BaseModel):
+    active: bool
+    time_to_close_pct: Number = Field(examples=[8.5])
+    pin_score: Number = Field(ge=0, le=100, examples=[62])
+    magnet_strike: Number | None = Field(examples=[550])
+    charm_regime: Literal["time_decay_dealers_buy", "time_decay_dealers_sell"] | None
+    vanna_interpretation: Literal["iv_increase_dealers_buy", "iv_increase_dealers_sell"] | None
+    max_pain: Number = Field(examples=[550])
+
+
 class MarketSnapshotResponse(BaseModel):
     schema_version: int = Field(examples=[1])
     symbol: str = Field(examples=["SPY"])
@@ -64,6 +74,7 @@ class MarketSnapshotResponse(BaseModel):
     expected_move: ExpectedMoveResponse
     anchored_vwap: AnchoredVwapResponse
     atr_range: AtrRangeResponse
+    closing_dynamics: ClosingDynamicsResponse
 
 
 class OptionContractResponse(BaseModel):

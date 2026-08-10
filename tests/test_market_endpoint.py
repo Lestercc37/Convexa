@@ -1,10 +1,12 @@
 from datetime import UTC, datetime
 from decimal import Decimal
 
+import pytest
 from fastapi.testclient import TestClient
 
 from backend.adapters.providers.mock.provider import MockDataProvider
 from backend.domain.entities import GammaAggregate, MarketPrice
+from backend.domain.use_cases import calculate_pin_risk_score, calculate_time_to_close_pct
 from backend.main import app
 
 
@@ -57,7 +59,7 @@ def test_market_endpoint_confirms_agreeing_dealer_mode_at_gamma_flip() -> None:
 
     assert response.status_code == 200
     payload = response.json()
-    excluded_keys = {"expected_move", "anchored_vwap", "atr_range"}
+    excluded_keys = {"expected_move", "anchored_vwap", "atr_range", "closing_dynamics"}
     assert {key: payload[key] for key in payload if key not in excluded_keys} == {
         "schema_version": 1,
         "symbol": "SPY",
@@ -93,6 +95,21 @@ def test_market_endpoint_confirms_agreeing_dealer_mode_at_gamma_flip() -> None:
         "outer_lower_band": None,
         "inner_upper_band": None,
         "inner_lower_band": None,
+    }
+    # No items on this hand-built GammaAggregate (only the OI/proximity/
+    # gamma-independent time component of Pin Risk Score can be computed —
+    # see calculate_closing_dynamics), and charm/vanna_exposure both
+    # default to 0 (the documented neutral edge case).
+    expected_time_to_close_pct = calculate_time_to_close_pct(price_as_of)
+    expected_pin_score, _ = calculate_pin_risk_score((), Decimal(550), expected_time_to_close_pct)
+    assert payload["closing_dynamics"] == {
+        "active": False,
+        "time_to_close_pct": pytest.approx(float(expected_time_to_close_pct)),
+        "pin_score": pytest.approx(float(expected_pin_score)),
+        "magnet_strike": None,
+        "charm_regime": None,
+        "vanna_interpretation": None,
+        "max_pain": 0,
     }
 
 

@@ -529,6 +529,7 @@ class MarketSnapshot:
     expected_move: ExpectedMove | None = None
     anchored_vwap: AnchoredVwap | None = None
     atr_range: AtrRange | None = None
+    closing_dynamics: ClosingDynamics | None = None
     recent_flow: tuple[FlowEvent, ...] = field(default_factory=tuple)
     state: MarketState = MarketState.UNKNOWN
 
@@ -657,6 +658,37 @@ class AtrRange:
                 _ensure_finite_decimal(value, InvalidOptionError, name)
         if self.daily_bars_count < 0:
             raise InvalidOptionError("atr range daily_bars_count cannot be negative")
+
+
+@dataclass(frozen=True, slots=True)
+class ClosingDynamics:
+    """Charm/Vanna/Pin Risk read-out for the closing window (dashboard-spec.md section 9).
+
+    `pin_score`, `magnet_strike`, `charm_regime` and `vanna_interpretation`
+    are computed on every request — same "the data always exists" pattern
+    as `AtrRange`/`AnchoredVwap`, never persisted. `active` is a separate,
+    purely time-based signal (`time_to_close_pct` under the initial
+    calibration threshold — see `calculate_closing_dynamics.py`) meant for
+    a future frontend to decide visual prominence, not whether the values
+    exist.
+    """
+
+    time_to_close_pct: Decimal
+    active: bool
+    pin_score: Decimal
+    magnet_strike: Decimal | None
+    charm_regime: str | None
+    vanna_interpretation: str | None
+    max_pain: Decimal
+
+    def __post_init__(self) -> None:
+        _ensure_finite_decimal(self.time_to_close_pct, InvalidOptionError, "time_to_close_pct")
+        _ensure_finite_decimal(self.pin_score, InvalidOptionError, "pin_score")
+        _ensure_finite_decimal(self.max_pain, InvalidOptionError, "max_pain")
+        if self.magnet_strike is not None:
+            _ensure_finite_decimal(self.magnet_strike, InvalidOptionError, "magnet_strike")
+        if not (Decimal(0) <= self.pin_score <= Decimal(100)):
+            raise InvalidOptionError("pin_score must be between 0 and 100")
 
 
 def utc_now() -> datetime:

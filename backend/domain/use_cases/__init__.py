@@ -7,6 +7,13 @@ from backend.domain.use_cases.calculate_atr_range import (
     REQUIRED_DAILY_BARS,
     calculate_atr_range,
 )
+from backend.domain.use_cases.calculate_closing_dynamics import (
+    CLOSING_WINDOW_THRESHOLD_PCT,
+    calculate_charm_regime,
+    calculate_closing_dynamics,
+    calculate_pin_risk_score,
+    calculate_vanna_interpretation,
+)
 from backend.domain.use_cases.calculate_derived_metrics import (
     CalculateDerivedMetricsUseCase,
     capture_daily_gamma_reference,
@@ -44,6 +51,7 @@ from backend.domain.use_cases.screener_presets import (
 
 __all__ = [
     "ATR_WINDOW_DAYS",
+    "CLOSING_WINDOW_THRESHOLD_PCT",
     "REQUIRED_DAILY_BARS",
     "CalculateDerivedMetricsUseCase",
     "CalculateGammaAggregateUseCase",
@@ -64,10 +72,14 @@ __all__ = [
     "build_market_snapshot",
     "calculate_anchored_vwap",
     "calculate_atr_range",
+    "calculate_charm_regime",
+    "calculate_closing_dynamics",
     "calculate_expected_move",
     "calculate_gamma_exposure",
+    "calculate_pin_risk_score",
     "calculate_session_open",
     "calculate_time_to_close_pct",
+    "calculate_vanna_interpretation",
     "capture_daily_gamma_reference",
     "get_flow",
     "get_gamma_exposure",

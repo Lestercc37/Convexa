@@ -246,6 +246,9 @@ def market_response(snapshot: MarketSnapshot) -> dict[str, Any]:
     atr_range = snapshot.atr_range
     if atr_range is None:
         raise ValueError("market snapshot requires atr range")
+    closing_dynamics = snapshot.closing_dynamics
+    if closing_dynamics is None:
+        raise ValueError("market snapshot requires closing dynamics")
     return {
         "schema_version": SCHEMA_VERSION,
         "symbol": snapshot.symbol,
@@ -285,6 +288,15 @@ def market_response(snapshot: MarketSnapshot) -> dict[str, Any]:
             "outer_lower_band": _optional_num(atr_range.outer_lower_band),
             "inner_upper_band": _optional_num(atr_range.inner_upper_band),
             "inner_lower_band": _optional_num(atr_range.inner_lower_band),
+        },
+        "closing_dynamics": {
+            "active": closing_dynamics.active,
+            "time_to_close_pct": _num(closing_dynamics.time_to_close_pct),
+            "pin_score": _num(closing_dynamics.pin_score),
+            "magnet_strike": _optional_num(closing_dynamics.magnet_strike),
+            "charm_regime": closing_dynamics.charm_regime,
+            "vanna_interpretation": closing_dynamics.vanna_interpretation,
+            "max_pain": _num(closing_dynamics.max_pain),
         },
     }
 
