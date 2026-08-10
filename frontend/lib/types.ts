@@ -167,6 +167,7 @@ export type MarketResponse = {
   expected_move?: ExpectedMove;
   anchored_vwap?: AnchoredVwap;
   atr_range?: AtrRange;
+  closing_dynamics?: ClosingDynamics;
 };
 
 export type ExpectedMove = {
@@ -196,6 +197,16 @@ export type AtrRange = {
   outer_lower_band: number | null;
   inner_upper_band: number | null;
   inner_lower_band: number | null;
+};
+
+export type ClosingDynamics = {
+  active: boolean;
+  time_to_close_pct: number;
+  pin_score: number;
+  magnet_strike: number | null;
+  charm_regime: "time_decay_dealers_buy" | "time_decay_dealers_sell" | null;
+  vanna_interpretation: "iv_increase_dealers_buy" | "iv_increase_dealers_sell" | null;
+  max_pain: number;
 };
 
 export type WhaleAlert = {

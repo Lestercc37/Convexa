@@ -231,6 +231,19 @@ button, select { font: inherit; }
 .exposure-label { display: block; color: var(--tv-text-dim); font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.05em; }
 .exposure-value { display: block; margin-top: 6px; color: var(--tv-text); font-size: 1.05rem; }
 
+.closing-dynamics-panel { padding: 12px 14px; display: flex; flex-direction: column; gap: 8px; }
+.closing-dynamics-panel.urgent { border-color: var(--warning); background: linear-gradient(145deg, rgba(243, 201, 105, 0.08), var(--tv-panel)); }
+.closing-dynamics-row { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.closing-dynamics-label { color: var(--tv-text-dim); font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.05em; }
+.closing-dynamics-value { color: var(--tv-text); font-size: 1.05rem; }
+.pin-score-meter { height: 6px; border-radius: 999px; background: var(--tv-panel-raised); overflow: hidden; }
+.pin-score-meter-fill { height: 100%; background: var(--warning); border-radius: 999px; }
+.closing-dynamics-note { margin: 0; color: var(--tv-text-dim); font-size: 0.64rem; line-height: 1.3; }
+.closing-dynamics-regime { margin: 0; font-size: 0.74rem; line-height: 1.4; }
+.closing-dynamics-regime.buy { color: var(--calm); }
+.closing-dynamics-regime.sell { color: var(--risk); }
+.closing-dynamics-regime.neutral { color: var(--tv-text-dim); }
+
 .expected-move { display: flex; flex-direction: column; gap: 6px; padding: 12px 14px; }
 .expected-move p { margin: 0; }
 .expected-move-primary { color: var(--tv-text); font-size: 0.8rem; font-weight: 700; line-height: 1.4; }
