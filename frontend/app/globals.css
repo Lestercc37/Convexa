@@ -259,6 +259,32 @@ button, select { font: inherit; }
 .status { min-height: 320px; display: flex; align-items: center; justify-content: center; color: var(--tv-text-dim); text-align: center; }
 .status.error { color: #ff9c84; }
 
+/* ---------- Pre-session panel: frozen previous-close GEX Profile ---------- */
+
+.pre-session-panel { flex: 1 1 auto; display: flex; flex-direction: column; min-height: 0; padding: 14px 18px; overflow-y: auto; }
+.pre-session-heading { align-items: start; flex-wrap: wrap; gap: 10px; }
+.frozen-pill { border: 1px solid var(--warning); border-radius: 999px; color: var(--warning); font-size: 0.68rem; padding: 4px 10px; white-space: nowrap; }
+.pre-session-chart-wrap { margin-top: 14px; }
+.pre-session-chart { display: block; width: 100%; height: auto; }
+.pre-session-axis { stroke: var(--tv-border); stroke-width: 1.5; }
+.pre-session-bar.call { fill: var(--calm); }
+.pre-session-bar.put { fill: var(--risk); }
+.pre-session-strike-label { fill: var(--tv-text-dim); font-size: 10px; text-anchor: start; }
+.pre-session-reference { stroke-width: 1.5; stroke-dasharray: 5 5; }
+.pre-session-reference.flip { stroke: var(--warning); }
+.pre-session-reference.pain { stroke: var(--accent); }
+.pre-session-reference-label { font-size: 11px; text-anchor: start; }
+.pre-session-reference-label.flip { fill: var(--warning); }
+.pre-session-reference-label.pain { fill: var(--accent); }
+.pre-session-legend { display: flex; justify-content: center; gap: 14px; margin-top: 8px; color: var(--tv-text-dim); font-size: 0.7rem; }
+.pre-session-legend span { display: inline-flex; align-items: center; gap: 5px; }
+.pre-session-status { min-height: 220px; display: flex; align-items: center; justify-content: center; margin: 0; color: var(--tv-text-dim); }
+.pre-session-status.error { color: #ff9c84; }
+
+.tv-view-toggle { display: flex; align-items: center; gap: 2px; }
+.tv-view-toggle button { border: 0; border-radius: 5px; background: transparent; color: var(--tv-text-dim); cursor: pointer; font-size: 0.74rem; font-weight: 700; padding: 5px 9px; }
+.tv-view-toggle button[aria-pressed="true"] { background: var(--tv-panel-raised); color: var(--tv-text); }
+
 .screener-panel { padding: 12px 14px; }
 .screener-heading { align-items: start; flex-direction: column; gap: 8px; }
 .preset-control { display: flex; flex-direction: column; gap: 4px; width: 100%; color: var(--tv-text-dim); font-size: 0.68rem; }

@@ -76,6 +76,8 @@ def gamma_aggregate_response(gamma: GammaAggregate) -> dict[str, Any]:
         "schema_version": SCHEMA_VERSION,
         "symbol": gamma.symbol,
         "as_of": _dt(gamma.as_of),
+        "gamma_flip": _num(gamma.gamma_flip),
+        "max_pain": _num(gamma.max_pain),
         "total_market_gamma": _num(gamma.total_market_gamma),
         "positive_gamma": _num(gamma.positive_gamma),
         "negative_gamma": _num(gamma.negative_gamma),

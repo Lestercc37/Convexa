@@ -1,4 +1,5 @@
 import type {
+  GammaAggregateResponse,
   GammaHistoryResponse,
   GammaResponse,
   MarketResponse,
@@ -28,6 +29,13 @@ export function getGamma(symbol: string, signal?: AbortSignal) {
 export function getGammaHistory(symbol: string, signal?: AbortSignal) {
   return getJson<GammaHistoryResponse>(
     `/gamma/${encodeURIComponent(symbol)}/history`,
+    signal,
+  );
+}
+
+export function getGammaProfile(symbol: string, signal?: AbortSignal) {
+  return getJson<GammaAggregateResponse>(
+    `/gamma/${encodeURIComponent(symbol)}/profile`,
     signal,
   );
 }

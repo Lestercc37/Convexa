@@ -91,6 +91,39 @@ def test_internal_trigger_persists_consolidated_gamma_for_public_get() -> None:
     }
 
 
+def test_gamma_profile_get_is_read_only_and_returns_uniform_not_found() -> None:
+    with TestClient(app) as client:
+        response = client.get("/api/v1/gamma/spy/profile")
+
+    assert response.status_code == 404
+    assert response.json() == {
+        "schema_version": 1,
+        "error": {
+            "code": "NOT_FOUND",
+            "message": "No gamma aggregate found for SPY",
+        },
+    }
+
+
+def test_gamma_profile_returns_frozen_snapshot_with_per_strike_items() -> None:
+    with TestClient(app) as client:
+        trigger = client.post("/internal/trigger-calculation/spy")
+        response = client.get("/api/v1/gamma/spy/profile")
+        stored = app.state.container.storage.get_latest_gamma_aggregate("SPY")
+
+    assert trigger.status_code == 200
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["schema_version"] == 1
+    assert payload["symbol"] == "SPY"
+    assert stored is not None
+    assert payload["gamma_flip"] == float(stored.gamma_flip)
+    assert payload["max_pain"] == float(stored.max_pain)
+    assert len(payload["items"]) == len(stored.items)
+    assert len(payload["items"]) > 0
+    assert {"strike", "net_gamma", "total_gamma_exposure"} <= payload["items"][0].keys()
+
+
 def test_underlyings_history_and_flow_are_storage_backed_gets() -> None:
     with TestClient(app) as client:
         underlyings = client.get("/api/v1/underlyings")

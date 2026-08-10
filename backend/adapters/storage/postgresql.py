@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import date, datetime
 from decimal import Decimal
 
@@ -15,6 +16,7 @@ from backend.domain.entities import (
     FlowEvent,
     FlowEventType,
     GammaAggregate,
+    GammaAggregateItem,
     Greeks,
     MarketPrice,
     OptionChain,
@@ -257,6 +259,18 @@ class PostgreSQLStorage:
                         :vanna_exposure,
                         :absolute_gamma_strike
                     )
+                    ON CONFLICT (underlying_id, time) DO UPDATE SET
+                        gamma_flip = EXCLUDED.gamma_flip,
+                        call_wall = EXCLUDED.call_wall,
+                        put_wall = EXCLUDED.put_wall,
+                        max_pain = EXCLUDED.max_pain,
+                        net_gamma = EXCLUDED.net_gamma,
+                        dealer_gamma_notional = EXCLUDED.dealer_gamma_notional,
+                        vega_exposure = EXCLUDED.vega_exposure,
+                        theta_exposure = EXCLUDED.theta_exposure,
+                        charm_exposure = EXCLUDED.charm_exposure,
+                        vanna_exposure = EXCLUDED.vanna_exposure,
+                        absolute_gamma_strike = EXCLUDED.absolute_gamma_strike
                     """
                 ),
                 {
@@ -275,6 +289,45 @@ class PostgreSQLStorage:
                     "absolute_gamma_strike": gamma.absolute_gamma_strike,
                 },
             )
+            for item in gamma.items:
+                session.execute(
+                    text(
+                        """
+                        INSERT INTO gamma_aggregate_items (
+                            underlying_id, time, strike, total_gamma_exposure,
+                            call_gamma_exposure, put_gamma_exposure, net_gamma,
+                            contract_count, absolute_gamma, open_interest, volume
+                        )
+                        VALUES (
+                            :underlying_id, :time, :strike, :total_gamma_exposure,
+                            :call_gamma_exposure, :put_gamma_exposure, :net_gamma,
+                            :contract_count, :absolute_gamma, :open_interest, :volume
+                        )
+                        ON CONFLICT (underlying_id, time, strike) DO UPDATE SET
+                            total_gamma_exposure = EXCLUDED.total_gamma_exposure,
+                            call_gamma_exposure = EXCLUDED.call_gamma_exposure,
+                            put_gamma_exposure = EXCLUDED.put_gamma_exposure,
+                            net_gamma = EXCLUDED.net_gamma,
+                            contract_count = EXCLUDED.contract_count,
+                            absolute_gamma = EXCLUDED.absolute_gamma,
+                            open_interest = EXCLUDED.open_interest,
+                            volume = EXCLUDED.volume
+                        """
+                    ),
+                    {
+                        "underlying_id": underlying_id,
+                        "time": gamma.as_of,
+                        "strike": item.strike,
+                        "total_gamma_exposure": item.total_gamma_exposure,
+                        "call_gamma_exposure": item.call_gamma_exposure,
+                        "put_gamma_exposure": item.put_gamma_exposure,
+                        "net_gamma": item.net_gamma,
+                        "contract_count": item.contract_count,
+                        "absolute_gamma": item.absolute_gamma,
+                        "open_interest": item.open_interest,
+                        "volume": item.volume,
+                    },
+                )
 
     def get_latest_gamma_aggregate(self, underlying: str) -> GammaAggregate | None:
         with self.session_factory() as session:
@@ -282,7 +335,7 @@ class PostgreSQLStorage:
                 session.execute(
                     text(
                         """
-                    SELECT g.time, u.symbol, g.gamma_flip, g.call_wall,
+                    SELECT g.time, g.underlying_id, u.symbol, g.gamma_flip, g.call_wall,
                            g.put_wall, g.max_pain, g.net_gamma,
                            g.dealer_gamma_notional, g.vega_exposure,
                            g.theta_exposure, g.charm_exposure,
@@ -300,7 +353,41 @@ class PostgreSQLStorage:
                 .mappings()
                 .one_or_none()
             )
-        return self._gamma_from_row(row) if row is not None else None
+            if row is None:
+                return None
+            items = self._gamma_aggregate_items(session, row["underlying_id"], row["time"])
+        return replace(self._gamma_from_row(row), items=items)
+
+    def _gamma_aggregate_items(
+        self, session: Session, underlying_id: int, time: datetime
+    ) -> tuple[GammaAggregateItem, ...]:
+        rows = session.execute(
+            text(
+                """
+                SELECT strike, total_gamma_exposure, call_gamma_exposure,
+                       put_gamma_exposure, net_gamma, contract_count,
+                       absolute_gamma, open_interest, volume
+                FROM gamma_aggregate_items
+                WHERE underlying_id = :underlying_id AND time = :time
+                ORDER BY strike
+                """
+            ),
+            {"underlying_id": underlying_id, "time": time},
+        ).mappings()
+        return tuple(
+            GammaAggregateItem(
+                strike=Decimal(row["strike"]),
+                total_gamma_exposure=Decimal(row["total_gamma_exposure"]),
+                call_gamma_exposure=Decimal(row["call_gamma_exposure"]),
+                put_gamma_exposure=Decimal(row["put_gamma_exposure"]),
+                net_gamma=Decimal(row["net_gamma"]),
+                contract_count=int(row["contract_count"]),
+                absolute_gamma=Decimal(row["absolute_gamma"]),
+                open_interest=int(row["open_interest"]),
+                volume=int(row["volume"]),
+            )
+            for row in rows
+        )
 
     def get_gamma_history(
         self, underlying: str, start: datetime, end: datetime
