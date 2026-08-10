@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AtrRange, GammaResponse } from "@/lib/types";
@@ -18,6 +18,8 @@ const chartMocks = vi.hoisted(() => ({
   priceToCoordinate: vi.fn(),
   subscribeVisibleLogicalRangeChange: vi.fn(),
   unsubscribeVisibleLogicalRangeChange: vi.fn(),
+  subscribeSizeChange: vi.fn(),
+  unsubscribeSizeChange: vi.fn(),
   getGammaHistory: vi.fn(),
 }));
 
@@ -53,16 +55,11 @@ beforeAll(() => {
       fitContent: vi.fn(),
       subscribeVisibleLogicalRangeChange: chartMocks.subscribeVisibleLogicalRangeChange,
       unsubscribeVisibleLogicalRangeChange: chartMocks.unsubscribeVisibleLogicalRangeChange,
+      subscribeSizeChange: chartMocks.subscribeSizeChange,
+      unsubscribeSizeChange: chartMocks.unsubscribeSizeChange,
     }),
     remove: chartMocks.remove,
   });
-  vi.stubGlobal(
-    "ResizeObserver",
-    class ResizeObserver {
-      observe() {}
-      disconnect() {}
-    },
-  );
 });
 
 beforeEach(() => {
@@ -320,5 +317,50 @@ describe("PriceChart", () => {
     expect(chartMocks.removeSeries).toHaveBeenCalled();
     expect(container.querySelector(".atr-band-outer")).toBeNull();
     expect(container.querySelector(".atr-band-inner")).toBeNull();
+  });
+
+  it("lets the library own resizing via autoSize instead of a hand-rolled ResizeObserver", () => {
+    render(<PriceChart symbol="SPY" gamma={gamma} candles={[]} />);
+
+    expect(chartMocks.createChart).toHaveBeenCalledWith(
+      expect.any(HTMLElement),
+      expect.objectContaining({ autoSize: true }),
+    );
+  });
+
+  it("keeps ATR bands correctly positioned after the chart's coordinate system changes (resize or pan)", () => {
+    let currentPrice = 500;
+    chartMocks.priceToCoordinate.mockImplementation((price: number) => currentPrice - price);
+    const readyAtrRange: AtrRange = {
+      atr: 20,
+      atr_provisional: false,
+      daily_bars_count: 15,
+      today_open: 500,
+      bands_provisional: false,
+      outer_upper_band: 520,
+      outer_lower_band: 480,
+      inner_upper_band: 510,
+      inner_lower_band: 490,
+    };
+    const { container } = render(
+      <PriceChart symbol="SPY" gamma={gamma} candles={[]} atrRange={readyAtrRange} />,
+    );
+
+    const topBefore = container.querySelector<HTMLElement>(".atr-band-outer")?.style.top;
+    expect(topBefore).toBe("-20px");
+
+    // Simulate the chart's coordinate system changing — the same recompute
+    // path a real pan drives via subscribeVisibleLogicalRangeChange, here
+    // triggered through subscribeSizeChange (e.g. the container's flex
+    // layout settling, or the window resizing) to prove bands don't go
+    // stale regardless of which event caused the change.
+    currentPrice = 600;
+    const sizeChangeHandler = chartMocks.subscribeSizeChange.mock.calls.at(-1)?.[0];
+    expect(sizeChangeHandler).toBeTypeOf("function");
+    act(() => sizeChangeHandler());
+
+    const topAfter = container.querySelector<HTMLElement>(".atr-band-outer")?.style.top;
+    expect(topAfter).toBe("80px");
+    expect(topAfter).not.toBe(topBefore);
   });
 });

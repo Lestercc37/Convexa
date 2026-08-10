@@ -159,6 +159,19 @@ export function PriceChart({
     if (!container) return;
 
     const chart = createChart(container, {
+      // `autoSize` delegates to the library's own internal ResizeObserver,
+      // which correctly resizes the canvas backing buffer as the flex
+      // layout settles. A hand-rolled `ResizeObserver` + `applyOptions`
+      // here previously left the canvas's actual pixel buffer stuck at the
+      // browser's 300x150 default whenever the container's height came
+      // from a flex chain instead of a fixed CSS height (as it does now,
+      // with PriceChart as the dominant center column) — every price
+      // coordinate `priceToCoordinate()` computed (what the ATR bands
+      // overlay uses) was then scaled against that tiny buffer instead of
+      // the CSS-stretched display size, drifting away from where the
+      // candles actually render. `width`/`height` below are only the
+      // documented fallback for when ResizeObserver is unavailable.
+      autoSize: true,
       width: container.clientWidth,
       height: container.clientHeight || 420,
       layout: {
@@ -187,17 +200,11 @@ export function PriceChart({
     chartRef.current = chart;
     seriesRef.current = series;
 
-    const resizeObserver = new ResizeObserver(([entry]) => {
-      chart.applyOptions({
-        width: entry.contentRect.width,
-        height: entry.contentRect.height,
-      });
-      recomputeBandRectsRef.current();
-    });
-    resizeObserver.observe(container);
+    const handleSizeChange = () => recomputeBandRectsRef.current();
+    chart.timeScale().subscribeSizeChange(handleSizeChange);
 
     return () => {
-      resizeObserver.disconnect();
+      chart.timeScale().unsubscribeSizeChange(handleSizeChange);
       chart.remove();
       chartRef.current = null;
       seriesRef.current = null;
