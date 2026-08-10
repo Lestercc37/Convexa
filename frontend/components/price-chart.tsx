@@ -8,6 +8,7 @@ import {
   createChart,
   LineSeries,
   LineStyle,
+  type AutoscaleInfo,
   type IChartApi,
   type IPriceLine,
   type ISeriesApi,
@@ -154,6 +155,42 @@ function hasPriceRange(candles: MinuteCandle[]): boolean {
   return max > min;
 }
 
+// Lightweight Charts' default vertical auto-scale is computed purely from
+// the candlestick series' own visible data (its documented behavior) — it
+// never expands to include `createPriceLine()` levels or these hand-drawn
+// ATR band overlays, since neither is "series data" to the library. With
+// only a few (or one, flat) candles, Call Wall/Put Wall/Gamma Flip/ATR
+// bounds can sit well outside that tight range and simply never get
+// painted — not hidden, just off-canvas. Showing exactly how far price is
+// from these reference levels is the whole point of the chart, so the
+// visible range must always stretch to include them (VWAP Anclado is a
+// real `LineSeries` with real data on the same price scale, so the
+// library already folds it into auto-scale on its own — verified live,
+// not assumed).
+function referenceLevelPrices(
+  gamma: GammaResponse,
+  atrRange: AtrRange | undefined,
+  showAtr: boolean,
+): number[] {
+  const bands = showAtr ? atrBands(atrRange) : null;
+  return [
+    ...gammaLevels(gamma).map((level) => level.price),
+    ...(bands ? [bands.outerUpper, bands.outerLower] : []),
+  ];
+}
+
+function mergePriceRange(base: AutoscaleInfo | null, extraPrices: number[]): AutoscaleInfo | null {
+  if (extraPrices.length === 0) return base;
+  const values = [...extraPrices];
+  if (base?.priceRange) {
+    values.push(base.priceRange.minValue, base.priceRange.maxValue);
+  }
+  return {
+    priceRange: { minValue: Math.min(...values), maxValue: Math.max(...values) },
+    margins: base?.margins,
+  };
+}
+
 export function PriceChart({
   symbol,
   candles,
@@ -170,6 +207,7 @@ export function PriceChart({
   const [history, setHistory] = useState<GammaHistoryItem[]>([]);
   const [showVwap, setShowVwap] = useState(true);
   const [showAtr, setShowAtr] = useState(true);
+  const referenceLevelsRef = useRef(referenceLevelPrices(gamma, atrRange, showAtr));
   const [bandRects, setBandRects] = useState<{ outer: BandRect | null; inner: BandRect | null }>({
     outer: null,
     inner: null,
@@ -215,6 +253,8 @@ export function PriceChart({
       borderVisible: false,
       wickUpColor: "#26A69A",
       wickDownColor: "#EF5350",
+      autoscaleInfoProvider: (original: () => AutoscaleInfo | null) =>
+        mergePriceRange(original(), referenceLevelsRef.current),
     });
     series.setData(initialCandlesRef.current.map(chartCandle));
     chart.timeScale().fitContent();
@@ -270,6 +310,28 @@ export function PriceChart({
       lines.forEach((line) => series.removePriceLine(line));
     };
   }, [gamma, levelMode]);
+
+  useEffect(() => {
+    referenceLevelsRef.current = referenceLevelPrices(gamma, atrRange, showAtr);
+    // `autoscaleInfoProvider` only re-runs when the library itself decides
+    // to recompute the visible range — genuinely new/changed series data,
+    // a pan/zoom, or a resize. A prop change alone (a fresh gamma
+    // recalculation with no new candle yet, or toggling the ATR checkbox)
+    // doesn't trigger that on its own. Confirmed live against the real
+    // library (not the mocked one) that `priceScale.setAutoScale(false)`
+    // then `(true)` does NOT force it either — the visible range stayed
+    // stale through that call. Re-feeding the series its own unchanged
+    // candle data is a no-op data-wise, but it's what actually makes the
+    // library re-run `autoscaleInfoProvider` with the freshly updated ref
+    // (verified the same way: staleness before, correct range after).
+    const series = seriesRef.current;
+    if (series) series.setData(candles.map(chartCandle));
+    // `candles` is deliberately omitted below: it's read here only for its
+    // current value, to nudge autoscale when the reference levels change.
+    // Candle *updates* are handled by the separate effect above via
+    // `series.update()`, not this one.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [gamma, atrRange, showAtr]);
 
   useEffect(() => {
     const chart = chartRef.current;

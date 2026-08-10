@@ -405,4 +405,111 @@ describe("PriceChart", () => {
     expect(topAfter).toBe("80px");
     expect(topAfter).not.toBe(topBefore);
   });
+
+  it("expands vertical autoscale to include Gamma levels and ATR bands beyond a single flat candle (regression for the #60 follow-up)", () => {
+    // Exact reported scenario: one flat candle (no second poll yet) with
+    // every reference level far above it — Lightweight Charts' default
+    // autoscale only looks at candle data, so without this the levels
+    // would be computed but drawn off-canvas, never visible.
+    const flatCandle: MinuteCandle[] = [
+      { time: 1_785_763_800, open: 552.25, high: 552.25, low: 552.25, close: 552.25 },
+    ];
+    const farGamma: GammaResponse = {
+      ...gamma,
+      put_wall: 570,
+      gamma_flip: 590,
+      absolute_gamma_strike: 600,
+      call_wall: 610,
+    };
+    const farAtrRange: AtrRange = {
+      atr: 20,
+      atr_provisional: false,
+      daily_bars_count: 15,
+      today_open: 552.25,
+      bands_provisional: false,
+      outer_upper_band: 630,
+      outer_lower_band: 460,
+      inner_upper_band: 610,
+      inner_lower_band: 480,
+    };
+
+    render(<PriceChart symbol="SPY" gamma={farGamma} candles={flatCandle} atrRange={farAtrRange} />);
+
+    const [, options] = chartMocks.addSeries.mock.calls.find(
+      ([definition]) => definition === "CandlestickSeries",
+    )!;
+    expect(options.autoscaleInfoProvider).toBeTypeOf("function");
+
+    const candleOnlyRange = () => ({
+      priceRange: { minValue: 551, maxValue: 553 },
+      margins: { above: 0.1, below: 0.1 },
+    });
+    const merged = options.autoscaleInfoProvider(candleOnlyRange);
+
+    // outer_lower_band (460) is the lowest of every candidate level, and
+    // outer_upper_band (630) the highest — both must survive the merge,
+    // not just the Gamma levels or just the candle range alone.
+    expect(merged).toEqual({
+      priceRange: { minValue: 460, maxValue: 630 },
+      margins: { above: 0.1, below: 0.1 },
+    });
+  });
+
+  it("excludes ATR bounds from autoscale when the ATR overlay is toggled off, but keeps Gamma levels", () => {
+    const flatCandle: MinuteCandle[] = [
+      { time: 1_785_763_800, open: 552.25, high: 552.25, low: 552.25, close: 552.25 },
+    ];
+    const farAtrRange: AtrRange = {
+      atr: 20,
+      atr_provisional: false,
+      daily_bars_count: 15,
+      today_open: 552.25,
+      bands_provisional: false,
+      outer_upper_band: 630,
+      outer_lower_band: 460,
+      inner_upper_band: 610,
+      inner_lower_band: 480,
+    };
+
+    const { rerender } = render(
+      <PriceChart symbol="SPY" gamma={gamma} candles={flatCandle} atrRange={farAtrRange} />,
+    );
+
+    // Toggle "Rango ATR" off before reading the provider so it reflects
+    // the current showAtr state.
+    const checkbox = screen.getByRole("checkbox", { name: "Rango ATR" }) as HTMLInputElement;
+    checkbox.click();
+    rerender(<PriceChart symbol="SPY" gamma={gamma} candles={flatCandle} atrRange={farAtrRange} />);
+
+    const [, options] = chartMocks.addSeries.mock.calls.find(
+      ([definition]) => definition === "CandlestickSeries",
+    )!;
+    const merged = options.autoscaleInfoProvider(() => null);
+
+    // Only Gamma levels (540-560 from the shared `gamma` fixture) remain —
+    // 460/630 from the ATR range must not leak in once its overlay is off.
+    expect(merged.priceRange.minValue).toBe(540);
+    expect(merged.priceRange.maxValue).toBe(560);
+  });
+
+  it("nudges the price scale to recompute autoscale whenever Gamma or ATR reference levels change", () => {
+    const { rerender } = render(
+      <PriceChart symbol="SPY" gamma={gamma} candles={candlesWithRange} />,
+    );
+    chartMocks.setData.mockClear();
+
+    rerender(
+      <PriceChart symbol="SPY" gamma={{ ...gamma, call_wall: 999 }} candles={candlesWithRange} />,
+    );
+
+    // A prop change alone doesn't make the library recompute on its own.
+    // `priceScale.setAutoScale(false)` then `(true)` was tried first and
+    // confirmed live (against the real library, not this mock) to NOT
+    // force a recompute — the visible range stayed stale through it.
+    // Re-feeding the series its own unchanged candle data does force it,
+    // which is what's asserted here.
+    expect(chartMocks.setData).toHaveBeenCalledWith(
+      candlesWithRange.map((candle) => ({ ...candle, time: candle.time })),
+    );
+  });
 });
