@@ -1,6 +1,7 @@
 import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import type { MinuteCandle } from "@/lib/candles";
 import type { AtrRange, GammaResponse } from "@/lib/types";
 import { derivedMetricsFixture } from "@/test/fixtures";
 import { PriceChart } from "./price-chart";
@@ -88,6 +89,14 @@ beforeEach(() => {
     ],
   });
 });
+
+// ATR bands are only meaningful (and only safe to position via
+// priceToCoordinate) once the chart has real price variance to auto-scale
+// against — see the regression test below for what happens without it.
+const candlesWithRange: MinuteCandle[] = [
+  { time: 1_785_763_800, open: 495, high: 505, low: 490, close: 500 },
+  { time: 1_785_763_860, open: 500, high: 510, low: 498, close: 505 },
+];
 
 const gamma: GammaResponse = {
   schema_version: 1,
@@ -213,7 +222,7 @@ describe("PriceChart", () => {
       <PriceChart
         symbol="SPY"
         gamma={gamma}
-        candles={[]}
+        candles={candlesWithRange}
         vwapPoints={[
           { timestamp: "2026-08-03T13:30:00Z", value: 549 },
           { timestamp: "2026-08-03T13:31:00Z", value: 550 },
@@ -239,6 +248,39 @@ describe("PriceChart", () => {
     expect(outer?.style.height).toBe("40px");
     expect(inner?.style.top).toBe("-10px");
     expect(inner?.style.height).toBe("20px");
+  });
+
+  it("hides ATR bands when the visible candles have zero price range (regression for #59)", () => {
+    // With only a single flat O=H=L=C candle (the state right after mount,
+    // before a second live poll lands), Lightweight Charts' own vertical
+    // auto-scale collapses to a near-zero range — priceToCoordinate then
+    // maps the ATR band's real bounds to coordinates thousands of pixels
+    // outside the chart. This mock reproduces that exact blow-up (a huge,
+    // constant offset unrelated to the actual price) so the test fails
+    // loudly if the zero-range guard in price-chart.tsx regresses.
+    chartMocks.priceToCoordinate.mockImplementation((price: number) => 20_000 - price * 40);
+    const readyAtrRange: AtrRange = {
+      atr: 20,
+      atr_provisional: false,
+      daily_bars_count: 15,
+      today_open: 500,
+      bands_provisional: false,
+      outer_upper_band: 520,
+      outer_lower_band: 480,
+      inner_upper_band: 510,
+      inner_lower_band: 490,
+    };
+    const { container } = render(
+      <PriceChart
+        symbol="SPY"
+        gamma={gamma}
+        candles={[{ time: 1_785_763_800, open: 500, high: 500, low: 500, close: 500 }]}
+        atrRange={readyAtrRange}
+      />,
+    );
+
+    expect(container.querySelector(".atr-band-outer")).toBeNull();
+    expect(container.querySelector(".atr-band-inner")).toBeNull();
   });
 
   it("draws nothing extra when VWAP and ATR are both provisional", () => {
@@ -303,7 +345,7 @@ describe("PriceChart", () => {
       <PriceChart
         symbol="SPY"
         gamma={gamma}
-        candles={[]}
+        candles={candlesWithRange}
         vwapPoints={[{ timestamp: "2026-08-03T13:30:00Z", value: 549 }]}
         atrRange={readyAtrRange}
       />,
@@ -343,7 +385,7 @@ describe("PriceChart", () => {
       inner_lower_band: 490,
     };
     const { container } = render(
-      <PriceChart symbol="SPY" gamma={gamma} candles={[]} atrRange={readyAtrRange} />,
+      <PriceChart symbol="SPY" gamma={gamma} candles={candlesWithRange} atrRange={readyAtrRange} />,
     );
 
     const topBefore = container.querySelector<HTMLElement>(".atr-band-outer")?.style.top;

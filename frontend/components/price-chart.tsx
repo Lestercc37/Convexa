@@ -133,6 +133,27 @@ function bandRect(
   return { top, height: bottom - top };
 }
 
+// With zero price variance across the visible candles (e.g. the single
+// flat O=H=L=C candle that exists right after mount, before a second live
+// poll lands — dashboard-spec.md section 2.2), Lightweight Charts'
+// vertical auto-scale collapses to a near-zero range. `priceToCoordinate`
+// then maps the ATR band's real price bounds (a few dollars away) to
+// coordinates thousands of pixels outside the container, so the resulting
+// band `<div>` balloons to dozens of times the chart's actual height —
+// invisible before PR #57 only because it rendered behind the chart's own
+// canvas layers (z-index 1 vs ~2), not because it was ever correctly
+// sized. Skip the bands entirely until there's real range for the price
+// scale to anchor to.
+function hasPriceRange(candles: MinuteCandle[]): boolean {
+  let min = Infinity;
+  let max = -Infinity;
+  for (const candle of candles) {
+    if (candle.low < min) min = candle.low;
+    if (candle.high > max) max = candle.high;
+  }
+  return max > min;
+}
+
 export function PriceChart({
   symbol,
   candles,
@@ -307,7 +328,7 @@ export function PriceChart({
     const bands = showAtr ? atrBands(atrRange) : null;
 
     const recompute = () => {
-      if (!series || !bands) {
+      if (!series || !bands || !hasPriceRange(candles)) {
         setBandRects({ outer: null, inner: null });
         return;
       }
