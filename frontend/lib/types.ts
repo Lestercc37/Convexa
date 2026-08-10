@@ -98,6 +98,12 @@ export type GammaResponse = {
   call_wall: number;
   put_wall: number;
   absolute_gamma_strike: number;
+  max_pain: number;
+  net_gamma: number;
+  vega_exposure: number;
+  theta_exposure: number;
+  charm_exposure: number;
+  vanna_exposure: number;
   dealer_position: "long_gamma" | "short_gamma";
   derived_metrics: DerivedMetrics;
 };
@@ -166,4 +172,18 @@ export type AtrRange = {
   outer_lower_band: number | null;
   inner_upper_band: number | null;
   inner_lower_band: number | null;
+};
+
+export type EagleAlert = {
+  symbol: string;
+  contract: string;
+  type: "WHALE" | "UNUSUAL";
+  amount: number;
+  timestamp: string;
+};
+
+export type EagleAlertsResponse = {
+  schema_version: number;
+  symbol: string;
+  alerts: EagleAlert[];
 };
