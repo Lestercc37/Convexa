@@ -1,5 +1,6 @@
-import { render, screen } from "@testing-library/react";
+import { screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
+import { renderWithLanguage } from "@/lib/i18n/test-utils";
 import type { GammaResponse, MarketResponse } from "@/lib/types";
 import { derivedMetricsFixture } from "@/test/fixtures";
 import { RegimeBadge } from "./regime-badge";
@@ -38,7 +39,7 @@ const tooltip =
 
 describe("RegimeBadge", () => {
   it("renders the dealer regime and price relative to Gamma Flip", () => {
-    render(<RegimeBadge gamma={gamma} market={market} />);
+    renderWithLanguage(<RegimeBadge gamma={gamma} market={market} />);
 
     expect(screen.getByRole("heading", { name: "LONG GAMMA" })).toBeInTheDocument();
     expect(screen.getByText(/SPY \$549\.10 — arriba del Flip \(\$548\.50\)/)).toBeInTheDocument();
@@ -48,7 +49,7 @@ describe("RegimeBadge", () => {
   });
 
   it("marks a price-resolved regime as transient with the documented tooltip", () => {
-    render(
+    renderWithLanguage(
       <RegimeBadge
         gamma={{ ...gamma, dealer_position: "short_gamma" }}
         market={{

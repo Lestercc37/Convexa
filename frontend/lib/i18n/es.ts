@@ -1,0 +1,113 @@
+import type { Translations } from "./translations";
+
+export const es: Translations = {
+  common: {
+    languageSwitcherAriaLabel: "Idioma",
+    convexaNote: "métrica propia de Convexa, no un estándar de mercado",
+  },
+  errors: {
+    notFound: "No se encontró el recurso solicitado.",
+    requestFailed: "No se pudo completar la solicitud. Intenta de nuevo.",
+  },
+  dashboard: {
+    underlyingLabel: "Subyacente",
+    timeframeGroupAriaLabel: "Marco temporal",
+    viewGroupAriaLabel: "Vista",
+    liveButton: "En vivo",
+    preSessionButton: "Pre-Sesión",
+    exposureGroupAriaLabel: "Charm y Vanna Exposure",
+    aggregatedGreeksEyebrow: "Griegas agregadas",
+    loadingRegime: "Cargando régimen y niveles…",
+  },
+  regimeBadge: {
+    ariaLabel: "Régimen gamma",
+    currentRegimeEyebrow: "Régimen actual",
+    transientAriaLabel: "Régimen transitorio",
+    unconfirmedTooltip:
+      "El precio cruzó el Gamma Flip antes del último recálculo del agregado — régimen basado en precio.",
+    above: "arriba",
+    below: "debajo",
+    detail: (symbol, price, relation, flip) =>
+      `${symbol} ${price} — ${relation} del Flip (${flip})`,
+    updateFrequency: "Actualización cada 30 segundos",
+  },
+  derivedMetricsBar: {
+    ariaLabel: "Métricas derivadas",
+    volatilityWindowNote: "Ventana: 60 días",
+    accumulating: (daysAccumulated) => `Acumulando datos — ${daysAccumulated}d/20d`,
+  },
+  expectedMoveWidget: {
+    ariaLabel: "Movimiento esperado",
+    primary: (dollars, pct, lower, upper) =>
+      `Movimiento esperado: ±${dollars} (${pct}%) — Rango: ${lower} – ${upper}`,
+    remaining: (dollars, pct) => `Remanente del día: ±${dollars} (${pct}%)`,
+  },
+  priceChart: {
+    eyebrow: "Precio intradía · memoria local",
+    title: (symbol) => `${symbol} · Velas de 1 minuto`,
+    levelModeAriaLabel: "Modo de niveles",
+    levelsLegend: "Niveles:",
+    staticButton: "Estático",
+    historicalButton: "Histórico",
+    overlaysAriaLabel: "Overlays",
+    overlaysLegend: "Overlays:",
+    vwapAnchoredLabel: "VWAP Anclado",
+    atrRangeLabel: "Rango ATR",
+    chartAriaLabel: (symbol) => `Chart de velas para ${symbol}`,
+    emptyState: "Esperando la primera muestra de precio…",
+  },
+  preSessionPanel: {
+    eyebrow: "Preparación pre-sesión",
+    title: (symbol) => `GEX Profile — ${symbol}`,
+    frozenPill: (closeDate) => `Congelado desde el cierre de ${closeDate}`,
+    chartAriaLabel: (symbol, closeDate) =>
+      `GEX Profile congelado de ${symbol}, cierre del ${closeDate}`,
+    noBreakdown: "Sin desglose por strike disponible para este snapshot.",
+    loading: "Cargando snapshot congelado del cierre anterior…",
+    legendAriaLabel: "Leyenda",
+  },
+  closingDynamicsPanel: {
+    ariaLabel: "Dinámica de Cierre",
+    eyebrow: "Dinámica de cierre",
+    pinRiskScoreLabel: "Pin Risk Score",
+    magnetStrikeLabel: "Strike imán",
+    charmTimeDecayBuy: "El paso del tiempo empuja a los dealers a comprar",
+    charmTimeDecaySell: "El paso del tiempo empuja a los dealers a vender",
+    charmNeutral: "Neutral — sin presión direccional por paso del tiempo",
+    vannaIvIncreaseBuy: "Un aumento de volatilidad empujaría a los dealers a comprar",
+    vannaIvIncreaseSell: "Un aumento de volatilidad empujaría a los dealers a vender",
+    vannaNeutral: "Neutral — sin presión direccional por volatilidad",
+  },
+  volatilitySmile: {
+    eyebrow: "Options Chain · IV cruda por strike",
+    roleSubtitle: "Sentimiento de riesgo en prima · no es un nivel de gravitación",
+    expirationLabel: "Vencimiento",
+    chartAriaLabel: (symbol, expiration) => `Volatility Smile de ${symbol} para ${expiration}`,
+    atmAriaLabel: (strike) => `Strike ATM ${strike}`,
+    pointAriaLabel: (type, strike, ivPct) => `${type} strike ${strike}, IV ${ivPct}%`,
+    legendAriaLabel: "Leyenda",
+    loading: "Cargando vencimientos y volatilidad implícita…",
+  },
+  alertsPanel: {
+    eyebrow: "Whale Alerts",
+    title: "Alertas",
+    empty: "Sin alertas recientes.",
+    recentAriaLabel: "Alertas recientes",
+  },
+  quickScreener: {
+    eyebrow: "Presets Convexa",
+    title: "Escáner Rápido",
+    presetLabel: "Preset",
+    noResults: "No hay resultados persistidos para este preset.",
+    loading: "Cargando preset…",
+    headers: {
+      symbol: "Símbolo",
+      contract: "Contrato",
+      type: "Tipo",
+      amount: "Monto",
+      time: "Hora",
+      updated: "Actualizado",
+      exposure: "Exposición",
+    },
+  },
+};

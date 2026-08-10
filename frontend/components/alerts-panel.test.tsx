@@ -1,5 +1,7 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { ApiError } from "@/lib/api";
+import { renderWithLanguage } from "@/lib/i18n/test-utils";
 import type { Underlying, WhaleAlertsResponse } from "@/lib/types";
 import { AlertsPanel } from "./alerts-panel";
 
@@ -7,7 +9,10 @@ const apiMocks = vi.hoisted(() => ({
   getAlerts: vi.fn(),
 }));
 
-vi.mock("@/lib/api", () => apiMocks);
+vi.mock("@/lib/api", async () => {
+  const actual = await vi.importActual<typeof import("@/lib/api")>("@/lib/api");
+  return { ...actual, ...apiMocks };
+});
 
 const underlyings: Underlying[] = [
   { symbol: "SPY", kind: "equity", is_priority: true },
@@ -48,7 +53,7 @@ describe("AlertsPanel", () => {
       ),
     );
 
-    render(<AlertsPanel underlyings={underlyings} />);
+    renderWithLanguage(<AlertsPanel underlyings={underlyings} />);
 
     await waitFor(() => expect(apiMocks.getAlerts).toHaveBeenCalledTimes(2));
     expect(apiMocks.getAlerts).toHaveBeenCalledWith("SPY", expect.any(AbortSignal));
@@ -67,7 +72,7 @@ describe("AlertsPanel", () => {
   it("shows an empty state, without an error, when there are no alerts", async () => {
     apiMocks.getAlerts.mockResolvedValue(alertsResponse("SPY", []));
 
-    render(<AlertsPanel underlyings={[underlyings[0]]} />);
+    renderWithLanguage(<AlertsPanel underlyings={[underlyings[0]]} />);
 
     await waitFor(() => expect(apiMocks.getAlerts).toHaveBeenCalled());
     expect(await screen.findByText("Sin alertas recientes.")).toBeInTheDocument();
@@ -75,11 +80,18 @@ describe("AlertsPanel", () => {
     expect(screen.queryByRole("article")).not.toBeInTheDocument();
   });
 
-  it("surfaces a request failure as an alert message", async () => {
-    apiMocks.getAlerts.mockRejectedValue(new Error("API request failed (500)"));
+  it("surfaces a request failure as a translated alert message, not the raw error", async () => {
+    // Regression check for the language-selector PR: `getJson` (lib/api.ts)
+    // always threw a real `Error`, so `reason.message` always won over the
+    // Spanish fallback text and users saw this raw string on screen. Now
+    // every catch translates via `describeError` instead of reading
+    // `.message` — confirm the friendly, translated text renders, not this.
+    apiMocks.getAlerts.mockRejectedValue(new ApiError(500));
 
-    render(<AlertsPanel underlyings={[underlyings[0]]} />);
+    renderWithLanguage(<AlertsPanel underlyings={[underlyings[0]]} />);
 
-    expect(await screen.findByRole("alert")).toHaveTextContent("API request failed (500)");
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("No se pudo completar la solicitud. Intenta de nuevo.");
+    expect(alert).not.toHaveTextContent("API request failed");
   });
 });

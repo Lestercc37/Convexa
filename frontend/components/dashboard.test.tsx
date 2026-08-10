@@ -1,6 +1,7 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { renderWithLanguage } from "@/lib/i18n/test-utils";
 import { derivedMetricsFixture } from "@/test/fixtures";
 import { Dashboard } from "./dashboard";
 
@@ -18,7 +19,10 @@ const chartMocks = vi.hoisted(() => ({
   createChart: vi.fn(),
 }));
 
-vi.mock("@/lib/api", () => apiMocks);
+vi.mock("@/lib/api", async () => {
+  const actual = await vi.importActual<typeof import("@/lib/api")>("@/lib/api");
+  return { ...actual, ...apiMocks };
+});
 vi.mock("lightweight-charts", () => ({
   CandlestickSeries: "CandlestickSeries",
   LineSeries: "LineSeries",
@@ -161,7 +165,7 @@ describe("Dashboard", () => {
   it("renders all current panels without duplicate-key warnings", async () => {
     const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
 
-    render(<Dashboard />);
+    renderWithLanguage(<Dashboard />);
 
     await screen.findByLabelText("Chart de velas para SPY");
     await waitFor(() => expect(apiMocks.getOptionChain).toHaveBeenCalled());
@@ -184,10 +188,10 @@ describe("Dashboard", () => {
     const user = userEvent.setup();
     const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
 
-    render(<Dashboard />);
+    renderWithLanguage(<Dashboard />);
     await screen.findByLabelText("Chart de velas para SPY");
 
-    const select = screen.getByRole("combobox", { name: "Underlying" });
+    const select = screen.getByRole("combobox", { name: "Subyacente" });
 
     // Each switch unmounts and remounts PriceChart via its `key`, which is
     // exactly the scenario that crashed before the cleanup-guard fix
@@ -205,7 +209,7 @@ describe("Dashboard", () => {
     await screen.findByLabelText("Chart de velas para SPY");
 
     // The dashboard is still fully rendered — not stuck on the error panel.
-    expect(screen.getByRole("group", { name: "Timeframe" })).toBeInTheDocument();
+    expect(screen.getByRole("group", { name: "Marco temporal" })).toBeInTheDocument();
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
     expect(consoleError).not.toHaveBeenCalled();
 
@@ -214,7 +218,7 @@ describe("Dashboard", () => {
 
   it("switches to the Pre-Sesión view without polling the live chart, and back", async () => {
     const user = userEvent.setup();
-    render(<Dashboard />);
+    renderWithLanguage(<Dashboard />);
     await screen.findByLabelText("Chart de velas para SPY");
 
     await user.click(screen.getByRole("button", { name: "Pre-Sesión" }));
@@ -227,5 +231,31 @@ describe("Dashboard", () => {
 
     await user.click(screen.getByRole("button", { name: "En vivo" }));
     expect(await screen.findByLabelText("Chart de velas para SPY")).toBeInTheDocument();
+  });
+
+  it("switches the whole UI to English via the language switcher, across several components", async () => {
+    const user = userEvent.setup();
+    renderWithLanguage(<Dashboard />);
+    await screen.findByLabelText("Chart de velas para SPY");
+
+    // Spanish by default, spot-checked across dashboard.tsx itself,
+    // RegimeBadge, and PriceChart — three independent components, not just
+    // the string used to find the chart above.
+    expect(screen.getByText("Griegas agregadas")).toBeInTheDocument();
+    expect(screen.getByText("Régimen actual")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Estático" })).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "EN" }));
+
+    expect(await screen.findByText("Aggregated Greeks")).toBeInTheDocument();
+    expect(screen.getByText("Current regime")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Static" })).toBeInTheDocument();
+    expect(await screen.findByLabelText("Candlestick chart for SPY")).toBeInTheDocument();
+    // No stale Spanish text left behind by the switch.
+    expect(screen.queryByText("Griegas agregadas")).not.toBeInTheDocument();
+    expect(screen.queryByText("Régimen actual")).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "ES" }));
+    expect(await screen.findByText("Griegas agregadas")).toBeInTheDocument();
   });
 });

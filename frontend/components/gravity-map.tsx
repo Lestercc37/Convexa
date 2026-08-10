@@ -1,5 +1,11 @@
 import type { GammaResponse, MarketResponse } from "@/lib/types";
 
+// Not wired into Dashboard since the TradingView-style layout (PR #56)
+// superseded it with PriceChart's Static/Historical level lines — dead
+// code, kept only for its own test coverage. Deliberately left out of the
+// language-selector translation pass (its fixed Spanish text stays as-is)
+// since translating unreachable UI isn't worth the upkeep; revisit if this
+// component is ever wired back in.
 type GravityMapProps = { gamma: GammaResponse; market: MarketResponse };
 
 export const LEVEL_MERGE_THRESHOLD = 0.02;

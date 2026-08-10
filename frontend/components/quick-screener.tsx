@@ -2,10 +2,14 @@
 
 import { useEffect, useState } from "react";
 import { getScreenerPreset } from "@/lib/api";
+import { describeError } from "@/lib/i18n/describe-error";
+import { useLanguage } from "@/lib/i18n/language-context";
+import type { Translations } from "@/lib/i18n/translations";
 import type {
   ScreenerPresetName,
   ScreenerPresetResult,
 } from "@/lib/types";
+import { TYPE_LABEL } from "./alerts-panel";
 
 const PRESETS: { name: ScreenerPresetName; label: string; icon: string }[] = [
   { name: "unusual-options-activity", label: "Unusual Options Activity", icon: "🔥" },
@@ -33,26 +37,29 @@ function currency(value: number | null) {
 function ResultsTable({
   preset,
   results,
+  t,
 }: {
   preset: ScreenerPresetName;
   results: ScreenerPresetResult[];
+  t: Translations;
 }) {
   if (!results.length) {
-    return <p className="screener-empty">No hay resultados persistidos para este preset.</p>;
+    return <p className="screener-empty">{t.quickScreener.noResults}</p>;
   }
+  const headers = t.quickScreener.headers;
 
   return (
     <div className="screener-table-wrap">
       <table className="screener-table">
         <thead>
           {preset === "unusual-options-activity" ? (
-            <tr><th>Símbolo</th><th>Contrato</th><th>Tipo</th><th>Monto</th><th>Hora</th></tr>
+            <tr><th>{headers.symbol}</th><th>{headers.contract}</th><th>{headers.type}</th><th>{headers.amount}</th><th>{headers.time}</th></tr>
           ) : preset === "negative-gamma-board" ? (
-            <tr><th>Símbolo</th><th>Net Gamma</th><th>Actualizado</th></tr>
+            <tr><th>{headers.symbol}</th><th>Net Gamma</th><th>{headers.updated}</th></tr>
           ) : preset === "max-pain-key-levels" ? (
-            <tr><th>Símbolo</th><th>Gamma Flip</th><th>Call Wall</th><th>Put Wall</th><th>Max Pain</th></tr>
+            <tr><th>{headers.symbol}</th><th>Gamma Flip</th><th>Call Wall</th><th>Put Wall</th><th>Max Pain</th></tr>
           ) : (
-            <tr><th>Símbolo</th><th>Exposición</th><th>Actualizado</th></tr>
+            <tr><th>{headers.symbol}</th><th>{headers.exposure}</th><th>{headers.updated}</th></tr>
           )}
         </thead>
         <tbody>
@@ -61,7 +68,7 @@ function ResultsTable({
               <td className="screener-symbol">{item.symbol}</td>
               {preset === "unusual-options-activity" ? (
                 <>
-                  <td>{item.contract}</td><td>{item.alert_type}</td>
+                  <td>{item.contract}</td><td>{item.alert_type ? TYPE_LABEL[item.alert_type] : "—"}</td>
                   <td>{currency(item.amount)}</td><td>{new Date(item.as_of).toLocaleTimeString()}</td>
                 </>
               ) : preset === "negative-gamma-board" ? (
@@ -86,20 +93,21 @@ function ResultsTable({
 }
 
 export function QuickScreener() {
+  const { t } = useLanguage();
   const [preset, setPreset] = useState<ScreenerPresetName>(PRESETS[0].name);
   const [results, setResults] = useState<ScreenerPresetResult[] | null>(null);
-  const [error, setError] = useState("");
+  const [error, setError] = useState<unknown>(null);
 
   useEffect(() => {
     const controller = new AbortController();
     getScreenerPreset(preset, controller.signal)
       .then((response) => {
         setResults(response.results);
-        setError("");
+        setError(null);
       })
       .catch((reason: unknown) => {
         if (!controller.signal.aborted) {
-          setError(reason instanceof Error ? reason.message : "No se pudo cargar el escáner");
+          setError(reason);
         }
       })
     return () => controller.abort();
@@ -109,23 +117,23 @@ export function QuickScreener() {
     <section className="panel screener-panel" aria-labelledby="quick-screener-title">
       <div className="panel-heading screener-heading">
         <div>
-          <p className="eyebrow">Presets Convexa</p>
-          <h2 id="quick-screener-title">Escáner Rápido</h2>
+          <p className="eyebrow">{t.quickScreener.eyebrow}</p>
+          <h2 id="quick-screener-title">{t.quickScreener.title}</h2>
         </div>
         <label className="preset-control">
-          <span>Preset</span>
+          <span>{t.quickScreener.presetLabel}</span>
           <select value={preset} onChange={(event) => {
             setResults(null);
-            setError("");
+            setError(null);
             setPreset(event.target.value as ScreenerPresetName);
           }}>
             {PRESETS.map((item) => <option key={item.name} value={item.name}>{item.icon} {item.label}</option>)}
           </select>
         </label>
       </div>
-      {error ? <p className="screener-empty error" role="alert">{error}</p> : results === null ? (
-        <p className="screener-empty" aria-live="polite">Cargando preset…</p>
-      ) : <ResultsTable preset={preset} results={results} />}
+      {error ? <p className="screener-empty error" role="alert">{describeError(error, t)}</p> : results === null ? (
+        <p className="screener-empty" aria-live="polite">{t.quickScreener.loading}</p>
+      ) : <ResultsTable preset={preset} results={results} t={t} />}
     </section>
   );
 }

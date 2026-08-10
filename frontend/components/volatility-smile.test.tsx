@@ -1,12 +1,16 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { renderWithLanguage } from "@/lib/i18n/test-utils";
 import type { OptionChainResponse, OptionContract } from "@/lib/types";
 import { VolatilitySmile } from "./volatility-smile";
 
 const apiMocks = vi.hoisted(() => ({ getOptionChain: vi.fn() }));
 
-vi.mock("@/lib/api", () => ({ getOptionChain: apiMocks.getOptionChain }));
+vi.mock("@/lib/api", async () => {
+  const actual = await vi.importActual<typeof import("@/lib/api")>("@/lib/api");
+  return { ...actual, getOptionChain: apiMocks.getOptionChain };
+});
 
 function contract(
   occSymbol: string,
@@ -69,7 +73,7 @@ beforeEach(() => {
 describe("VolatilitySmile", () => {
   it("renders raw call/put IV points, derives expirations and marks ATM", async () => {
     const user = userEvent.setup();
-    render(<VolatilitySmile symbol="SPY" marketPrice={551} />);
+    renderWithLanguage(<VolatilitySmile symbol="SPY" marketPrice={551} />);
 
     const selector = await screen.findByLabelText("Vencimiento");
     await waitFor(() => expect(selector).toHaveValue("2026-08-07"));

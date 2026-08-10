@@ -298,6 +298,10 @@ button, select { font: inherit; }
 .tv-view-toggle button { border: 0; border-radius: 5px; background: transparent; color: var(--tv-text-dim); cursor: pointer; font-size: 0.74rem; font-weight: 700; padding: 5px 9px; }
 .tv-view-toggle button[aria-pressed="true"] { background: var(--tv-panel-raised); color: var(--tv-text); }
 
+.tv-language-toggle { display: flex; align-items: center; gap: 2px; border: 1px solid var(--tv-border); border-radius: 6px; padding: 2px; }
+.tv-language-toggle button { border: 0; border-radius: 4px; background: transparent; color: var(--tv-text-dim); cursor: pointer; font-size: 0.68rem; font-weight: 700; padding: 4px 8px; }
+.tv-language-toggle button[aria-pressed="true"] { background: var(--tv-panel-raised); color: var(--tv-text); }
+
 .screener-panel { padding: 12px 14px; }
 .screener-heading { align-items: start; flex-direction: column; gap: 8px; }
 .preset-control { display: flex; flex-direction: column; gap: 4px; width: 100%; color: var(--tv-text-dim); font-size: 0.68rem; }
