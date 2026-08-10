@@ -2,6 +2,8 @@
 
 import { useEffect, useState } from "react";
 import { getAlerts } from "@/lib/api";
+import { describeError } from "@/lib/i18n/describe-error";
+import { useLanguage } from "@/lib/i18n/language-context";
 import { POLLING_INTERVAL_MS } from "@/lib/polling";
 import type { Underlying, WhaleAlert } from "@/lib/types";
 
@@ -9,7 +11,11 @@ type AlertsPanelProps = {
   underlyings: Underlying[];
 };
 
-const TYPE_LABEL: Record<WhaleAlert["type"], string> = {
+// English regardless of UI language — same "Whale"/"Unusual" alert
+// vocabulary GEXBot-style tools use; not Spanish prose to translate.
+// Exported so quick-screener.tsx renders the same labels instead of the
+// raw backend enum ("WHALE"/"UNUSUAL").
+export const TYPE_LABEL: Record<WhaleAlert["type"], string> = {
   WHALE: "Whale",
   UNUSUAL: "Unusual",
 };
@@ -25,8 +31,9 @@ function alertKey(alert: WhaleAlert) {
 }
 
 export function AlertsPanel({ underlyings }: AlertsPanelProps) {
+  const { t } = useLanguage();
   const [alerts, setAlerts] = useState<WhaleAlert[]>([]);
-  const [error, setError] = useState("");
+  const [error, setError] = useState<unknown>(null);
 
   useEffect(() => {
     if (!underlyings.length) return;
@@ -41,10 +48,10 @@ export function AlertsPanel({ underlyings }: AlertsPanelProps) {
           .flatMap((response) => response.alerts)
           .sort((left, right) => Date.parse(right.timestamp) - Date.parse(left.timestamp));
         setAlerts(combined);
-        setError("");
+        setError(null);
       } catch (reason: unknown) {
         if (!controller.signal.aborted) {
-          setError(reason instanceof Error ? reason.message : "No se pudieron cargar las alertas");
+          setError(reason);
         }
       }
     };
@@ -60,19 +67,19 @@ export function AlertsPanel({ underlyings }: AlertsPanelProps) {
   return (
     <section className="panel alerts-panel" aria-labelledby="alerts-panel-title">
       <div className="panel-heading alerts-heading">
-        <p className="eyebrow">Whale Alerts</p>
-        <h2 id="alerts-panel-title">Alertas</h2>
+        <p className="eyebrow">{t.alertsPanel.eyebrow}</p>
+        <h2 id="alerts-panel-title">{t.alertsPanel.title}</h2>
       </div>
       {error ? (
         <p className="alerts-empty error" role="alert">
-          {error}
+          {describeError(error, t)}
         </p>
       ) : alerts.length === 0 ? (
         <p className="alerts-empty" aria-live="polite">
-          Sin alertas recientes.
+          {t.alertsPanel.empty}
         </p>
       ) : (
-        <div className="alerts-row" aria-label="Alertas recientes">
+        <div className="alerts-row" aria-label={t.alertsPanel.recentAriaLabel}>
           {alerts.map((alert) => (
             <article key={alertKey(alert)} className={`alert-card alert-${alert.type.toLowerCase()}`}>
               <span className="alert-symbol">{alert.symbol}</span>

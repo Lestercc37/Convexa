@@ -2,6 +2,8 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { getGammaProfile } from "@/lib/api";
+import { describeError } from "@/lib/i18n/describe-error";
+import { useLanguage, type Language } from "@/lib/i18n/language-context";
 import type { GammaAggregateItem, GammaAggregateResponse } from "@/lib/types";
 
 type PreSessionPanelProps = { symbol: string };
@@ -10,13 +12,17 @@ const PLOT = { top: 20, bottom: 320, centerLeft: 120, centerRight: 640, edgeLeft
 
 const level = new Intl.NumberFormat("en-US", { maximumFractionDigits: 2 });
 
-const closeDateLabel = new Intl.DateTimeFormat("es-US", {
-  weekday: "long",
-  year: "numeric",
-  month: "long",
-  day: "numeric",
-  timeZone: "UTC",
-});
+const DATE_LOCALE: Record<Language, string> = { es: "es-US", en: "en-US" };
+
+function closeDateFormatter(language: Language): Intl.DateTimeFormat {
+  return new Intl.DateTimeFormat(DATE_LOCALE[language], {
+    weekday: "long",
+    year: "numeric",
+    month: "long",
+    day: "numeric",
+    timeZone: "UTC",
+  });
+}
 
 function scale(value: number, minimum: number, maximum: number, start: number, end: number) {
   if (maximum <= minimum) return (start + end) / 2;
@@ -30,8 +36,10 @@ function magnitude(value: number, peak: number, start: number, end: number) {
 }
 
 export function PreSessionPanel({ symbol }: PreSessionPanelProps) {
+  const { language, t } = useLanguage();
   const [profile, setProfile] = useState<GammaAggregateResponse | null>(null);
-  const [error, setError] = useState("");
+  const [error, setError] = useState<unknown>(null);
+  const closeDateLabel = useMemo(() => closeDateFormatter(language), [language]);
 
   useEffect(() => {
     if (!symbol) return;
@@ -43,9 +51,7 @@ export function PreSessionPanel({ symbol }: PreSessionPanelProps) {
       .then((response) => setProfile(response))
       .catch((reason: unknown) => {
         if (!controller.signal.aborted) {
-          setError(
-            reason instanceof Error ? reason.message : "No se pudo cargar el snapshot congelado",
-          );
+          setError(reason);
         }
       });
     return () => controller.abort();
@@ -76,19 +82,19 @@ export function PreSessionPanel({ symbol }: PreSessionPanelProps) {
     <section className="panel pre-session-panel" aria-labelledby="pre-session-title">
       <div className="panel-heading pre-session-heading">
         <div>
-          <p className="eyebrow">Preparación pre-sesión</p>
-          <h2 id="pre-session-title">GEX Profile — {symbol}</h2>
+          <p className="eyebrow">{t.preSessionPanel.eyebrow}</p>
+          <h2 id="pre-session-title">{t.preSessionPanel.title(symbol)}</h2>
         </div>
         {profile && (
           <span className="frozen-pill" role="status">
-            Congelado desde el cierre de {closeDateLabel.format(new Date(profile.as_of))}
+            {t.preSessionPanel.frozenPill(closeDateLabel.format(new Date(profile.as_of)))}
           </span>
         )}
       </div>
 
       {error ? (
         <p className="pre-session-status error" role="alert">
-          {error}
+          {describeError(error, t)}
         </p>
       ) : profile && items.length ? (
         <div className="pre-session-chart-wrap">
@@ -96,9 +102,10 @@ export function PreSessionPanel({ symbol }: PreSessionPanelProps) {
             className="pre-session-chart"
             viewBox="0 0 760 340"
             role="img"
-            aria-label={`GEX Profile congelado de ${symbol}, cierre del ${closeDateLabel.format(
-              new Date(profile.as_of),
-            )}`}
+            aria-label={t.preSessionPanel.chartAriaLabel(
+              symbol,
+              closeDateLabel.format(new Date(profile.as_of)),
+            )}
           >
             <line
               className="pre-session-axis"
@@ -158,7 +165,7 @@ export function PreSessionPanel({ symbol }: PreSessionPanelProps) {
               </text>
             </g>
           </svg>
-          <div className="pre-session-legend" aria-label="Leyenda">
+          <div className="pre-session-legend" aria-label={t.preSessionPanel.legendAriaLabel}>
             <span>
               <i className="legend-dot call" /> Calls
             </span>
@@ -168,9 +175,9 @@ export function PreSessionPanel({ symbol }: PreSessionPanelProps) {
           </div>
         </div>
       ) : profile ? (
-        <p className="pre-session-status">Sin desglose por strike disponible para este snapshot.</p>
+        <p className="pre-session-status">{t.preSessionPanel.noBreakdown}</p>
       ) : (
-        <p className="pre-session-status">Cargando snapshot congelado del cierre anterior…</p>
+        <p className="pre-session-status">{t.preSessionPanel.loading}</p>
       )}
     </section>
   );

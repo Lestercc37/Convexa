@@ -1,5 +1,6 @@
-import { render, screen, within } from "@testing-library/react";
+import { screen, within } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
+import { renderWithLanguage } from "@/lib/i18n/test-utils";
 import type { DerivedMetrics } from "@/lib/types";
 import { DerivedMetricsBar } from "./derived-metrics-bar";
 
@@ -24,7 +25,7 @@ const proprietaryNote = "métrica propia de Convexa, no un estándar de mercado"
 
 describe("DerivedMetricsBar", () => {
   it("renders all four confirmed metrics with their mandatory presentation notes", () => {
-    render(<DerivedMetricsBar metrics={confirmedMetrics} />);
+    renderWithLanguage(<DerivedMetricsBar metrics={confirmedMetrics} />);
 
     expect(screen.getByText("Dealer Impact Score")).toBeInTheDocument();
     expect(screen.getByText("78")).toBeInTheDocument();
@@ -55,7 +56,7 @@ describe("DerivedMetricsBar", () => {
       },
     };
 
-    render(<DerivedMetricsBar metrics={provisionalMetrics} />);
+    renderWithLanguage(<DerivedMetricsBar metrics={provisionalMetrics} />);
 
     const bar = screen.getByLabelText("Métricas derivadas");
     expect(within(bar).getByText("57.4")).toBeInTheDocument();

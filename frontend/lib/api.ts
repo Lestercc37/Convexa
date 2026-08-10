@@ -12,9 +12,19 @@ import type {
 
 const API_PREFIX = "/backend/api/v1";
 
+export class ApiError extends Error {
+  readonly status: number;
+
+  constructor(status: number) {
+    super(`API request failed (${status})`);
+    this.name = "ApiError";
+    this.status = status;
+  }
+}
+
 async function getJson<T>(path: string, signal?: AbortSignal): Promise<T> {
   const response = await fetch(`${API_PREFIX}${path}`, { cache: "no-store", signal });
-  if (!response.ok) throw new Error(`API request failed (${response.status})`);
+  if (!response.ok) throw new ApiError(response.status);
   return (await response.json()) as T;
 }
 

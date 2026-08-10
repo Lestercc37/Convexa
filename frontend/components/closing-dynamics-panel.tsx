@@ -1,10 +1,10 @@
+import { useLanguage } from "@/lib/i18n/language-context";
+import type { Translations } from "@/lib/i18n/translations";
 import type { ClosingDynamics } from "@/lib/types";
 
 type ClosingDynamicsPanelProps = {
   closingDynamics?: ClosingDynamics;
 };
-
-const CONVEXA_NOTE = "métrica propia de Convexa, no un estándar de mercado";
 
 // Last ~5% of the session (~20 of the ~390 minute session) — a purely
 // presentational emphasis threshold (border/background intensify), not a
@@ -15,27 +15,31 @@ const URGENT_TIME_TO_CLOSE_PCT = 5;
 
 const level = new Intl.NumberFormat("en-US", { maximumFractionDigits: 2 });
 
-function charmRegimeLabel(charmRegime: ClosingDynamics["charm_regime"]): string {
+function charmRegimeLabel(
+  charmRegime: ClosingDynamics["charm_regime"],
+  t: Translations,
+): string {
   switch (charmRegime) {
     case "time_decay_dealers_buy":
-      return "El paso del tiempo empuja a los dealers a comprar";
+      return t.closingDynamicsPanel.charmTimeDecayBuy;
     case "time_decay_dealers_sell":
-      return "El paso del tiempo empuja a los dealers a vender";
+      return t.closingDynamicsPanel.charmTimeDecaySell;
     default:
-      return "Neutral — sin presión direccional por paso del tiempo";
+      return t.closingDynamicsPanel.charmNeutral;
   }
 }
 
 function vannaInterpretationLabel(
   vannaInterpretation: ClosingDynamics["vanna_interpretation"],
+  t: Translations,
 ): string {
   switch (vannaInterpretation) {
     case "iv_increase_dealers_buy":
-      return "Un aumento de volatilidad empujaría a los dealers a comprar";
+      return t.closingDynamicsPanel.vannaIvIncreaseBuy;
     case "iv_increase_dealers_sell":
-      return "Un aumento de volatilidad empujaría a los dealers a vender";
+      return t.closingDynamicsPanel.vannaIvIncreaseSell;
     default:
-      return "Neutral — sin presión direccional por volatilidad";
+      return t.closingDynamicsPanel.vannaNeutral;
   }
 }
 
@@ -48,6 +52,7 @@ function regimeTone(
 }
 
 export function ClosingDynamicsPanel({ closingDynamics }: ClosingDynamicsPanelProps) {
+  const { t } = useLanguage();
   // Conditional by design, not a toggle (dashboard-spec.md section 9): the
   // panel is absent outside the closing window, no empty state, no
   // "unavailable" message — `active` is the real backend signal, not a
@@ -62,38 +67,38 @@ export function ClosingDynamicsPanel({ closingDynamics }: ClosingDynamicsPanelPr
   return (
     <section
       className={`panel closing-dynamics-panel${urgent ? " urgent" : ""}`}
-      aria-label="Dinámica de Cierre"
+      aria-label={t.closingDynamicsPanel.ariaLabel}
     >
-      <p className="eyebrow">Dinámica de cierre</p>
+      <p className="eyebrow">{t.closingDynamicsPanel.eyebrow}</p>
 
       <div className="closing-dynamics-row">
-        <span className="closing-dynamics-label">Pin Risk Score</span>
+        <span className="closing-dynamics-label">{t.closingDynamicsPanel.pinRiskScoreLabel}</span>
         <strong className="closing-dynamics-value">{level.format(pin_score)}</strong>
       </div>
       <div
         className="pin-score-meter"
         role="meter"
-        aria-label="Pin Risk Score"
+        aria-label={t.closingDynamicsPanel.pinRiskScoreLabel}
         aria-valuemin={0}
         aria-valuemax={100}
         aria-valuenow={pinScorePct}
       >
         <div className="pin-score-meter-fill" style={{ width: `${pinScorePct}%` }} />
       </div>
-      <p className="closing-dynamics-note">{CONVEXA_NOTE}</p>
+      <p className="closing-dynamics-note">{t.common.convexaNote}</p>
 
       <div className="closing-dynamics-row">
-        <span className="closing-dynamics-label">Strike imán</span>
+        <span className="closing-dynamics-label">{t.closingDynamicsPanel.magnetStrikeLabel}</span>
         <strong className="closing-dynamics-value">
           {magnet_strike === null ? "—" : level.format(magnet_strike)}
         </strong>
       </div>
 
       <p className={`closing-dynamics-regime ${regimeTone(charm_regime)}`}>
-        {charmRegimeLabel(charm_regime)}
+        {charmRegimeLabel(charm_regime, t)}
       </p>
       <p className={`closing-dynamics-regime ${regimeTone(vanna_interpretation)}`}>
-        {vannaInterpretationLabel(vanna_interpretation)}
+        {vannaInterpretationLabel(vanna_interpretation, t)}
       </p>
     </section>
   );

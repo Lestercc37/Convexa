@@ -1,11 +1,16 @@
-import { render, screen } from "@testing-library/react";
+import { screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { ApiError } from "@/lib/api";
+import { renderWithLanguage } from "@/lib/i18n/test-utils";
 import type { GammaAggregateResponse } from "@/lib/types";
 import { PreSessionPanel } from "./pre-session-panel";
 
 const apiMocks = vi.hoisted(() => ({ getGammaProfile: vi.fn() }));
 
-vi.mock("@/lib/api", () => ({ getGammaProfile: apiMocks.getGammaProfile }));
+vi.mock("@/lib/api", async () => {
+  const actual = await vi.importActual<typeof import("@/lib/api")>("@/lib/api");
+  return { ...actual, getGammaProfile: apiMocks.getGammaProfile };
+});
 
 function profile(overrides: Partial<GammaAggregateResponse> = {}): GammaAggregateResponse {
   return {
@@ -51,7 +56,7 @@ describe("PreSessionPanel", () => {
   it("labels the snapshot as frozen from the previous close and draws per-strike bars", async () => {
     apiMocks.getGammaProfile.mockResolvedValue(profile());
 
-    render(<PreSessionPanel symbol="SPY" />);
+    renderWithLanguage(<PreSessionPanel symbol="SPY" />);
 
     expect(
       await screen.findByText(/Congelado desde el cierre de viernes, 7 de agosto de 2026/),
@@ -66,20 +71,20 @@ describe("PreSessionPanel", () => {
   it("does not poll — fetches the frozen snapshot exactly once per symbol", async () => {
     apiMocks.getGammaProfile.mockResolvedValue(profile());
 
-    render(<PreSessionPanel symbol="SPY" />);
+    renderWithLanguage(<PreSessionPanel symbol="SPY" />);
 
     await screen.findByLabelText("Strike 545");
     await new Promise((resolve) => setTimeout(resolve, 50));
     expect(apiMocks.getGammaProfile).toHaveBeenCalledTimes(1);
   });
 
-  it("shows an error when no frozen snapshot exists yet for the symbol", async () => {
-    apiMocks.getGammaProfile.mockRejectedValue(new Error("No gamma aggregate found for SPY"));
+  it("shows a translated not-found error when no frozen snapshot exists yet for the symbol", async () => {
+    apiMocks.getGammaProfile.mockRejectedValue(new ApiError(404));
 
-    render(<PreSessionPanel symbol="SPY" />);
+    renderWithLanguage(<PreSessionPanel symbol="SPY" />);
 
     expect(await screen.findByRole("alert")).toHaveTextContent(
-      "No gamma aggregate found for SPY",
+      "No se encontró el recurso solicitado.",
     );
   });
 });

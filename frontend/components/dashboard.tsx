@@ -4,6 +4,8 @@ import Image from "next/image";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { getGamma, getMarket, getUnderlyings } from "@/lib/api";
 import { aggregateMinuteCandles, type PricePoint, type VwapPoint } from "@/lib/candles";
+import { describeError } from "@/lib/i18n/describe-error";
+import { useLanguage, type Language } from "@/lib/i18n/language-context";
 import { POLLING_INTERVAL_MS } from "@/lib/polling";
 import type { GammaResponse, MarketResponse, Underlying } from "@/lib/types";
 import { AlertsPanel } from "./alerts-panel";
@@ -32,6 +34,7 @@ const EXPOSURE_FORMAT = new Intl.NumberFormat("en-US", {
 });
 
 export function Dashboard() {
+  const { language, setLanguage, t } = useLanguage();
   const [underlyings, setUnderlyings] = useState<Underlying[]>([]);
   const [symbol, setSymbol] = useState("");
   const [view, setView] = useState<"live" | "pre-session">("live");
@@ -39,7 +42,12 @@ export function Dashboard() {
   const [market, setMarket] = useState<MarketResponse | null>(null);
   const [pricePoints, setPricePoints] = useState<PricePoint[]>([]);
   const [vwapPoints, setVwapPoints] = useState<VwapPoint[]>([]);
-  const [error, setError] = useState("");
+  // Stores the raw error, not a pre-translated string — translating at
+  // render time (via `describeError(error, t)` below) means the message
+  // stays correct if the user switches language while it's on screen,
+  // instead of being frozen in whichever language was active when the
+  // request failed.
+  const [error, setError] = useState<unknown>(null);
   const candles = useMemo(() => aggregateMinuteCandles(pricePoints), [pricePoints]);
   const latestCandle = candles.at(-1) ?? null;
 
@@ -52,7 +60,7 @@ export function Dashboard() {
       })
       .catch((reason: unknown) => {
         if (!controller.signal.aborted) {
-          setError(reason instanceof Error ? reason.message : "No se pudo cargar la lista");
+          setError(reason);
         }
       });
     return () => controller.abort();
@@ -86,10 +94,10 @@ export function Dashboard() {
             : [...current, { timestamp: marketData.as_of, value }],
         );
       }
-      setError("");
+      setError(null);
     } catch (reason: unknown) {
       if (!signal?.aborted) {
-        setError(reason instanceof Error ? reason.message : "No se pudieron cargar los datos");
+        setError(reason);
       }
     }
   }, []);
@@ -122,7 +130,7 @@ export function Dashboard() {
             priority
           />
           <label className="tv-symbol-control">
-            <span className="sr-only">Underlying</span>
+            <span className="sr-only">{t.dashboard.underlyingLabel}</span>
             <select
               value={symbol}
               onChange={(event) => {
@@ -141,6 +149,22 @@ export function Dashboard() {
               ))}
             </select>
           </label>
+          <div
+            className="tv-language-toggle"
+            role="group"
+            aria-label={t.common.languageSwitcherAriaLabel}
+          >
+            {(["es", "en"] as Language[]).map((option) => (
+              <button
+                key={option}
+                type="button"
+                aria-pressed={language === option}
+                onClick={() => setLanguage(option)}
+              >
+                {option.toUpperCase()}
+              </button>
+            ))}
+          </div>
           {market && (
             <div className="tv-price-readout">
               <strong>{PRICE_FORMAT.format(market.price)}</strong>
@@ -155,7 +179,7 @@ export function Dashboard() {
             </div>
           )}
         </div>
-        <div className="tv-timeframes" role="group" aria-label="Timeframe">
+        <div className="tv-timeframes" role="group" aria-label={t.dashboard.timeframeGroupAriaLabel}>
           {TIMEFRAMES.map((timeframe) => (
             <button
               key={timeframe}
@@ -168,20 +192,20 @@ export function Dashboard() {
             </button>
           ))}
         </div>
-        <div className="tv-view-toggle" role="group" aria-label="Vista">
+        <div className="tv-view-toggle" role="group" aria-label={t.dashboard.viewGroupAriaLabel}>
           <button
             type="button"
             aria-pressed={view === "live"}
             onClick={() => setView("live")}
           >
-            En vivo
+            {t.dashboard.liveButton}
           </button>
           <button
             type="button"
             aria-pressed={view === "pre-session"}
             onClick={() => setView("pre-session")}
           >
-            Pre-Sesión
+            {t.dashboard.preSessionButton}
           </button>
         </div>
         <div className="tv-topbar-right">
@@ -191,7 +215,7 @@ export function Dashboard() {
 
       {error ? (
         <section className="panel status error" role="alert">
-          {error}
+          {describeError(error, t)}
         </section>
       ) : gamma && market ? (
         <div className="tv-body">
@@ -220,8 +244,11 @@ export function Dashboard() {
 
           <aside className="tv-sidebar">
             <DerivedMetricsBar metrics={gamma.derived_metrics} />
-            <section className="panel exposure-panel" aria-label="Charm y Vanna Exposure">
-              <p className="eyebrow">Griegas agregadas</p>
+            <section
+              className="panel exposure-panel"
+              aria-label={t.dashboard.exposureGroupAriaLabel}
+            >
+              <p className="eyebrow">{t.dashboard.aggregatedGreeksEyebrow}</p>
               <div className="exposure-row">
                 <div>
                   <span className="exposure-label">Charm Exposure</span>
@@ -254,7 +281,7 @@ export function Dashboard() {
         </div>
       ) : (
         <section className="panel status" aria-live="polite">
-          Cargando régimen y niveles…
+          {t.dashboard.loadingRegime}
         </section>
       )}
 

@@ -2,6 +2,8 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { getOptionChain } from "@/lib/api";
+import { describeError } from "@/lib/i18n/describe-error";
+import { useLanguage, type Language } from "@/lib/i18n/language-context";
 import type { OptionChainResponse, OptionContract } from "@/lib/types";
 
 type VolatilitySmileProps = {
@@ -24,8 +26,10 @@ function scale(value: number, minimum: number, maximum: number, start: number, e
   return start + ((value - minimum) / (maximum - minimum)) * (end - start);
 }
 
-function expirationLabel(expiration: string) {
-  return new Intl.DateTimeFormat("es-US", {
+const EXPIRATION_LOCALE: Record<Language, string> = { es: "es-US", en: "en-US" };
+
+function expirationLabel(expiration: string, language: Language) {
+  return new Intl.DateTimeFormat(EXPIRATION_LOCALE[language], {
     year: "numeric",
     month: "short",
     day: "numeric",
@@ -34,10 +38,11 @@ function expirationLabel(expiration: string) {
 }
 
 export function VolatilitySmile({ symbol, marketPrice }: VolatilitySmileProps) {
+  const { language, t } = useLanguage();
   const [expirations, setExpirations] = useState<string[]>([]);
   const [selectedExpiration, setSelectedExpiration] = useState("");
   const [chain, setChain] = useState<OptionChainResponse | null>(null);
-  const [error, setError] = useState("");
+  const [error, setError] = useState<unknown>(null);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -51,7 +56,7 @@ export function VolatilitySmile({ symbol, marketPrice }: VolatilitySmileProps) {
       })
       .catch((reason: unknown) => {
         if (!controller.signal.aborted) {
-          setError(reason instanceof Error ? reason.message : "No se pudo cargar la cadena");
+          setError(reason);
         }
       });
     return () => controller.abort();
@@ -63,11 +68,11 @@ export function VolatilitySmile({ symbol, marketPrice }: VolatilitySmileProps) {
     getOptionChain(symbol, selectedExpiration, controller.signal)
       .then((response) => {
         setChain(response);
-        setError("");
+        setError(null);
       })
       .catch((reason: unknown) => {
         if (!controller.signal.aborted) {
-          setError(reason instanceof Error ? reason.message : "No se pudo cargar el vencimiento");
+          setError(reason);
         }
       });
     return () => controller.abort();
@@ -95,12 +100,12 @@ export function VolatilitySmile({ symbol, marketPrice }: VolatilitySmileProps) {
     <section className="panel smile-panel" aria-labelledby="smile-title">
       <div className="panel-heading smile-heading">
         <div>
-          <p className="eyebrow">Options Chain · IV cruda por strike</p>
+          <p className="eyebrow">{t.volatilitySmile.eyebrow}</p>
           <h2 id="smile-title">Volatility Smile</h2>
-          <p className="smile-role">Sentimiento de riesgo en prima · no es un nivel de gravitación</p>
+          <p className="smile-role">{t.volatilitySmile.roleSubtitle}</p>
         </div>
         <label className="expiration-control">
-          <span>Vencimiento</span>
+          <span>{t.volatilitySmile.expirationLabel}</span>
           <select
             value={selectedExpiration}
             onChange={(event) => setSelectedExpiration(event.target.value)}
@@ -108,7 +113,7 @@ export function VolatilitySmile({ symbol, marketPrice }: VolatilitySmileProps) {
           >
             {expirations.map((expiration) => (
               <option key={expiration} value={expiration}>
-                {expirationLabel(expiration)}
+                {expirationLabel(expiration, language)}
               </option>
             ))}
           </select>
@@ -116,19 +121,19 @@ export function VolatilitySmile({ symbol, marketPrice }: VolatilitySmileProps) {
       </div>
 
       {error ? (
-        <p className="smile-status error" role="alert">{error}</p>
+        <p className="smile-status error" role="alert">{describeError(error, t)}</p>
       ) : contracts.length ? (
         <div className="smile-chart-wrap">
           <svg
             className="smile-chart"
             viewBox="0 0 800 280"
             role="img"
-            aria-label={`Volatility Smile de ${symbol} para ${selectedExpiration}`}
+            aria-label={t.volatilitySmile.chartAriaLabel(symbol, selectedExpiration)}
           >
             <line className="smile-axis" x1={PLOT.left} y1={PLOT.bottom} x2={PLOT.right} y2={PLOT.bottom} />
             <line className="smile-axis" x1={PLOT.left} y1={PLOT.top} x2={PLOT.left} y2={PLOT.bottom} />
             {plot.atmStrike !== null && (
-              <g aria-label={`Strike ATM ${plot.atmStrike}`}>
+              <g aria-label={t.volatilitySmile.atmAriaLabel(plot.atmStrike)}>
                 <line className="smile-atm" x1={x(plot.atmStrike)} y1={PLOT.top} x2={x(plot.atmStrike)} y2={PLOT.bottom} />
                 <text className="smile-atm-label" x={x(plot.atmStrike)} y={PLOT.top + 12}>ATM {plot.atmStrike}</text>
               </g>
@@ -140,19 +145,23 @@ export function VolatilitySmile({ symbol, marketPrice }: VolatilitySmileProps) {
                 cx={x(contract.strike)}
                 cy={y(contract.iv)}
                 r="5"
-                aria-label={`${contract.type} strike ${contract.strike}, IV ${(contract.iv * 100).toFixed(2)}%`}
+                aria-label={t.volatilitySmile.pointAriaLabel(
+                  contract.type,
+                  contract.strike,
+                  (contract.iv * 100).toFixed(2),
+                )}
               />
             ))}
             <text className="smile-axis-label" x={(PLOT.left + PLOT.right) / 2} y="274">Strike</text>
             <text className="smile-axis-label" x="14" y={(PLOT.top + PLOT.bottom) / 2} transform={`rotate(-90 14 ${(PLOT.top + PLOT.bottom) / 2})`}>IV</text>
           </svg>
-          <div className="smile-legend" aria-label="Leyenda">
+          <div className="smile-legend" aria-label={t.volatilitySmile.legendAriaLabel}>
             <span><i className="legend-dot call" /> Calls</span>
             <span><i className="legend-dot put" /> Puts</span>
           </div>
         </div>
       ) : (
-        <p className="smile-status">Cargando vencimientos y volatilidad implícita…</p>
+        <p className="smile-status">{t.volatilitySmile.loading}</p>
       )}
     </section>
   );

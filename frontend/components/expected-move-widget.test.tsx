@@ -1,5 +1,6 @@
-import { render, screen } from "@testing-library/react";
+import { screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
+import { renderWithLanguage } from "@/lib/i18n/test-utils";
 import { ExpectedMoveWidget } from "./expected-move-widget";
 
 const expectedMove = {
@@ -14,7 +15,7 @@ const expectedMove = {
 
 describe("ExpectedMoveWidget", () => {
   it("renders the expected range and remaining session move", () => {
-    render(<ExpectedMoveWidget expectedMove={expectedMove} />);
+    renderWithLanguage(<ExpectedMoveWidget expectedMove={expectedMove} />);
 
     expect(
       screen.getByText(
@@ -25,7 +26,7 @@ describe("ExpectedMoveWidget", () => {
   });
 
   it("does not break its parent when expected move is absent", () => {
-    const { container } = render(<ExpectedMoveWidget />);
+    const { container } = renderWithLanguage(<ExpectedMoveWidget />);
 
     expect(container).toBeEmptyDOMElement();
   });

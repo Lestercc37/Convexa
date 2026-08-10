@@ -1,5 +1,6 @@
-import { render, screen } from "@testing-library/react";
+import { screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
+import { renderWithLanguage } from "@/lib/i18n/test-utils";
 import type { ClosingDynamics } from "@/lib/types";
 import { ClosingDynamicsPanel } from "./closing-dynamics-panel";
 
@@ -15,7 +16,7 @@ const activeClosingDynamics: ClosingDynamics = {
 
 describe("ClosingDynamicsPanel", () => {
   it("renders Pin Risk Score, magnet strike, and translated charm/vanna labels when active", () => {
-    render(<ClosingDynamicsPanel closingDynamics={activeClosingDynamics} />);
+    renderWithLanguage(<ClosingDynamicsPanel closingDynamics={activeClosingDynamics} />);
 
     expect(screen.getByLabelText("Dinámica de Cierre")).toBeInTheDocument();
     expect(screen.getByText("62")).toBeInTheDocument();
@@ -37,13 +38,13 @@ describe("ClosingDynamicsPanel", () => {
   });
 
   it("renders nothing when closing_dynamics is absent from the poll", () => {
-    const { container } = render(<ClosingDynamicsPanel closingDynamics={undefined} />);
+    const { container } = renderWithLanguage(<ClosingDynamicsPanel closingDynamics={undefined} />);
 
     expect(container).toBeEmptyDOMElement();
   });
 
   it("renders nothing when closing_dynamics is present but not active (outside the closing window)", () => {
-    const { container } = render(
+    const { container } = renderWithLanguage(
       <ClosingDynamicsPanel closingDynamics={{ ...activeClosingDynamics, active: false }} />,
     );
 
@@ -51,7 +52,7 @@ describe("ClosingDynamicsPanel", () => {
   });
 
   it("shows neutral labels and a dash for magnet strike without breaking the render", () => {
-    render(
+    renderWithLanguage(
       <ClosingDynamicsPanel
         closingDynamics={{
           ...activeClosingDynamics,
