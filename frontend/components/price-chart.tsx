@@ -39,10 +39,16 @@ type BandRect = {
   height: number;
 };
 
+// Convexa brand colors (matches --calm/--risk in globals.css) — reserved for
+// levels Convexa itself calculates. Candlesticks below intentionally use a
+// separate, TradingView-native pair (see CANDLE_UP_COLOR/CANDLE_DOWN_COLOR).
+const CONVEXA_GREEN = "#00DC5A";
+const CONVEXA_RED = "#FA000A";
+
 const HISTORICAL_LEVELS = [
-  { field: "call_wall", title: "Call Wall", color: "#36c99b" },
+  { field: "call_wall", title: "Call Wall", color: CONVEXA_GREEN },
   { field: "gamma_flip", title: "Gamma Flip", color: "#f3c969" },
-  { field: "put_wall", title: "Put Wall", color: "#ff7a45" },
+  { field: "put_wall", title: "Put Wall", color: CONVEXA_RED },
 ] as const;
 
 const VWAP_COLOR = "#f3c969";
@@ -61,9 +67,9 @@ function gammaLevels(gamma: GammaResponse): GammaLevel[] {
       ];
 
   return [
-    { price: gamma.put_wall, title: "Put Wall", color: "#ff7a45" },
+    { price: gamma.put_wall, title: "Put Wall", color: CONVEXA_RED },
     ...middleLevels,
-    { price: gamma.call_wall, title: "Call Wall", color: "#36c99b" },
+    { price: gamma.call_wall, title: "Call Wall", color: CONVEXA_GREEN },
   ];
 }
 
@@ -154,25 +160,27 @@ export function PriceChart({
 
     const chart = createChart(container, {
       width: container.clientWidth,
-      height: 420,
+      height: container.clientHeight || 420,
       layout: {
         background: { type: ColorType.Solid, color: "transparent" },
-        textColor: "#91a0b2",
+        textColor: "#787b86",
         attributionLogo: false,
       },
       grid: {
-        vertLines: { color: "rgba(42, 55, 70, 0.42)" },
-        horzLines: { color: "rgba(42, 55, 70, 0.42)" },
+        vertLines: { color: "rgba(42, 46, 57, 0.6)" },
+        horzLines: { color: "rgba(42, 46, 57, 0.6)" },
       },
       timeScale: { timeVisible: true, secondsVisible: false },
-      rightPriceScale: { borderColor: "#2a3746" },
+      rightPriceScale: { borderColor: "#2A2E39" },
     });
+    // TradingView-native candle colors — never the Convexa brand pair above,
+    // which is reserved for what Convexa itself calculates (Gamma levels).
     const series = chart.addSeries(CandlestickSeries, {
-      upColor: "#36c99b",
-      downColor: "#ff7a45",
+      upColor: "#26A69A",
+      downColor: "#EF5350",
       borderVisible: false,
-      wickUpColor: "#36c99b",
-      wickDownColor: "#ff7a45",
+      wickUpColor: "#26A69A",
+      wickDownColor: "#EF5350",
     });
     series.setData(initialCandlesRef.current.map(chartCandle));
     chart.timeScale().fitContent();
@@ -180,7 +188,10 @@ export function PriceChart({
     seriesRef.current = series;
 
     const resizeObserver = new ResizeObserver(([entry]) => {
-      chart.applyOptions({ width: entry.contentRect.width });
+      chart.applyOptions({
+        width: entry.contentRect.width,
+        height: entry.contentRect.height,
+      });
       recomputeBandRectsRef.current();
     });
     resizeObserver.observe(container);

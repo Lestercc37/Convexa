@@ -12,6 +12,12 @@ const gamma: GammaResponse = {
   call_wall: 555,
   put_wall: 540,
   absolute_gamma_strike: 550,
+  max_pain: 549,
+  net_gamma: 1,
+  vega_exposure: 2,
+  theta_exposure: 3,
+  charm_exposure: 4,
+  vanna_exposure: 5,
   dealer_position: "long_gamma",
   derived_metrics: derivedMetricsFixture,
 };

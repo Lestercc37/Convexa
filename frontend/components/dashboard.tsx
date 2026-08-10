@@ -4,16 +4,30 @@ import Image from "next/image";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { getGamma, getMarket, getUnderlyings } from "@/lib/api";
 import { aggregateMinuteCandles, type PricePoint, type VwapPoint } from "@/lib/candles";
+import { POLLING_INTERVAL_MS } from "@/lib/polling";
 import type { GammaResponse, MarketResponse, Underlying } from "@/lib/types";
+import { AlertsPanel } from "./alerts-panel";
 import { DerivedMetricsBar } from "./derived-metrics-bar";
 import { ExpectedMoveWidget } from "./expected-move-widget";
-import { GravityMap } from "./gravity-map";
 import { PriceChart } from "./price-chart";
 import { QuickScreener } from "./quick-screener";
 import { RegimeBadge } from "./regime-badge";
 import { VolatilitySmile } from "./volatility-smile";
 
-const POLLING_INTERVAL_MS = 30_000;
+// Only 1-minute candles exist (client-side accumulated, dashboard-spec.md
+// section 2.2) — the other buttons are decorative chrome, same as the side
+// toolbar, until a real multi-timeframe aggregation exists.
+const TIMEFRAMES = ["1m", "5m", "15m", "1h"] as const;
+
+const PRICE_FORMAT = new Intl.NumberFormat("en-US", {
+  minimumFractionDigits: 2,
+  maximumFractionDigits: 2,
+});
+
+const EXPOSURE_FORMAT = new Intl.NumberFormat("en-US", {
+  notation: "compact",
+  maximumFractionDigits: 1,
+});
 
 export function Dashboard() {
   const [underlyings, setUnderlyings] = useState<Underlying[]>([]);
@@ -24,6 +38,7 @@ export function Dashboard() {
   const [vwapPoints, setVwapPoints] = useState<VwapPoint[]>([]);
   const [error, setError] = useState("");
   const candles = useMemo(() => aggregateMinuteCandles(pricePoints), [pricePoints]);
+  const latestCandle = candles.at(-1) ?? null;
 
   useEffect(() => {
     const controller = new AbortController();
@@ -92,39 +107,66 @@ export function Dashboard() {
   }, [refresh, symbol]);
 
   return (
-    <main className="dashboard">
-      <header className="topbar">
-        <div>
+    <main className="tv-shell">
+      <header className="tv-topbar">
+        <div className="tv-topbar-left">
           <Image
             src="/logo-header.png"
             alt="Convexa — Volatility Exposure Edge"
-            width={485}
-            height={215}
-            className="header-logo"
+            width={96}
+            height={26}
+            className="tv-logo"
             priority
           />
-          <h1>Gamma Dashboard</h1>
+          <label className="tv-symbol-control">
+            <span className="sr-only">Underlying</span>
+            <select
+              value={symbol}
+              onChange={(event) => {
+                setGamma(null);
+                setMarket(null);
+                setPricePoints([]);
+                setVwapPoints([]);
+                setSymbol(event.target.value);
+              }}
+              disabled={!underlyings.length}
+            >
+              {underlyings.map((item) => (
+                <option key={item.symbol} value={item.symbol}>
+                  {item.symbol}
+                </option>
+              ))}
+            </select>
+          </label>
+          {market && (
+            <div className="tv-price-readout">
+              <strong>{PRICE_FORMAT.format(market.price)}</strong>
+              {latestCandle && (
+                <span className="tv-ohlc">
+                  O {PRICE_FORMAT.format(latestCandle.open)} H{" "}
+                  {PRICE_FORMAT.format(latestCandle.high)} L{" "}
+                  {PRICE_FORMAT.format(latestCandle.low)} C{" "}
+                  {PRICE_FORMAT.format(latestCandle.close)}
+                </span>
+              )}
+            </div>
+          )}
         </div>
-        <div className="symbol-control">
-          <label htmlFor="symbol">Underlying</label>
-          <select
-            id="symbol"
-            value={symbol}
-            onChange={(event) => {
-              setGamma(null);
-              setMarket(null);
-              setPricePoints([]);
-              setVwapPoints([]);
-              setSymbol(event.target.value);
-            }}
-            disabled={!underlyings.length}
-          >
-            {underlyings.map((item) => (
-              <option key={item.symbol} value={item.symbol}>
-                {item.symbol}
-              </option>
-            ))}
-          </select>
+        <div className="tv-timeframes" role="group" aria-label="Timeframe">
+          {TIMEFRAMES.map((timeframe) => (
+            <button
+              key={timeframe}
+              type="button"
+              className="tv-timeframe"
+              aria-pressed={timeframe === "1m"}
+              disabled={timeframe !== "1m"}
+            >
+              {timeframe}
+            </button>
+          ))}
+        </div>
+        <div className="tv-topbar-right">
+          {gamma && market && <RegimeBadge gamma={gamma} market={market} />}
         </div>
       </header>
 
@@ -133,36 +175,63 @@ export function Dashboard() {
           {error}
         </section>
       ) : gamma && market ? (
-        <div className="dashboard-content">
-          <div className="content-grid">
-            <RegimeBadge gamma={gamma} market={market} />
-            <ExpectedMoveWidget
-              key={`expected-move-${symbol}`}
-              expectedMove={market.expected_move}
+        <div className="tv-body">
+          <aside className="tv-toolbar" aria-hidden="true">
+            <span className="tv-tool-icon">↖</span>
+            <span className="tv-tool-icon">✎</span>
+            <span className="tv-tool-icon">▭</span>
+            <span className="tv-tool-icon">〰</span>
+            <span className="tv-tool-icon">Ⓣ</span>
+          </aside>
+
+          <div className="tv-center">
+            <PriceChart
+              key={`price-chart-${symbol}`}
+              symbol={symbol}
+              candles={candles}
+              gamma={gamma}
+              vwapPoints={vwapPoints}
+              atrRange={market.atr_range}
             />
-            <GravityMap gamma={gamma} market={market} />
           </div>
-          <PriceChart
-            key={`price-chart-${symbol}`}
-            symbol={symbol}
-            candles={candles}
-            gamma={gamma}
-            vwapPoints={vwapPoints}
-            atrRange={market.atr_range}
-          />
-          <DerivedMetricsBar metrics={gamma.derived_metrics} />
-          <VolatilitySmile
-            key={`volatility-smile-${symbol}`}
-            symbol={symbol}
-            marketPrice={market.price}
-          />
+
+          <aside className="tv-sidebar">
+            <DerivedMetricsBar metrics={gamma.derived_metrics} />
+            <section className="panel exposure-panel" aria-label="Charm y Vanna Exposure">
+              <p className="eyebrow">Griegas agregadas</p>
+              <div className="exposure-row">
+                <div>
+                  <span className="exposure-label">Charm Exposure</span>
+                  <strong className="exposure-value">
+                    {EXPOSURE_FORMAT.format(gamma.charm_exposure)}
+                  </strong>
+                </div>
+                <div>
+                  <span className="exposure-label">Vanna Exposure</span>
+                  <strong className="exposure-value">
+                    {EXPOSURE_FORMAT.format(gamma.vanna_exposure)}
+                  </strong>
+                </div>
+              </div>
+            </section>
+            <ExpectedMoveWidget key={`expected-move-${symbol}`} expectedMove={market.expected_move} />
+            <VolatilitySmile
+              key={`volatility-smile-${symbol}`}
+              symbol={symbol}
+              marketPrice={market.price}
+            />
+            <QuickScreener />
+          </aside>
         </div>
       ) : (
         <section className="panel status" aria-live="polite">
           Cargando régimen y niveles…
         </section>
       )}
-      <QuickScreener />
+
+      <footer className="tv-footer">
+        <AlertsPanel underlyings={underlyings} />
+      </footer>
     </main>
   );
 }

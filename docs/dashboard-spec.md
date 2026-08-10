@@ -208,7 +208,37 @@ Banda del día (ancladas a la apertura de HOY):
 
 ## 12. Fuera de alcance de este documento
 
-- Paleta de colores exacta, tipografía, sistema de diseño general — se resuelve en Etapa 5 junto con el resto del Dashboard, no aquí (evita sobre-especificar antes de tener el resto de la UI para dar contexto).
 - Vista de Options Chain, Flow — tienen su propio documento cuando lleguen esas etapas.
-- Layout completo estilo TradingView para el chart principal — los overlays de VWAP Anclado y ATR Range (secciones 10 y 11) ya están implementados sobre el `PriceChart` actual (Lightweight Charts + velas de 1 minuto acumuladas client-side, sección 2.2); la migración de layout es un PR aparte.
 - Historial persistido del lado del servidor para la línea de VWAP Anclado (endpoint dedicado) — por ahora se acumula client-side, ver nota de implementación en la sección 10.
+
+## 13. Layout estilo TradingView (implementado)
+
+Migración del Dashboard al layout de referencia aprobado. Reorganiza únicamente estructura y paleta — reutiliza cada componente existente tal cual (mismos props, misma lógica interna), salvo dos excepciones puntuales documentadas abajo. Reemplaza la sección "paleta/tipografía... se resuelve en Etapa 5" que antes vivía en "Fuera de alcance": ya se resolvió, es esta sección.
+
+**Paleta** (variables CSS en `globals.css`):
+
+```
+--tv-bg: #131722      --tv-panel: #1e222d   --tv-border: #2A2E39
+--tv-text: #d1d4dc     --tv-text-dim: #787b86
+--tv-up: #26A69A (velas alcistas — SOLO velas, nunca niveles de Convexa)
+--tv-down: #EF5350 (velas bajistas — ídem)
+```
+
+**Colores de marca Convexa (`#00DC5A` verde / `#FA000A` rojo)** — decisión de alcance: se aplican a **todo lo que Convexa calcula** (`--calm`/`--risk`, reemplazando sus valores anteriores), no solo a los niveles de Gamma — cubre también `RegimeBadge` (long/short), `VolatilitySmile` (call/put) y el par Put Wall/Call Wall en `PriceChart`/`GravityMap`. Los overlays propios (VWAP ámbar `--warning`, ATR violeta `--atr`) no cambian — ya tenían "su propio color para diferenciarse" por diseño (secciones 10-11). Único corte fijo: las velas (`--tv-up`/`--tv-down`) nunca usan el par de marca, sin excepción.
+
+**Estructura (flexbox, no CSS grid):**
+1. Barra superior (~44px): logo, selector de símbolo, precio + OHLC de la vela más reciente, timeframe, `RegimeBadge` a la derecha.
+2. Fila principal: toolbar lateral angosto decorativo (44px) | **centro dominante**: `PriceChart` con todos sus overlays (Gamma, VWAP Anclado, ATR Range) y su selector Estático/Histórico ya integrado en su propia barra de herramientas | panel derecho (~256px, apilado): `DerivedMetricsBar` (4 métricas, ahora en columna) + Charm/Vanna Exposure + `ExpectedMoveWidget` + `VolatilitySmile` + `QuickScreener`, todos compactados vía CSS contextual.
+3. Franja inferior fija: panel de Alertas (Eagle Contracts), nuevo — ver abajo.
+
+**Decisiones de alcance tomadas durante la implementación, documentadas explícitamente:**
+
+- **Panel de Alertas (Eagle Contracts) — no existía, se construyó en este PR.** El plan original asumía que ya existía un componente de frontend para reposicionar; verificado contra el código, solo existía el endpoint backend `GET /api/v1/alerts/{symbol}` (`EagleAlertsResponse`: `symbol`, `contract`, `type` (`WHALE`/`UNUSUAL`), `amount`, `timestamp`), sin consumidor en el frontend. Se construyó `AlertsPanel` (fila horizontal desplazable de tarjetas, una por alerta, color distinto por tipo), consultando los símbolos activos vía la misma lista que ya usa el selector del Dashboard (`getUnderlyings`, sin duplicar la fuente), con el mismo polling de 30s que el resto del Dashboard (`frontend/lib/polling.ts`, nueva constante compartida para evitar duplicar el valor).
+- **`GravityMap` retirado del Dashboard compuesto.** La lista de "Estructura" del layout de referencia no le asigna ninguna zona — su función (mostrar Put Wall/Gamma Flip/Call Wall en una franja horizontal) queda cubierta por los mismos niveles ya superpuestos al precio en `PriceChart` (modo Estático, sección 2.1), ahora elemento central dominante en vez de una tarjeta pequeña. El componente y sus tests (`gravity-map.tsx`/`gravity-map.test.tsx`) quedan intactos y siguen pasando de forma standalone — la decisión es reversible con un solo import si se prefiere mantenerlo visible.
+- **`RegimeBadge` en la barra superior es una compactación vía CSS, no un componente nuevo.** Mismo componente, mismos props (`gamma`, `market`) — un selector contextual (`.tv-topbar-right .regime-badge`) reduce tamaño de fuente y oculta el eyebrow/meta line para caber en una barra de ~44px, sin tocar `regime-badge.tsx`.
+- **Precio + OHLC en la barra superior** se arma con datos que el Dashboard ya tiene (`market.price` + la última vela de `candles`, ya calculada por `aggregateMinuteCandles`) — no es una llamada ni componente nuevo.
+- **Timeframe (1m/5m/15m/1h) y el toolbar lateral son decorativos**, igual que ya indicaba el propio plan para el toolbar lateral. Solo existen velas de 1 minuto (sección 2.2); no se inventó agregación real de 5m/15m/1h — los botones de otros timeframes están deshabilitados visualmente, sin lógica detrás, hasta que exista una fuente de datos multi-timeframe real.
+- **Charm/Vanna Exposure en el panel derecho no requirió backend nuevo.** `GET /api/v1/gamma/{symbol}` ya devolvía `charm_exposure`/`vanna_exposure` (junto con `max_pain`, `net_gamma`, `vega_exposure`, `theta_exposure`) — el tipo `GammaResponse` del frontend simplemente no los declaraba todavía. Se completó el tipo para reflejar la respuesta real y se agregó un bloque compacto que los muestra.
+- **`PriceChart` gana altura responsiva** (adaptación mínima, no lógica de negocio nueva): el `ResizeObserver` que ya ajustaba el ancho del chart en cada resize ahora también ajusta el alto (mismo mecanismo, una dimensión más), necesario para que el chart pueda ser el "centro dominante" del layout en vez de quedar con una altura fija de 420px sin importar el espacio disponible.
+
+**Tests**: `dashboard.test.tsx` incluye un test de cambio de símbolo repetido (mismo escenario que causó los crashes corregidos en los PRs #54 y #55 — remount completo de `PriceChart` vía su `key`), con datos no-provisionales de VWAP/ATR para ejercitar sus efectos de limpieza en el layout nuevo, confirmando que los guards siguen protegiendo correctamente.

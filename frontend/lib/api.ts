@@ -1,4 +1,5 @@
 import type {
+  EagleAlertsResponse,
   GammaHistoryResponse,
   GammaResponse,
   MarketResponse,
@@ -33,6 +34,10 @@ export function getGammaHistory(symbol: string, signal?: AbortSignal) {
 
 export function getMarket(symbol: string, signal?: AbortSignal) {
   return getJson<MarketResponse>(`/market/${encodeURIComponent(symbol)}`, signal);
+}
+
+export function getAlerts(symbol: string, signal?: AbortSignal) {
+  return getJson<EagleAlertsResponse>(`/alerts/${encodeURIComponent(symbol)}`, signal);
 }
 
 export function getScreenerPreset(
