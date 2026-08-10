@@ -7,7 +7,7 @@ from enum import StrEnum
 from typing import Iterable
 
 from backend.domain.ports import IStorage
-from backend.domain.use_cases.flow import EagleAlert, EagleAlertType
+from backend.domain.use_cases.flow import WhaleAlert, WhaleAlertType
 
 
 class ScreenerPreset(StrEnum):
@@ -27,7 +27,7 @@ class ScreenerPresetResult:
     symbol: str
     as_of: datetime
     contract: str | None = None
-    alert_type: EagleAlertType | None = None
+    alert_type: WhaleAlertType | None = None
     amount: Decimal | None = None
     net_gamma: Decimal | None = None
     gamma_flip: Decimal | None = None
@@ -41,7 +41,7 @@ class ScreenerPresetResult:
 def get_screener_preset(
     storage: IStorage,
     preset: ScreenerPreset,
-    alerts: Iterable[EagleAlert] = (),
+    alerts: Iterable[WhaleAlert] = (),
 ) -> list[ScreenerPresetResult]:
     if preset is ScreenerPreset.UNUSUAL_OPTIONS_ACTIVITY:
         return sorted(

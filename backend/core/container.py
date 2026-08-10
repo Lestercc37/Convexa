@@ -34,10 +34,10 @@ from backend.domain.use_cases import (
     CalculateGreeksUseCase,
     CalculateMaxPainUseCase,
     CalculateWallsUseCase,
-    EagleContractsEngine,
-    EagleThresholds,
     GetMarketSnapshotUseCase,
     LoadOptionChainUseCase,
+    WhaleAlertsEngine,
+    WhaleAlertThresholds,
 )
 
 
@@ -71,14 +71,14 @@ class Container:
     calculate_max_pain_use_case: CalculateMaxPainUseCase
     calculate_gamma_exposure_orchestrator: CalculateGammaExposureOrchestrator
     calculate_derived_metrics_use_case: CalculateDerivedMetricsUseCase
-    eagle_contracts_engine: EagleContractsEngine
+    whale_alerts_engine: WhaleAlertsEngine
 
 
-def build_eagle_contracts_engine(storage: IStorage) -> EagleContractsEngine:
-    """Build Eagle Contracts with persisted per-symbol threshold overrides."""
-    return EagleContractsEngine(
+def build_whale_alerts_engine(storage: IStorage) -> WhaleAlertsEngine:
+    """Build Whale Alerts with persisted per-symbol threshold overrides."""
+    return WhaleAlertsEngine(
         thresholds_by_symbol={
-            symbol: EagleThresholds(
+            symbol: WhaleAlertThresholds(
                 unusual_min=threshold.unusual_min,
                 whale_min=threshold.whale_min,
                 unusual_multiplier=threshold.unusual_multiplier,
@@ -131,7 +131,7 @@ def build_container() -> Container:
         max_pain=calculate_max_pain_use_case,
     )
     calculate_derived_metrics_use_case = CalculateDerivedMetricsUseCase(storage)
-    eagle_contracts_engine = build_eagle_contracts_engine(storage)
+    whale_alerts_engine = build_whale_alerts_engine(storage)
     return Container(
         settings=settings,
         database_engine=database_engine,
@@ -155,5 +155,5 @@ def build_container() -> Container:
         calculate_max_pain_use_case=calculate_max_pain_use_case,
         calculate_gamma_exposure_orchestrator=calculate_gamma_exposure_orchestrator,
         calculate_derived_metrics_use_case=calculate_derived_metrics_use_case,
-        eagle_contracts_engine=eagle_contracts_engine,
+        whale_alerts_engine=whale_alerts_engine,
     )

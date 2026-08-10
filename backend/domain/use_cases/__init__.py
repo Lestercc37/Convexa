@@ -22,10 +22,10 @@ from backend.domain.use_cases.calculate_greeks import CalculateGreeksUseCase
 from backend.domain.use_cases.calculate_max_pain import CalculateMaxPainUseCase
 from backend.domain.use_cases.calculate_walls import CalculateWallsUseCase
 from backend.domain.use_cases.flow import (
-    EagleAlert,
-    EagleAlertType,
-    EagleContractsEngine,
-    EagleThresholds,
+    WhaleAlert,
+    WhaleAlertsEngine,
+    WhaleAlertThresholds,
+    WhaleAlertType,
 )
 from backend.domain.use_cases.gamma import (
     CalculateGammaExposureOrchestrator,
@@ -53,14 +53,14 @@ __all__ = [
     "CalculateGreeksUseCase",
     "CalculateMaxPainUseCase",
     "CalculateWallsUseCase",
-    "EagleAlert",
-    "EagleAlertType",
-    "EagleContractsEngine",
-    "EagleThresholds",
     "GetMarketSnapshotUseCase",
     "LoadOptionChainUseCase",
     "ScreenerPreset",
     "ScreenerPresetResult",
+    "WhaleAlert",
+    "WhaleAlertsEngine",
+    "WhaleAlertThresholds",
+    "WhaleAlertType",
     "build_market_snapshot",
     "calculate_anchored_vwap",
     "calculate_atr_range",

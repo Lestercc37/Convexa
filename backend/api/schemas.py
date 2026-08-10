@@ -94,7 +94,7 @@ class OptionChainResponse(BaseModel):
     contracts: list[OptionContractResponse]
 
 
-class EagleAlertResponse(BaseModel):
+class WhaleAlertResponse(BaseModel):
     symbol: str
     contract: str
     type: Literal["WHALE", "UNUSUAL"]
@@ -102,10 +102,10 @@ class EagleAlertResponse(BaseModel):
     timestamp: str
 
 
-class EagleAlertsResponse(BaseModel):
+class WhaleAlertsResponse(BaseModel):
     schema_version: int = Field(examples=[1])
     symbol: str
-    alerts: list[EagleAlertResponse]
+    alerts: list[WhaleAlertResponse]
 
 
 class ScreenerPresetItemResponse(BaseModel):

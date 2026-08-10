@@ -174,7 +174,7 @@ export type AtrRange = {
   inner_lower_band: number | null;
 };
 
-export type EagleAlert = {
+export type WhaleAlert = {
   symbol: string;
   contract: string;
   type: "WHALE" | "UNUSUAL";
@@ -182,8 +182,8 @@ export type EagleAlert = {
   timestamp: string;
 };
 
-export type EagleAlertsResponse = {
+export type WhaleAlertsResponse = {
   schema_version: number;
   symbol: string;
-  alerts: EagleAlert[];
+  alerts: WhaleAlert[];
 };

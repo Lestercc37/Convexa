@@ -1,5 +1,4 @@
 import type {
-  EagleAlertsResponse,
   GammaHistoryResponse,
   GammaResponse,
   MarketResponse,
@@ -7,6 +6,7 @@ import type {
   ScreenerPresetName,
   ScreenerPresetResponse,
   UnderlyingsResponse,
+  WhaleAlertsResponse,
 } from "./types";
 
 const API_PREFIX = "/backend/api/v1";
@@ -37,7 +37,7 @@ export function getMarket(symbol: string, signal?: AbortSignal) {
 }
 
 export function getAlerts(symbol: string, signal?: AbortSignal) {
-  return getJson<EagleAlertsResponse>(`/alerts/${encodeURIComponent(symbol)}`, signal);
+  return getJson<WhaleAlertsResponse>(`/alerts/${encodeURIComponent(symbol)}`, signal);
 }
 
 export function getScreenerPreset(

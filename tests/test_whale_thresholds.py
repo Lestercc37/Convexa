@@ -9,10 +9,10 @@ from sqlalchemy import create_engine, text
 from backend.adapters.providers.mock import MockDataProvider
 from backend.adapters.storage.memory import InMemoryStorage
 from backend.adapters.storage.postgresql import PostgreSQLStorage
-from backend.core.container import build_eagle_contracts_engine
+from backend.core.container import build_whale_alerts_engine
 from backend.domain.entities import OptionChain, WhaleThreshold
 from backend.domain.underlyings import ACTIVE_UNDERLYINGS
-from backend.domain.use_cases import EagleAlert, EagleAlertType
+from backend.domain.use_cases import WhaleAlert, WhaleAlertType
 from backend.infrastructure.database.session import create_sync_session_factory
 
 
@@ -27,8 +27,8 @@ def _chain(base: OptionChain, volume: int, period: int) -> OptionChain:
 
 def _prime_and_process(
     symbol: str, storage: InMemoryStorage, final_delta: int
-) -> tuple[EagleAlert, ...]:
-    engine = build_eagle_contracts_engine(storage)
+) -> tuple[WhaleAlert, ...]:
+    engine = build_whale_alerts_engine(storage)
     base = MockDataProvider().get_option_chain(symbol)
     cumulative = 100
     engine.process(_chain(base, cumulative, 0))
@@ -53,7 +53,7 @@ def test_engine_uses_persisted_symbol_thresholds() -> None:
     alerts = _prime_and_process("SPX", storage, final_delta=250)
 
     assert len(alerts) == 1
-    assert alerts[0].alert_type is EagleAlertType.UNUSUAL
+    assert alerts[0].alert_type is WhaleAlertType.UNUSUAL
     assert alerts[0].amount == Decimal("25000.00")
 
 
