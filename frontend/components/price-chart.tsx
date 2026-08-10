@@ -71,6 +71,25 @@ function chartCandle(candle: MinuteCandle) {
   return { ...candle, time: candle.time as UTCTimestamp };
 }
 
+type TimePoint = { time: UTCTimestamp; value: number };
+
+// lightweight-charts requires setData() input strictly ascending by time.
+// `points` must already be sorted ascending; collapses consecutive points
+// that land on the same second (keeping the latest value for that second)
+// as a defensive backstop alongside the source-level dedup in dashboard.tsx.
+function dedupeAscendingByTime(points: TimePoint[]): TimePoint[] {
+  const deduped: TimePoint[] = [];
+  for (const point of points) {
+    const last = deduped.at(-1);
+    if (last && last.time === point.time) {
+      deduped[deduped.length - 1] = point;
+    } else {
+      deduped.push(point);
+    }
+  }
+  return deduped;
+}
+
 type AtrBandValues = {
   outerUpper: number;
   outerLower: number;
@@ -250,12 +269,14 @@ export function PriceChart({
       lastValueVisible: true,
     });
     line.setData(
-      [...vwapPoints]
-        .sort((left, right) => Date.parse(left.timestamp) - Date.parse(right.timestamp))
-        .map((point) => ({
-          time: Math.floor(Date.parse(point.timestamp) / 1000) as UTCTimestamp,
-          value: point.value,
-        })),
+      dedupeAscendingByTime(
+        [...vwapPoints]
+          .sort((left, right) => Date.parse(left.timestamp) - Date.parse(right.timestamp))
+          .map((point) => ({
+            time: Math.floor(Date.parse(point.timestamp) / 1000) as UTCTimestamp,
+            value: point.value,
+          })),
+      ),
     );
     return () => {
       if (chartRef.current !== chart) return;
