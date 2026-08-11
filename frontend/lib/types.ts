@@ -1,6 +1,6 @@
 export type Underlying = {
   symbol: string;
-  kind: "equity" | "index";
+  kind: "equity" | "index" | "future";
   is_priority: boolean;
 };
 
