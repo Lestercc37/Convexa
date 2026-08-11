@@ -49,6 +49,7 @@ class MarketState(StrEnum):
 class UnderlyingKind(StrEnum):
     EQUITY = "equity"
     INDEX = "index"
+    FUTURE = "future"
 
 
 class FlowEventType(StrEnum):

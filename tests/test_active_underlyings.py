@@ -26,6 +26,7 @@ def test_active_underlying_classification() -> None:
         "META": Underlying("META", UnderlyingKind.EQUITY, True),
         "AMZN": Underlying("AMZN", UnderlyingKind.EQUITY, True),
         "GOOGL": Underlying("GOOGL", UnderlyingKind.EQUITY, True),
+        "ES": Underlying("ES", UnderlyingKind.FUTURE, True),
     }
 
     assert {item.symbol: item for item in ACTIVE_UNDERLYINGS} == expected
@@ -57,6 +58,28 @@ def test_ensure_underlying_corrects_configured_symbol_metadata() -> None:
             ).one()
 
         assert row == ("SPX", "index", True)
+    finally:
+        engine.dispose()
+
+
+def test_ensure_underlying_classifies_es_as_future() -> None:
+    session_factory, engine = _underlying_session_factory()
+    try:
+        with session_factory.begin() as session:
+            PostgreSQLStorage._ensure_underlying(session, "es")
+
+        with session_factory() as session:
+            row = session.execute(
+                text(
+                    """
+                    SELECT symbol, kind, is_priority
+                    FROM underlyings
+                    WHERE symbol = 'ES'
+                    """
+                )
+            ).one()
+
+        assert row == ("ES", "future", True)
     finally:
         engine.dispose()
 

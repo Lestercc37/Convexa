@@ -259,7 +259,7 @@ class GammaHistoryResponse(BaseModel):
 
 class UnderlyingResponse(BaseModel):
     symbol: str
-    kind: Literal["equity", "index"]
+    kind: Literal["equity", "index", "future"]
     is_priority: bool
 
 

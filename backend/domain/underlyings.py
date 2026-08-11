@@ -13,6 +13,7 @@ ACTIVE_UNDERLYINGS: tuple[Underlying, ...] = (
     Underlying("META", UnderlyingKind.EQUITY, True),
     Underlying("AMZN", UnderlyingKind.EQUITY, True),
     Underlying("GOOGL", UnderlyingKind.EQUITY, True),
+    Underlying("ES", UnderlyingKind.FUTURE, True),
 )
 
 ACTIVE_UNDERLYINGS_BY_SYMBOL: dict[str, Underlying] = {
