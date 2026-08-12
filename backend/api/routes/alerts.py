@@ -29,6 +29,8 @@ def get_alerts(
                     "type": alert.alert_type,
                     "amount": alert.amount,
                     "timestamp": alert.as_of.isoformat(),
+                    "estimated_buy_volume": alert.estimated_buy_volume,
+                    "estimated_sell_volume": alert.estimated_sell_volume,
                 }
                 for alert in alerts
             ],

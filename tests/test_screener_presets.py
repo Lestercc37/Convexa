@@ -55,13 +55,23 @@ def _storage() -> InMemoryStorage:
 
 def test_unusual_activity_is_sorted_most_recent_first() -> None:
     alerts = (
-        WhaleAlert("SPY", "SPY-C", WhaleAlertType.UNUSUAL, Decimal("40000"), AS_OF),
         WhaleAlert(
-            "QQQ",
-            "QQQ-C",
-            WhaleAlertType.WHALE,
-            Decimal("150000"),
-            AS_OF + timedelta(minutes=1),
+            symbol="SPY",
+            occ_symbol="SPY-C",
+            alert_type=WhaleAlertType.UNUSUAL,
+            amount=Decimal("40000"),
+            as_of=AS_OF,
+            estimated_buy_volume=Decimal("20000"),
+            estimated_sell_volume=Decimal("20000"),
+        ),
+        WhaleAlert(
+            symbol="QQQ",
+            occ_symbol="QQQ-C",
+            alert_type=WhaleAlertType.WHALE,
+            amount=Decimal("150000"),
+            as_of=AS_OF + timedelta(minutes=1),
+            estimated_buy_volume=Decimal("100000"),
+            estimated_sell_volume=Decimal("50000"),
         ),
     )
 

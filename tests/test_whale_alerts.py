@@ -8,7 +8,13 @@ from fastapi.testclient import TestClient
 
 from backend.adapters.providers.mock import MockDataProvider
 from backend.domain.entities import OptionChain
-from backend.domain.use_cases import WhaleAlert, WhaleAlertsEngine, WhaleAlertType
+from backend.domain.use_cases import (
+    WhaleAlert,
+    WhaleAlertsEngine,
+    WhaleAlertType,
+    calculate_bvc_split,
+    calculate_price_volatility,
+)
 from backend.main import app
 
 
@@ -63,6 +69,55 @@ def test_engine_emits_whale_and_prioritizes_it_over_unusual() -> None:
     assert alerts[0].amount == Decimal("160000.00")
 
 
+def test_bvc_split_on_a_real_alert_matches_the_pure_function_given_the_same_inputs() -> None:
+    # Same shape as the WHALE test above, but with a genuinely varying
+    # price (not the constant "1.00" _chain defaults to) so BVC computes a
+    # real, non-neutral split — proof the engine's own rolling price
+    # window and per-reading accumulation are wired correctly, not just
+    # that the pure function in calculate_bvc.py is correct in isolation
+    # (already covered by tests/test_bvc.py).
+    engine = WhaleAlertsEngine()
+    base = MockDataProvider().get_option_chain("IWM")
+    prices = ["1.00", "1.02", "0.99", "1.03", "1.00", "1.05", "1.10"]
+
+    cumulative = 100
+    engine.process(_chain(base, cumulative, 0, last=prices[0]))
+    for period in range(1, 6):
+        cumulative += 200
+        engine.process(_chain(base, cumulative, period, last=prices[period]))
+
+    cumulative += 1600
+    # Closes period 5's bucket, starts period 6's with this one reading.
+    engine.process(_chain(base, cumulative, 6, last=prices[6]))
+    # Closes period 6's bucket — same price as period 6, so this reading
+    # contributes nothing further to period 6's already-finalized bucket.
+    alerts = engine.process(_chain(base, cumulative, 7, last=prices[6]))
+
+    assert len(alerts) == 1
+    assert alerts[0].alert_type is WhaleAlertType.WHALE
+
+    # Independently reconstruct what period 6's single raw reading should
+    # have produced: the rolling price-delta window built from periods
+    # 1-6's own price changes (population stdev, same as the engine uses),
+    # then BVC applied to period 6's own 1,600-contract volume delta.
+    price_deltas = [
+        Decimal(prices[i]) - Decimal(prices[i - 1]) for i in range(1, len(prices))
+    ]
+    sigma = calculate_price_volatility(price_deltas)
+    expected_buy, expected_sell = calculate_bvc_split(
+        price_deltas[-1], sigma, Decimal(1600)
+    )
+
+    assert alerts[0].estimated_buy_volume == expected_buy
+    assert alerts[0].estimated_sell_volume == expected_sell
+    assert expected_buy + expected_sell == Decimal(1600)
+    # The final price change (period 5 -> period 6, +0.05) is positive and
+    # not the largest swing in the window, so it should skew toward
+    # buying without being an extreme, saturated split.
+    assert expected_buy > expected_sell
+    assert Decimal("800") < expected_buy < Decimal("1600")
+
+
 def test_engine_does_not_alert_below_multiplier_or_dollar_threshold() -> None:
     engine = WhaleAlertsEngine()
     base = MockDataProvider().get_option_chain("IWM")
@@ -100,6 +155,11 @@ def test_alerts_endpoint_is_read_only_and_returns_recent_alerts() -> None:
     assert payload["symbol"] == "SPY"
     assert payload["alerts"][0]["type"] == "UNUSUAL"
     assert payload["alerts"][0]["amount"] == 45000.0
+    # `_chain` uses a constant price ("1.00") throughout — zero price
+    # variance means sigma stays 0, so BVC falls back to a neutral 50/50
+    # split of the finalized minute's 450-contract volume delta.
+    assert payload["alerts"][0]["estimated_buy_volume"] == 225.0
+    assert payload["alerts"][0]["estimated_sell_volume"] == 225.0
 
 
 def test_sustained_flow_fires_once_and_whale_still_classifies_independently() -> None:

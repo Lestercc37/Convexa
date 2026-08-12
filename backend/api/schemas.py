@@ -108,9 +108,14 @@ class OptionChainResponse(BaseModel):
 class WhaleAlertResponse(BaseModel):
     symbol: str
     contract: str
-    type: Literal["WHALE", "UNUSUAL"]
+    type: Literal["WHALE", "UNUSUAL", "SUSTAINED_FLOW"]
     amount: Number
     timestamp: str
+    # Bulk Volume Classification estimates (Easley, López de Prado, O'Hara
+    # 2012) — derived from price movement alone, never confirmed
+    # buy/sell-side order flow.
+    estimated_buy_volume: Number
+    estimated_sell_volume: Number
 
 
 class WhaleAlertsResponse(BaseModel):
@@ -123,7 +128,7 @@ class ScreenerPresetItemResponse(BaseModel):
     symbol: str
     as_of: str
     contract: str | None = None
-    alert_type: Literal["WHALE", "UNUSUAL"] | None = None
+    alert_type: Literal["WHALE", "UNUSUAL", "SUSTAINED_FLOW"] | None = None
     amount: Number | None = None
     net_gamma: Number | None = None
     gamma_flip: Number | None = None
