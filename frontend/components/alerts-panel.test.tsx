@@ -69,6 +69,37 @@ describe("AlertsPanel", () => {
     expect(cards[1]).toHaveTextContent("Unusual");
   });
 
+  it("defaults to the horizontal strip, and switches to a vertical column via orientation", async () => {
+    apiMocks.getAlerts.mockResolvedValue(
+      alertsResponse("SPY", [
+        {
+          symbol: "SPY",
+          contract: "SPY260220C00540000",
+          type: "UNUSUAL",
+          amount: 45000,
+          timestamp: "2026-08-03T14:00:00Z",
+        },
+      ]),
+    );
+
+    const { container: horizontalContainer } = renderWithLanguage(
+      <AlertsPanel underlyings={[underlyings[0]]} />,
+    );
+    await screen.findAllByRole("article");
+    expect(horizontalContainer.querySelector(".alerts-row")).toBeInTheDocument();
+    expect(horizontalContainer.querySelector(".alerts-column")).not.toBeInTheDocument();
+
+    const { container: verticalContainer } = renderWithLanguage(
+      <AlertsPanel underlyings={[underlyings[0]]} orientation="vertical" />,
+    );
+    await screen.findAllByRole("article");
+    expect(verticalContainer.querySelector(".alerts-column")).toBeInTheDocument();
+    expect(verticalContainer.querySelector(".alerts-row")).not.toBeInTheDocument();
+    expect(
+      verticalContainer.querySelector(".alerts-panel-vertical"),
+    ).toBeInTheDocument();
+  });
+
   it("shows an empty state, without an error, when there are no alerts", async () => {
     apiMocks.getAlerts.mockResolvedValue(alertsResponse("SPY", []));
 

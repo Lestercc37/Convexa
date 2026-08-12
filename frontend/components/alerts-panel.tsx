@@ -9,6 +9,9 @@ import type { Underlying, WhaleAlert } from "@/lib/types";
 
 type AlertsPanelProps = {
   underlyings: Underlying[];
+  // "horizontal" (default) is the original scrollable strip — kept as an
+  // option in case this panel is ever reused outside the left sidebar.
+  orientation?: "horizontal" | "vertical";
 };
 
 // English regardless of UI language — same "Whale"/"Unusual" alert
@@ -30,7 +33,7 @@ function alertKey(alert: WhaleAlert) {
   return `${alert.symbol}-${alert.contract}-${alert.timestamp}`;
 }
 
-export function AlertsPanel({ underlyings }: AlertsPanelProps) {
+export function AlertsPanel({ underlyings, orientation = "horizontal" }: AlertsPanelProps) {
   const { t } = useLanguage();
   const [alerts, setAlerts] = useState<WhaleAlert[]>([]);
   const [error, setError] = useState<unknown>(null);
@@ -65,7 +68,10 @@ export function AlertsPanel({ underlyings }: AlertsPanelProps) {
   }, [underlyings]);
 
   return (
-    <section className="panel alerts-panel" aria-labelledby="alerts-panel-title">
+    <section
+      className={`panel alerts-panel alerts-panel-${orientation}`}
+      aria-labelledby="alerts-panel-title"
+    >
       <div className="panel-heading alerts-heading">
         <p className="eyebrow">{t.alertsPanel.eyebrow}</p>
         <h2 id="alerts-panel-title">{t.alertsPanel.title}</h2>
@@ -79,7 +85,10 @@ export function AlertsPanel({ underlyings }: AlertsPanelProps) {
           {t.alertsPanel.empty}
         </p>
       ) : (
-        <div className="alerts-row" aria-label={t.alertsPanel.recentAriaLabel}>
+        <div
+          className={orientation === "vertical" ? "alerts-column" : "alerts-row"}
+          aria-label={t.alertsPanel.recentAriaLabel}
+        >
           {alerts.map((alert) => (
             <article key={alertKey(alert)} className={`alert-card alert-${alert.type.toLowerCase()}`}>
               <span className="alert-symbol">{alert.symbol}</span>

@@ -258,4 +258,49 @@ describe("Dashboard", () => {
     await user.click(screen.getByRole("button", { name: "ES" }));
     expect(await screen.findByText("Griegas agregadas")).toBeInTheDocument();
   });
+
+  it("moves Whale Alerts into a vertical left sidebar, replacing the old toolbar/footer", async () => {
+    const manyAlerts = Array.from({ length: 25 }, (_, index) => ({
+      symbol: "SPY",
+      contract: `SPY26022${index}C00540000`,
+      type: (index % 2 === 0 ? "WHALE" : "UNUSUAL") as "WHALE" | "UNUSUAL",
+      amount: 150_000 + index,
+      timestamp: new Date(Date.UTC(2026, 7, 3, 14, 30, index)).toISOString(),
+    }));
+    apiMocks.getAlerts.mockImplementation((symbol: string) =>
+      Promise.resolve({
+        schema_version: 1,
+        symbol,
+        alerts: symbol === "SPY" ? manyAlerts : [],
+      }),
+    );
+
+    const { container } = renderWithLanguage(<Dashboard />);
+    await screen.findByLabelText("Chart de velas para SPY");
+    await waitFor(() =>
+      expect(apiMocks.getAlerts).toHaveBeenCalledWith("SPY", expect.any(AbortSignal)),
+    );
+
+    // The old decorative toolbar and the bottom alerts strip are both gone.
+    expect(container.querySelector(".tv-toolbar")).not.toBeInTheDocument();
+    expect(container.querySelector(".tv-footer")).not.toBeInTheDocument();
+    expect(container.querySelector("footer")).not.toBeInTheDocument();
+
+    // Whale Alerts now lives in the left sidebar, in its vertical variant.
+    const sidebar = container.querySelector(".tv-alerts-sidebar");
+    expect(sidebar).toBeInTheDocument();
+    const verticalPanel = sidebar?.querySelector(".alerts-panel-vertical");
+    expect(verticalPanel).toBeInTheDocument();
+
+    // Many alerts render inside the panel's own scrollable column (the CSS
+    // hook that gets overflow-y: auto), not the horizontal-strip variant
+    // — proof "displaces within itself, never the whole page" is wired to
+    // the right element, not just true by accident.
+    await waitFor(() => {
+      const column = verticalPanel?.querySelector(".alerts-column");
+      expect(column).toBeInTheDocument();
+      expect(column?.querySelectorAll(".alert-card")).toHaveLength(25);
+    });
+    expect(verticalPanel?.querySelector(".alerts-row")).not.toBeInTheDocument();
+  });
 });

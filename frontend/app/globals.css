@@ -63,10 +63,17 @@ button, select { font: inherit; }
 
 /* ---------- TradingView-style shell (flexbox only) ---------- */
 
+/* height (not min-height): a hard cap is what makes .tv-sidebar's and
+   .tv-alerts-sidebar's own overflow-y: auto actually bound their content
+   instead of pushing the whole page taller — with only a minimum, a flex
+   child's default min-height: auto lets it grow past the viewport
+   regardless of an overflow rule on itself. Reverted to natural
+   page-scrolling min-height in the narrow-viewport media query below,
+   where .tv-body already reflows to a stacked column layout. */
 .tv-shell {
   display: flex;
   flex-direction: column;
-  min-height: 100vh;
+  height: 100vh;
 }
 
 .tv-topbar {
@@ -135,21 +142,20 @@ button, select { font: inherit; }
 
 .tv-body { display: flex; flex: 1 1 auto; min-height: 0; }
 
-.tv-toolbar {
+/* Replaces the old decorative 44px toolbar — same slot in the row, now a
+   real functional panel (dashboard-spec.md section 17). */
+.tv-alerts-sidebar {
   display: flex;
   flex-direction: column;
-  align-items: center;
-  gap: 16px;
-  flex: 0 0 44px;
-  width: 44px;
-  padding-top: 14px;
+  flex: 0 0 256px;
+  width: 256px;
+  min-height: 0;
+  padding: 10px;
   border-right: 1px solid var(--tv-border);
   background: var(--tv-panel);
-  color: var(--tv-text-dim);
 }
-.tv-tool-icon { font-size: 1rem; }
 
-.tv-center { flex: 1 1 auto; min-width: 0; display: flex; }
+.tv-center { flex: 1 1 auto; min-width: 0; min-height: 0; display: flex; }
 
 .tv-sidebar {
   display: flex;
@@ -157,12 +163,11 @@ button, select { font: inherit; }
   gap: 10px;
   flex: 0 0 256px;
   width: 256px;
+  min-height: 0;
   padding: 10px;
   border-left: 1px solid var(--tv-border);
   overflow-y: auto;
 }
-
-.tv-footer { border-top: 1px solid var(--tv-border); background: var(--tv-panel); padding: 10px 14px; }
 
 /* ---------- Regime badge (full form — used only if rendered outside the topbar) ---------- */
 
@@ -316,15 +321,29 @@ button, select { font: inherit; }
 .screener-empty { min-height: 80px; display: flex; align-items: center; justify-content: center; margin: 0; color: var(--tv-text-dim); font-size: 0.78rem; text-align: center; }
 .screener-empty.error { color: #ff9c84; }
 
-/* ---------- Bottom strip: Whale Alerts ---------- */
+/* ---------- Whale Alerts: left sidebar (vertical) or horizontal strip ---------- */
 
 .alerts-panel { border: 0; background: none; }
+/* Vertical (left sidebar, dashboard-spec.md section 17): the panel and
+   its card list both need min-height: 0 to actually shrink within
+   .tv-alerts-sidebar's bounded height instead of growing past it — same
+   reasoning as .tv-shell's height cap above. */
+.alerts-panel-vertical { display: flex; flex-direction: column; min-height: 0; flex: 1 1 auto; }
 .alerts-heading { margin-bottom: 8px; }
 .alerts-heading .eyebrow { margin-bottom: 2px; }
 .alerts-heading h2 { margin: 0; font-size: 0.86rem; }
 .alerts-empty { margin: 0; padding: 10px 0; color: var(--tv-text-dim); font-size: 0.8rem; }
 .alerts-empty.error { color: #ff9c84; }
 .alerts-row { display: flex; gap: 10px; overflow-x: auto; padding-bottom: 2px; }
+.alerts-column {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 0;
+  flex: 1 1 auto;
+  overflow-y: auto;
+  padding-right: 2px;
+}
 .alert-card {
   flex: 0 0 auto;
   display: flex;
@@ -338,6 +357,7 @@ button, select { font: inherit; }
   background: var(--tv-panel-raised);
   font-size: 0.74rem;
 }
+.alerts-column .alert-card { min-width: 0; width: 100%; }
 .alert-card.alert-whale { border-left-color: var(--risk); }
 .alert-card.alert-unusual { border-left-color: var(--warning); }
 .alert-symbol { font-weight: 750; }
@@ -349,9 +369,20 @@ button, select { font: inherit; }
 .alert-time { color: var(--tv-text-dim); font-size: 0.66rem; }
 
 @media (max-width: 960px) {
+  /* Natural page scroll on narrow viewports — .tv-body reflows to a
+     stacked column below, so there's no fixed-height row layout left to
+     bound, unlike the desktop cap above. */
+  .tv-shell { height: auto; min-height: 100vh; }
   .tv-body { flex-direction: column; }
-  .tv-toolbar { flex-direction: row; width: 100%; flex: 0 0 auto; padding: 8px 14px; gap: 18px; border-right: 0; border-bottom: 1px solid var(--tv-border); }
-  .tv-sidebar { width: 100%; flex: 0 0 auto; border-left: 0; border-top: 1px solid var(--tv-border); }
+  .tv-alerts-sidebar {
+    width: 100%;
+    flex: 0 0 auto;
+    min-height: auto;
+    max-height: 240px;
+    border-right: 0;
+    border-bottom: 1px solid var(--tv-border);
+  }
+  .tv-sidebar { width: 100%; flex: 0 0 auto; min-height: auto; border-left: 0; border-top: 1px solid var(--tv-border); }
   .tv-topbar { flex-wrap: wrap; height: auto; }
   .tv-price-readout { order: 3; width: 100%; }
 }
