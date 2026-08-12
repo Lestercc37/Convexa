@@ -220,6 +220,7 @@ def test_whale_threshold_round_trip_against_postgresql(
         whale_min=Decimal("125000"),
         unusual_multiplier=Decimal("2.5"),
         whale_multiplier=Decimal("5.5"),
+        sustained_flow_min=Decimal("500000"),
     )
 
     storage.save_whale_threshold(threshold)

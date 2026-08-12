@@ -35,6 +35,7 @@ class InMemoryStorage:
                 whale_min=Decimal("150000"),
                 unusual_multiplier=Decimal("3.0"),
                 whale_multiplier=Decimal("6.0"),
+                sustained_flow_min=Decimal("500000"),
             )
             for underlying in ACTIVE_UNDERLYINGS
         }

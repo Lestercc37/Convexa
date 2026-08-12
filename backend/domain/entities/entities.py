@@ -80,6 +80,7 @@ class WhaleThreshold:
     whale_min: Decimal
     unusual_multiplier: Decimal
     whale_multiplier: Decimal
+    sustained_flow_min: Decimal
 
     def __post_init__(self) -> None:
         if not self.symbol or not self.symbol.strip():
@@ -90,6 +91,7 @@ class WhaleThreshold:
             "whale_min",
             "unusual_multiplier",
             "whale_multiplier",
+            "sustained_flow_min",
         ):
             value = getattr(self, name)
             _ensure_finite_decimal(value, InvalidOptionError, name)

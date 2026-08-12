@@ -62,17 +62,18 @@ class PostgreSQLStorage:
                     """
                     INSERT INTO whale_thresholds (
                         underlying_id, unusual_min, whale_min,
-                        unusual_multiplier, whale_multiplier
+                        unusual_multiplier, whale_multiplier, sustained_flow_min
                     )
                     VALUES (
                         :underlying_id, :unusual_min, :whale_min,
-                        :unusual_multiplier, :whale_multiplier
+                        :unusual_multiplier, :whale_multiplier, :sustained_flow_min
                     )
                     ON CONFLICT (underlying_id) DO UPDATE SET
                         unusual_min = EXCLUDED.unusual_min,
                         whale_min = EXCLUDED.whale_min,
                         unusual_multiplier = EXCLUDED.unusual_multiplier,
-                        whale_multiplier = EXCLUDED.whale_multiplier
+                        whale_multiplier = EXCLUDED.whale_multiplier,
+                        sustained_flow_min = EXCLUDED.sustained_flow_min
                     """
                 ),
                 {
@@ -81,6 +82,7 @@ class PostgreSQLStorage:
                     "whale_min": str(threshold.whale_min),
                     "unusual_multiplier": str(threshold.unusual_multiplier),
                     "whale_multiplier": str(threshold.whale_multiplier),
+                    "sustained_flow_min": str(threshold.sustained_flow_min),
                 },
             )
 
@@ -90,7 +92,7 @@ class PostgreSQLStorage:
                 text(
                     """
                     SELECT u.symbol, w.unusual_min, w.whale_min,
-                           w.unusual_multiplier, w.whale_multiplier
+                           w.unusual_multiplier, w.whale_multiplier, w.sustained_flow_min
                     FROM whale_thresholds AS w
                     JOIN underlyings AS u ON u.id = w.underlying_id
                     ORDER BY u.symbol
@@ -104,6 +106,7 @@ class PostgreSQLStorage:
                     whale_min=Decimal(str(row["whale_min"])),
                     unusual_multiplier=Decimal(str(row["unusual_multiplier"])),
                     whale_multiplier=Decimal(str(row["whale_multiplier"])),
+                    sustained_flow_min=Decimal(str(row["sustained_flow_min"])),
                 )
                 for row in rows
             }

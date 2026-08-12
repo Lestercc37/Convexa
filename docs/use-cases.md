@@ -58,20 +58,43 @@ Se dividen en dos categorías según qué los dispara:
 
 Whale Alerts consume snapshots sucesivos de `OptionChain`, sin depender del proveedor que los
 produzca. Por cada `occ_symbol` conserva el último volumen acumulado de sesión, calcula
-`delta_volume = volumen_actual - volumen_anterior` y convierte el período a dólares mediante
+`delta_volume = volumen_actual - volumen_anterior` y convierte cada lectura a dólares mediante
 `monto = delta_volume × last × 100`. Una caída del acumulado se trata como reinicio de sesión:
-se descarta ese período y se reinicia su ventana para evitar falsos positivos.
+se descarta toda ventana en curso (bucket del minuto, promedio de 5 y acumulado de 15) para evitar
+falsos positivos.
 
-La evaluación empieza cuando existen cinco períodos anteriores completos. El promedio usa solo
-los montos de esos cinco períodos y excluye el actual, equivalente a `ta.sma(n1m[1], 5)`. Se emite
-una sola alerta por período, dando prioridad a `WHALE`:
+**Granularidad real: bloques de 1 minuto, no cada lectura cruda.** Las lecturas (hoy disparadas
+manualmente vía `/internal/trigger-calculation/{symbol}`, sin cadencia fija todavía) se agrupan en
+buckets alineados al minuto calendario usando `chain.as_of` — mismo criterio de "floor al minuto"
+que ya usa el frontend para las velas. Un bucket solo se clasifica (contra el umbral) cuando llega
+una lectura del minuto *siguiente*, cerrándolo — la clasificación nunca ocurre sobre una lectura
+parcial. `n1m` en la fórmula de abajo ya asumía "monto por minuto" (heredado del Pine Script
+original); esto es la primera vez que el motor de Python lo hace cumplir de verdad.
+
+La evaluación de Whale/Unusual empieza cuando existen cinco minutos anteriores completos — la
+ventana móvil de 5 períodos ahora representa 5 minutos reales, no 2.5 minutos. El promedio usa solo
+los montos de esos cinco minutos y excluye el actual, equivalente a `ta.sma(n1m[1], 5)`. Se emite
+una sola alerta Whale/Unusual por minuto cerrado, dando prioridad a `WHALE`:
 
 | Tipo | Monto mínimo | Múltiplo sobre promedio previo |
 |---|---:|---:|
 | `UNUSUAL` | $40,000 | 3.0× |
 | `WHALE` | $150,000 | 6.0× |
 
-Los valores son defaults configurables por símbolo y fueron calibrados originalmente para IWM.
+**`SUSTAINED_FLOW`** es un tipo de alerta independiente, separado de Whale/Unusual: se dispara
+cuando la suma de los últimos 15 minutos cerrados (mismo stream de montos-por-minuto, alimentando
+un segundo `deque(maxlen=15)` en vez de un promedio) cruza `sustained_flow_min`. Se dispara una
+sola vez mientras se mantenga por encima del umbral (flag `sustained_alerted` independiente por
+contrato) y vuelve a estar disponible solo cuando el acumulado caiga por debajo y lo vuelva a
+cruzar. A diferencia de Whale/Unusual, no hay precedente de un flag de "ya alertado" en el motor
+de Python — este es nuevo, construido específicamente para este tipo de alerta.
+
+| Tipo | Ventana | Monto mínimo |
+|---|---:|---:|
+| `SUSTAINED_FLOW` | 15 minutos acumulados | $500,000 |
+
+Los valores son defaults configurables por símbolo y fueron calibrados originalmente para IWM
+(Whale/Unusual) o son una calibración inicial sin datos reales todavía (`sustained_flow_min`).
 Los demás símbolos deben comenzar con estos defaults, pero necesitan recalibración con datos
 reales; no se presupone que una calibración de IWM sea válida, por ejemplo, para SPX.
 
