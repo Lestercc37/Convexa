@@ -219,12 +219,8 @@ export function Dashboard() {
         </section>
       ) : gamma && market ? (
         <div className="tv-body">
-          <aside className="tv-toolbar" aria-hidden="true">
-            <span className="tv-tool-icon">↖</span>
-            <span className="tv-tool-icon">✎</span>
-            <span className="tv-tool-icon">▭</span>
-            <span className="tv-tool-icon">〰</span>
-            <span className="tv-tool-icon">Ⓣ</span>
+          <aside className="tv-alerts-sidebar">
+            <AlertsPanel underlyings={underlyings} orientation="vertical" />
           </aside>
 
           <div className="tv-center">
@@ -284,10 +280,6 @@ export function Dashboard() {
           {t.dashboard.loadingRegime}
         </section>
       )}
-
-      <footer className="tv-footer">
-        <AlertsPanel underlyings={underlyings} />
-      </footer>
     </main>
   );
 }
