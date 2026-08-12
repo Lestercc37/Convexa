@@ -101,6 +101,47 @@ reales; no se presupone que una calibración de IWM sea válida, por ejemplo, pa
 El ciclo interno que obtiene y persiste el `OptionChain` entrega el mismo snapshot al motor. Las
 alertas recientes se consultan sin disparar cálculo mediante `GET /api/v1/alerts/{symbol}`.
 
+**Bulk Volume Classification (BVC) — estimación de compra/venta, no dato confirmado.** Cada alerta
+(Whale, Unusual o Sustained Flow) incluye `estimated_buy_volume` y `estimated_sell_volume`,
+etiquetados explícitamente como estimación — el motor nunca ve el lado real (compra o venta) de una
+operación, solo infiere una probabilidad a partir del movimiento de precio. Método académico real,
+no una fórmula propia:
+
+> Easley, D., López de Prado, M., O'Hara, M. (2012). "Flow Toxicity and Liquidity in a
+> High-Frequency World." *Review of Financial Studies*, 25(5), 1457-1493.
+
+Por cada `occ_symbol`, a nivel de CONTRATO individual (cada opción tiene su propio precio y su
+propia clasificación, nunca el subyacente):
+
+1. `ΔP = precio_actual − precio_anterior` — precio (`contract.last`) de la lectura actual contra la
+   lectura inmediatamente anterior del mismo contrato.
+2. `σ` = desviación estándar poblacional de `ΔP` sobre una ventana móvil de las últimas 20 lecturas
+   (`deque(maxlen=20)`, ajustable — ventana inicial del rango 20-30 sugerido).
+3. `Z = ΔP / σ`.
+4. `fracción_compra = Φ(Z)` — CDF normal estándar. Sin dependencia de `scipy` (no es dependencia del
+   proyecto en ningún otro lado): `Φ(z) = 0.5 × (1 + erf(z/√2))` vía `math.erf` de la librería
+   estándar — relación exacta, no una aproximación de `erf` en sí.
+5. `volumen_compra_estimado = volumen_del_período × fracción_compra`,
+   `volumen_venta_estimado = volumen_del_período × (1 − fracción_compra)`.
+
+**Caso borde de `σ = 0`** (ventana vacía o sin varianza todavía): `fracción_compra = 0.5` — mismo
+criterio documentado que usa `calculate_iv_rank` para una ventana de IV plana.
+
+**Cadencia: por lectura cruda, no por minuto cerrado.** A diferencia de Whale/Unusual/Sustained Flow
+(que operan sobre montos ya agregados por minuto), BVC clasifica cada lectura individualmente
+—ΔP y σ se actualizan en cada llamada a `process()`— y el resultado de cada lectura se acumula
+dentro del bucket del minuto en curso (`bucket_buy_volume`/`bucket_sell_volume`, mismo patrón que
+`bucket_amount`). Al cerrar un minuto, el split de compra/venta reportado es la suma de todas las
+lecturas individuales de ese minuto, no un único Z de "fin de minuto" aplicado a todo el volumen —
+consistente con la metodología del paper (clasificar cada barra, agregar sobre cualquier ventana
+mayor sumando). Para `SUSTAINED_FLOW`, el split reportado es la suma de los mismos 15 minutos
+cerrados que ya alimentan su monto acumulado (dos `deque(maxlen=15)` adicionales, uno por lado).
+
+`previous_price` y la ventana de `ΔP` viven en la misma estructura de estado en memoria por
+contrato que ya mantenía el motor (`_ContractState`) — no se creó ninguna tabla nueva; el motor de
+Whale Alerts nunca persistió su estado en base de datos, solo los umbrales configurados
+(`whale_thresholds`).
+
 ---
 
 ## Resumen de mapeo a contratos existentes

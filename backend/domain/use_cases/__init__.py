@@ -7,6 +7,11 @@ from backend.domain.use_cases.calculate_atr_range import (
     REQUIRED_DAILY_BARS,
     calculate_atr_range,
 )
+from backend.domain.use_cases.calculate_bvc import (
+    calculate_bvc_split,
+    calculate_price_volatility,
+    standard_normal_cdf,
+)
 from backend.domain.use_cases.calculate_closing_dynamics import (
     CLOSING_WINDOW_THRESHOLD_PCT,
     calculate_charm_regime,
@@ -72,11 +77,13 @@ __all__ = [
     "build_market_snapshot",
     "calculate_anchored_vwap",
     "calculate_atr_range",
+    "calculate_bvc_split",
     "calculate_charm_regime",
     "calculate_closing_dynamics",
     "calculate_expected_move",
     "calculate_gamma_exposure",
     "calculate_pin_risk_score",
+    "calculate_price_volatility",
     "calculate_session_open",
     "calculate_time_to_close_pct",
     "calculate_vanna_interpretation",
@@ -86,4 +93,5 @@ __all__ = [
     "get_gamma_history",
     "get_option_chain",
     "get_screener_preset",
+    "standard_normal_cdf",
 ]

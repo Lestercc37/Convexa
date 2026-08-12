@@ -7,6 +7,10 @@ from decimal import Decimal
 from enum import StrEnum
 
 from backend.domain.entities import OptionChain, OptionContract
+from backend.domain.use_cases.calculate_bvc import (
+    calculate_bvc_split,
+    calculate_price_volatility,
+)
 
 
 class WhaleAlertType(StrEnum):
@@ -36,6 +40,11 @@ class WhaleAlert:
     alert_type: WhaleAlertType
     amount: Decimal
     as_of: datetime
+    # Bulk Volume Classification (Easley, López de Prado, O'Hara 2012)
+    # estimates derived from price movement alone — never a measurement of
+    # confirmed buy/sell-side order flow. See calculate_bvc.py.
+    estimated_buy_volume: Decimal
+    estimated_sell_volume: Decimal
 
 
 def _floor_to_minute(moment: datetime) -> datetime:
@@ -50,6 +59,17 @@ class _ContractState:
     previous_amounts: deque[Decimal] = field(default_factory=lambda: deque(maxlen=5))
     sustained_amounts: deque[Decimal] = field(default_factory=lambda: deque(maxlen=15))
     sustained_alerted: bool = False
+    # BVC: price history and the rolling volatility window are tracked
+    # per raw reading (not per finalized minute) — each reading gets its
+    # own buy/sell classification, accumulated into the bucket alongside
+    # bucket_amount, same as the sustained-flow windows mirror the
+    # whale/unusual one.
+    previous_price: Decimal | None = None
+    price_deltas: deque[Decimal] = field(default_factory=lambda: deque(maxlen=20))
+    bucket_buy_volume: Decimal = Decimal(0)
+    bucket_sell_volume: Decimal = Decimal(0)
+    sustained_buy_volumes: deque[Decimal] = field(default_factory=lambda: deque(maxlen=15))
+    sustained_sell_volumes: deque[Decimal] = field(default_factory=lambda: deque(maxlen=15))
 
 
 class WhaleAlertsEngine:
@@ -92,6 +112,7 @@ class WhaleAlertsEngine:
                 self._states[contract.occ_symbol] = _ContractState(
                     cumulative_volume=contract.volume,
                     bucket_start=current_bucket_start,
+                    previous_price=contract.last,
                 )
                 continue
 
@@ -100,30 +121,58 @@ class WhaleAlertsEngine:
             if delta < 0:
                 # Session rollover — the volume counter is no longer
                 # comparable to anything accumulated so far, so every
-                # window (whale/unusual, sustained flow, the in-progress
-                # bucket) is discarded, same treatment the original code
-                # already gave `previous_amounts`.
+                # window (whale/unusual, sustained flow, BVC price
+                # history, the in-progress bucket) is discarded, same
+                # treatment the original code already gave
+                # `previous_amounts`.
                 state.previous_amounts.clear()
                 state.sustained_amounts.clear()
                 state.sustained_alerted = False
                 state.bucket_amount = Decimal(0)
                 state.bucket_start = current_bucket_start
+                state.previous_price = contract.last
+                state.price_deltas.clear()
+                state.bucket_buy_volume = Decimal(0)
+                state.bucket_sell_volume = Decimal(0)
+                state.sustained_buy_volumes.clear()
+                state.sustained_sell_volumes.clear()
                 continue
 
             amount = Decimal(delta) * contract.last * self._CONTRACT_MULTIPLIER
 
+            # BVC: classified per raw reading (not per finalized minute),
+            # using the reading's own price change against the current
+            # rolling volatility window, then accumulated into the
+            # in-progress bucket alongside `amount` — see calculate_bvc.py.
+            price_delta = contract.last - state.previous_price
+            state.price_deltas.append(price_delta)
+            sigma = calculate_price_volatility(state.price_deltas)
+            buy_volume, sell_volume = calculate_bvc_split(price_delta, sigma, Decimal(delta))
+            state.previous_price = contract.last
+
             if current_bucket_start != state.bucket_start:
                 finalized_amount = state.bucket_amount
+                finalized_buy_volume = state.bucket_buy_volume
+                finalized_sell_volume = state.bucket_sell_volume
 
                 if len(state.previous_amounts) == self._WINDOW_SIZE:
                     average_amount = sum(state.previous_amounts, Decimal()) / self._WINDOW_SIZE
                     alert_type = self._classify(finalized_amount, average_amount, thresholds)
                     if alert_type is not None:
                         generated.append(
-                            self._emit(chain, contract, alert_type, finalized_amount)
+                            self._emit(
+                                chain,
+                                contract,
+                                alert_type,
+                                finalized_amount,
+                                finalized_buy_volume,
+                                finalized_sell_volume,
+                            )
                         )
 
                 state.sustained_amounts.append(finalized_amount)
+                state.sustained_buy_volumes.append(finalized_buy_volume)
+                state.sustained_sell_volumes.append(finalized_sell_volume)
                 if len(state.sustained_amounts) == self._SUSTAINED_WINDOW_SIZE:
                     sustained_total = sum(state.sustained_amounts, Decimal())
                     if sustained_total >= thresholds.sustained_flow_min:
@@ -135,6 +184,8 @@ class WhaleAlertsEngine:
                                     contract,
                                     WhaleAlertType.SUSTAINED_FLOW,
                                     sustained_total,
+                                    sum(state.sustained_buy_volumes, Decimal()),
+                                    sum(state.sustained_sell_volumes, Decimal()),
                                 )
                             )
                     else:
@@ -143,8 +194,12 @@ class WhaleAlertsEngine:
                 state.previous_amounts.append(finalized_amount)
                 state.bucket_start = current_bucket_start
                 state.bucket_amount = Decimal(0)
+                state.bucket_buy_volume = Decimal(0)
+                state.bucket_sell_volume = Decimal(0)
 
             state.bucket_amount += amount
+            state.bucket_buy_volume += buy_volume
+            state.bucket_sell_volume += sell_volume
 
         return tuple(generated)
 
@@ -154,6 +209,8 @@ class WhaleAlertsEngine:
         contract: OptionContract,
         alert_type: WhaleAlertType,
         amount: Decimal,
+        estimated_buy_volume: Decimal,
+        estimated_sell_volume: Decimal,
     ) -> WhaleAlert:
         alert = WhaleAlert(
             symbol=chain.symbol,
@@ -161,6 +218,8 @@ class WhaleAlertsEngine:
             alert_type=alert_type,
             amount=amount,
             as_of=chain.as_of,
+            estimated_buy_volume=estimated_buy_volume,
+            estimated_sell_volume=estimated_sell_volume,
         )
         self._alerts.append(alert)
         return alert
