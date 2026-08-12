@@ -35,7 +35,13 @@ def _prime_and_process(
     for period in range(1, 6):
         cumulative += 100
         engine.process(_chain(base, cumulative, period))
-    return engine.process(_chain(base, cumulative + final_delta, 6))
+    cumulative += final_delta
+    engine.process(_chain(base, cumulative, 6))
+    # A 1-minute bucket is only finalized (classified, pushed into the
+    # window) once a reading from the *next* minute arrives — same
+    # inherent latency as any bucket/candle aggregation. This extra call
+    # (zero further delta) is what finalizes period 6's bucket.
+    return engine.process(_chain(base, cumulative, 7))
 
 
 def test_engine_uses_persisted_symbol_thresholds() -> None:
@@ -47,6 +53,7 @@ def test_engine_uses_persisted_symbol_thresholds() -> None:
             whale_min=Decimal("100000"),
             unusual_multiplier=Decimal("2"),
             whale_multiplier=Decimal("5"),
+            sustained_flow_min=Decimal("500000"),
         )
     )
 
@@ -76,6 +83,7 @@ def test_memory_storage_seeds_all_active_symbols() -> None:
         and threshold.whale_min == Decimal("150000")
         and threshold.unusual_multiplier == Decimal("3.0")
         and threshold.whale_multiplier == Decimal("6.0")
+        and threshold.sustained_flow_min == Decimal("500000")
         for threshold in thresholds.values()
     )
 
@@ -103,7 +111,8 @@ def test_postgresql_storage_reads_and_writes_whale_thresholds() -> None:
                     unusual_min numeric NOT NULL,
                     whale_min numeric NOT NULL,
                     unusual_multiplier numeric NOT NULL,
-                    whale_multiplier numeric NOT NULL
+                    whale_multiplier numeric NOT NULL,
+                    sustained_flow_min numeric NOT NULL
                 )
                 """
             )
@@ -115,6 +124,7 @@ def test_postgresql_storage_reads_and_writes_whale_thresholds() -> None:
         whale_min=Decimal("125000"),
         unusual_multiplier=Decimal("2.5"),
         whale_multiplier=Decimal("5.5"),
+        sustained_flow_min=Decimal("500000"),
     )
 
     storage.save_whale_threshold(threshold)

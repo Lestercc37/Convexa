@@ -83,6 +83,7 @@ def build_whale_alerts_engine(storage: IStorage) -> WhaleAlertsEngine:
                 whale_min=threshold.whale_min,
                 unusual_multiplier=threshold.unusual_multiplier,
                 whale_multiplier=threshold.whale_multiplier,
+                sustained_flow_min=threshold.sustained_flow_min,
             )
             for symbol, threshold in storage.get_whale_thresholds().items()
         }
