@@ -8,6 +8,9 @@ import type {
   ScreenerPresetResponse,
   UnderlyingsResponse,
   WhaleAlertsResponse,
+  WhaleThreshold,
+  WhaleThresholdsResponse,
+  WhaleThresholdUpdate,
 } from "./types";
 
 const API_PREFIX = "/backend/api/v1";
@@ -24,6 +27,21 @@ export class ApiError extends Error {
 
 async function getJson<T>(path: string, signal?: AbortSignal): Promise<T> {
   const response = await fetch(`${API_PREFIX}${path}`, { cache: "no-store", signal });
+  if (!response.ok) throw new ApiError(response.status);
+  return (await response.json()) as T;
+}
+
+// The one write path in an otherwise read-only API client — see
+// docs/use-cases.md's "único endpoint de escritura" note for why
+// PATCH /whale-thresholds/{symbol} is the sole exception.
+async function patchJson<T>(path: string, body: unknown, signal?: AbortSignal): Promise<T> {
+  const response = await fetch(`${API_PREFIX}${path}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+    cache: "no-store",
+    signal,
+  });
   if (!response.ok) throw new ApiError(response.status);
   return (await response.json()) as T;
 }
@@ -78,6 +96,22 @@ export function getOptionChain(
     : "";
   return getJson<OptionChainResponse>(
     `/chain/${encodeURIComponent(symbol)}${query}`,
+    signal,
+  );
+}
+
+export function getWhaleThresholds(signal?: AbortSignal) {
+  return getJson<WhaleThresholdsResponse>("/whale-thresholds", signal);
+}
+
+export function updateWhaleThreshold(
+  symbol: string,
+  update: WhaleThresholdUpdate,
+  signal?: AbortSignal,
+) {
+  return patchJson<WhaleThreshold>(
+    `/whale-thresholds/${encodeURIComponent(symbol)}`,
+    update,
     signal,
   );
 }

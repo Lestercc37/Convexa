@@ -212,13 +212,40 @@ export type ClosingDynamics = {
 export type WhaleAlert = {
   symbol: string;
   contract: string;
-  type: "WHALE" | "UNUSUAL";
+  type: "WHALE" | "UNUSUAL" | "SUSTAINED_FLOW";
   amount: number;
   timestamp: string;
+  // Bulk Volume Classification estimates (Easley, López de Prado, O'Hara
+  // 2012) — derived from price movement alone, never confirmed
+  // buy/sell-side order flow.
+  estimated_buy_volume: number;
+  estimated_sell_volume: number;
 };
 
 export type WhaleAlertsResponse = {
   schema_version: number;
   symbol: string;
   alerts: WhaleAlert[];
+};
+
+export type WhaleThreshold = {
+  symbol: string;
+  unusual_min: number;
+  whale_min: number;
+  unusual_multiplier: number;
+  whale_multiplier: number;
+  sustained_flow_min: number;
+};
+
+export type WhaleThresholdsResponse = {
+  schema_version: number;
+  thresholds: WhaleThreshold[];
+};
+
+export type WhaleThresholdUpdate = {
+  unusual_min: number;
+  whale_min: number;
+  unusual_multiplier: number;
+  whale_multiplier: number;
+  sustained_flow_min: number;
 };

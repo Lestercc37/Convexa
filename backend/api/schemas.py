@@ -273,6 +273,35 @@ class UnderlyingsResponse(BaseModel):
     underlyings: list[UnderlyingResponse]
 
 
+class WhaleThresholdResponse(BaseModel):
+    symbol: str
+    unusual_min: Number
+    whale_min: Number
+    unusual_multiplier: Number
+    whale_multiplier: Number
+    sustained_flow_min: Number
+
+
+class WhaleThresholdsResponse(BaseModel):
+    schema_version: int = Field(examples=[1])
+    thresholds: list[WhaleThresholdResponse]
+
+
+class WhaleThresholdUpdateRequest(BaseModel):
+    """Body for PATCH /whale-thresholds/{symbol} — every field is required,
+
+    not a partial update: `IStorage.save_whale_threshold` persists a
+    complete `WhaleThreshold` row, and the editor panel always submits
+    all five fields for a symbol together.
+    """
+
+    unusual_min: Decimal = Field(gt=0, examples=[40000])
+    whale_min: Decimal = Field(gt=0, examples=[150000])
+    unusual_multiplier: Decimal = Field(gt=0, examples=[3.0])
+    whale_multiplier: Decimal = Field(gt=0, examples=[6.0])
+    sustained_flow_min: Decimal = Field(gt=0, examples=[500000])
+
+
 class FlowEventResponse(BaseModel):
     as_of: str
     occ_symbol: str

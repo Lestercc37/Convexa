@@ -21,6 +21,7 @@ type AlertsPanelProps = {
 export const TYPE_LABEL: Record<WhaleAlert["type"], string> = {
   WHALE: "Whale",
   UNUSUAL: "Unusual",
+  SUSTAINED_FLOW: "Sustained Flow",
 };
 
 const CURRENCY_FORMAT = new Intl.NumberFormat("en-US", {

@@ -18,6 +18,7 @@ export const en: Translations = {
     exposureGroupAriaLabel: "Charm and Vanna Exposure",
     aggregatedGreeksEyebrow: "Aggregated Greeks",
     loadingRegime: "Loading regime and levels…",
+    settingsButtonAriaLabel: "Whale Alerts threshold settings",
   },
   regimeBadge: {
     ariaLabel: "Gamma regime",
@@ -106,6 +107,28 @@ export const en: Translations = {
       time: "Time",
       updated: "Updated",
       exposure: "Exposure",
+    },
+  },
+  whaleThresholdsPanel: {
+    title: "Whale Alerts Thresholds",
+    description:
+      "Per-symbol calibration — determines when each alert type fires. Changes apply immediately, no backend restart required.",
+    closeButtonAriaLabel: "Close",
+    loading: "Loading thresholds…",
+    loadFailed: "Couldn't load the thresholds.",
+    saveButton: "Save",
+    savingButton: "Saving…",
+    savedConfirmation: "Saved",
+    saveFailed: "Couldn't save",
+    validationError: "All 5 fields must be positive numbers",
+    headers: {
+      symbol: "Symbol",
+      unusualMin: "Unusual min. ($)",
+      whaleMin: "Whale min. ($)",
+      unusualMultiplier: "Unusual multiplier",
+      whaleMultiplier: "Whale multiplier",
+      sustainedFlowMin: "Sustained Flow min. ($)",
+      actions: "Actions",
     },
   },
 };

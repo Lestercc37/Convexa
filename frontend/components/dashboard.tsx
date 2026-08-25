@@ -17,6 +17,7 @@ import { PriceChart } from "./price-chart";
 import { QuickScreener } from "./quick-screener";
 import { RegimeBadge } from "./regime-badge";
 import { VolatilitySmile } from "./volatility-smile";
+import { WhaleThresholdsPanel } from "./whale-thresholds-panel";
 
 // Only 1-minute candles exist (client-side accumulated, dashboard-spec.md
 // section 2.2) — the other buttons are decorative chrome, same as the side
@@ -48,6 +49,7 @@ export function Dashboard() {
   // instead of being frozen in whichever language was active when the
   // request failed.
   const [error, setError] = useState<unknown>(null);
+  const [showThresholdsPanel, setShowThresholdsPanel] = useState(false);
   const candles = useMemo(() => aggregateMinuteCandles(pricePoints), [pricePoints]);
   const latestCandle = candles.at(-1) ?? null;
 
@@ -209,9 +211,21 @@ export function Dashboard() {
           </button>
         </div>
         <div className="tv-topbar-right">
+          <button
+            type="button"
+            className="tv-settings-button"
+            aria-label={t.dashboard.settingsButtonAriaLabel}
+            onClick={() => setShowThresholdsPanel(true)}
+          >
+            ⚙
+          </button>
           {gamma && market && <RegimeBadge gamma={gamma} market={market} />}
         </div>
       </header>
+
+      {showThresholdsPanel && (
+        <WhaleThresholdsPanel onClose={() => setShowThresholdsPanel(false)} />
+      )}
 
       {error ? (
         <section className="panel status error" role="alert">

@@ -37,7 +37,6 @@ from backend.domain.use_cases import (
     GetMarketSnapshotUseCase,
     LoadOptionChainUseCase,
     WhaleAlertsEngine,
-    WhaleAlertThresholds,
 )
 
 
@@ -75,19 +74,8 @@ class Container:
 
 
 def build_whale_alerts_engine(storage: IStorage) -> WhaleAlertsEngine:
-    """Build Whale Alerts with persisted per-symbol threshold overrides."""
-    return WhaleAlertsEngine(
-        thresholds_by_symbol={
-            symbol: WhaleAlertThresholds(
-                unusual_min=threshold.unusual_min,
-                whale_min=threshold.whale_min,
-                unusual_multiplier=threshold.unusual_multiplier,
-                whale_multiplier=threshold.whale_multiplier,
-                sustained_flow_min=threshold.sustained_flow_min,
-            )
-            for symbol, threshold in storage.get_whale_thresholds().items()
-        }
-    )
+    """Build Whale Alerts, reading per-symbol threshold overrides live from storage."""
+    return WhaleAlertsEngine(storage=storage)
 
 
 def build_container() -> Container:

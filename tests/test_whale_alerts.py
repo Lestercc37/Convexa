@@ -7,6 +7,7 @@ from decimal import Decimal
 from fastapi.testclient import TestClient
 
 from backend.adapters.providers.mock import MockDataProvider
+from backend.adapters.storage.memory import InMemoryStorage
 from backend.domain.entities import OptionChain
 from backend.domain.use_cases import (
     WhaleAlert,
@@ -29,7 +30,7 @@ def _chain(base: OptionChain, volume: int, period: int, last: str = "1.00") -> O
 
 
 def test_engine_emits_unusual_after_five_previous_periods() -> None:
-    engine = WhaleAlertsEngine()
+    engine = WhaleAlertsEngine(InMemoryStorage())
     base = MockDataProvider().get_option_chain("IWM")
 
     cumulative = 100
@@ -51,7 +52,7 @@ def test_engine_emits_unusual_after_five_previous_periods() -> None:
 
 
 def test_engine_emits_whale_and_prioritizes_it_over_unusual() -> None:
-    engine = WhaleAlertsEngine()
+    engine = WhaleAlertsEngine(InMemoryStorage())
     base = MockDataProvider().get_option_chain("IWM")
 
     cumulative = 100
@@ -76,7 +77,7 @@ def test_bvc_split_on_a_real_alert_matches_the_pure_function_given_the_same_inpu
     # window and per-reading accumulation are wired correctly, not just
     # that the pure function in calculate_bvc.py is correct in isolation
     # (already covered by tests/test_bvc.py).
-    engine = WhaleAlertsEngine()
+    engine = WhaleAlertsEngine(InMemoryStorage())
     base = MockDataProvider().get_option_chain("IWM")
     prices = ["1.00", "1.02", "0.99", "1.03", "1.00", "1.05", "1.10"]
 
@@ -119,7 +120,7 @@ def test_bvc_split_on_a_real_alert_matches_the_pure_function_given_the_same_inpu
 
 
 def test_engine_does_not_alert_below_multiplier_or_dollar_threshold() -> None:
-    engine = WhaleAlertsEngine()
+    engine = WhaleAlertsEngine(InMemoryStorage())
     base = MockDataProvider().get_option_chain("IWM")
 
     cumulative = 100
@@ -132,6 +133,43 @@ def test_engine_does_not_alert_below_multiplier_or_dollar_threshold() -> None:
     assert engine.process(_chain(base, cumulative, 6)) == ()
     assert engine.process(_chain(base, cumulative, 7)) == ()
     assert engine.recent_alerts("IWM") == ()
+
+
+def test_threshold_edits_take_effect_on_the_next_process_call_without_rebuilding_the_engine() -> None:
+    # The whole point of Piece 1: an edit written to storage after the
+    # engine is constructed must change classification on the very next
+    # process() call — no restart, no rebuilding the engine (which would
+    # also wipe _states/_alerts).
+    storage = InMemoryStorage()
+    engine = WhaleAlertsEngine(storage)
+    base = MockDataProvider().get_option_chain("IWM")
+
+    cumulative = 100
+    engine.process(_chain(base, cumulative, 0))
+    for period in range(1, 6):
+        cumulative += 100
+        engine.process(_chain(base, cumulative, period))
+
+    # A $45,000 finalized minute at a $10,000 average is UNUSUAL under the
+    # default $40,000 threshold (same shape as the periods-5 test above).
+    cumulative += 450
+    engine.process(_chain(base, cumulative, 6))
+    assert engine.process(_chain(base, cumulative, 7))[0].alert_type is WhaleAlertType.UNUSUAL
+
+    # Raise unusual_min above $45,000 directly in storage — no engine
+    # rebuild — then feed the exact same shape through again.
+    raised = replace(
+        storage.get_whale_thresholds()["IWM"],
+        unusual_min=Decimal("100000"),
+    )
+    storage.save_whale_threshold(raised)
+
+    for period in range(8, 14):
+        cumulative += 100
+        engine.process(_chain(base, cumulative, period))
+    cumulative += 450
+    engine.process(_chain(base, cumulative, 14))
+    assert engine.process(_chain(base, cumulative, 15)) == ()
 
 
 def test_alerts_endpoint_is_read_only_and_returns_recent_alerts() -> None:
@@ -169,7 +207,7 @@ def test_sustained_flow_fires_once_and_whale_still_classifies_independently() ->
     # 1x$0 + 14x$40,000), crossing sustained_flow_min ($500,000) on the
     # 15th finalized minute. $40,000/min never crosses Unusual on its own
     # (average converges to $40,000 too, and 40,000 is not > 40,000*3).
-    engine = WhaleAlertsEngine()
+    engine = WhaleAlertsEngine(InMemoryStorage())
     base = MockDataProvider().get_option_chain("IWM")
     cumulative = 100
     engine.process(_chain(base, cumulative, 0))
@@ -207,7 +245,7 @@ def test_sustained_flow_fires_once_and_whale_still_classifies_independently() ->
 
 
 def test_sustained_flow_resets_and_refires_after_dropping_below_threshold() -> None:
-    engine = WhaleAlertsEngine()
+    engine = WhaleAlertsEngine(InMemoryStorage())
     base = MockDataProvider().get_option_chain("IWM")
     cumulative = 100
     engine.process(_chain(base, cumulative, 0))

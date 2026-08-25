@@ -13,6 +13,8 @@ const apiMocks = vi.hoisted(() => ({
   getOptionChain: vi.fn(),
   getScreenerPreset: vi.fn(),
   getUnderlyings: vi.fn(),
+  getWhaleThresholds: vi.fn(),
+  updateWhaleThreshold: vi.fn(),
 }));
 
 const chartMocks = vi.hoisted(() => ({
@@ -134,6 +136,19 @@ beforeEach(() => {
     results: [],
   });
   apiMocks.getAlerts.mockResolvedValue({ schema_version: 1, symbol: "SPY", alerts: [] });
+  apiMocks.getWhaleThresholds.mockResolvedValue({
+    schema_version: 1,
+    thresholds: [
+      {
+        symbol: "SPY",
+        unusual_min: 40000,
+        whale_min: 150000,
+        unusual_multiplier: 3.0,
+        whale_multiplier: 6.0,
+        sustained_flow_min: 500000,
+      },
+    ],
+  });
   apiMocks.getGammaProfile.mockImplementation((symbol: string) =>
     Promise.resolve({
       schema_version: 1,
@@ -302,5 +317,24 @@ describe("Dashboard", () => {
       expect(column?.querySelectorAll(".alert-card")).toHaveLength(25);
     });
     expect(verticalPanel?.querySelector(".alerts-row")).not.toBeInTheDocument();
+  });
+
+  it("opens the Whale Alerts thresholds panel from the gear button, and closes it", async () => {
+    const user = userEvent.setup();
+    renderWithLanguage(<Dashboard />);
+    await screen.findByLabelText("Chart de velas para SPY");
+
+    expect(screen.queryByText("Umbrales de Whale Alerts")).not.toBeInTheDocument();
+
+    await user.click(
+      screen.getByRole("button", { name: "Configuración de umbrales de Whale Alerts" }),
+    );
+
+    expect(await screen.findByText("Umbrales de Whale Alerts")).toBeInTheDocument();
+    await waitFor(() => expect(apiMocks.getWhaleThresholds).toHaveBeenCalled());
+    expect(screen.getByLabelText("SPY Unusual mín. ($)")).toHaveValue(40000);
+
+    await user.click(screen.getByRole("button", { name: "Cerrar" }));
+    expect(screen.queryByText("Umbrales de Whale Alerts")).not.toBeInTheDocument();
   });
 });
