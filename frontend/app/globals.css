@@ -309,7 +309,8 @@ button, select { font: inherit; }
 
 .screener-panel { padding: 12px 14px; }
 .screener-heading { align-items: start; flex-direction: column; gap: 8px; }
-.preset-control { display: flex; flex-direction: column; gap: 4px; width: 100%; color: var(--tv-text-dim); font-size: 0.68rem; }
+.screener-preset-row { display: flex; align-items: flex-end; gap: 8px; width: 100%; }
+.preset-control { display: flex; flex-direction: column; gap: 4px; flex: 1 1 auto; color: var(--tv-text-dim); font-size: 0.68rem; }
 .preset-control select { border: 1px solid var(--tv-border); border-radius: 6px; background: var(--tv-panel-raised); color: var(--tv-text); padding: 6px 8px; }
 .screener-table-wrap { margin-top: 12px; overflow-x: auto; }
 .screener-table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; font-size: 0.76rem; }

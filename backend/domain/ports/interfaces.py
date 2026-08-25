@@ -14,6 +14,8 @@ from backend.domain.entities import (
     MarketSnapshot,
     MaxPain,
     OptionChain,
+    ScreenerPreset,
+    ScreenerPresetSettings,
     Underlying,
     Walls,
     WhaleThreshold,
@@ -57,6 +59,12 @@ class IStorage(Protocol):
     def list_underlyings(self) -> list[Underlying]: ...
     def save_whale_threshold(self, threshold: WhaleThreshold) -> None: ...
     def get_whale_thresholds(self) -> dict[str, WhaleThreshold]: ...
+    def save_screener_preset_settings(
+        self, preset: ScreenerPreset, settings: ScreenerPresetSettings
+    ) -> None: ...
+    def get_screener_preset_settings(
+        self, preset: ScreenerPreset
+    ) -> ScreenerPresetSettings | None: ...
     def save_chain_snapshot(self, chain: OptionChain) -> None: ...
     def get_latest_chain_snapshot(
         self, underlying: str, expiration: date | None = None

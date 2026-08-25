@@ -164,7 +164,7 @@ tres mecanismos antes de elegir uno:
   de umbrales; `_states`/`_alerts` no cambian. Costo: un `SELECT` adicional, barato, por cada
   llamada a `process()` — aceptable dado el volumen actual.
 
-**El único endpoint de escritura de toda la API — justificación explícita.** `PATCH
+**El primer endpoint de escritura de toda la API — justificación explícita.** `PATCH
 /api/v1/whale-thresholds/{symbol}` actualiza `unusual_min`, `whale_min`, `unusual_multiplier`,
 `whale_multiplier` y `sustained_flow_min` para un símbolo (los 5 campos juntos, reemplazo completo,
 no actualización parcial — `IStorage.save_whale_threshold` persiste una fila `WhaleThreshold`
@@ -180,6 +180,61 @@ fila de `underlyings` nueva por accidente vía el upsert interno de `_ensure_und
 `GET /api/v1/whale-thresholds` (los 11 símbolos con sus umbrales vigentes) se agregó junto con el
 PATCH — no existía forma de leer los umbrales actuales vía API antes de esto, necesaria para que el
 panel de edición del frontend pueda mostrar los valores vigentes antes de editarlos.
+
+**Screener Presets — criterios de filtro editables.** Los 5 presets de `get_screener_preset`
+(`backend/domain/use_cases/screener_presets.py`) resultaron tener criterios muy distintos entre sí
+al auditarlos — ninguno tenía un mecanismo de configuración previo:
+
+- `unusual-options-activity`: sin filtro propio — muestra las alertas que `WhaleAlertsEngine` ya
+  emitió; su configuración real ya vive en `whale_thresholds` (arriba). No se duplica nada aquí.
+- `negative-gamma-board`: el único con un umbral real, hardcodeado como `net_gamma < 0`.
+- `max-pain-key-levels`: sin filtro — devuelve todos los subyacentes persistidos, incondicional.
+- `vanna-exposure-leaders` / `charm-decay-pressure`: sin filtro ni tope — solo ordenan por
+  `abs(vanna_exposure)`/`abs(charm_exposure)` descendente.
+
+Decisión, confirmada antes de implementar: de los 5, solo 3 obtienen parámetros editables —
+`negative-gamma-board` (`net_gamma_max`, reemplaza el `0` hardcodeado), `vanna-exposure-leaders` y
+`charm-decay-pressure` (`min_magnitude` y `limit`/top-N cada uno, ambos opcionales). Los otros 2 no
+tienen ningún escalar sensato que exponer.
+
+**Esquema: una tabla JSONB flexible, con un dataclass congelado por preset validando en el dominio.**
+`screener_preset_settings (preset text PRIMARY KEY, parameters jsonb NOT NULL)` — una sola fila por
+preset configurable, con la forma del JSON dependiendo de cuál preset es. Deliberadamente **no** un
+blob sin tipar: `NegativeGammaBoardSettings` y `ExposureLeadersSettings`
+(`backend/domain/entities/entities.py`, junto a `ScreenerPreset` — movido ahí desde el use case para
+evitar el ciclo de imports `ports → use_cases → ports`, mismo motivo por el que `WhaleThreshold` ya
+vivía en `entities.py`) son `@dataclass(frozen=True)` que validan sus propios campos en
+`__post_init__` (decimal finito, `min_magnitude` no negativo, `limit` entero positivo) — el JSON es
+solo el mecanismo de persistencia, nunca el tipo con el que trabaja el dominio.
+`_screener_preset_settings_to_json`/`_from_json` en `PostgreSQLStorage`
+(`backend/adapters/storage/postgresql.py`) hacen la conversión; los `Decimal` se serializan como
+strings dentro del JSON (nunca como número JSON), mismo criterio de precisión que el resto del
+proyecto usa en cada round-trip a base de datos. Un preset sin fila persistida (o sin settings del
+tipo esperado) cae al valor por defecto que reproduce el comportamiento de antes de este PR:
+`NegativeGammaBoardSettings()` tiene `net_gamma_max=0` (el preset es inherentemente sobre gamma
+negativo, así que "sin configurar" nunca puede significar "sin tope"); `ExposureLeadersSettings()`
+tiene ambos campos en `None` (los dos presets de exposición eran un ranking incondicional, así que
+"sin configurar" debe seguir siéndolo).
+
+**Mismo patrón ya probado en `whale_thresholds`: lectura en vivo, no cacheada al arrancar.**
+`get_screener_preset` llama a `storage.get_screener_preset_settings(preset)` en cada invocación —
+una edición vía `PATCH` tiene efecto en la siguiente consulta, sin reiniciar el backend, exactamente
+igual que `WhaleAlertsEngine` con `whale_thresholds`.
+
+**Segunda y tercera excepción a la API de solo lectura, misma justificación que `whale_thresholds`.**
+`PATCH /api/v1/screener-preset-settings/{preset_name}` — igual que los umbrales de Whale Alerts, esto
+no es el cliente "mandando a calcular" nada: es calibración de cómo un preset (de solo lectura) filtra
+resultados futuros. `GET /api/v1/screener-preset-settings` devuelve los 3 presets configurables con
+sus valores vigentes (forma plana/unioned, mismo criterio que `ScreenerPresetResponse` ya usa para la
+heterogeneidad de campos entre presets — solo los campos que aplican a cada preset vienen no-`null`).
+El `PATCH` es reemplazo completo por preset (no parcial), con una particularidad nueva frente a
+`WhaleThresholdUpdateRequest`: distingue "campo enviado explícitamente como `null`" (válido — limpia
+ese filtro, aplica solo a `vanna-exposure-leaders`/`charm-decay-pressure`) de "campo no enviado en
+absoluto" (rechazado con 422) vía `body.model_fields_set` de Pydantic, en la ruta
+(`backend/api/routes/screener_presets.py`) — necesario porque `min_magnitude`/`limit` son ambos
+genuinamente opcionales (a diferencia de los 5 campos de `WhaleThresholdUpdateRequest`, todos
+obligatorios). `unusual-options-activity` y `max-pain-key-levels` devuelven 404 en el `PATCH` — no
+tienen fila de configuración que editar.
 
 ---
 

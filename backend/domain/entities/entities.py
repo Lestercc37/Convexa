@@ -99,6 +99,58 @@ class WhaleThreshold:
                 raise InvalidOptionError(f"{name} must be positive")
 
 
+class ScreenerPreset(StrEnum):
+    UNUSUAL_OPTIONS_ACTIVITY = "unusual-options-activity"
+    NEGATIVE_GAMMA_BOARD = "negative-gamma-board"
+    MAX_PAIN_KEY_LEVELS = "max-pain-key-levels"
+    VANNA_EXPOSURE_LEADERS = "vanna-exposure-leaders"
+    CHARM_DECAY_PRESSURE = "charm-decay-pressure"
+
+    @classmethod
+    def parse(cls, value: str) -> ScreenerPreset:
+        return cls(value.strip().lower().replace("_", "-").replace(" ", "-"))
+
+
+@dataclass(frozen=True, slots=True)
+class NegativeGammaBoardSettings:
+    """Editable filter for the Negative Gamma Board preset.
+
+    `net_gamma_max` replaces the value that was hardcoded as `0`
+    (`net_gamma < net_gamma_max`) — unlike the two exposure-leader
+    thresholds below, this one is never "no filter": the preset is
+    inherently about negative gamma, so an unset row falls back to the
+    original `0` default, not an unbounded board.
+    """
+
+    net_gamma_max: Decimal = Decimal(0)
+
+    def __post_init__(self) -> None:
+        _ensure_finite_decimal(self.net_gamma_max, InvalidOptionError, "net_gamma_max")
+
+
+@dataclass(frozen=True, slots=True)
+class ExposureLeadersSettings:
+    """Editable filter/limit shared by Vanna Exposure Leaders and Charm
+    Decay Pressure — both rank by `|vanna_exposure|`/`|charm_exposure|`
+    with no threshold or cap today. Both fields are genuinely optional:
+    `None` means "behave exactly as today" (no minimum, no result cap).
+    """
+
+    min_magnitude: Decimal | None = None
+    limit: int | None = None
+
+    def __post_init__(self) -> None:
+        if self.min_magnitude is not None:
+            _ensure_finite_decimal(self.min_magnitude, InvalidOptionError, "min_magnitude")
+            if self.min_magnitude < 0:
+                raise InvalidOptionError("min_magnitude cannot be negative")
+        if self.limit is not None and self.limit < 1:
+            raise InvalidOptionError("limit must be a positive integer")
+
+
+ScreenerPresetSettings = NegativeGammaBoardSettings | ExposureLeadersSettings
+
+
 @dataclass(frozen=True, slots=True)
 class OptionGreeks:
     delta: Decimal

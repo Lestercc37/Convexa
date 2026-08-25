@@ -17,11 +17,14 @@ from backend.domain.entities import (
     AggressorSide,
     DailyBar,
     DailyGammaReference,
+    ExposureLeadersSettings,
     FlowEvent,
     FlowEventType,
     GammaAggregate,
     GammaAggregateItem,
     MarketPrice,
+    NegativeGammaBoardSettings,
+    ScreenerPreset,
     WhaleThreshold,
 )
 from backend.domain.underlyings import ACTIVE_UNDERLYINGS
@@ -226,6 +229,43 @@ def test_whale_threshold_round_trip_against_postgresql(
     storage.save_whale_threshold(threshold)
 
     assert storage.get_whale_thresholds()[symbol] == threshold
+
+
+def test_screener_preset_settings_round_trip_against_postgresql(
+    postgresql_storage: tuple[PostgreSQLStorage, Engine, str],
+) -> None:
+    # Unlike other fixtures, this table is keyed by preset name, not by
+    # the per-test-unique `symbol` — there is nothing to isolate this
+    # test with, so restore the migration's seeded defaults afterward.
+    storage, _, _ = postgresql_storage
+    original_gamma = storage.get_screener_preset_settings(ScreenerPreset.NEGATIVE_GAMMA_BOARD)
+    original_vanna = storage.get_screener_preset_settings(ScreenerPreset.VANNA_EXPOSURE_LEADERS)
+    try:
+        gamma_settings = NegativeGammaBoardSettings(net_gamma_max=Decimal("-25"))
+        vanna_settings = ExposureLeadersSettings(min_magnitude=Decimal("1500"), limit=5)
+
+        storage.save_screener_preset_settings(ScreenerPreset.NEGATIVE_GAMMA_BOARD, gamma_settings)
+        storage.save_screener_preset_settings(
+            ScreenerPreset.VANNA_EXPOSURE_LEADERS, vanna_settings
+        )
+
+        assert (
+            storage.get_screener_preset_settings(ScreenerPreset.NEGATIVE_GAMMA_BOARD)
+            == gamma_settings
+        )
+        assert (
+            storage.get_screener_preset_settings(ScreenerPreset.VANNA_EXPOSURE_LEADERS)
+            == vanna_settings
+        )
+    finally:
+        if original_gamma is not None:
+            storage.save_screener_preset_settings(
+                ScreenerPreset.NEGATIVE_GAMMA_BOARD, original_gamma
+            )
+        if original_vanna is not None:
+            storage.save_screener_preset_settings(
+                ScreenerPreset.VANNA_EXPOSURE_LEADERS, original_vanna
+            )
 
 
 def test_daily_gamma_reference_upsert_and_read_against_postgresql(

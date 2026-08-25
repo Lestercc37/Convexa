@@ -434,3 +434,50 @@ distinta longitud, entrada malformada), `alerts-panel.test.tsx` (alertas mixtas 
 en su pestaña correcta con la clasificación BVC visible, estado vacío al cambiar a una pestaña sin
 alertas, 30 alertas de un mismo bando confirmando que el scroll queda acotado a `.alerts-column`
 dentro del panel, no a la página completa — mismo criterio de verificación ya usado en la sección 17).
+
+## 20. Panel de configuración: criterios de filtro de los 5 presets del Quick Screener
+
+**Investigación previa (sin implementar nada), antes de tocar código:** se auditó el criterio real de
+cada uno de los 5 presets de `QuickScreener` y resultó divergir por completo de la premisa inicial
+del pedido — de los 5, solo **Negative Gamma Board** tenía un umbral real hardcodeado (`net_gamma <
+0`). *Unusual Options Activity* no filtra nada propio (muestra las alertas que el motor de Whale
+Alerts ya emitió — su configuración real ya vive en `whale_thresholds`, sección 18). *Max Pain & Key
+Levels* no filtra nada (lista incondicional de todos los subyacentes persistidos). *Vanna Exposure
+Leaders* y *Charm Decay Pressure* solo ordenan por magnitud absoluta de exposición, sin mínimo ni
+tope. Ver `docs/use-cases.md` (sección Screener Presets) para el detalle completo por preset y el
+esquema de almacenamiento elegido a partir de este hallazgo.
+
+**Decisión, preset por preset (confirmada antes de implementar):** de los 5, solo 3 terminan con
+parámetros editables — **Negative Gamma Board** (1 campo, `net_gamma_max`, reemplaza el `0`
+hardcodeado), **Vanna Exposure Leaders** y **Charm Decay Pressure** (2 campos cada uno,
+`min_magnitude` y `limit`/top-N, ambos opcionales — vacíos se comportan exactamente como hoy, sin
+filtro ni tope). *Unusual Options Activity* y *Max Pain & Key Levels* quedan sin cambios, sin fila de
+configuración: no hay ningún escalar sensato que exponer en ninguno de los dos.
+
+**Mismo patrón visual que `WhaleThresholdsPanel` (sección 18), adaptado a la forma unioned/plana ya
+usada por `ScreenerPresetResult`:** un botón de engranaje (`⚙`, `.tv-settings-button` reutilizada) —
+pero a diferencia de los umbrales de Whale Alerts (calibración global, vive en `.tv-topbar-right`),
+esta configuración es específica del Quick Screener, así que el disparador vive junto al selector de
+preset (`.screener-preset-row`, nueva fila flex dentro de `.screener-heading` — el `<select>` y el
+botón antes eran hijos directos de un contenedor sin `display:flex` real, así que se agrupó ambos en
+su propia fila en vez de dejar el botón cayendo a una línea aparte). Abre
+`ScreenerPresetSettingsPanel` como el mismo modal centrado (`.modal-overlay`/`.modal`,
+`.whale-thresholds-panel` reutilizada) con una tabla de una fila por preset configurable (3, no 5) y
+una columna por campo posible (`Net Gamma Max`, `Min. Magnitude`, `Limit`) — solo el/los campo(s) que
+aplican a esa fila muestran un `<input>`; el resto muestra `—` (misma forma unioned que el backend, no
+tres tablas con columnas distintas). Guardado por fila, no global — cada preset se confirma por
+separado, igual que `WhaleThresholdsPanel`.
+
+**Validación en cliente antes de llamar al endpoint:** Negative Gamma Board exige que el campo sea un
+número finito (puede ser negativo — es un umbral, no una magnitud); Vanna/Charm exigen que
+`min_magnitude` (si no está vacío) sea un número no negativo y que `limit` (si no está vacío) sea un
+entero positivo. Vacío es válido en ambos campos de Vanna/Charm — se envía como `null` explícito, no
+se omite, porque el backend distingue "enviado como null" (limpia el filtro) de "no enviado" (rechaza
+la petición) vía `model_fields_set` — ver `docs/use-cases.md`.
+
+**Tests:** `screener-preset-settings-panel.test.tsx` (carga las 3 filas configurables con sus valores
+vigentes, muestra `—` en los campos que no aplican, edita y guarda cada forma de fila —campo único de
+Negative Gamma Board y par de campos de Vanna/Charm enviados juntos—, rechaza magnitud negativa o
+límite no positivo sin llamar al endpoint, rechaza un `net_gamma_max` no numérico, error traducido si
+falla la carga o el guardado, cierre por botón/overlay/Escape), ajuste a `quick-screener.test.tsx`
+(el botón de engranaje abre el panel y dispara la carga).

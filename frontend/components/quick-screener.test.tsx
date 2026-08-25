@@ -4,7 +4,10 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { renderWithLanguage } from "@/lib/i18n/test-utils";
 import { QuickScreener } from "./quick-screener";
 
-const apiMocks = vi.hoisted(() => ({ getScreenerPreset: vi.fn() }));
+const apiMocks = vi.hoisted(() => ({
+  getScreenerPreset: vi.fn(),
+  getScreenerPresetSettings: vi.fn(),
+}));
 vi.mock("@/lib/api", async () => {
   const actual = await vi.importActual<typeof import("@/lib/api")>("@/lib/api");
   return { ...actual, ...apiMocks };
@@ -82,5 +85,34 @@ describe("QuickScreener", () => {
     await screen.findByText("SPY");
     expect(screen.getByText("Whale")).toBeInTheDocument();
     expect(screen.queryByText("WHALE")).not.toBeInTheDocument();
+  });
+
+  it("opens the preset filter settings panel from its trigger button", async () => {
+    apiMocks.getScreenerPresetSettings.mockResolvedValue({
+      schema_version: 1,
+      settings: [
+        { preset: "negative-gamma-board", net_gamma_max: 0, min_magnitude: null, limit: null },
+        {
+          preset: "vanna-exposure-leaders",
+          net_gamma_max: null,
+          min_magnitude: null,
+          limit: null,
+        },
+        {
+          preset: "charm-decay-pressure",
+          net_gamma_max: null,
+          min_magnitude: null,
+          limit: null,
+        },
+      ],
+    });
+    const user = userEvent.setup();
+    renderWithLanguage(<QuickScreener />);
+
+    expect(screen.queryByText("Configuración de Filtros de Presets")).not.toBeInTheDocument();
+    await user.click(screen.getByLabelText("Configuración de filtros de presets"));
+
+    expect(await screen.findByText("Configuración de Filtros de Presets")).toBeInTheDocument();
+    await waitFor(() => expect(apiMocks.getScreenerPresetSettings).toHaveBeenCalled());
   });
 });

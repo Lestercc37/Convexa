@@ -6,6 +6,9 @@ import type {
   OptionChainResponse,
   ScreenerPresetName,
   ScreenerPresetResponse,
+  ScreenerPresetSettings,
+  ScreenerPresetSettingsListResponse,
+  ScreenerPresetSettingsUpdate,
   UnderlyingsResponse,
   WhaleAlertsResponse,
   WhaleThreshold,
@@ -31,9 +34,10 @@ async function getJson<T>(path: string, signal?: AbortSignal): Promise<T> {
   return (await response.json()) as T;
 }
 
-// The one write path in an otherwise read-only API client — see
-// docs/use-cases.md's "único endpoint de escritura" note for why
-// PATCH /whale-thresholds/{symbol} is the sole exception.
+// The write paths in an otherwise read-only API client — see
+// docs/use-cases.md's write-endpoint justification notes for why
+// PATCH /whale-thresholds/{symbol} and PATCH /screener-preset-settings/{preset}
+// are the exceptions.
 async function patchJson<T>(path: string, body: unknown, signal?: AbortSignal): Promise<T> {
   const response = await fetch(`${API_PREFIX}${path}`, {
     method: "PATCH",
@@ -111,6 +115,22 @@ export function updateWhaleThreshold(
 ) {
   return patchJson<WhaleThreshold>(
     `/whale-thresholds/${encodeURIComponent(symbol)}`,
+    update,
+    signal,
+  );
+}
+
+export function getScreenerPresetSettings(signal?: AbortSignal) {
+  return getJson<ScreenerPresetSettingsListResponse>("/screener-preset-settings", signal);
+}
+
+export function updateScreenerPresetSettings(
+  preset: string,
+  update: ScreenerPresetSettingsUpdate,
+  signal?: AbortSignal,
+) {
+  return patchJson<ScreenerPresetSettings>(
+    `/screener-preset-settings/${encodeURIComponent(preset)}`,
     update,
     signal,
   );

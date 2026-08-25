@@ -302,6 +302,44 @@ class WhaleThresholdUpdateRequest(BaseModel):
     sustained_flow_min: Decimal = Field(gt=0, examples=[500000])
 
 
+class ScreenerPresetSettingsResponse(BaseModel):
+    """Flat, unioned shape (mirrors ScreenerPresetResult) — only the
+    field(s) that apply to `preset` are non-null.
+    """
+
+    preset: Literal["negative-gamma-board", "vanna-exposure-leaders", "charm-decay-pressure"]
+    net_gamma_max: Number | None = None
+    min_magnitude: Number | None = None
+    limit: int | None = None
+
+
+class ScreenerPresetSettingsListResponse(BaseModel):
+    schema_version: int = Field(examples=[1])
+    settings: list[ScreenerPresetSettingsResponse]
+
+
+class ScreenerPresetSettingsUpdateRequest(BaseModel):
+    """Body for PATCH /screener-preset-settings/{preset_name}.
+
+    Which fields are accepted depends on the preset — validated in the
+    route (Pydantic can't cleanly express "required only for preset X"
+    without a discriminated union the frontend would also have to
+    branch on):
+    - negative-gamma-board: `net_gamma_max` required; the other two
+      must be absent.
+    - vanna-exposure-leaders / charm-decay-pressure: `min_magnitude`
+      and `limit` must both be sent together (full replace, same
+      convention as `WhaleThresholdUpdateRequest`) — a `null` value
+      means "no filter"/"no limit", not "leave unchanged". Distinguished
+      from "not sent at all" via `model_fields_set` in the route, since
+      both are valid, different requests. `net_gamma_max` must be absent.
+    """
+
+    net_gamma_max: Decimal | None = None
+    min_magnitude: Decimal | None = Field(default=None, ge=0)
+    limit: int | None = Field(default=None, ge=1)
+
+
 class FlowEventResponse(BaseModel):
     as_of: str
     occ_symbol: str
