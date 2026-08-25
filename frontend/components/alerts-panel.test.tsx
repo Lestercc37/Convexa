@@ -1,4 +1,5 @@
 import { screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiError } from "@/lib/api";
 import { renderWithLanguage } from "@/lib/i18n/test-utils";
@@ -115,6 +116,104 @@ describe("AlertsPanel", () => {
     expect(await screen.findByText("Sin alertas recientes.")).toBeInTheDocument();
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
     expect(screen.queryByRole("article")).not.toBeInTheDocument();
+  });
+
+  it("splits alerts into Calls and Puts tabs, based on the OCC contract symbol", async () => {
+    apiMocks.getAlerts.mockResolvedValue(
+      alertsResponse("SPY", [
+        {
+          symbol: "SPY",
+          contract: "SPY260220C00540000",
+          type: "UNUSUAL",
+          amount: 45000,
+          timestamp: "2026-08-03T14:00:00Z",
+          estimated_buy_volume: 30000,
+          estimated_sell_volume: 15000,
+        },
+        {
+          symbol: "SPY",
+          contract: "SPY260220P00540000",
+          type: "WHALE",
+          amount: 210000,
+          timestamp: "2026-08-03T14:05:00Z",
+          estimated_buy_volume: 60000,
+          estimated_sell_volume: 150000,
+        },
+      ]),
+    );
+
+    const user = userEvent.setup();
+    renderWithLanguage(<AlertsPanel underlyings={[underlyings[0]]} orientation="vertical" />);
+
+    // Defaults to the Calls tab — only the call contract's card is shown.
+    let cards = await screen.findAllByRole("article");
+    expect(cards).toHaveLength(1);
+    expect(cards[0]).toHaveTextContent("SPY260220C00540000");
+
+    await user.click(screen.getByRole("button", { name: "Puts" }));
+
+    cards = await screen.findAllByRole("article");
+    expect(cards).toHaveLength(1);
+    expect(cards[0]).toHaveTextContent("SPY260220P00540000");
+    // BVC estimate rendered on the card, explicitly labeled as an estimate
+    // (renderWithLanguage defaults to Spanish).
+    expect(cards[0]).toHaveTextContent("29% / 71%");
+    expect(cards[0]).toHaveTextContent("Compra/venta estimado (BVC)");
+  });
+
+  it("shows a clear empty state for a side with no active alerts, without an error", async () => {
+    apiMocks.getAlerts.mockResolvedValue(
+      alertsResponse("SPY", [
+        {
+          symbol: "SPY",
+          contract: "SPY260220C00540000",
+          type: "UNUSUAL",
+          amount: 45000,
+          timestamp: "2026-08-03T14:00:00Z",
+          estimated_buy_volume: 22500,
+          estimated_sell_volume: 22500,
+        },
+      ]),
+    );
+
+    const user = userEvent.setup();
+    renderWithLanguage(<AlertsPanel underlyings={[underlyings[0]]} orientation="vertical" />);
+    await screen.findAllByRole("article");
+
+    await user.click(screen.getByRole("button", { name: "Puts" }));
+
+    expect(await screen.findByText("Sin alertas recientes.")).toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(screen.queryByRole("article")).not.toBeInTheDocument();
+  });
+
+  it("keeps many alerts on one side scrollable within the column, not the whole page", async () => {
+    const manyPuts = Array.from({ length: 30 }, (_, index) => ({
+      symbol: "SPY",
+      contract: `SPY260220P0054${String(index).padStart(4, "0")}`,
+      type: (index % 2 === 0 ? "WHALE" : "UNUSUAL") as "WHALE" | "UNUSUAL",
+      amount: 150_000 + index,
+      timestamp: new Date(Date.UTC(2026, 7, 3, 14, 30, index)).toISOString(),
+      estimated_buy_volume: 75_000,
+      estimated_sell_volume: 75_000,
+    }));
+    apiMocks.getAlerts.mockResolvedValue(alertsResponse("SPY", manyPuts));
+
+    const user = userEvent.setup();
+    const { container } = renderWithLanguage(
+      <AlertsPanel underlyings={[underlyings[0]]} orientation="vertical" />,
+    );
+    await user.click(await screen.findByRole("button", { name: "Puts" }));
+
+    await waitFor(() => {
+      const column = container.querySelector(".alerts-column");
+      expect(column).toBeInTheDocument();
+      expect(column?.querySelectorAll(".alert-card")).toHaveLength(30);
+    });
+    // The scrollable hook is the column itself, not a page-level container
+    // — same CSS class dashboard.test.tsx already confirms carries
+    // overflow-y: auto, scoping the scroll to the panel.
+    expect(container.querySelector(".alerts-panel-vertical > .alerts-column")).toBeInTheDocument();
   });
 
   it("surfaces a request failure as a translated alert message, not the raw error", async () => {
