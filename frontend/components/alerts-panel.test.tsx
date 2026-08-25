@@ -39,6 +39,8 @@ describe("AlertsPanel", () => {
                 type: "UNUSUAL",
                 amount: 45000,
                 timestamp: "2026-08-03T14:00:00Z",
+                estimated_buy_volume: 22500,
+                estimated_sell_volume: 22500,
               },
             ])
           : alertsResponse("QQQ", [
@@ -48,6 +50,8 @@ describe("AlertsPanel", () => {
                 type: "WHALE",
                 amount: 210000,
                 timestamp: "2026-08-03T14:05:00Z",
+                estimated_buy_volume: 105000,
+                estimated_sell_volume: 105000,
               },
             ]),
       ),
@@ -78,6 +82,8 @@ describe("AlertsPanel", () => {
           type: "UNUSUAL",
           amount: 45000,
           timestamp: "2026-08-03T14:00:00Z",
+          estimated_buy_volume: 22500,
+          estimated_sell_volume: 22500,
         },
       ]),
     );

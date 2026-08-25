@@ -18,6 +18,7 @@ export const es: Translations = {
     exposureGroupAriaLabel: "Charm y Vanna Exposure",
     aggregatedGreeksEyebrow: "Griegas agregadas",
     loadingRegime: "Cargando régimen y niveles…",
+    settingsButtonAriaLabel: "Configuración de umbrales de Whale Alerts",
   },
   regimeBadge: {
     ariaLabel: "Régimen gamma",
@@ -108,6 +109,28 @@ export const es: Translations = {
       time: "Hora",
       updated: "Actualizado",
       exposure: "Exposición",
+    },
+  },
+  whaleThresholdsPanel: {
+    title: "Umbrales de Whale Alerts",
+    description:
+      "Calibración por símbolo — determina cuándo se dispara cada tipo de alerta. Los cambios aplican de inmediato, sin reiniciar el backend.",
+    closeButtonAriaLabel: "Cerrar",
+    loading: "Cargando umbrales…",
+    loadFailed: "No se pudieron cargar los umbrales.",
+    saveButton: "Guardar",
+    savingButton: "Guardando…",
+    savedConfirmation: "Guardado",
+    saveFailed: "No se pudo guardar",
+    validationError: "Los 5 campos deben ser números positivos",
+    headers: {
+      symbol: "Símbolo",
+      unusualMin: "Unusual mín. ($)",
+      whaleMin: "Whale mín. ($)",
+      unusualMultiplier: "Multiplicador Unusual",
+      whaleMultiplier: "Multiplicador Whale",
+      sustainedFlowMin: "Flujo Sostenido mín. ($)",
+      actions: "Acciones",
     },
   },
 };

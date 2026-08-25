@@ -4,7 +4,7 @@ Cada caso de uso vive en `backend/domain/use_cases/` como una función/clase que
 
 Se dividen en dos categorías según qué los dispara:
 
-- **Orientados a cliente**: los dispara una petición REST o una suscripción WebSocket. Son de **solo lectura** desde la perspectiva del cliente — el cliente nunca "manda a calcular", solo consulta resultados ya calculados o persistidos.
+- **Orientados a cliente**: los dispara una petición REST o una suscripción WebSocket. Son de **solo lectura** desde la perspectiva del cliente — el cliente nunca "manda a calcular", solo consulta resultados ya calculados o persistidos. **Única excepción, explícita:** `PATCH /api/v1/whale-thresholds/{symbol}` — ver la sección de Whale Alerts más abajo para la justificación.
 - **Internos del motor**: los dispara un scheduler (cadencia fija) o el stream de datos entrante. No tienen endpoint propio — su resultado alimenta lo que los casos de uso orientados a cliente consultan.
 
 ---
@@ -141,6 +141,45 @@ cerrados que ya alimentan su monto acumulado (dos `deque(maxlen=15)` adicionales
 contrato que ya mantenía el motor (`_ContractState`) — no se creó ninguna tabla nueva; el motor de
 Whale Alerts nunca persistió su estado en base de datos, solo los umbrales configurados
 (`whale_thresholds`).
+
+**Umbrales editables en caliente, sin reiniciar el backend.** Hasta este punto,
+`WhaleAlertsEngine` construía su `thresholds_by_symbol` una sola vez, al arrancar
+(`build_container()`), a partir de `storage.get_whale_thresholds()` — cualquier edición hecha
+directamente en la base de datos requería reiniciar el proceso para tener efecto. Se investigaron
+tres mecanismos antes de elegir uno:
+
+- *Reconstruir el motor completo por request* — descartado: `WhaleAlertsEngine` también mantiene
+  `_states` (la memoria de ventana por contrato — minuto en curso, promedio de 5, acumulado de 15,
+  ventana de precio de BVC) y `_alerts` (historial). Reconstruir el motor las borraría, rompiendo
+  la ventana móvil por completo.
+- *Caché con invalidación por tiempo* — descartado: complejidad real (reloj, ventana de staleness,
+  invalidación) para una tabla de 11 filas consultada por un endpoint (`/internal/trigger-calculation`)
+  disparado manualmente hoy, no por un scheduler de alta frecuencia — resuelve un problema de
+  rendimiento que todavía no existe.
+- **Elegido: el motor lee `storage.get_whale_thresholds()` en vivo, dentro de cada llamada a
+  `process()`.** `IStorage` es un `Protocol` de dominio (`backend/domain/ports/interfaces.py`), no
+  un adaptador — varios casos de uso ya reciben `storage: IStorage` directamente
+  (`get_flow`, `BuildMarketSnapshot`), así que esto es consistente con el patrón ya establecido, no
+  uno nuevo. `WhaleAlertsEngine.__init__` ahora recibe `storage` en vez de un diccionario congelado
+  de umbrales; `_states`/`_alerts` no cambian. Costo: un `SELECT` adicional, barato, por cada
+  llamada a `process()` — aceptable dado el volumen actual.
+
+**El único endpoint de escritura de toda la API — justificación explícita.** `PATCH
+/api/v1/whale-thresholds/{symbol}` actualiza `unusual_min`, `whale_min`, `unusual_multiplier`,
+`whale_multiplier` y `sustained_flow_min` para un símbolo (los 5 campos juntos, reemplazo completo,
+no actualización parcial — `IStorage.save_whale_threshold` persiste una fila `WhaleThreshold`
+completa). Rompe deliberadamente la regla de "solo lectura" de arriba porque los umbrales de Whale
+Alerts no son un dato de mercado ni un resultado calculado — son una **calibración del operador**
+(ya documentada arriba como "defaults... necesitan recalibración con datos reales; no se presupone
+que una calibración de IWM sea válida para SPX"). Editarlos ajusta cómo el motor (de solo lectura)
+clasifica actividad futura; no es el cliente "mandando a calcular" nada. Antes de esta pieza, la
+única forma de ajustar un umbral era SQL manual en pgAdmin — el endpoint reemplaza eso, no introduce
+una capacidad nueva de negocio. Valida que los 5 campos sean números positivos (`Field(gt=0)`) y que
+el símbolo sea uno de los 11 ya configurados en `ACTIVE_UNDERLYINGS` (404 si no, para no crear una
+fila de `underlyings` nueva por accidente vía el upsert interno de `_ensure_underlying`).
+`GET /api/v1/whale-thresholds` (los 11 símbolos con sus umbrales vigentes) se agregó junto con el
+PATCH — no existía forma de leer los umbrales actuales vía API antes de esto, necesaria para que el
+panel de edición del frontend pueda mostrar los valores vigentes antes de editarlos.
 
 ---
 

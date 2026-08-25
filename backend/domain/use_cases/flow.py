@@ -7,6 +7,7 @@ from decimal import Decimal
 from enum import StrEnum
 
 from backend.domain.entities import OptionChain, OptionContract
+from backend.domain.ports import IStorage
 from backend.domain.use_cases.calculate_bvc import (
     calculate_bvc_split,
     calculate_price_volatility,
@@ -81,6 +82,14 @@ class WhaleAlertsEngine:
     using `chain.as_of` (same floor-to-minute approach the frontend already
     uses for candles), and only a *finalized* 1-minute bucket is ever
     classified or windowed — never a raw sub-minute reading.
+
+    Thresholds are read from `storage` fresh on every `process()` call,
+    not cached at construction — so an edit made through the thresholds
+    endpoint takes effect on the very next trigger, without a restart.
+    Only the thresholds are re-read live; `_states`/`_alerts` (the
+    per-contract windowing memory and alert history) stay exactly as
+    long-lived, in-memory engine state — re-fetching those per call would
+    defeat the whole windowing mechanism.
     """
 
     _WINDOW_SIZE = 5
@@ -89,21 +98,30 @@ class WhaleAlertsEngine:
 
     def __init__(
         self,
-        thresholds_by_symbol: dict[str, WhaleAlertThresholds] | None = None,
+        storage: IStorage,
         default_thresholds: WhaleAlertThresholds | None = None,
         alert_limit: int = 1000,
     ) -> None:
+        self._storage = storage
         self._default_thresholds = default_thresholds or WhaleAlertThresholds()
-        self._thresholds_by_symbol = {
-            symbol.upper(): thresholds
-            for symbol, thresholds in (thresholds_by_symbol or {}).items()
-        }
         self._states: dict[str, _ContractState] = {}
         self._alerts: deque[WhaleAlert] = deque(maxlen=alert_limit)
 
+    def _resolve_thresholds(self, symbol: str) -> WhaleAlertThresholds:
+        persisted = self._storage.get_whale_thresholds().get(symbol.upper())
+        if persisted is None:
+            return self._default_thresholds
+        return WhaleAlertThresholds(
+            unusual_min=persisted.unusual_min,
+            whale_min=persisted.whale_min,
+            unusual_multiplier=persisted.unusual_multiplier,
+            whale_multiplier=persisted.whale_multiplier,
+            sustained_flow_min=persisted.sustained_flow_min,
+        )
+
     def process(self, chain: OptionChain) -> tuple[WhaleAlert, ...]:
         generated: list[WhaleAlert] = []
-        thresholds = self._thresholds_by_symbol.get(chain.symbol, self._default_thresholds)
+        thresholds = self._resolve_thresholds(chain.symbol)
         current_bucket_start = _floor_to_minute(chain.as_of)
 
         for contract in chain.contracts:

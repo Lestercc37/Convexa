@@ -356,3 +356,38 @@ La franja horizontal inferior de Alertas (sección 13, punto 3) resultó ser la 
 **Supuesto de resolución de referencia:** 1920×1080 (verificado también a 1366×768, una resolución de laptop común) — ambos sin scroll de página en el navegador real, con la barra superior (~59px) y el resto de la fila principal (~1021px de alto en 1080p) resueltos por el flex chain, no por un valor fijo. Verificado en el navegador de desarrollo real (no solo en jsdom): altura de página exactamente igual al viewport en ambas resoluciones, columna de alertas y panel derecho correctamente posicionados, toolbar y franja inferior confirmados ausentes del DOM. El *fallback* móvil (≤960px) se verificó intacto por separado — vuelve a scroll de página natural, como antes.
 
 **Tests:** `frontend/components/alerts-panel.test.tsx` (orientación por defecto sigue siendo horizontal — `.alerts-row` —, y `orientation="vertical"` renderiza `.alerts-column` en su lugar), `frontend/components/dashboard.test.tsx` (el toolbar y la franja inferior/`<footer>` ya no existen en el DOM; un caso de 25 alertas confirma que se renderizan dentro de `.alerts-column`, no `.alerts-row`, como prueba estructural de que el desplazamiento queda acotado al panel — jsdom no ejecuta layout real, así que la confirmación final de que la página no crece más allá del viewport se hizo en el navegador real, no en este test).
+
+## 18. Panel de configuración: umbrales de Whale Alerts
+
+Hasta ahora, los 5 umbrales por símbolo (`unusual_min`, `whale_min`, `unusual_multiplier`,
+`whale_multiplier`, `sustained_flow_min`) solo eran editables con SQL manual en pgAdmin. Se agrega
+un botón de engranaje (`⚙`, `.tv-settings-button`) en `.tv-topbar-right`, junto a `RegimeBadge` —
+control global, no específico del símbolo activo, por eso vive en la barra superior y no en ninguna
+de las dos columnas laterales (ambas ya llenas, por diseño, desde la sección 17). Abre
+`WhaleThresholdsPanel` como modal centrado (`.modal-overlay`/`.modal`, patrón nuevo — primer modal
+del Dashboard), no una vista embebida: con 11 símbolos × 5 campos (55 inputs), una tabla en modal es
+más legible que competir por espacio permanente en una columna angosta ya llena. Cierra con el botón
+`×`, clic en el overlay, o Escape.
+
+**Contenido:** una tabla con los 11 símbolos (filas) y sus 5 campos editables (columnas) más una
+columna de acciones — un botón "Guardar" por fila (no guardado global: cada símbolo se confirma por
+separado, y la API solo expone `PATCH` de un símbolo a la vez). Al guardar, valida en el cliente que
+los 5 campos sean números positivos (mismo criterio que el backend) antes de llamar al endpoint;
+muestra "Guardando…" mientras está en vuelo y "Guardado" tras confirmar — el estado se limpia solo
+al volver a editar esa fila, no con un temporizador.
+
+**Ver `docs/use-cases.md`** (sección Whale Alerts / ProcessFlow) para el mecanismo completo: por qué
+el motor necesitaba leer umbrales en vivo (no solo al arrancar) para que este panel tuviera efecto
+real, y la justificación explícita de por qué `PATCH /api/v1/whale-thresholds/{symbol}` es la única
+excepción a la API de solo lectura.
+
+**Hallazgo adicional, corregido en el mismo PR:** `WhaleAlert` (tipo de frontend) y `TYPE_LABEL` en
+`alerts-panel.tsx` seguían sin `SUSTAINED_FLOW` ni los campos de BVC (`estimated_buy_volume`/
+`estimated_sell_volume`) — un vacío real desde el PR de BVC (backend-only en su momento), que habría
+roto el render de `AlertsPanel` ante la primera alerta `SUSTAINED_FLOW` real. Se agregó también un
+color distintivo (`--atr`, violeta) para las tarjetas de este tipo, ya que `--risk`/`--warning` ya
+estaban asignados a Whale/Unusual.
+
+**Tests:** `whale-thresholds-panel.test.tsx` (carga los 11 símbolos, edita y guarda un campo,
+confirma el mensaje de "Guardado", rechaza un valor no positivo sin llamar al endpoint), ajustes a
+`dashboard.test.tsx` para el botón de engranaje y la apertura/cierre del modal.

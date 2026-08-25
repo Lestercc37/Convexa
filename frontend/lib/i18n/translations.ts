@@ -16,6 +16,7 @@ export type Translations = {
     exposureGroupAriaLabel: string;
     aggregatedGreeksEyebrow: string;
     loadingRegime: string;
+    settingsButtonAriaLabel: string;
   };
   regimeBadge: {
     ariaLabel: string;
@@ -102,6 +103,27 @@ export type Translations = {
       time: string;
       updated: string;
       exposure: string;
+    };
+  };
+  whaleThresholdsPanel: {
+    title: string;
+    description: string;
+    closeButtonAriaLabel: string;
+    loading: string;
+    loadFailed: string;
+    saveButton: string;
+    savingButton: string;
+    savedConfirmation: string;
+    saveFailed: string;
+    validationError: string;
+    headers: {
+      symbol: string;
+      unusualMin: string;
+      whaleMin: string;
+      unusualMultiplier: string;
+      whaleMultiplier: string;
+      sustainedFlowMin: string;
+      actions: string;
     };
   };
 };

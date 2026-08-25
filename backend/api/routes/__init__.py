@@ -8,6 +8,7 @@ from backend.api.routes.internal import router as internal_router
 from backend.api.routes.market import router as market_router
 from backend.api.routes.options import router as options_router
 from backend.api.routes.screener_presets import router as screener_presets_router
+from backend.api.routes.whale_thresholds import router as whale_thresholds_router
 
 
 def api_router() -> APIRouter:
@@ -18,4 +19,5 @@ def api_router() -> APIRouter:
     router.include_router(options_router, prefix="/api/v1")
     router.include_router(alerts_router, prefix="/api/v1")
     router.include_router(screener_presets_router, prefix="/api/v1")
+    router.include_router(whale_thresholds_router, prefix="/api/v1")
     return router
