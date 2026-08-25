@@ -391,3 +391,46 @@ estaban asignados a Whale/Unusual.
 **Tests:** `whale-thresholds-panel.test.tsx` (carga los 11 símbolos, edita y guarda un campo,
 confirma el mensaje de "Guardado", rechaza un valor no positivo sin llamar al endpoint), ajustes a
 `dashboard.test.tsx` para el botón de engranaje y la apertura/cierre del modal.
+
+## 19. Whale Alerts: columna dividida en Calls/Puts, con clasificación BVC visible
+
+Antes de este PR, `AlertsPanel` en su variante vertical (columna izquierda, sección 17) mezclaba
+todas las alertas en una sola lista, sin distinguir bando ni mostrar la clasificación de compra/venta
+(BVC, sección de Whale Alerts/BVC en `docs/use-cases.md`) que el backend ya calculaba desde el PR de
+BVC.
+
+**Hallazgo de investigación, confirmado antes de implementar:** `WhaleAlert` (entidad de backend,
+`WhaleAlertResponse`, y el tipo de frontend) **no tiene ningún campo dedicado de bando** —
+`alert_type` es `WHALE`/`UNUSUAL`/`SUSTAINED_FLOW`, no call/put. La única fuente de esa información
+es el símbolo OCC (`occ_symbol`/`contract`, ej. `"SPY260220C00540000"`), de donde hay que parsear el
+carácter `C`/`P` en la posición fija `length - 9` (justo antes de los 8 dígitos del strike) — mismo
+criterio ya usado en el script de TradingView. Extraído a una función pura y testeada de forma
+aislada: `frontend/lib/occ-symbol.ts` (`parseContractSide`), con su propio `occ-symbol.test.ts` —
+lógica basada en posición de string, frágil si el formato cambiara, con verificación directa en vez
+de solo indirecta a través del render del componente.
+
+**Pestañas, no secciones apiladas** — decisión tomada explícitamente dado el ancho fijo de 256px de
+`.tv-alerts-sidebar` (sección 17): secciones apiladas dividirían permanentemente el alto disponible a
+la mitad, mostrando menos alertas de cada lado antes de necesitar scroll; las pestañas le dan a cada
+bando el alto completo de la columna cuando está activo. El split (`.alerts-side-tabs`, mismo patrón
+visual que `.tv-view-toggle`) solo aplica a la variante `orientation="vertical"` — la franja horizontal
+sigue siendo la lista plana sin dividir, consistente con que ya es una opción heredada/sin uso actual
+(sección 17).
+
+**Estado vacío por sección:** reutiliza el mensaje genérico ya existente (`t.alertsPanel.empty`) en
+vez de inventar un mensaje distinto por bando — simple, dado que las pestañas ya dejan claro cuál
+bando está activo.
+
+**Visualización BVC en cada tarjeta** (ambas orientaciones, no solo la vertical — es una mejora por
+tarjeta, no parte de la división por bando): una barra de dos segmentos (`--calm` compra / `--risk`
+venta, ancho proporcional a `estimated_buy_volume`/`estimated_sell_volume`) más una leyenda de texto
+explícita ("Compra/venta estimado (BVC) · X% / Y%") — la etiqueta de texto, no solo el color, es
+intencional: mismo criterio de "nunca dato confirmado" ya establecido en el PR de BVC. Caso borde de
+ambos estimados en cero (primer minuto finalizado de un contrato, sin historial de precio aún) cae al
+50/50 neutral, mismo criterio que el propio σ=0 de BVC.
+
+**Tests:** `frontend/lib/occ-symbol.test.ts` (símbolo call/put conocido a mano, símbolos con raíz de
+distinta longitud, entrada malformada), `alerts-panel.test.tsx` (alertas mixtas de ambos bandos caen
+en su pestaña correcta con la clasificación BVC visible, estado vacío al cambiar a una pestaña sin
+alertas, 30 alertas de un mismo bando confirmando que el scroll queda acotado a `.alerts-column`
+dentro del panel, no a la página completa — mismo criterio de verificación ya usado en la sección 17).

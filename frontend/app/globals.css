@@ -370,6 +370,18 @@ button, select { font: inherit; }
 .alert-amount { font-variant-numeric: tabular-nums; }
 .alert-time { color: var(--tv-text-dim); font-size: 0.66rem; }
 
+.alerts-side-tabs { display: flex; align-items: center; gap: 2px; margin-bottom: 8px; border: 1px solid var(--tv-border); border-radius: 6px; padding: 2px; }
+.alerts-side-tabs button { flex: 1 1 0; border: 0; border-radius: 4px; background: transparent; color: var(--tv-text-dim); cursor: pointer; font-size: 0.72rem; font-weight: 700; padding: 5px 0; }
+.alerts-side-tabs button[aria-pressed="true"] { background: var(--tv-panel-raised); color: var(--tv-text); }
+
+/* BVC (PR #67) — a per-card estimate, never confirmed buy/sell data,
+   hence the explicit caption text on every card, not just a color. */
+.alert-bvc { margin-top: 2px; }
+.alert-bvc-bar { display: flex; width: 100%; height: 5px; border-radius: 999px; overflow: hidden; background: var(--tv-panel); }
+.alert-bvc-buy { display: block; height: 100%; background: var(--calm); }
+.alert-bvc-sell { display: block; height: 100%; background: var(--risk); }
+.alert-bvc-caption { display: block; margin-top: 2px; color: var(--tv-text-dim); font-size: 0.6rem; }
+
 .tv-settings-button {
   border: 1px solid var(--tv-border);
   border-radius: 6px;
