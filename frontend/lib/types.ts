@@ -37,6 +37,27 @@ export type ScreenerPresetResponse = {
   results: ScreenerPresetResult[];
 };
 
+export type ConfigurableScreenerPreset =
+  | "negative-gamma-board"
+  | "vanna-exposure-leaders"
+  | "charm-decay-pressure";
+
+export type ScreenerPresetSettings = {
+  preset: ConfigurableScreenerPreset;
+  net_gamma_max: number | null;
+  min_magnitude: number | null;
+  limit: number | null;
+};
+
+export type ScreenerPresetSettingsListResponse = {
+  schema_version: number;
+  settings: ScreenerPresetSettings[];
+};
+
+export type ScreenerPresetSettingsUpdate =
+  | { net_gamma_max: number }
+  | { min_magnitude: number | null; limit: number | null };
+
 export type OptionContract = {
   occ_symbol: string;
   strike: number;

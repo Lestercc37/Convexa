@@ -129,4 +129,31 @@ export type Translations = {
       actions: string;
     };
   };
+  screenerPresetSettingsPanel: {
+    title: string;
+    description: string;
+    triggerAriaLabel: string;
+    closeButtonAriaLabel: string;
+    loading: string;
+    loadFailed: string;
+    saveButton: string;
+    savingButton: string;
+    savedConfirmation: string;
+    saveFailed: string;
+    gammaValidationError: string;
+    exposureValidationError: string;
+    notApplicable: string;
+    presetLabel: {
+      "negative-gamma-board": string;
+      "vanna-exposure-leaders": string;
+      "charm-decay-pressure": string;
+    };
+    headers: {
+      preset: string;
+      netGammaMax: string;
+      minMagnitude: string;
+      limit: string;
+      actions: string;
+    };
+  };
 };

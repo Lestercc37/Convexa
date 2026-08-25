@@ -3,23 +3,15 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal
-from enum import StrEnum
 from typing import Iterable
 
+from backend.domain.entities import (
+    ExposureLeadersSettings,
+    NegativeGammaBoardSettings,
+    ScreenerPreset,
+)
 from backend.domain.ports import IStorage
 from backend.domain.use_cases.flow import WhaleAlert, WhaleAlertType
-
-
-class ScreenerPreset(StrEnum):
-    UNUSUAL_OPTIONS_ACTIVITY = "unusual-options-activity"
-    NEGATIVE_GAMMA_BOARD = "negative-gamma-board"
-    MAX_PAIN_KEY_LEVELS = "max-pain-key-levels"
-    VANNA_EXPOSURE_LEADERS = "vanna-exposure-leaders"
-    CHARM_DECAY_PRESSURE = "charm-decay-pressure"
-
-    @classmethod
-    def parse(cls, value: str) -> ScreenerPreset:
-        return cls(value.strip().lower().replace("_", "-").replace(" ", "-"))
 
 
 @dataclass(frozen=True, slots=True)
@@ -66,6 +58,15 @@ def get_screener_preset(
     ]
 
     if preset is ScreenerPreset.NEGATIVE_GAMMA_BOARD:
+        # Read live on every call, not cached at startup — same
+        # "editor writes take effect on the next request, no restart"
+        # pattern already established for whale_thresholds (PR #69).
+        settings = storage.get_screener_preset_settings(preset)
+        net_gamma_max = (
+            settings.net_gamma_max
+            if isinstance(settings, NegativeGammaBoardSettings)
+            else NegativeGammaBoardSettings().net_gamma_max
+        )
         return [
             ScreenerPresetResult(
                 symbol=aggregate.symbol,
@@ -73,7 +74,7 @@ def get_screener_preset(
                 net_gamma=aggregate.net_gamma,
             )
             for aggregate in sorted(
-                (item for item in aggregates if item.net_gamma < 0),
+                (item for item in aggregates if item.net_gamma < net_gamma_max),
                 key=lambda item: abs(item.net_gamma),
                 reverse=True,
             )
@@ -102,6 +103,18 @@ def get_screener_preset(
         key=lambda item: abs(getattr(item, exposure_name)),
         reverse=True,
     )
+
+    settings = storage.get_screener_preset_settings(preset)
+    if isinstance(settings, ExposureLeadersSettings):
+        if settings.min_magnitude is not None:
+            ranked = [
+                item
+                for item in ranked
+                if abs(getattr(item, exposure_name)) >= settings.min_magnitude
+            ]
+        if settings.limit is not None:
+            ranked = ranked[: settings.limit]
+
     return [
         ScreenerPresetResult(
             symbol=aggregate.symbol,

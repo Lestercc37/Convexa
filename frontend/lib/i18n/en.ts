@@ -135,4 +135,33 @@ export const en: Translations = {
       actions: "Actions",
     },
   },
+  screenerPresetSettingsPanel: {
+    title: "Preset Filter Settings",
+    description:
+      "Editable filter criteria for the presets that have one. Changes apply immediately, no backend restart required.",
+    triggerAriaLabel: "Preset filter settings",
+    closeButtonAriaLabel: "Close",
+    loading: "Loading settings…",
+    loadFailed: "Couldn't load the preset settings.",
+    saveButton: "Save",
+    savingButton: "Saving…",
+    savedConfirmation: "Saved",
+    saveFailed: "Couldn't save",
+    gammaValidationError: "Net Gamma Max must be a number",
+    exposureValidationError:
+      "Min. magnitude must be a non-negative number (or empty) and limit a positive integer (or empty)",
+    notApplicable: "—",
+    presetLabel: {
+      "negative-gamma-board": "Negative Gamma Board",
+      "vanna-exposure-leaders": "Vanna Exposure Leaders",
+      "charm-decay-pressure": "Charm Decay Pressure",
+    },
+    headers: {
+      preset: "Preset",
+      netGammaMax: "Net Gamma Max",
+      minMagnitude: "Min. Magnitude",
+      limit: "Limit (top-N)",
+      actions: "Actions",
+    },
+  },
 };

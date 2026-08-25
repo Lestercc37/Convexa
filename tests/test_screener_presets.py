@@ -3,10 +3,16 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
+import pytest
 from fastapi.testclient import TestClient
 
 from backend.adapters.storage.memory import InMemoryStorage
-from backend.domain.entities import GammaAggregate
+from backend.domain.entities import (
+    ExposureLeadersSettings,
+    GammaAggregate,
+    InvalidOptionError,
+    NegativeGammaBoardSettings,
+)
 from backend.domain.use_cases import (
     ScreenerPreset,
     WhaleAlert,
@@ -132,6 +138,104 @@ def test_charm_pressure_sorts_by_absolute_exposure() -> None:
         ("SPX", Decimal("100")),
         ("SPY", Decimal("30")),
     ]
+
+
+def test_memory_storage_seeds_only_the_3_configurable_presets() -> None:
+    storage = InMemoryStorage()
+
+    assert storage.get_screener_preset_settings(
+        ScreenerPreset.NEGATIVE_GAMMA_BOARD
+    ) == NegativeGammaBoardSettings()
+    assert storage.get_screener_preset_settings(
+        ScreenerPreset.VANNA_EXPOSURE_LEADERS
+    ) == ExposureLeadersSettings()
+    assert storage.get_screener_preset_settings(
+        ScreenerPreset.CHARM_DECAY_PRESSURE
+    ) == ExposureLeadersSettings()
+    assert storage.get_screener_preset_settings(
+        ScreenerPreset.UNUSUAL_OPTIONS_ACTIVITY
+    ) is None
+    assert storage.get_screener_preset_settings(ScreenerPreset.MAX_PAIN_KEY_LEVELS) is None
+
+
+def test_negative_gamma_board_settings_reject_non_finite_net_gamma_max() -> None:
+    with pytest.raises(InvalidOptionError):
+        NegativeGammaBoardSettings(net_gamma_max=Decimal("NaN"))
+
+
+def test_exposure_leaders_settings_reject_negative_min_magnitude() -> None:
+    with pytest.raises(InvalidOptionError):
+        ExposureLeadersSettings(min_magnitude=Decimal("-1"))
+
+
+def test_exposure_leaders_settings_reject_non_positive_limit() -> None:
+    with pytest.raises(InvalidOptionError):
+        ExposureLeadersSettings(limit=0)
+
+
+def test_negative_gamma_board_uses_configured_threshold() -> None:
+    storage = _storage()
+    storage.save_screener_preset_settings(
+        ScreenerPreset.NEGATIVE_GAMMA_BOARD,
+        NegativeGammaBoardSettings(net_gamma_max=Decimal("-50")),
+    )
+
+    results = get_screener_preset(storage, ScreenerPreset.NEGATIVE_GAMMA_BOARD)
+
+    assert [item.symbol for item in results] == ["SPX"]
+
+
+class _UnconfiguredStorage(InMemoryStorage):
+    """Simulates a preset with no persisted settings row (e.g. a fresh
+    PostgreSQL deployment before the seed migration ran)."""
+
+    def get_screener_preset_settings(self, preset: ScreenerPreset) -> None:
+        return None
+
+
+def test_negative_gamma_board_falls_back_to_default_when_unconfigured() -> None:
+    storage = _UnconfiguredStorage()
+    storage.save_gamma_aggregate(_aggregate("SPY", net_gamma="-20", vanna="0", charm="0"))
+
+    results = get_screener_preset(storage, ScreenerPreset.NEGATIVE_GAMMA_BOARD)
+
+    assert [item.symbol for item in results] == ["SPY"]
+
+
+def test_vanna_leaders_applies_configured_minimum_magnitude() -> None:
+    storage = _storage()
+    storage.save_screener_preset_settings(
+        ScreenerPreset.VANNA_EXPOSURE_LEADERS,
+        ExposureLeadersSettings(min_magnitude=Decimal("100")),
+    )
+
+    results = get_screener_preset(storage, ScreenerPreset.VANNA_EXPOSURE_LEADERS)
+
+    assert [item.symbol for item in results] == ["SPY", "QQQ"]
+
+
+def test_vanna_leaders_applies_configured_limit() -> None:
+    storage = _storage()
+    storage.save_screener_preset_settings(
+        ScreenerPreset.VANNA_EXPOSURE_LEADERS,
+        ExposureLeadersSettings(limit=1),
+    )
+
+    results = get_screener_preset(storage, ScreenerPreset.VANNA_EXPOSURE_LEADERS)
+
+    assert [item.symbol for item in results] == ["SPY"]
+
+
+def test_charm_pressure_applies_configured_minimum_and_limit_together() -> None:
+    storage = _storage()
+    storage.save_screener_preset_settings(
+        ScreenerPreset.CHARM_DECAY_PRESSURE,
+        ExposureLeadersSettings(min_magnitude=Decimal("50"), limit=1),
+    )
+
+    results = get_screener_preset(storage, ScreenerPreset.CHARM_DECAY_PRESSURE)
+
+    assert [item.symbol for item in results] == ["QQQ"]
 
 
 def test_screener_endpoint_is_read_only() -> None:

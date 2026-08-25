@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from dataclasses import replace
 from datetime import date, datetime
 from decimal import Decimal
@@ -13,14 +14,18 @@ from backend.domain.entities import (
     ContractType,
     DailyBar,
     DailyGammaReference,
+    ExposureLeadersSettings,
     FlowEvent,
     FlowEventType,
     GammaAggregate,
     GammaAggregateItem,
     Greeks,
     MarketPrice,
+    NegativeGammaBoardSettings,
     OptionChain,
     OptionContract,
+    ScreenerPreset,
+    ScreenerPresetSettings,
     Underlying,
     UnderlyingKind,
     WhaleThreshold,
@@ -110,6 +115,73 @@ class PostgreSQLStorage:
                 )
                 for row in rows
             }
+
+    def save_screener_preset_settings(
+        self, preset: ScreenerPreset, settings: ScreenerPresetSettings
+    ) -> None:
+        parameters = self._screener_preset_settings_to_json(settings)
+        with self.session_factory.begin() as session:
+            session.execute(
+                text(
+                    """
+                    INSERT INTO screener_preset_settings (preset, parameters)
+                    VALUES (:preset, CAST(:parameters AS jsonb))
+                    ON CONFLICT (preset) DO UPDATE SET
+                        parameters = EXCLUDED.parameters
+                    """
+                ),
+                {"preset": preset.value, "parameters": json.dumps(parameters)},
+            )
+
+    def get_screener_preset_settings(
+        self, preset: ScreenerPreset
+    ) -> ScreenerPresetSettings | None:
+        with self.session_factory() as session:
+            row = session.execute(
+                text(
+                    """
+                    SELECT parameters FROM screener_preset_settings WHERE preset = :preset
+                    """
+                ),
+                {"preset": preset.value},
+            ).mappings().one_or_none()
+        if row is None:
+            return None
+        raw_parameters = row["parameters"]
+        # The JSONB driver normally deserializes to a dict already, but
+        # fall back to parsing explicitly rather than assume one behavior.
+        parameters: dict[str, str | int | None] = (
+            json.loads(raw_parameters) if isinstance(raw_parameters, str) else raw_parameters
+        )
+        return self._screener_preset_settings_from_json(preset, parameters)
+
+    @staticmethod
+    def _screener_preset_settings_to_json(
+        settings: ScreenerPresetSettings,
+    ) -> dict[str, str | int | None]:
+        if isinstance(settings, NegativeGammaBoardSettings):
+            return {"net_gamma_max": str(settings.net_gamma_max)}
+        return {
+            "min_magnitude": (
+                str(settings.min_magnitude) if settings.min_magnitude is not None else None
+            ),
+            "limit": settings.limit,
+        }
+
+    @staticmethod
+    def _screener_preset_settings_from_json(
+        preset: ScreenerPreset, parameters: dict[str, str | int | None]
+    ) -> ScreenerPresetSettings:
+        if preset is ScreenerPreset.NEGATIVE_GAMMA_BOARD:
+            return NegativeGammaBoardSettings(
+                net_gamma_max=Decimal(str(parameters["net_gamma_max"]))
+            )
+        min_magnitude = parameters.get("min_magnitude")
+        limit = parameters.get("limit")
+        return ExposureLeadersSettings(
+            min_magnitude=Decimal(str(min_magnitude)) if min_magnitude is not None else None,
+            limit=int(limit) if limit is not None else None,
+        )
 
     def save_chain_snapshot(self, chain: OptionChain) -> None:
         with self.session_factory.begin() as session:

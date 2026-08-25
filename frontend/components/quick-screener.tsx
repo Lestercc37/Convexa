@@ -10,6 +10,7 @@ import type {
   ScreenerPresetResult,
 } from "@/lib/types";
 import { TYPE_LABEL } from "./alerts-panel";
+import { ScreenerPresetSettingsPanel } from "./screener-preset-settings-panel";
 
 const PRESETS: { name: ScreenerPresetName; label: string; icon: string }[] = [
   { name: "unusual-options-activity", label: "Unusual Options Activity", icon: "🔥" },
@@ -97,6 +98,7 @@ export function QuickScreener() {
   const [preset, setPreset] = useState<ScreenerPresetName>(PRESETS[0].name);
   const [results, setResults] = useState<ScreenerPresetResult[] | null>(null);
   const [error, setError] = useState<unknown>(null);
+  const [showSettingsPanel, setShowSettingsPanel] = useState(false);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -120,17 +122,30 @@ export function QuickScreener() {
           <p className="eyebrow">{t.quickScreener.eyebrow}</p>
           <h2 id="quick-screener-title">{t.quickScreener.title}</h2>
         </div>
-        <label className="preset-control">
-          <span>{t.quickScreener.presetLabel}</span>
-          <select value={preset} onChange={(event) => {
-            setResults(null);
-            setError(null);
-            setPreset(event.target.value as ScreenerPresetName);
-          }}>
-            {PRESETS.map((item) => <option key={item.name} value={item.name}>{item.icon} {item.label}</option>)}
-          </select>
-        </label>
+        <div className="screener-preset-row">
+          <label className="preset-control">
+            <span>{t.quickScreener.presetLabel}</span>
+            <select value={preset} onChange={(event) => {
+              setResults(null);
+              setError(null);
+              setPreset(event.target.value as ScreenerPresetName);
+            }}>
+              {PRESETS.map((item) => <option key={item.name} value={item.name}>{item.icon} {item.label}</option>)}
+            </select>
+          </label>
+          <button
+            type="button"
+            className="tv-settings-button"
+            aria-label={t.screenerPresetSettingsPanel.triggerAriaLabel}
+            onClick={() => setShowSettingsPanel(true)}
+          >
+            ⚙
+          </button>
+        </div>
       </div>
+      {showSettingsPanel && (
+        <ScreenerPresetSettingsPanel onClose={() => setShowSettingsPanel(false)} />
+      )}
       {error ? <p className="screener-empty error" role="alert">{describeError(error, t)}</p> : results === null ? (
         <p className="screener-empty" aria-live="polite">{t.quickScreener.loading}</p>
       ) : <ResultsTable preset={preset} results={results} t={t} />}

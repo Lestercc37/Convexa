@@ -6,10 +6,14 @@ from decimal import Decimal
 from backend.domain.entities import (
     DailyBar,
     DailyGammaReference,
+    ExposureLeadersSettings,
     FlowEvent,
     GammaAggregate,
     MarketPrice,
+    NegativeGammaBoardSettings,
     OptionChain,
+    ScreenerPreset,
+    ScreenerPresetSettings,
     Underlying,
     WhaleThreshold,
 )
@@ -39,6 +43,15 @@ class InMemoryStorage:
             )
             for underlying in ACTIVE_UNDERLYINGS
         }
+        # Only the 3 presets with real parameters get a seeded row (task
+        # decision) — Unusual Options Activity and Max Pain & Key Levels
+        # have nothing to configure, so `get_screener_preset_settings`
+        # correctly returns `None` for them, same as an unseeded preset.
+        self._screener_preset_settings: dict[ScreenerPreset, ScreenerPresetSettings] = {
+            ScreenerPreset.NEGATIVE_GAMMA_BOARD: NegativeGammaBoardSettings(),
+            ScreenerPreset.VANNA_EXPOSURE_LEADERS: ExposureLeadersSettings(),
+            ScreenerPreset.CHARM_DECAY_PRESSURE: ExposureLeadersSettings(),
+        }
 
     def list_underlyings(self) -> list[Underlying]:
         return sorted(self._underlyings.values(), key=lambda item: item.symbol)
@@ -48,6 +61,16 @@ class InMemoryStorage:
 
     def get_whale_thresholds(self) -> dict[str, WhaleThreshold]:
         return dict(self._whale_thresholds)
+
+    def save_screener_preset_settings(
+        self, preset: ScreenerPreset, settings: ScreenerPresetSettings
+    ) -> None:
+        self._screener_preset_settings[preset] = settings
+
+    def get_screener_preset_settings(
+        self, preset: ScreenerPreset
+    ) -> ScreenerPresetSettings | None:
+        return self._screener_preset_settings.get(preset)
 
     def save_chain_snapshot(self, chain: OptionChain) -> None:
         self._chains.setdefault(chain.symbol, []).append(chain)
