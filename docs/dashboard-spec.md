@@ -481,7 +481,6 @@ Negative Gamma Board y par de campos de Vanna/Charm enviados juntos—, rechaza 
 límite no positivo sin llamar al endpoint, rechaza un `net_gamma_max` no numérico, error traducido si
 falla la carga o el guardado, cierre por botón/overlay/Escape), ajuste a `quick-screener.test.tsx`
 (el botón de engranaje abre el panel y dispara la carga).
-
 ## 21. Scheduler automático de cálculo — reemplaza el disparo manual periódico
 
 Hasta este PR, `POST /internal/trigger-calculation/{symbol}` (endpoint interno, sin UI) era la única
@@ -500,3 +499,65 @@ scheduler intentará correr en un feriado que caiga entre semana (Acción de Gra
 aunque en la práctica probablemente no obtenga datos útiles del proveedor real en ese caso (hoy sigue
 sobre `MockDataProvider`, que no tiene ese concepto tampoco). Construir un calendario de feriados
 completo queda fuera de alcance de este PR — decisión tomada explícitamente, no un descuido.
+
+## 22. Chart más compacto (ancho y alto), espacio ganado para el panel de métricas y un panel reservado
+
+**Investigación previa, confirmada antes de tocar CSS:**
+
+1. **Ancho relativo hoy — flex-basis fijo en px, no grid ni porcentaje.** `.tv-alerts-sidebar` y
+   `.tv-sidebar` son columnas de ancho fijo (`flex: 0 0 256px; width: 256px`); el chart (`.tv-center`)
+   no tiene ancho propio — es `flex: 1 1 auto` y absorbe lo que sobra de `.tv-body` después de restar
+   ambas columnas fijas. No hay `.content-grid` ni porcentajes en ningún lado de este layout.
+2. **Ancho vs. alto — mecanismos distintos.** Para el ancho, ensanchar `.tv-sidebar` alcanza: el chart
+   se angosta solo (cero cambios en `PriceChart`), porque su `flex: 1 1 auto` absorbe automáticamente
+   lo que la columna derecha deja de ocupar. Para el alto, **este mecanismo no existe**: `.tv-center`
+   (chart) y `.tv-sidebar` (métricas) son hermanos dentro de la misma fila (`.tv-body`, flex
+   horizontal) — ambos ya se estiran a la misma altura (la de `.tv-body`, topeada por `.tv-shell {
+   height: 100vh }`, PR #68/sección 17). Reducir el alto del chart no le transfiere nada al panel de
+   métricas por sí solo — son carriles paralelos de la misma altura, no vasos comunicantes. Confirmado
+   con el usuario antes de implementar: el espacio vertical liberado se reserva dentro de la propia
+   columna del chart (`.tv-center`), como un panel nuevo apilado debajo, no se intenta transferir al
+   panel derecho.
+
+**Cambios de proporción, ambos ~10-20% (rango de referencia pedido), verificados en 1920×1080 y
+1366×768:**
+
+- **Ancho:** `.tv-sidebar` pasa de `256px` a `400px` (fijo, mismo criterio de ancho fijo que
+  `.tv-alerts-sidebar`, que no se toca). El chart se angosta solo vía su propio `flex: 1 1 auto` — sin
+  tocar `PriceChart`. Reducción resultante del ancho del chart: **10.2%** en 1920×1080 (1408px → 1264px)
+  y **16.9%** en 1366×768 (854px → 710px) — ambos dentro del rango 10-20%, aunque en píxeles fijos la
+  proporción exacta varía naturalmente según el ancho total del viewport.
+- **Alto:** `.tv-center` pasa a `flex-direction: column` con dos hijos en el eje vertical —
+  `.price-chart-panel` (`flex: 5 1 0`, ~83%) y el nuevo `.chart-secondary-panel` (`flex: 1 1 0`,
+  ~17%) — reducción del **16.7%** de alto del chart en cualquier viewport (es una proporción de
+  flex-grow, no un split en px fijos, así que se mantiene constante sin importar la altura disponible,
+  a diferencia del ancho). Verificado: 854.4px/171.9px en 1920×1080, 602.5px/121.5px en 1366×768 —
+  misma proporción ~83/17 en ambos casos.
+
+**`.chart-secondary-panel` — espacio reservado, no un hueco vacío, sin contenido funcional todavía.**
+Decisión explícita del usuario: en vez de dejar el alto liberado como espacio muerto sin usar, se
+reserva como un panel con su propio contenedor (`border-top` como separador, mismo patrón de línea
+divisoria que ya usan `.tv-sidebar`/`.tv-alerts-sidebar` con sus bordes de columna, solo rotado a
+horizontal) — con un placeholder simple ("Próximamente" / "Coming soon", i18n completo en/es vía
+`t.chartSecondaryPanel`), sin gráfico de barras ni contenido funcional. Qué va ahí se decide en un PR
+futuro aparte; esto solo asegura que el layout se vea completo y proporcionado desde ya, no a medio
+terminar.
+
+**Efecto medido en el panel de métricas — mejora real, no elimina el scroll interno en todos los
+casos.** En 1920×1080, `.tv-sidebar` deja de necesitar su scroll interno por completo
+(`scrollHeight === clientHeight` tras el cambio de ancho). En 1366×768 (el más ajustado de los dos
+probados) el scroll interno de `.tv-sidebar` sigue siendo necesario, pero se reduce: el desborde baja
+de 216px a 172px (contenido total: 940px → 896px, ambos por debajo de los 724px disponibles en esa
+resolución) — el ancho extra permite que las etiquetas/valores envuelvan menos, ganando altura real,
+aunque seis paneles apilados en una columna de 400px a 768px de alto siguen sin caber sin scroll. Ese
+scroll interno (nunca de página completa) es el comportamiento ya establecido y aceptado desde la
+sección 17 para cualquier columna con más contenido del que cabe. Ningún scroll de página completa
+aparece en ninguna de las dos resoluciones (`document.documentElement.scrollHeight ===
+document.documentElement.clientHeight` en ambas) — el requisito duro del PR #68 se mantiene intacto.
+La columna izquierda de Whale Alerts (`.tv-alerts-sidebar`) no se tocó — sigue en 256px, verificado sin
+cambios en ambas resoluciones.
+
+**Tests:** `dashboard.test.tsx` — nueva aserción confirmando que `.chart-secondary-panel` se renderiza
+(con su `aria-label` y el texto "Próximamente") en la vista "En vivo"; los tests existentes de cambio
+de vista/símbolo, ya cubiertos, siguen confirmando que el Dashboard completo renderiza sin errores con
+las proporciones nuevas.

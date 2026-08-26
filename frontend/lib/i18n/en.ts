@@ -56,6 +56,11 @@ export const en: Translations = {
     chartAriaLabel: (symbol) => `Candlestick chart for ${symbol}`,
     emptyState: "Waiting for the first price sample…",
   },
+  chartSecondaryPanel: {
+    ariaLabel: "Additional chart panel, coming soon",
+    eyebrow: "Convexa",
+    placeholder: "Coming soon",
+  },
   preSessionPanel: {
     eyebrow: "Pre-session preparation",
     title: (symbol) => `GEX Profile — ${symbol}`,

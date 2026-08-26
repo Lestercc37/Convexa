@@ -239,14 +239,25 @@ export function Dashboard() {
 
           <div className="tv-center">
             {view === "live" ? (
-              <PriceChart
-                key={`price-chart-${symbol}`}
-                symbol={symbol}
-                candles={candles}
-                gamma={gamma}
-                vwapPoints={vwapPoints}
-                atrRange={market.atr_range}
-              />
+              <>
+                <PriceChart
+                  key={`price-chart-${symbol}`}
+                  symbol={symbol}
+                  candles={candles}
+                  gamma={gamma}
+                  vwapPoints={vwapPoints}
+                  atrRange={market.atr_range}
+                />
+                <section
+                  className="chart-secondary-panel"
+                  aria-label={t.chartSecondaryPanel.ariaLabel}
+                >
+                  <p className="eyebrow">{t.chartSecondaryPanel.eyebrow}</p>
+                  <p className="chart-secondary-panel-placeholder">
+                    {t.chartSecondaryPanel.placeholder}
+                  </p>
+                </section>
+              </>
             ) : (
               <PreSessionPanel key={`pre-session-${symbol}`} symbol={symbol} />
             )}

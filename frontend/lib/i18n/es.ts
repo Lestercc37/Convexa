@@ -57,6 +57,11 @@ export const es: Translations = {
     chartAriaLabel: (symbol) => `Chart de velas para ${symbol}`,
     emptyState: "Esperando la primera muestra de precio…",
   },
+  chartSecondaryPanel: {
+    ariaLabel: "Panel adicional del chart, próximamente",
+    eyebrow: "Convexa",
+    placeholder: "Próximamente",
+  },
   preSessionPanel: {
     eyebrow: "Preparación pre-sesión",
     title: (symbol) => `GEX Profile — ${symbol}`,
