@@ -76,11 +76,24 @@ button, select { font: inherit; }
   height: 100vh;
 }
 
+/* flex-shrink: 0 (section 23) — the real fix for the Regime Badge
+   overlap bug, not a z-index patch. .tv-shell's column ({height: 100vh}
+   above) forces its flex-shrink algorithm to run whenever the page's
+   total content exceeds the viewport height, which is the normal case
+   once .tv-body's content (the stacked right sidebar especially) grows
+   past what's available. Without this, .tv-topbar had no flex-shrink:0
+   guard, so it got compressed down to its min-height: 44px right along
+   with .tv-body — even though its content (with the Regime Badge, when
+   that still lived here) needed more room than that, so the excess
+   spilled out above and below the shrunk box. .tv-body already has its
+   own min-height: 0 + overflow-y: auto (section 17) specifically so it
+   can absorb that kind of shrink safely; the topbar never could. */
 .tv-topbar {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 16px;
+  flex-shrink: 0;
   min-height: 44px;
   padding: 6px 14px;
   border-bottom: 1px solid var(--tv-border);
@@ -123,23 +136,6 @@ button, select { font: inherit; }
 .tv-timeframe[aria-pressed="true"] { background: var(--tv-panel-raised); color: var(--tv-text); }
 .tv-timeframe:disabled { cursor: default; opacity: 0.4; }
 
-.tv-topbar-right { display: flex; align-items: center; }
-.tv-topbar-right .regime-badge {
-  min-height: 0;
-  padding: 5px 12px;
-  border-radius: 6px;
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-.tv-topbar-right .regime-badge > div,
-.tv-topbar-right .regime-badge .regime-heading { display: contents; }
-.tv-topbar-right .regime-badge .eyebrow,
-.tv-topbar-right .regime-badge .regime-meta,
-.tv-topbar-right .regime-badge .regime-warning { display: none; }
-.tv-topbar-right .regime-badge .regime-label { font-size: 0.82rem; line-height: 1; white-space: nowrap; }
-.tv-topbar-right .regime-badge .regime-detail { margin: 0; color: var(--tv-text-dim); font-size: 0.74rem; white-space: nowrap; }
-
 .tv-body { display: flex; flex: 1 1 auto; min-height: 0; }
 
 /* Replaces the old decorative 44px toolbar — same slot in the row, now a
@@ -181,7 +177,15 @@ button, select { font: inherit; }
   overflow-y: auto;
 }
 
-/* ---------- Regime badge (full form — used only if rendered outside the topbar) ---------- */
+/* ---------- Regime badge (full form) ---------- */
+
+/* Lives inside .pre-session-panel now (section 23) — moved out of the
+   topbar, where it was both overlapping (see the .tv-topbar fix above)
+   and mostly redundant with the live chart's own Gamma Flip/wall lines.
+   Pre-Sesión has no such visual context of its own, and had genuine
+   unused space below its chart to hold this — no compact override
+   needed anymore; this is always the full form. */
+.pre-session-panel .regime-badge { margin-top: 14px; flex-shrink: 0; }
 
 .regime-badge { padding: 20px; display: flex; flex-direction: column; justify-content: space-between; gap: 14px; }
 .regime-badge.long { border-color: rgba(0, 220, 90, 0.4); background: linear-gradient(145deg, var(--calm-soft), var(--tv-panel)); }
@@ -365,7 +369,11 @@ button, select { font: inherit; }
    .tv-alerts-sidebar's bounded height instead of growing past it — same
    reasoning as .tv-shell's height cap above. */
 .alerts-panel-vertical { display: flex; flex-direction: column; min-height: 0; flex: 1 1 auto; }
-.alerts-heading { margin-bottom: 8px; }
+/* display: flex (section 23) — the Whale Alerts thresholds gear moved
+   here from the topbar, so it reads as this panel's own setting, not
+   Gamma's. Same "title block | action button" row pattern as
+   .screener-preset-row's own trigger button. */
+.alerts-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
 .alerts-heading .eyebrow { margin-bottom: 2px; }
 .alerts-heading h2 { margin: 0; font-size: 0.86rem; }
 .alerts-empty { margin: 0; padding: 10px 0; color: var(--tv-text-dim); font-size: 0.8rem; }

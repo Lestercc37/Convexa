@@ -4,9 +4,10 @@ import { useEffect, useMemo, useState } from "react";
 import { getGammaProfile } from "@/lib/api";
 import { describeError } from "@/lib/i18n/describe-error";
 import { useLanguage, type Language } from "@/lib/i18n/language-context";
-import type { GammaAggregateItem, GammaAggregateResponse } from "@/lib/types";
+import type { GammaAggregateItem, GammaAggregateResponse, GammaResponse, MarketResponse } from "@/lib/types";
+import { RegimeBadge } from "./regime-badge";
 
-type PreSessionPanelProps = { symbol: string };
+type PreSessionPanelProps = { symbol: string; gamma: GammaResponse; market: MarketResponse };
 
 const PLOT = { top: 20, bottom: 320, centerLeft: 120, centerRight: 640, edgeLeft: 20, edgeRight: 740 };
 
@@ -35,7 +36,7 @@ function magnitude(value: number, peak: number, start: number, end: number) {
   return start + ratio * (end - start);
 }
 
-export function PreSessionPanel({ symbol }: PreSessionPanelProps) {
+export function PreSessionPanel({ symbol, gamma, market }: PreSessionPanelProps) {
   const { language, t } = useLanguage();
   const [profile, setProfile] = useState<GammaAggregateResponse | null>(null);
   const [error, setError] = useState<unknown>(null);
@@ -179,6 +180,14 @@ export function PreSessionPanel({ symbol }: PreSessionPanelProps) {
       ) : (
         <p className="pre-session-status">{t.preSessionPanel.loading}</p>
       )}
+
+      {/* Relocated from the topbar (dashboard-spec.md section 23) — the
+          live view's chart already conveys regime context of its own
+          (Gamma Flip line, walls), making the badge redundant there; this
+          frozen, context-free snapshot view is where it actually adds
+          something. Renders in the real empty space confirmed below the
+          chart, not layered on top of anything. */}
+      <RegimeBadge gamma={gamma} market={market} />
     </section>
   );
 }
