@@ -236,6 +236,78 @@ genuinamente opcionales (a diferencia de los 5 campos de `WhaleThresholdUpdateRe
 obligatorios). `unusual-options-activity` y `max-pain-key-levels` devuelven 404 en el `PATCH` — no
 tienen fila de configuración que editar.
 
+**Scheduler Automático de Cálculo — reemplaza el disparo manual periódico.** Hasta este PR, la única
+forma de refrescar snapshot + gamma + métricas derivadas para un símbolo era `POST
+/internal/trigger-calculation/{symbol}` (endpoint interno, sin UI, uno por vez) — sin ningún proceso
+que lo disparara solo. Se investigaron tres cosas antes de escribir código:
+
+1. **¿Existe ya un chequeo de horario de mercado reutilizable?** La premisa inicial asumía que sí
+   (del PR de bucketing de 1 minuto de Whale Alerts) — resultó ser falsa. `WhaleAlertsEngine.process()`
+   (`backend/domain/use_cases/flow.py`) bucketiza por `chain.as_of` pero no tiene ningún gate de
+   horario de sesión; no existía ningún `is_market_open` en el proyecto. Sí hay precedente de usar
+   `ZoneInfo("America/New_York")` en la capa de dominio (`calculate_anchored_vwap.py`,
+   `calculate_derived_metrics.py`, `calculate_expected_move.py`), pero todos calculan el ancla de
+   sesión (9:30 ET), no un booleano de horario — se construyó `is_market_open` desde cero, siguiendo
+   ese mismo estilo (`zoneinfo`, dominio puro).
+2. **¿`trigger_calculation` maneja errores por símbolo?** No — cero `try`/`except`, cualquier
+   excepción en cualquiera de sus 6 pasos se propaga sin aislarse (el único handler es el `QllError`
+   global de `backend/main.py`, que no distingue por símbolo). El scheduler tiene que aislar cada
+   símbolo por su cuenta.
+3. **¿Qué mecanismo de tarea periódica?** No había ninguna infraestructura previa (sin APScheduler, sin
+   `BackgroundTasks`, sin Celery) — se eligió un loop `asyncio` nativo (`asyncio.create_task` +
+   `asyncio.sleep`), arrancado/detenido dentro del `lifespan` ya existente de `backend/main.py`, en vez
+   de agregar una dependencia como APScheduler para un caso de 11 símbolos cada 30 segundos que no
+   necesita jobstores, persistencia ni varios triggers concurrentes.
+
+**Extracción a un caso de uso compartido, no duplicación.** El cuerpo de `trigger_calculation` (6
+pasos: traer cadena de opciones, persistirla, alimentar Whale Alerts, traer/persistir precio y barras
+diarias, recalcular exposición gamma y métricas derivadas) se extrajo a
+`RefreshUnderlyingSnapshotUseCase` (`backend/domain/use_cases/refresh_snapshot.py`) — mismo patrón que
+`capture_daily_gamma_reference`: una función/clase de dominio reutilizada por dos llamadores. El
+endpoint manual y el scheduler la llaman por igual; ninguno de los dos invoca al otro (se descartó
+explícitamente que el scheduler llamara al endpoint por HTTP interno — más indirecto y frágil que
+compartir la función de dominio directamente). El endpoint mantiene el mismo contrato externo
+(`TriggerCalculationResponse` sin cambios).
+
+**`UnderlyingRefreshScheduler` (`backend/core/scheduler.py`) — infraestructura, no dominio.** Vive en
+`backend/core/` (junto a `container.py`), no en `backend/domain/`, porque coordina `asyncio`, logging
+y el `Container` completo — son responsabilidades de composición/infraestructura, no lógica de
+negocio. Un único `asyncio.Task` corre durante toda la vida del proceso, arrancado en el `lifespan` de
+`backend/main.py` justo después de construir el container, y cancelado limpiamente en su bloque
+`finally`. Cada ciclo (cada 30s, solo si `is_market_open(datetime.now(UTC))`) recorre
+`ACTIVE_UNDERLYINGS` y llama a `RefreshUnderlyingSnapshotUseCase.execute(symbol)` por cada uno dentro
+de `asyncio.to_thread(...)` — hoy sobre `MockDataProvider` (síncrono, en memoria) esto no cambia nada
+observable, pero mantiene al scheduler agnóstico del proveedor: el día que se conecte FlashAlpha real
+(HTTP síncrono), una llamada lenta ya no congelaría el event loop ni el resto de la API mientras un
+ciclo está en curso. Cada símbolo se envuelve en su propio `try`/`except Exception` con
+`logger.exception(...)` — un fallo de un símbolo no interrumpe a los demás ni tira abajo el ciclo. Al
+cerrar cada ciclo se loggea un resumen (símbolos exitosos/fallidos, con los símbolos fallidos
+nombrados) — para poder diagnosticar sin adivinar, como pidió la tarea.
+
+**Deshabilitado durante tests, no solo "no llamado".** `Settings.enable_scheduler` (default `True`)
+se fuerza a `False` en el fixture `autouse` de `tests/conftest.py` para todo test no marcado
+`integration` — cualquier test que abra `TestClient(app)` dispara el `lifespan` real, y sin este flag
+arrancaría un scheduler de verdad (intervalo de 30s, iteraciones inmediatas si el reloj real cae en
+horario de mercado) corriendo de fondo durante ese test, con efectos secundarios no deterministas
+según la hora real de ejecución de la suite. Mismo mecanismo ya usado por ese fixture para forzar
+SQLite en memoria en vez de la base de datos real del desarrollador.
+
+**Límite conocido y aceptado explícitamente: sin calendario de feriados bursátiles.**
+`is_market_open` (`backend/domain/use_cases/market_hours.py`) solo verifica día hábil (lunes-viernes)
+y horario (9:30am-4:00pm ET, intervalo semiabierto `[9:30, 16:00)`) — ningún feriado bursátil
+(Acción de Gracias, Navidad, etc.) está contemplado, porque no existe ningún calendario de feriados en
+el proyecto. El scheduler intentará correr en un feriado entre semana; documentado en el docstring de
+la función y en `docs/dashboard-spec.md` (sección 21) como limitación conocida y deliberada, no un
+descuido — construir un calendario de feriados completo queda fuera de alcance de este PR.
+
+**Tests:** `tests/test_market_hours.py` (abierto en sesión regular, exactamente en el límite de
+apertura/cierre —intervalo semiabierto—, cerrado fuera de horario, cerrado en fin de semana, acepta
+cualquier timezone de entrada y convierte a ET, y un test que documenta explícitamente la limitación
+de feriados en vez de asumir una corrección que la función no ofrece), `tests/test_scheduler.py` (un
+ciclo procesa los 11 símbolos activos, un ciclo continúa con los 10 restantes si uno falla, el loop no
+corre ningún ciclo fuera de horario de mercado, el loop sí corre durante horario de mercado,
+`start()`/`stop()` son seguros de llamar repetidamente o antes de arrancar).
+
 ---
 
 ## Resumen de mapeo a contratos existentes
