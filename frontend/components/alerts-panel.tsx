@@ -8,6 +8,7 @@ import type { Translations } from "@/lib/i18n/translations";
 import { type ContractSide, parseContractSide } from "@/lib/occ-symbol";
 import { POLLING_INTERVAL_MS } from "@/lib/polling";
 import type { Underlying, WhaleAlert } from "@/lib/types";
+import { WhaleThresholdsPanel } from "./whale-thresholds-panel";
 
 type AlertsPanelProps = {
   underlyings: Underlying[];
@@ -92,6 +93,7 @@ export function AlertsPanel({ underlyings, orientation = "horizontal" }: AlertsP
   const [alerts, setAlerts] = useState<WhaleAlert[]>([]);
   const [error, setError] = useState<unknown>(null);
   const [activeSide, setActiveSide] = useState<ContractSide>("call");
+  const [showThresholdsPanel, setShowThresholdsPanel] = useState(false);
 
   useEffect(() => {
     if (!underlyings.length) return;
@@ -143,9 +145,22 @@ export function AlertsPanel({ underlyings, orientation = "horizontal" }: AlertsP
       aria-labelledby="alerts-panel-title"
     >
       <div className="panel-heading alerts-heading">
-        <p className="eyebrow">{t.alertsPanel.eyebrow}</p>
-        <h2 id="alerts-panel-title">{t.alertsPanel.title}</h2>
+        <div>
+          <p className="eyebrow">{t.alertsPanel.eyebrow}</p>
+          <h2 id="alerts-panel-title">{t.alertsPanel.title}</h2>
+        </div>
+        <button
+          type="button"
+          className="tv-settings-button"
+          aria-label={t.dashboard.settingsButtonAriaLabel}
+          onClick={() => setShowThresholdsPanel(true)}
+        >
+          ⚙
+        </button>
       </div>
+      {showThresholdsPanel && (
+        <WhaleThresholdsPanel onClose={() => setShowThresholdsPanel(false)} />
+      )}
       {isVertical && !error && (
         <div
           className="alerts-side-tabs"

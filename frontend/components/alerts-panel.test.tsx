@@ -8,6 +8,7 @@ import { AlertsPanel } from "./alerts-panel";
 
 const apiMocks = vi.hoisted(() => ({
   getAlerts: vi.fn(),
+  getWhaleThresholds: vi.fn(),
 }));
 
 vi.mock("@/lib/api", async () => {
@@ -26,6 +27,8 @@ function alertsResponse(symbol: string, alerts: WhaleAlertsResponse["alerts"]): 
 
 beforeEach(() => {
   vi.clearAllMocks();
+  apiMocks.getAlerts.mockResolvedValue(alertsResponse("SPY", []));
+  apiMocks.getWhaleThresholds.mockResolvedValue({ schema_version: 1, thresholds: [] });
 });
 
 describe("AlertsPanel", () => {
@@ -229,5 +232,26 @@ describe("AlertsPanel", () => {
     const alert = await screen.findByRole("alert");
     expect(alert).toHaveTextContent("No se pudo completar la solicitud. Intenta de nuevo.");
     expect(alert).not.toHaveTextContent("API request failed");
+  });
+
+  it("owns its own Whale Alerts thresholds gear button, opening and closing the panel", async () => {
+    // Relocated here from the topbar (dashboard-spec.md section 23) so it
+    // reads as this panel's own setting, not Gamma's — same
+    // self-contained trigger+state+modal pattern as QuickScreener's own
+    // settings gear.
+    const user = userEvent.setup();
+    renderWithLanguage(<AlertsPanel underlyings={[underlyings[0]]} orientation="vertical" />);
+
+    expect(screen.queryByText("Umbrales de Whale Alerts")).not.toBeInTheDocument();
+
+    await user.click(
+      screen.getByRole("button", { name: "Configuración de umbrales de Whale Alerts" }),
+    );
+
+    expect(await screen.findByText("Umbrales de Whale Alerts")).toBeInTheDocument();
+    await waitFor(() => expect(apiMocks.getWhaleThresholds).toHaveBeenCalled());
+
+    await user.click(screen.getByRole("button", { name: "Cerrar" }));
+    expect(screen.queryByText("Umbrales de Whale Alerts")).not.toBeInTheDocument();
   });
 });
