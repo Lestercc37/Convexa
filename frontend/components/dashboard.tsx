@@ -227,6 +227,7 @@ export function Dashboard() {
                   symbol={symbol}
                   candles={candles}
                   gamma={gamma}
+                  market={market}
                   vwapPoints={vwapPoints}
                   atrRange={market.atr_range}
                 />
@@ -241,12 +242,7 @@ export function Dashboard() {
                 </section>
               </>
             ) : (
-              <PreSessionPanel
-                key={`pre-session-${symbol}`}
-                symbol={symbol}
-                gamma={gamma}
-                market={market}
-              />
+              <PreSessionPanel key={`pre-session-${symbol}`} symbol={symbol} />
             )}
           </div>
 

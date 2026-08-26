@@ -17,13 +17,15 @@ import {
 import { getGammaHistory } from "@/lib/api";
 import type { MinuteCandle, VwapPoint } from "@/lib/candles";
 import { useLanguage } from "@/lib/i18n/language-context";
-import type { AtrRange, GammaHistoryItem, GammaResponse } from "@/lib/types";
+import type { AtrRange, GammaHistoryItem, GammaResponse, MarketResponse } from "@/lib/types";
 import { LEVEL_MERGE_THRESHOLD } from "./gravity-map";
+import { RegimeBadge } from "./regime-badge";
 
 type PriceChartProps = {
   symbol: string;
   candles: MinuteCandle[];
   gamma: GammaResponse;
+  market: MarketResponse;
   vwapPoints?: VwapPoint[];
   atrRange?: AtrRange;
 };
@@ -196,6 +198,7 @@ export function PriceChart({
   symbol,
   candles,
   gamma,
+  market,
   vwapPoints = [],
   atrRange,
 }: PriceChartProps) {
@@ -423,49 +426,52 @@ export function PriceChart({
   return (
     <section className="panel price-chart-panel" aria-labelledby="price-chart-title">
       <div className="panel-heading">
-        <div>
-          <p className="eyebrow">{t.priceChart.eyebrow}</p>
-          <h2 id="price-chart-title">{t.priceChart.title(symbol)}</h2>
+        <div className="price-chart-heading-main">
+          <div>
+            <p className="eyebrow">{t.priceChart.eyebrow}</p>
+            <h2 id="price-chart-title">{t.priceChart.title(symbol)}</h2>
+          </div>
+          <div className="chart-controls">
+            <fieldset className="level-mode-selector" aria-label={t.priceChart.levelModeAriaLabel}>
+              <legend>{t.priceChart.levelsLegend}</legend>
+              <button
+                type="button"
+                aria-pressed={levelMode === "static"}
+                onClick={() => setLevelMode("static")}
+              >
+                {t.priceChart.staticButton}
+              </button>
+              <button
+                type="button"
+                aria-pressed={levelMode === "historical"}
+                onClick={() => setLevelMode("historical")}
+              >
+                {t.priceChart.historicalButton}
+              </button>
+            </fieldset>
+            <fieldset className="overlay-toggles" aria-label={t.priceChart.overlaysAriaLabel}>
+              <legend>{t.priceChart.overlaysLegend}</legend>
+              <label className="chart-toggle">
+                <input
+                  type="checkbox"
+                  checked={showVwap}
+                  onChange={(event) => setShowVwap(event.target.checked)}
+                />
+                {t.priceChart.vwapAnchoredLabel}
+              </label>
+              <label className="chart-toggle">
+                <input
+                  type="checkbox"
+                  checked={showAtr}
+                  onChange={(event) => setShowAtr(event.target.checked)}
+                />
+                {t.priceChart.atrRangeLabel}
+              </label>
+            </fieldset>
+            <span className="mode-pill">{t.dashboard.liveButton}</span>
+          </div>
         </div>
-        <div className="chart-controls">
-          <fieldset className="level-mode-selector" aria-label={t.priceChart.levelModeAriaLabel}>
-            <legend>{t.priceChart.levelsLegend}</legend>
-            <button
-              type="button"
-              aria-pressed={levelMode === "static"}
-              onClick={() => setLevelMode("static")}
-            >
-              {t.priceChart.staticButton}
-            </button>
-            <button
-              type="button"
-              aria-pressed={levelMode === "historical"}
-              onClick={() => setLevelMode("historical")}
-            >
-              {t.priceChart.historicalButton}
-            </button>
-          </fieldset>
-          <fieldset className="overlay-toggles" aria-label={t.priceChart.overlaysAriaLabel}>
-            <legend>{t.priceChart.overlaysLegend}</legend>
-            <label className="chart-toggle">
-              <input
-                type="checkbox"
-                checked={showVwap}
-                onChange={(event) => setShowVwap(event.target.checked)}
-              />
-              {t.priceChart.vwapAnchoredLabel}
-            </label>
-            <label className="chart-toggle">
-              <input
-                type="checkbox"
-                checked={showAtr}
-                onChange={(event) => setShowAtr(event.target.checked)}
-              />
-              {t.priceChart.atrRangeLabel}
-            </label>
-          </fieldset>
-          <span className="mode-pill">{t.dashboard.liveButton}</span>
-        </div>
+        <RegimeBadge gamma={gamma} market={market} />
       </div>
       <div className="price-chart-frame">
         <div

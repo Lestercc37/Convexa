@@ -177,15 +177,7 @@ button, select { font: inherit; }
   overflow-y: auto;
 }
 
-/* ---------- Regime badge (full form) ---------- */
-
-/* Lives inside .pre-session-panel now (section 23) — moved out of the
-   topbar, where it was both overlapping (see the .tv-topbar fix above)
-   and mostly redundant with the live chart's own Gamma Flip/wall lines.
-   Pre-Sesión has no such visual context of its own, and had genuine
-   unused space below its chart to hold this — no compact override
-   needed anymore; this is always the full form. */
-.pre-session-panel .regime-badge { margin-top: 14px; flex-shrink: 0; }
+/* ---------- Regime badge (full form — compact override below for the price chart's own heading) ---------- */
 
 .regime-badge { padding: 20px; display: flex; flex-direction: column; justify-content: space-between; gap: 14px; }
 .regime-badge.long { border-color: rgba(0, 220, 90, 0.4); background: linear-gradient(145deg, var(--calm-soft), var(--tv-panel)); }
@@ -225,8 +217,48 @@ button, select { font: inherit; }
 }
 .chart-secondary-panel .eyebrow { margin: 0; }
 .chart-secondary-panel-placeholder { margin: 0; font-size: 0.8rem; }
-.price-chart-panel .panel-heading { padding: 10px 14px; border-bottom: 1px solid var(--tv-border); }
+/* display: flex (section 24) — the Regime Badge moved here from the
+   topbar (by way of a brief detour through PreSessionPanel, corrected
+   once we confirmed the real target zone by searching the literal
+   heading text: "Intraday price", "Levels", "Overlays"). Confirmed
+   real, ample horizontal slack in this heading at both 1920x1080 and
+   1366x768 (188-970px depending on row/resolution) — no growth needed,
+   the badge sits within the heading's existing ~93px height using the
+   same compact form it had in .tv-topbar-right before. Title+controls
+   grouped into .price-chart-heading-main so they keep stacking exactly
+   as before; the badge is the second (and only other) flex item. */
+.price-chart-panel .panel-heading {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--tv-border);
+}
+.price-chart-heading-main { min-width: 0; flex: 1 1 auto; }
 .price-chart-panel .panel-heading h2 { margin: 0; font-size: 0.86rem; }
+
+/* Compact Regime Badge, same override this used in .tv-topbar-right
+   before section 23 — collapses to a single-line label + detail,
+   hiding the eyebrow/meta/warning that only make sense in the full
+   form (dashboard-spec.md section 9's Pre-Sesión-adjacent form still
+   uses those; this one doesn't need them). */
+.price-chart-panel .panel-heading .regime-badge {
+  flex-shrink: 0;
+  min-height: 0;
+  padding: 5px 12px;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.price-chart-panel .panel-heading .regime-badge > div,
+.price-chart-panel .panel-heading .regime-badge .regime-heading { display: contents; }
+.price-chart-panel .panel-heading .regime-badge .eyebrow,
+.price-chart-panel .panel-heading .regime-badge .regime-meta,
+.price-chart-panel .panel-heading .regime-badge .regime-warning { display: none; }
+.price-chart-panel .panel-heading .regime-badge .regime-label { font-size: 0.82rem; line-height: 1; white-space: nowrap; }
+.price-chart-panel .panel-heading .regime-badge .regime-detail { margin: 0; color: var(--tv-text-dim); font-size: 0.74rem; white-space: nowrap; }
 .price-chart-frame { position: relative; flex: 1 1 auto; min-height: 0; }
 .price-chart { width: 100%; height: 100%; }
 /* z-index: 3 — Lightweight Charts stacks its own internal canvas layers up

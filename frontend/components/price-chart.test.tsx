@@ -1,9 +1,9 @@
-import { act, screen, waitFor } from "@testing-library/react";
+import { act, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { MinuteCandle } from "@/lib/candles";
 import { renderWithLanguage } from "@/lib/i18n/test-utils";
-import type { AtrRange, GammaResponse } from "@/lib/types";
+import type { AtrRange, GammaResponse, MarketResponse } from "@/lib/types";
 import { derivedMetricsFixture } from "@/test/fixtures";
 import { PriceChart } from "./price-chart";
 
@@ -118,12 +118,24 @@ const gamma: GammaResponse = {
   derived_metrics: derivedMetricsFixture,
 };
 
+const market: MarketResponse = {
+  schema_version: 1,
+  symbol: "SPY",
+  as_of: "2026-08-03T14:30:05Z",
+  price: 549.1,
+  volume: 1_000_000,
+  dealer_mode: "long_gamma",
+  dealer_mode_source: "agree",
+  dealer_mode_confirmed: true,
+};
+
 describe("PriceChart", () => {
   it("mounts Lightweight Charts with candles and Gamma overlays", () => {
     const { container } = renderWithLanguage(
       <PriceChart
         symbol="SPY"
         gamma={gamma}
+        market={market}
         candles={[
           { time: 1_786_026_600, open: 548, high: 552, low: 548, close: 550 },
         ]}
@@ -153,11 +165,24 @@ describe("PriceChart", () => {
     expect(chartMocks.createPriceLine).toHaveBeenCalledTimes(4);
   });
 
+  it("renders the Regime Badge in its own heading, next to Levels/Overlays (section 24)", () => {
+    renderWithLanguage(
+      <PriceChart symbol="SPY" gamma={gamma} market={market} candles={[]} />,
+    );
+
+    const heading = screen.getByText("SPY · Velas de 1 minuto").closest(".panel-heading");
+    expect(heading).not.toBeNull();
+    const badge = within(heading as HTMLElement).getByLabelText("Régimen gamma");
+    expect(within(badge).getByRole("heading", { name: "LONG GAMMA" })).toBeInTheDocument();
+    expect(within(heading as HTMLElement).getByText("Niveles:")).toBeInTheDocument();
+  });
+
   it("merges Flip and Absolute Gamma overlays inside the 2% threshold", () => {
     renderWithLanguage(
       <PriceChart
         symbol="SPY"
         gamma={{ ...gamma, absolute_gamma_strike: 548.7 }}
+        market={market}
         candles={[]}
       />,
     );
@@ -170,7 +195,9 @@ describe("PriceChart", () => {
 
   it("switches to three historical level series without Absolute Gamma", async () => {
     const user = userEvent.setup();
-    renderWithLanguage(<PriceChart symbol="SPY" gamma={gamma} candles={[]} />);
+    renderWithLanguage(
+      <PriceChart symbol="SPY" gamma={gamma} market={market} candles={[]} />,
+    );
 
     expect(screen.getByRole("button", { name: "Estático" })).toHaveAttribute(
       "aria-pressed",
@@ -224,6 +251,7 @@ describe("PriceChart", () => {
       <PriceChart
         symbol="SPY"
         gamma={gamma}
+        market={market}
         candles={candlesWithRange}
         vwapPoints={[
           { timestamp: "2026-08-03T13:30:00Z", value: 549 },
@@ -276,6 +304,7 @@ describe("PriceChart", () => {
       <PriceChart
         symbol="SPY"
         gamma={gamma}
+        market={market}
         candles={[{ time: 1_785_763_800, open: 500, high: 500, low: 500, close: 500 }]}
         atrRange={readyAtrRange}
       />,
@@ -298,7 +327,14 @@ describe("PriceChart", () => {
       inner_lower_band: null,
     };
     const { container } = renderWithLanguage(
-      <PriceChart symbol="SPY" gamma={gamma} candles={[]} vwapPoints={[]} atrRange={provisionalAtrRange} />,
+      <PriceChart
+        symbol="SPY"
+        gamma={gamma}
+        market={market}
+        candles={[]}
+        vwapPoints={[]}
+        atrRange={provisionalAtrRange}
+      />,
     );
 
     expect(chartMocks.addSeries).not.toHaveBeenCalledWith(
@@ -322,7 +358,14 @@ describe("PriceChart", () => {
       inner_lower_band: null,
     };
     const { container } = renderWithLanguage(
-      <PriceChart symbol="SPY" gamma={gamma} candles={[]} vwapPoints={[]} atrRange={mixedAtrRange} />,
+      <PriceChart
+        symbol="SPY"
+        gamma={gamma}
+        market={market}
+        candles={[]}
+        vwapPoints={[]}
+        atrRange={mixedAtrRange}
+      />,
     );
 
     expect(container.querySelector(".atr-band-outer")).toBeNull();
@@ -347,6 +390,7 @@ describe("PriceChart", () => {
       <PriceChart
         symbol="SPY"
         gamma={gamma}
+        market={market}
         candles={candlesWithRange}
         vwapPoints={[{ timestamp: "2026-08-03T13:30:00Z", value: 549 }]}
         atrRange={readyAtrRange}
@@ -364,7 +408,9 @@ describe("PriceChart", () => {
   });
 
   it("lets the library own resizing via autoSize instead of a hand-rolled ResizeObserver", () => {
-    renderWithLanguage(<PriceChart symbol="SPY" gamma={gamma} candles={[]} />);
+    renderWithLanguage(
+      <PriceChart symbol="SPY" gamma={gamma} market={market} candles={[]} />,
+    );
 
     expect(chartMocks.createChart).toHaveBeenCalledWith(
       expect.any(HTMLElement),
@@ -387,7 +433,13 @@ describe("PriceChart", () => {
       inner_lower_band: 490,
     };
     const { container } = renderWithLanguage(
-      <PriceChart symbol="SPY" gamma={gamma} candles={candlesWithRange} atrRange={readyAtrRange} />,
+      <PriceChart
+        symbol="SPY"
+        gamma={gamma}
+        market={market}
+        candles={candlesWithRange}
+        atrRange={readyAtrRange}
+      />,
     );
 
     const topBefore = container.querySelector<HTMLElement>(".atr-band-outer")?.style.top;
@@ -435,7 +487,7 @@ describe("PriceChart", () => {
       inner_lower_band: 480,
     };
 
-    renderWithLanguage(<PriceChart symbol="SPY" gamma={farGamma} candles={flatCandle} atrRange={farAtrRange} />);
+    renderWithLanguage(<PriceChart symbol="SPY" gamma={farGamma} market={market} candles={flatCandle} atrRange={farAtrRange} />);
 
     const [, options] = chartMocks.addSeries.mock.calls.find(
       ([definition]) => definition === "CandlestickSeries",
@@ -474,14 +526,16 @@ describe("PriceChart", () => {
     };
 
     const { rerender } = renderWithLanguage(
-      <PriceChart symbol="SPY" gamma={gamma} candles={flatCandle} atrRange={farAtrRange} />,
+      <PriceChart symbol="SPY" gamma={gamma} market={market} candles={flatCandle} atrRange={farAtrRange} />,
     );
 
     // Toggle "Rango ATR" off before reading the provider so it reflects
     // the current showAtr state.
     const checkbox = screen.getByRole("checkbox", { name: "Rango ATR" }) as HTMLInputElement;
     checkbox.click();
-    rerender(<PriceChart symbol="SPY" gamma={gamma} candles={flatCandle} atrRange={farAtrRange} />);
+    rerender(
+      <PriceChart symbol="SPY" gamma={gamma} market={market} candles={flatCandle} atrRange={farAtrRange} />,
+    );
 
     const [, options] = chartMocks.addSeries.mock.calls.find(
       ([definition]) => definition === "CandlestickSeries",
@@ -496,12 +550,17 @@ describe("PriceChart", () => {
 
   it("nudges the price scale to recompute autoscale whenever Gamma or ATR reference levels change", () => {
     const { rerender } = renderWithLanguage(
-      <PriceChart symbol="SPY" gamma={gamma} candles={candlesWithRange} />,
+      <PriceChart symbol="SPY" gamma={gamma} market={market} candles={candlesWithRange} />,
     );
     chartMocks.setData.mockClear();
 
     rerender(
-      <PriceChart symbol="SPY" gamma={{ ...gamma, call_wall: 999 }} candles={candlesWithRange} />,
+      <PriceChart
+        symbol="SPY"
+        gamma={{ ...gamma, call_wall: 999 }}
+        market={market}
+        candles={candlesWithRange}
+      />,
     );
 
     // A prop change alone doesn't make the library recompute on its own.

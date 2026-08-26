@@ -581,16 +581,20 @@ las proporciones nuevas.
    empíricamente (no un parche a ciegas, mismo criterio que la investigación del scroll en el PR
    #68): inyectar `flex-shrink: 0` en `.tv-topbar` vía DevTools hizo que la altura pasara de 44px a
    65.89px y el badge quedara completamente contenido — antes de escribir el fix real.
-3. **Espacio debajo de Preparación Pre-Sesión — confirmado con dimensiones reales.**
-   `.pre-session-chart-wrap` (el GEX Profile) termina su contenido en **y=762 de 1080** en
-   1920×1080 (**318px libres**) y en **y=504 de 768** en 1366×768 (**264px libres**) dentro de
-   `.pre-session-panel` — de sobra para el Regime Badge completo. Encontré una ambigüedad real antes
-   de implementar: esa vista y "En vivo" son mutuamente excluyentes, así que poner el badge ahí
-   significa que **desaparece de la vista "En vivo"** (donde vive hoy, siempre visible). Confirmado
-   con el usuario: aceptable y preferible — la vista en vivo ya transmite contexto direccional propio
-   vía el chart (líneas de Gamma Flip, Walls), haciendo el badge más redundante que informativo ahí;
-   Pre-Sesión es un snapshot estático sin ese contexto, así que es donde el badge aporta algo nuevo.
-   Se decidió explícitamente NO duplicarlo como franja persistente en ambas vistas.
+3. **Ubicación del badge — dos vueltas de investigación antes de la ubicación final.** La primera
+   propuesta fue el espacio libre debajo del GEX Profile de `PreSessionPanel` (318px/264px medidos en
+   1920×1080/1366×768) — pero esa vista y "En vivo" son mutuamente excluyentes, así que el badge
+   habría desaparecido de "En vivo" (donde vivía siempre). El usuario corrigió el destino: la zona real
+   pedida era el encabezado del **chart principal en vivo** (`PriceChart`), la fila donde ya viven
+   "Intraday price · client-side memory", el símbolo/timeframe, los controles Levels/Overlays y el
+   pill "Live" — localizada sin ambigüedad buscando esos textos literales en el código
+   (`frontend/components/price-chart.tsx:424-469`). `.panel-heading` ahí es `display: block` (sin flex
+   propio, mismo patrón sin-flex que `.screener-heading`/`.alerts-heading` en PRs anteriores): título y
+   `.chart-controls` se apilan verticalmente, cada fila usando solo una fracción de su ancho. Medido
+   con `Range` (el ancho real del texto, no el 100% del div contenedor): en 1366×768 sobran ~428px en
+   la fila de título y ~188px en la de controles; en 1920×1080, ~970px y ~742px respectivamente — de
+   sobra para el badge compacto (232×53px, la misma variante que tenía en el topbar) sin crecer la
+   altura del heading (93px, ya mayor que los 53px del badge) ni tocar Levels/Overlays/el pill.
 
 **Cambios:**
 
@@ -606,28 +610,28 @@ las proporciones nuevas.
   cumplen para `.tv-body` desde la sección 17, aplicado ahora al otro lado de la ecuación. Con el
   Regime Badge ya reubicado, `.tv-topbar-right` queda vacío — se eliminó del JSX y su CSS en vez de
   dejar un contenedor colgado sin usar.
-- **Regime Badge → dentro de `PreSessionPanel`, después del GEX Profile.** `PreSessionPanel` recibe
-  ahora `gamma`/`market` como props (ya garantizados no-nulos por `Dashboard` para cuando se renderiza
-  esta vista) y renderiza `<RegimeBadge>` como hijo normal del flujo, después de
-  `.pre-session-chart-wrap` — sin tocar ninguna proporción de `flex` de `.tv-center` ni de
-  `.pre-session-panel` (`flex: 1 1 auto` sin cambios), ya que el espacio confirmado en el punto 3 es
-  holgura real *dentro* del panel, no un slot separado que hubiera que crear. Renderiza
-  independientemente de si el propio GEX Profile cargó, tiene error, o está vacío — es dato de
-  `Dashboard`, no del snapshot congelado. Ya no hace falta la variante "compacta" del badge (la que
-  ocultaba eyebrow/meta/warning y forzaba una sola línea) — siempre es la forma completa.
+- **Regime Badge → dentro del encabezado de `PriceChart`, solo en "En vivo".** `.panel-heading` (con
+  scope a `.price-chart-panel`) pasa a `display: flex; justify-content: space-between;`, agrupando el
+  bloque de título + `.chart-controls` en un wrapper (`.price-chart-heading-main`, sin cambios entre
+  ellos) a la izquierda, con `<RegimeBadge>` como segundo ítem flex a la derecha. `PriceChart` recibe
+  ahora `market` como prop (ya tenía `gamma`; ambos garantizados no-nulos por `Dashboard` para cuando
+  esta vista renderiza) y usa la misma variante compacta que tenía en el topbar (oculta eyebrow/meta/
+  warning, un `.regime-label` + `.regime-detail` en una fila) — reubicada, no duplicada: `PreSessionPanel`
+  no lo referencia en absoluto. A 1366×768, `.chart-controls` puede envolver a una segunda línea (ya
+  tenía `flex-wrap: wrap`) porque su fila comparte espacio con el badge — degradación esperada, no un
+  bug: el heading crece de 93px a 126px en ese caso, sin overlap ni corte de ningún control.
 
-**Tests:** `pre-session-panel.test.tsx` (nueva prueba: el Regime Badge se renderiza debajo del chart
-congelado sin importar el estado de carga de ese chart), `alerts-panel.test.tsx` (nueva prueba: el
-panel abre y cierra su propio modal de umbrales, mockeando `getWhaleThresholds`), ajustes a
-`dashboard.test.tsx` (el chequeo de i18n del Regime Badge se separó a su propia prueba en la vista
-Pre-Sesión, restableciendo el idioma a ES al final para no filtrar estado a pruebas siguientes vía
-`localStorage`; la prueba existente del engranaje sigue pasando sin cambios, ya que solo consulta por
-rol/aria-label, no por ubicación en el árbol).
+**Tests:** `price-chart.test.tsx` (nueva prueba: el Regime Badge se renderiza dentro del mismo
+`.panel-heading` que "Niveles:", junto al resto de los controles del chart), `alerts-panel.test.tsx`
+(nueva prueba: el panel abre y cierra su propio modal de umbrales, mockeando `getWhaleThresholds`);
+`dashboard.test.tsx` vuelve a su forma original (una sola prueba de i18n cubriendo Gamma, RegimeBadge y
+PriceChart en la vista "En vivo" — sin necesitar una prueba aparte para Pre-Sesión, ya que el badge
+nunca dejó esa vista); `pre-session-panel.test.tsx` sin cambios respecto a antes de este PR.
 
 **Verificado visualmente en navegador real, ambas resoluciones:** `.tv-topbar` estable en 44px en
 ambas vistas y ambas resoluciones (antes: 44px comprimido en 1366×768 con el badge desbordando,
 confirmado y corregido); `.tv-topbar-right`/badge ya no existen en el topbar; el engranaje aparece
 dentro de `.tv-alerts-sidebar` y abre `WhaleThresholdsPanel` correctamente; el Regime Badge se
-renderiza en Pre-Sesión en el espacio confirmado (147px de alto, sin superposición, con ~102-166px de
-margen adicional debajo según la resolución) y no aparece en "En vivo". Sin scroll de página completa
-en ninguna combinación de vista/resolución probada. Columna de Whale Alerts intacta.
+renderiza dentro del encabezado del chart en "En vivo" (232×53px, sin superposición con Levels/
+Overlays/el pill "Live" en ninguna resolución) y no aparece en "Pre-Sesión". Sin scroll de página
+completa en ninguna combinación de vista/resolución probada. Columna de Whale Alerts intacta.

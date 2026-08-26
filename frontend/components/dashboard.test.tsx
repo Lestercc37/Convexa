@@ -264,40 +264,26 @@ describe("Dashboard", () => {
     renderWithLanguage(<Dashboard />);
     await screen.findByLabelText("Chart de velas para SPY");
 
-    // Spanish by default, spot-checked across dashboard.tsx itself and
-    // PriceChart — two independent components in the live view (RegimeBadge
-    // only renders in Pre-Sesión now, section 23 — covered separately below).
+    // Spanish by default, spot-checked across dashboard.tsx itself,
+    // RegimeBadge (now in PriceChart's own heading, section 24), and
+    // PriceChart — three independent components, not just the string
+    // used to find the chart above.
     expect(screen.getByText("Griegas agregadas")).toBeInTheDocument();
+    expect(screen.getByText("Régimen actual")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Estático" })).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "EN" }));
 
     expect(await screen.findByText("Aggregated Greeks")).toBeInTheDocument();
+    expect(screen.getByText("Current regime")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Static" })).toBeInTheDocument();
     expect(await screen.findByLabelText("Candlestick chart for SPY")).toBeInTheDocument();
     // No stale Spanish text left behind by the switch.
     expect(screen.queryByText("Griegas agregadas")).not.toBeInTheDocument();
+    expect(screen.queryByText("Régimen actual")).not.toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "ES" }));
     expect(await screen.findByText("Griegas agregadas")).toBeInTheDocument();
-  });
-
-  it("translates the Regime Badge in the Pre-Sesión view via the language switcher", async () => {
-    const user = userEvent.setup();
-    renderWithLanguage(<Dashboard />);
-    await screen.findByLabelText("Chart de velas para SPY");
-
-    await user.click(screen.getByRole("button", { name: "Pre-Sesión" }));
-    expect(await screen.findByText("Régimen actual")).toBeInTheDocument();
-
-    await user.click(screen.getByRole("button", { name: "EN" }));
-    expect(await screen.findByText("Current regime")).toBeInTheDocument();
-    expect(screen.queryByText("Régimen actual")).not.toBeInTheDocument();
-
-    // Reset language before the test ends — it persists to localStorage
-    // (language-context.tsx) and would otherwise leak into later tests.
-    await user.click(screen.getByRole("button", { name: "ES" }));
-    expect(await screen.findByText("Régimen actual")).toBeInTheDocument();
   });
 
   it("moves Whale Alerts into a vertical left sidebar, replacing the old toolbar/footer", async () => {
