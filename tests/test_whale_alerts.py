@@ -119,6 +119,41 @@ def test_bvc_split_on_a_real_alert_matches_the_pure_function_given_the_same_inpu
     assert Decimal("800") < expected_buy < Decimal("1600")
 
 
+def test_bvc_volatility_window_evicts_by_elapsed_time_not_reading_count() -> None:
+    # Same price sequence and structure as the test above, but spaced far
+    # enough apart in wall-clock time (20 minutes between readings, not 1)
+    # that every price delta falls outside the rolling window
+    # (_PRICE_VOLATILITY_WINDOW, 10 minutes) by the time the next reading
+    # arrives. Under the old deque(maxlen=20) design this same 7-reading
+    # sequence would never evict anything (7 << 20) and would produce the
+    # exact same non-neutral split as the test above, regardless of how
+    # much real time passed between readings — proof the window is now
+    # anchored to elapsed time, not reading count.
+    engine = WhaleAlertsEngine(InMemoryStorage())
+    base = MockDataProvider().get_option_chain("IWM")
+    prices = ["1.00", "1.02", "0.99", "1.03", "1.00", "1.05", "1.10"]
+    period_minutes = 20  # > _PRICE_VOLATILITY_WINDOW (10 minutes)
+
+    cumulative = 100
+    engine.process(_chain(base, cumulative, 0, last=prices[0]))
+    for period in range(1, 6):
+        cumulative += 200
+        engine.process(_chain(base, cumulative, period * period_minutes, last=prices[period]))
+
+    cumulative += 1600
+    engine.process(_chain(base, cumulative, 6 * period_minutes, last=prices[6]))
+    alerts = engine.process(_chain(base, cumulative, 7 * period_minutes, last=prices[6]))
+
+    assert len(alerts) == 1
+    assert alerts[0].alert_type is WhaleAlertType.WHALE
+    # Each reading's own delta is the only one left in its window (the
+    # prior reading's delta is always >10 minutes old by then), so sigma
+    # is a single-point population stdev — exactly 0 — every time. BVC's
+    # documented sigma==0 fallback is a neutral 50/50 split.
+    assert alerts[0].estimated_buy_volume == alerts[0].estimated_sell_volume
+    assert alerts[0].estimated_buy_volume == Decimal("800")
+
+
 def test_engine_does_not_alert_below_multiplier_or_dollar_threshold() -> None:
     engine = WhaleAlertsEngine(InMemoryStorage())
     base = MockDataProvider().get_option_chain("IWM")

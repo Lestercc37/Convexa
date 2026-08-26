@@ -115,8 +115,15 @@ propia clasificación, nunca el subyacente):
 
 1. `ΔP = precio_actual − precio_anterior` — precio (`contract.last`) de la lectura actual contra la
    lectura inmediatamente anterior del mismo contrato.
-2. `σ` = desviación estándar poblacional de `ΔP` sobre una ventana móvil de las últimas 20 lecturas
-   (`deque(maxlen=20)`, ajustable — ventana inicial del rango 20-30 sugerido).
+2. `σ` = desviación estándar poblacional de `ΔP` sobre una ventana móvil de los últimos 10 minutos
+   reales (`_PRICE_VOLATILITY_WINDOW`, timedelta — **no** un conteo de lecturas). Originalmente era
+   `deque(maxlen=20)` (últimas 20 lecturas), correcto solo mientras las lecturas llegaran a cadencia
+   más o menos estable (~30s, ~10 minutos reales para 20 lecturas). Al investigar la arquitectura para
+   un futuro proveedor por streaming (ThetaData, push en vez de pull) quedó claro que esa suposición se
+   rompe con lecturas a intervalos irregulares: 20 lecturas podrían representar 2 segundos en una
+   ráfaga o 20 minutos en una calma, cambiando qué mide realmente σ sin que el código lo note. Se ancló
+   a tiempo transcurrido real en su lugar — mismo criterio que ya usan `previous_amounts`/
+   `sustained_amounts`, anclados a minutos calendario finalizados, no a conteo de lecturas.
 3. `Z = ΔP / σ`.
 4. `fracción_compra = Φ(Z)` — CDF normal estándar. Sin dependencia de `scipy` (no es dependencia del
    proyecto en ningún otro lado): `Φ(z) = 0.5 × (1 + erf(z/√2))` vía `math.erf` de la librería
