@@ -155,14 +155,26 @@ button, select { font: inherit; }
   background: var(--tv-panel);
 }
 
-.tv-center { flex: 1 1 auto; min-width: 0; min-height: 0; display: flex; }
+/* flex-direction: column (section 22) — stacks the chart above the
+   reserved secondary-panel space, each sized by its own flex-grow
+   share of .tv-center's height (see .price-chart-panel/.chart-
+   secondary-panel below) instead of a fixed split, so the ~83/17 ratio
+   holds at any viewport height. */
+.tv-center { flex: 1 1 auto; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
 
 .tv-sidebar {
   display: flex;
   flex-direction: column;
   gap: 10px;
-  flex: 0 0 256px;
-  width: 256px;
+  /* 400px (up from 256px, section 22) — widened to give the metrics
+     column real breathing room, per the same ~10-20% chart-shrink
+     budget as the height split above. A fixed px width (not a
+     percentage) matches .tv-alerts-sidebar's own fixed-width
+     convention; the chart (`.tv-center`, flex: 1 1 auto) absorbs
+     whatever's left automatically, so no chart-specific change was
+     needed to shrink it. */
+  flex: 0 0 400px;
+  width: 400px;
   min-height: 0;
   padding: 10px;
   border-left: 1px solid var(--tv-border);
@@ -185,7 +197,30 @@ button, select { font: inherit; }
 
 /* ---------- Center: price chart ---------- */
 
-.price-chart-panel { position: relative; flex: 1 1 auto; display: flex; flex-direction: column; min-height: 0; border-radius: 0; border-width: 0; overflow: hidden; }
+/* flex: 5 (section 22, ~83% of .tv-center's height, sharing it with
+   .chart-secondary-panel's flex: 1/~17%) — was flex: 1 1 auto (100%).
+   Ratio, not a fixed px height, so it holds proportionally at any
+   viewport height rather than only at the two resolutions checked. */
+.price-chart-panel { position: relative; flex: 5 1 0; display: flex; flex-direction: column; min-height: 0; border-radius: 0; border-width: 0; overflow: hidden; }
+/* Reserved space (section 22) — deliberately just a labeled
+   placeholder, no chart/content yet; a future PR decides what goes
+   here. Same ~17% share every time (flex: 1, see .price-chart-panel
+   above), border-top as the seam between the two stacked sections —
+   same divider pattern .tv-sidebar/.tv-alerts-sidebar use for their
+   column borders, just rotated to a horizontal split. */
+.chart-secondary-panel {
+  flex: 1 1 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  border-top: 1px solid var(--tv-border);
+  color: var(--tv-text-dim);
+}
+.chart-secondary-panel .eyebrow { margin: 0; }
+.chart-secondary-panel-placeholder { margin: 0; font-size: 0.8rem; }
 .price-chart-panel .panel-heading { padding: 10px 14px; border-bottom: 1px solid var(--tv-border); }
 .price-chart-panel .panel-heading h2 { margin: 0; font-size: 0.86rem; }
 .price-chart-frame { position: relative; flex: 1 1 auto; min-height: 0; }

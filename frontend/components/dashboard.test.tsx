@@ -199,6 +199,17 @@ describe("Dashboard", () => {
     consoleError.mockRestore();
   });
 
+  it("reserves the secondary chart panel below the price chart, in the live view", async () => {
+    renderWithLanguage(<Dashboard />);
+
+    await screen.findByLabelText("Chart de velas para SPY");
+
+    expect(
+      screen.getByLabelText("Panel adicional del chart, próximamente"),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Próximamente")).toBeInTheDocument();
+  });
+
   it("survives repeated symbol switches without crashing (regression for #54/#55)", async () => {
     const user = userEvent.setup();
     const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);

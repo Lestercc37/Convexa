@@ -52,6 +52,11 @@ export type Translations = {
     chartAriaLabel: (symbol: string) => string;
     emptyState: string;
   };
+  chartSecondaryPanel: {
+    ariaLabel: string;
+    eyebrow: string;
+    placeholder: string;
+  };
   preSessionPanel: {
     eyebrow: string;
     title: (symbol: string) => string;
