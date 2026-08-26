@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections import deque
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta
 from decimal import Decimal
 from enum import StrEnum
 
@@ -65,8 +65,22 @@ class _ContractState:
     # own buy/sell classification, accumulated into the bucket alongside
     # bucket_amount, same as the sustained-flow windows mirror the
     # whale/unusual one.
+    #
+    # Windowed by elapsed time (last `_PRICE_VOLATILITY_WINDOW`), not by
+    # reading count — a fixed reading-count window (the original design)
+    # implicitly assumed a roughly steady polling cadence: 20 readings at
+    # ~30s each is ~10 real minutes, a reasonable volatility sample. That
+    # assumption breaks once readings can arrive at irregular intervals
+    # (a push/streaming provider, or simply a faster/slower poll cadence)
+    # — 20 readings could then span 2 seconds during a burst or 20 minutes
+    # during a lull, changing what sigma actually measures without the
+    # code noticing. Anchoring to real elapsed time instead keeps the
+    # window's meaning constant regardless of how often readings arrive —
+    # same reasoning already applied to `previous_amounts`/
+    # `sustained_amounts` below, which are anchored to finalized calendar
+    # minutes rather than a raw reading count.
     previous_price: Decimal | None = None
-    price_deltas: deque[Decimal] = field(default_factory=lambda: deque(maxlen=20))
+    price_deltas: deque[tuple[datetime, Decimal]] = field(default_factory=deque)
     bucket_buy_volume: Decimal = Decimal(0)
     bucket_sell_volume: Decimal = Decimal(0)
     sustained_buy_volumes: deque[Decimal] = field(default_factory=lambda: deque(maxlen=15))
@@ -95,6 +109,11 @@ class WhaleAlertsEngine:
     _WINDOW_SIZE = 5
     _SUSTAINED_WINDOW_SIZE = 15
     _CONTRACT_MULTIPLIER = Decimal(100)
+    # 10 minutes: same order of magnitude the old 20-reading window
+    # represented at the ~30s polling cadence it was designed around, but
+    # anchored to real elapsed time so it holds regardless of how often
+    # readings actually arrive (see `_ContractState.price_deltas`).
+    _PRICE_VOLATILITY_WINDOW = timedelta(minutes=10)
 
     def __init__(
         self,
@@ -163,8 +182,11 @@ class WhaleAlertsEngine:
             # rolling volatility window, then accumulated into the
             # in-progress bucket alongside `amount` — see calculate_bvc.py.
             price_delta = contract.last - state.previous_price
-            state.price_deltas.append(price_delta)
-            sigma = calculate_price_volatility(state.price_deltas)
+            state.price_deltas.append((chain.as_of, price_delta))
+            cutoff = chain.as_of - self._PRICE_VOLATILITY_WINDOW
+            while state.price_deltas and state.price_deltas[0][0] < cutoff:
+                state.price_deltas.popleft()
+            sigma = calculate_price_volatility([delta for _, delta in state.price_deltas])
             buy_volume, sell_volume = calculate_bvc_split(price_delta, sigma, Decimal(delta))
             state.previous_price = contract.last
 
