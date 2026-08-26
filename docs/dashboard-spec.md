@@ -481,3 +481,22 @@ Negative Gamma Board y par de campos de Vanna/Charm enviados juntos—, rechaza 
 límite no positivo sin llamar al endpoint, rechaza un `net_gamma_max` no numérico, error traducido si
 falla la carga o el guardado, cierre por botón/overlay/Escape), ajuste a `quick-screener.test.tsx`
 (el botón de engranaje abre el panel y dispara la carga).
+
+## 21. Scheduler automático de cálculo — reemplaza el disparo manual periódico
+
+Hasta este PR, `POST /internal/trigger-calculation/{symbol}` (endpoint interno, sin UI) era la única
+forma de refrescar snapshot + gamma + métricas derivadas de un símbolo — había que dispararlo a mano,
+símbolo por símbolo. Se agrega un scheduler en segundo plano que recorre los 11 símbolos activos cada
+30 segundos, solo durante horario de mercado, arrancando solo al iniciar el backend (sin comando
+manual aparte). El endpoint manual sigue existiendo tal cual, sin cambio de contrato — sigue siendo
+útil para pruebas y diagnóstico puntual de un símbolo. Ver `docs/use-cases.md` (sección Scheduler
+Automático de Cálculo) para el mecanismo completo, la investigación previa y la justificación de cada
+decisión de diseño.
+
+**Limitación conocida y aceptada, documentada explícitamente (no silenciosa):** el chequeo de horario
+(`is_market_open`, `backend/domain/use_cases/market_hours.py`) solo verifica día hábil (lunes-viernes)
+y hora (9:30am-4:00pm ET) — **no existe calendario de feriados bursátiles** en el proyecto. El
+scheduler intentará correr en un feriado que caiga entre semana (Acción de Gracias, Navidad, etc.),
+aunque en la práctica probablemente no obtenga datos útiles del proveedor real en ese caso (hoy sigue
+sobre `MockDataProvider`, que no tiene ese concepto tampoco). Construir un calendario de feriados
+completo queda fuera de alcance de este PR — decisión tomada explícitamente, no un descuido.

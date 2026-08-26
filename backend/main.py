@@ -11,6 +11,7 @@ from backend.api.routes import api_router
 from backend.api.serializers import error_response
 from backend.core.container import build_container
 from backend.core.logging import configure_logging
+from backend.core.scheduler import UnderlyingRefreshScheduler
 from backend.domain.use_cases.errors import QllError
 
 logger = logging.getLogger(__name__)
@@ -22,9 +23,14 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     configure_logging(container.settings)
     app.state.container = container
     logger.info("Starting %s", container.settings.app_name)
+    scheduler = UnderlyingRefreshScheduler(container) if container.settings.enable_scheduler else None
+    if scheduler is not None:
+        scheduler.start()
     try:
         yield
     finally:
+        if scheduler is not None:
+            await scheduler.stop()
         if container.storage_engine is not None:
             container.storage_engine.dispose()
         await container.database_engine.dispose()
