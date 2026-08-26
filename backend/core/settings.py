@@ -23,6 +23,7 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices("DATABASE_URL", "QLL_DATABASE_URL"),
     )
     database_echo: bool = Field(default=False)
+    enable_scheduler: bool = Field(default=True)
 
 
 @lru_cache
