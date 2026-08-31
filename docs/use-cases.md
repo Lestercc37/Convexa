@@ -315,6 +315,113 @@ ciclo procesa los 11 símbolos activos, un ciclo continúa con los 10 restantes 
 corre ningún ciclo fuera de horario de mercado, el loop sí corre durante horario de mercado,
 `start()`/`stop()` son seguros de llamar repetidamente o antes de arrancar).
 
+**`ThetaDataProvider` — proveedor real, conectado a un Theta Terminal v3 local.** Reemplaza a
+`MockDataProvider` cuando `QLL_DATA_PROVIDER=thetadata` (default: `mock`) — mecanismo de configuración
+elegido específicamente para poder volver a Mock en cualquier momento sin cambiar código, si hace
+falta diagnosticar algo sin gastar cupo real. Toda la investigación previa a este PR se hizo con
+llamadas reales contra `http://localhost:25503` (REST) y `ws://127.0.0.1:25520/v1/events` (streaming),
+con una cuenta real en tier Options Standard — no se adivinó ninguna forma de respuesta. (`FlashAlpha`
+se investigó primero como proveedor candidato, con hallazgos equivalentes en varios puntos — pero
+`FlashAlphaDataProvider` nunca se implementó; se optó por ThetaData antes de llegar a esa etapa.)
+
+Fuente real por campo, confirmada en vivo antes de escribir el adaptador:
+
+- **bid/ask/delta/theta/vega/IV/underlying_price**: una sola llamada a
+  `GET /v3/option/snapshot/greeks/first_order` — Options Standard ya la incluye completa.
+- **open_interest**: `GET /v3/option/snapshot/open_interest`.
+- **gamma/vanna/charm**: el endpoint que los trae directo (`greeks/second_order`) exige tier
+  Professional (confirmado con un 403 real) — se calculan en su lugar vía Black-Scholes-Merton
+  (`backend/domain/use_cases/calculate_bsm_greeks.py`), sin dividendos:
+  ```
+  d1 = [ln(S/K) + (r + σ²/2)T] / (σ√T)
+  d2 = d1 - σ√T
+  Gamma = φ(d1) / (S σ √T)
+  Vanna = -φ(d1) · d2 / σ
+  Charm = -φ(d1) · (2rT - d2·σ√T) / (2T·σ√T)
+  ```
+  > Black, F., & Scholes, M. (1973). "The Pricing of Options and Corporate Liabilities." *Journal of
+  > Political Economy*, 81(3), 637-654.
+  > Merton, R. C. (1973). "Theory of Rational Option Pricing." *Bell Journal of Economics and
+  > Management Science*, 4(1), 141-183.
+  > Haug, E. G. (2007). *The Complete Guide to Option Pricing Formulas* (2nd ed.). McGraw-Hill —
+  > fórmulas cerradas de vanna/charm.
+
+  Verificado a mano contra un caso de texto conocido (S=K=100, r=5%, σ=20%, T=1 año →
+  gamma=0.018762, vanna=-0.281430, charm=-0.065667, reproducidos exactos) antes de confiar en la
+  implementación, y contra el `delta` real que ThetaData ya reporta para 7 contratos reales (0DTE y a
+  3 semanas, en dos momentos del día) usando la misma convención de tiempo.
+  - **Tasa libre de riesgo**: SOFR real vía `GET /v3/interest_rate/history/eod?symbol=SOFR` (tier
+    FREE), cacheada una vez por día.
+  - **Tiempo a vencimiento**: `T = segundos reales hasta las 4:00pm ET / 86400 / 365` (ACT/365
+    calendario real hasta el cierre) — confirmado con datos reales dos veces en el mismo día de
+    mercado (mañana y tarde), en 7 strikes reales, con error total de 0.0002-0.0003 contra el `delta`
+    que ThetaData reporta directamente. Un conteo de días calendario completos (el otro candidato
+    considerado) da `T=0` exacto para contratos 0DTE y rompe la fórmula — descartado con evidencia,
+    no por intuición. Los timestamps de ThetaData son hora de Nueva York (ET), no UTC — confirmado
+    comparando un timestamp en vivo contra el reloj real del sistema durante horario de mercado real;
+    convertirlos como si fueran UTC produce un `T` incorrecto (fue el error real de una investigación
+    previa en este mismo proyecto, corregido antes de escribir el adaptador).
+- **`last` (precio de última operación)**: ThetaData no tiene ese campo en el snapshot — se usa el
+  punto medio `(bid+ask)/2`, documentado explícitamente como aproximación.
+- **`occ_symbol`**: tampoco viene en la respuesta — se construye igual que
+  `MockDataProvider._contract()` (`{symbol}{expiración:%y%m%d}{C|P}{strike*1000:08d}`).
+- **Volumen acumulado** (para la detección por delta de `WhaleAlertsEngine`): el snapshot REST de
+  `/trade` solo da el tamaño de la última operación individual, no un acumulado — se construye sumando
+  cada mensaje del Trade Stream (WebSocket) desde que arranca el proveedor. Validado con evidencia
+  real contra la apertura de mercado del 2026-08-31 (9:32-10:22 AM ET, la ventana históricamente más
+  riesgosa para este proveedor — dos incidentes reales documentados de desconexión/pérdida de datos,
+  uno durante una apertura): 100.6-100.8% de cobertura contra el volumen/cantidad de operaciones que
+  reportó independientemente `GET /v3/option/history/ohlc` para la misma ventana, cero desconexiones
+  en 50 minutos de captura real.
+- **Volumen del subyacente** (para Anchored VWAP) **y snapshot en vivo de índices**: las suscripciones
+  de Stocks/Indices no estaban activas al momento de esta investigación (confirmado con 403 reales en
+  ambos endpoints) — `MarketSnapshot.volume` queda en `0`, limitación conocida y documentada, mismo
+  patrón ya usado en el proyecto. **No afecta al precio del subyacente** — ese ya viene gratis desde
+  `greeks/first_order`, incluso para símbolos tipo índice (SPX/VIX tienen su propia cadena de
+  opciones).
+- **`get_daily_bars`**: `GET /v3/stock/history/eod` (equities) o `/v3/index/history/eod` (índices) —
+  ambos confirmados funcionando con datos reales, sin necesitar la suscripción de Stocks/Indices en
+  vivo. No se encontró ningún endpoint equivalente para futuros (`/v3/future/history/eod` → 404
+  confirmado) — ES devuelve lista vacía, limitación conocida y documentada.
+- **`atm_iv`/`pc_oi_ratio`** en `MarketSnapshot`: aproximados desde la misma cadena near-the-money ya
+  traída para la cadena de opciones (IV promedio; ratio de open interest put/call) — documentado
+  explícitamente como aproximación, no el IV ATM real ni el put/call ratio de mercado completo.
+  `skew_25d` queda en `0`: calcularlo de verdad necesitaría strikes a 25-delta específicos, fuera del
+  rango near-the-money que este adaptador ya trae.
+
+**Manejo de conexión del streaming — no opcional, dados los incidentes reales documentados de
+ThetaData.** `ThetaTradeStream` (dentro del mismo módulo del adaptador) monitorea el mensaje `STATUS`
+como heartbeat (uno por segundo, según la documentación) — sin uno reciente, o con un estado distinto
+de `CONNECTED`, se fuerza una reconexión. Las reconexiones usan backoff exponencial (2s, 4s, 8s...
+tope de 60s) e incrementan el `id` de la solicitud, seguido del patrón de ThetaData. Cada mensaje
+loggea su `sequence` como red de seguridad adicional para detectar huecos — informativo, no una
+garantía por sí solo, porque los números de secuencia de OPRA son globales entre contratos/exchanges,
+no un contador simple por contrato (confirmado en la investigación). Cada 20 minutos se reconcilia el
+volumen acumulado contra `GET /v3/option/history/ohlc` para el mismo contrato/día — una discrepancia
+mayor al 10% se loggea como advertencia clara, nunca falla en silencio.
+
+**`stream_trades()` — el método del puerto que ya existía sin usar, ahora implementado, sin
+consumidor todavía.** Confirmado antes de escribir el adaptador: ningún caso de uso construye
+`FlowEvent` ni llama `stream_trades()` en ningún lugar del proyecto — es infraestructura declarada en
+el puerto desde antes, nunca conectada. La implementación en `ThetaDataProvider` reenvía cada
+operación cruda del Trade Stream como un `FlowEvent`, pero como una operación cruda de OPRA no trae
+ninguna clasificación de comprador/vendedor ni de tipo de flujo (sweep/block/unusual) propia,
+`aggressor_side` queda en `Side.UNKNOWN` y `event_type` en `FlowEventType.UNUSUAL` como valores
+honestos por defecto, no una clasificación real — documentado explícitamente en el código como algo a
+revisar el día que algo consuma este método.
+
+**`start()`/`stop()` — nuevo en el puerto `IDataProvider`, no específico de este adaptador.** Ganchos
+de ciclo de vida para un proveedor con una conexión persistente que abrir/cerrar junto con el proceso
+— `MockDataProvider` los implementa como no-operaciones. Viven en el puerto (no en `ThetaDataProvider`
+únicamente) para que `backend/main.py` y el `Container` sigan siendo agnósticos del proveedor
+concreto, mismo criterio que ya mantiene a `UnderlyingRefreshScheduler` sin saber qué proveedor tiene
+detrás. El scheduler en sí **no necesitó ningún cambio de rol** — sigue llamando a
+`RefreshUnderlyingSnapshotUseCase.execute(symbol)` en su cadencia habitual, porque greeks/IV/OI no
+tienen ningún equivalente por streaming (confirmado en la investigación previa a este PR: el Trade
+Stream y el Quote Stream traen exactamente los mismos campos fragmentados que sus equivalentes REST,
+nada más completo) — lo único que deja de necesitar una llamada de red en el momento de pedirlo es el
+volumen, servido desde el estado que el stream ya mantiene en memoria.
+
 ---
 
 ## Resumen de mapeo a contratos existentes

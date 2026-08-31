@@ -12,6 +12,7 @@ from backend.adapters.providers.mock.gamma_exposure import FakeGammaExposureCalc
 from backend.adapters.providers.mock.gamma_flip import FakeGammaFlipCalculator
 from backend.adapters.providers.mock.max_pain import FakeMaxPainCalculator
 from backend.adapters.providers.mock.walls import FakeWallCalculator
+from backend.adapters.providers.thetadata import ThetaDataProvider
 from backend.adapters.storage.memory import InMemoryStorage
 from backend.adapters.storage.postgresql import PostgreSQLStorage
 from backend.core.settings import Settings, get_settings
@@ -96,7 +97,11 @@ def build_container() -> Container:
     else:
         storage_engine = None
         storage = InMemoryStorage()
-    market_data_provider = MockDataProvider()
+    market_data_provider: IDataProvider = (
+        ThetaDataProvider(settings.thetadata_rest_url, settings.thetadata_ws_url)
+        if settings.data_provider == "thetadata"
+        else MockDataProvider()
+    )
     greeks_calculator = FakeGreeksCalculator()
     gamma_exposure_calculator = FakeGammaExposureCalculator()
     gamma_aggregate_calculator = FakeGammaAggregateCalculator()

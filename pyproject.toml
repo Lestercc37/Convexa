@@ -12,6 +12,8 @@ dependencies = [
     "psycopg[binary]>=3.2",
     "aiosqlite>=0.20",
     "uvicorn[standard]>=0.30",
+    "httpx>=0.27",
+    "websockets>=13",
 ]
 
 [project.optional-dependencies]
