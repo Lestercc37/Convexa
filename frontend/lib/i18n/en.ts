@@ -169,4 +169,105 @@ export const en: Translations = {
       actions: "Actions",
     },
   },
+  enginesGuide: {
+    eyebrow: "Convexa",
+    title: "Engine Interpretation Guide",
+    description: "What each Convexa engine calculates and how to read it — replaces the PDF guide.",
+    triggerAriaLabel: "Engine interpretation guide",
+    closeButtonAriaLabel: "Close",
+    standardBadge: "🟢 Validated standard",
+    proprietaryBadge: "🟡 Convexa proprietary metric",
+    citationLabel: "Academic source",
+    engines: {
+      gammaExposure: {
+        name: "Gamma Exposure (GEX) / Net Gamma",
+        description:
+          "Aggregate net gamma exposure of options dealers for an underlying — its sign determines the regime (Long/Short Gamma) shown on the Regime Badge. It's the base Gamma Flip, Call/Put Wall, Max Pain, and Absolute Gamma Strike are all derived from.",
+      },
+      gammaFlip: {
+        name: "Gamma Flip",
+        description:
+          "The market's regime boundary: price above it means Long Gamma (dampens volatility), below it means Short Gamma (amplifies it). If price already crossed it since the last recalculation, the regime is marked \"price-based\", lower confidence.",
+      },
+      absoluteGammaStrike: {
+        name: "Absolute Gamma Strike",
+        description:
+          "The Gravity Map's most literal price magnet — the strike with the highest absolute gamma. When it coincides with or sits very close to Gamma Flip, both merge into one visual marker instead of showing as two.",
+      },
+      callPutWalls: {
+        name: "Call Wall / Put Wall",
+        description:
+          "The day's most likely range boundaries, marked at the edges of the Gravity Map — along with Gamma Flip and Absolute Gamma, they reflect dealers' mechanical hedging pressure on price, not market sentiment.",
+      },
+      maxPain: {
+        name: "Max Pain",
+        description:
+          "The strike where the least total option value would expire — a closing-price theory. It gains weight as the session close approaches, and appears in Pre-Session Preparation and Closing Dynamics.",
+      },
+      vegaExposure: {
+        name: "Vega Exposure",
+        description:
+          "Aggregate exposure to implied-volatility changes — same pattern as GEX (Vega × Open Interest × 100, per 1% change in IV).",
+      },
+      thetaExposure: {
+        name: "Theta Exposure",
+        description: "Aggregate exposure to the passage of time — same calculation as Vega Exposure, with Theta.",
+      },
+      vannaExposure: {
+        name: "Vanna Exposure",
+        description:
+          "Sensitivity of dealers' delta to changes in implied volatility. A positive value means rising IV pushes dealers to buy; negative means it pushes them to sell.",
+      },
+      charmExposure: {
+        name: "Charm Exposure",
+        description:
+          "Sensitivity of dealers' delta to the simple passage of time. A positive value means the passage of time pushes dealers to buy; negative means it pushes them to sell.",
+      },
+      whaleAlertsBvc: {
+        name: "Whale Alerts (Bulk Volume Classification)",
+        description:
+          "A buy/sell estimate derived from price movement alone — never a confirmed measurement of the real side of a trade. Every alert (Whale/Unusual/Sustained Flow) includes its estimated buy/sell volume from this method.",
+      },
+      anchoredVwap: {
+        name: "Anchored VWAP",
+        description:
+          "A level where price tends to react, anchored to the session open (9:30 ET) and calculated with standard industry math — not a proprietary formula from any vendor.",
+      },
+      atrRange: {
+        name: "ATR Range (Expected Historical Range)",
+        description:
+          "An expected price band anchored to the day's open, using classic technical-analysis True Range/ATR. The construction is Convexa's own, but the underlying formula is public domain.",
+      },
+      expectedMove: {
+        name: "Expected Move",
+        description:
+          "A statistical measure derived from implied volatility (±1 standard deviation) — complements, not replaces, the Walls, which are mechanical hedging pressure, not a statistical measure.",
+      },
+      volatilityRegime: {
+        name: "Volatility Regime / IV Rank",
+        description:
+          "Percentile of today's IV against the underlying's own last 60 days (Low/Moderate/High). The concept itself is an industry standard — the 60-day window instead of the usual 52 weeks is Convexa's only adaptation.",
+      },
+      dealerImpactScore: {
+        name: "Dealer Impact Score",
+        description:
+          "A percentile of how extreme today's Net Gamma is compared to the underlying's own last 60 days. Not a probability of a trade working out — it measures how unusual today's reading is against the asset's own history.",
+      },
+      signalAlignmentScore: {
+        name: "Signal Alignment Score",
+        description:
+          "Measures how much the signals Convexa already calculates agree with each other (regime agreement, data freshness, regime extremity) — not how extreme the regime itself is, that's Dealer Impact Score's job.",
+      },
+      marketBias: {
+        name: "Market Bias",
+        description:
+          "Directional bias of options positioning (Put/Call OI Ratio + IV skew) — distinct from the Regime Badge's volatility regime, which describes behavior, not direction.",
+      },
+      pinRiskScore: {
+        name: "Pin Risk Score",
+        description:
+          "How likely price is to get \"pinned\" near a specific strike at the close, combining Open Interest concentration, proximity to the magnet strike, and remaining session time.",
+      },
+    },
+  },
 };

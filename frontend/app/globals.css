@@ -342,6 +342,14 @@ button, select { font: inherit; }
 .tv-view-toggle button { border: 0; border-radius: 5px; background: transparent; color: var(--tv-text-dim); cursor: pointer; font-size: 0.74rem; font-weight: 700; padding: 5px 9px; }
 .tv-view-toggle button[aria-pressed="true"] { background: var(--tv-panel-raised); color: var(--tv-text); }
 
+/* Reintroduced (section 25) — removed in section 23 once both of its
+   former occupants (the Whale Alerts gear, the Regime Badge) moved out
+   to their own panels, leaving it empty. The engines reference guide
+   is genuinely global (not scoped to any one panel), so the topbar is
+   its natural home again — same .tv-settings-button styling already
+   used for the other icon triggers. */
+.tv-topbar-right { display: flex; align-items: center; }
+
 .tv-language-toggle { display: flex; align-items: center; gap: 2px; border: 1px solid var(--tv-border); border-radius: 6px; padding: 2px; }
 .tv-language-toggle button { border: 0; border-radius: 4px; background: transparent; color: var(--tv-text-dim); cursor: pointer; font-size: 0.68rem; font-weight: 700; padding: 4px 8px; }
 .tv-language-toggle button[aria-pressed="true"] { background: var(--tv-panel-raised); color: var(--tv-text); }
@@ -510,6 +518,43 @@ button, select { font: inherit; }
 .whale-thresholds-actions button:disabled { opacity: 0.6; cursor: default; }
 .whale-thresholds-saved { color: var(--calm); font-size: 0.72rem; font-weight: 600; }
 .whale-thresholds-error { color: var(--risk); font-size: 0.72rem; }
+
+.engines-guide-heading { align-items: flex-start; }
+.engines-guide-description { color: var(--tv-text-dim); font-size: 0.76rem; max-width: 60ch; margin-top: 4px; }
+.engines-guide-list {
+  list-style: none;
+  margin: 0;
+  padding: 0 16px 16px;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.engines-guide-card {
+  border: 1px solid var(--tv-border);
+  border-radius: 8px;
+  padding: 12px 14px;
+}
+.engines-guide-card-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.engines-guide-card-heading h3 { margin: 0; font-size: 0.86rem; }
+.engines-guide-badge {
+  flex-shrink: 0;
+  border-radius: 999px;
+  padding: 2px 9px;
+  font-size: 0.68rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.engines-guide-badge.standard { background: var(--calm-soft); color: var(--calm); }
+.engines-guide-badge.proprietary { background: rgba(243, 201, 105, 0.15); color: var(--warning); }
+.engines-guide-card-description { margin: 6px 0 0; color: var(--tv-text-dim); font-size: 0.78rem; line-height: 1.5; }
+.engines-guide-card-citation { margin: 6px 0 0; color: var(--tv-text-dim); font-size: 0.68rem; font-style: italic; }
 
 @media (max-width: 960px) {
   /* Natural page scroll on narrow viewports — .tv-body reflows to a
