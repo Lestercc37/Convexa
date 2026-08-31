@@ -3,7 +3,13 @@
 import Image from "next/image";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { getGamma, getMarket, getUnderlyings } from "@/lib/api";
-import { aggregateMinuteCandles, type PricePoint, type VwapPoint } from "@/lib/candles";
+import {
+  aggregateCandles,
+  aggregateMinuteCandles,
+  type PricePoint,
+  type Timeframe,
+  type VwapPoint,
+} from "@/lib/candles";
 import { describeError } from "@/lib/i18n/describe-error";
 import { useLanguage, type Language } from "@/lib/i18n/language-context";
 import { POLLING_INTERVAL_MS } from "@/lib/polling";
@@ -18,10 +24,10 @@ import { PriceChart } from "./price-chart";
 import { QuickScreener } from "./quick-screener";
 import { VolatilitySmile } from "./volatility-smile";
 
-// Only 1-minute candles exist (client-side accumulated, dashboard-spec.md
-// section 2.2) — the other buttons are decorative chrome, same as the side
-// toolbar, until a real multi-timeframe aggregation exists.
-const TIMEFRAMES = ["1m", "5m", "15m", "1h"] as const;
+// Only 1-minute candles are ever fetched (client-side accumulated,
+// dashboard-spec.md section 2.2) — the other timeframes are pure
+// client-side aggregation of that same data, via aggregateCandles.
+const TIMEFRAMES: Timeframe[] = ["1m", "5m", "15m", "1h"];
 
 const PRICE_FORMAT = new Intl.NumberFormat("en-US", {
   minimumFractionDigits: 2,
@@ -49,8 +55,13 @@ export function Dashboard() {
   // request failed.
   const [error, setError] = useState<unknown>(null);
   const [showEnginesGuide, setShowEnginesGuide] = useState(false);
+  const [timeframe, setTimeframe] = useState<Timeframe>("1m");
   const candles = useMemo(() => aggregateMinuteCandles(pricePoints), [pricePoints]);
-  const latestCandle = candles.at(-1) ?? null;
+  const displayedCandles = useMemo(
+    () => aggregateCandles(candles, timeframe),
+    [candles, timeframe],
+  );
+  const latestCandle = displayedCandles.at(-1) ?? null;
 
   useEffect(() => {
     const controller = new AbortController();
@@ -181,15 +192,15 @@ export function Dashboard() {
           )}
         </div>
         <div className="tv-timeframes" role="group" aria-label={t.dashboard.timeframeGroupAriaLabel}>
-          {TIMEFRAMES.map((timeframe) => (
+          {TIMEFRAMES.map((option) => (
             <button
-              key={timeframe}
+              key={option}
               type="button"
               className="tv-timeframe"
-              aria-pressed={timeframe === "1m"}
-              disabled={timeframe !== "1m"}
+              aria-pressed={timeframe === option}
+              onClick={() => setTimeframe(option)}
             >
-              {timeframe}
+              {option}
             </button>
           ))}
         </div>
@@ -239,12 +250,13 @@ export function Dashboard() {
             {view === "live" ? (
               <>
                 <PriceChart
-                  key={`price-chart-${symbol}`}
+                  key={`price-chart-${symbol}-${timeframe}`}
                   symbol={symbol}
-                  candles={candles}
+                  candles={displayedCandles}
                   gamma={gamma}
                   vwapPoints={vwapPoints}
                   atrRange={market.atr_range}
+                  timeframe={timeframe}
                 />
                 <section
                   className="chart-secondary-panel"

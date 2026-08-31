@@ -678,3 +678,48 @@ al menos un badge de cada clasificación visible; la cita académica aparece sol
 tienen; cierra por botón ×, click en overlay, y Escape; un click dentro del modal no lo cierra.
 `dashboard.test.tsx` — nueva prueba: el ícono del topbar abre el panel (confirmando que muestra al
 menos una entrada) y lo cierra por ×.
+
+## 25. Botones de timeframe del chart (5m/15m/1h) — agregación pura en el frontend
+
+Los botones 1m/5m/15m/1h del topbar eran decorativos (solo "1m" habilitado, sin `onClick`). No hace
+falta ningún dato nuevo del backend para activarlos: las velas de 1 minuto ya viven enteras en memoria
+del cliente (`aggregateMinuteCandles`, sección 2.2) — agregarlas a marcos mayores es aritmética pura
+sobre datos que ya están ahí.
+
+**Agregación:** `aggregateCandles(candles, timeframe)` en `frontend/lib/candles.ts`. Agrupa por tiempo
+transcurrido (`Math.floor(candle.time / bucketSeconds) * bucketSeconds`), no por conteo de N velas
+consecutivas — así un hueco en los datos de 1 minuto (poll fallido, símbolo recién cambiado) no
+desalinea los buckets siguientes respecto al reloj de pared. Por bucket: `open` de la primera vela,
+`close` de la última, `high`/`low` como máximo/mínimo del grupo. Sin campo de volumen: `MinuteCandle`
+nunca tuvo `volume` (se construye solo de `{ timestamp, price }`, sin dato de volumen en el pipeline
+actual) — la agregación cubre únicamente OHLC, las cuatro dimensiones que sí existen.
+
+**Conexión en `Dashboard`:** nuevo estado `timeframe` (`Timeframe`, default `"1m"`). Los datos de 1
+minuto (`candles`) se mantienen intactos (siguen siendo la fuente que acumula cada poll); un `useMemo`
+separado (`displayedCandles = aggregateCandles(candles, timeframe)`) deriva la vista agregada que
+recibe `PriceChart`, y de la que también sale el `latestCandle` del OHLC readout del topbar. Los cuatro
+botones ya no tienen `disabled` — todos llaman a `setTimeframe(option)` y su `aria-pressed` refleja el
+timeframe activo.
+
+**`PriceChart` se remonta al cambiar de timeframe** (`key` incluye ahora `timeframe`, mismo patrón ya
+usado para el cambio de símbolo) en vez de intentar parchear el dataset en el sitio: cambiar de
+timeframe no es un simple "agregar la última vela" (lo que sí maneja el `series.update()` existente
+cuando solo llega un poll nuevo dentro del mismo timeframe) sino un reemplazo completo de la forma de
+los datos — más simple y sin nuevos casos borde reutilizar el mecanismo de remonte ya probado que
+enseñarle a la serie a distinguir ambos casos. El título del panel (`t.priceChart.title`) ahora recibe
+también la etiqueta traducida del timeframe (`t.priceChart.timeframeLabels[timeframe]`) para no quedar
+diciendo "Velas de 1 minuto" mientras se muestran velas de otra duración; `chartAriaLabel` no cambió
+(sigue sin mencionar el timeframe) para no romper los selectores de test existentes que dependen de su
+texto fijo.
+
+**Tests:** `candles.test.ts` (nuevo describe `aggregateCandles`) — caso construido a mano con velas de
+1 minuto en segundos planos (`time: 0, 60, 120...`) para que los límites de cada bucket se puedan
+verificar sin ambigüedad: identidad en `"1m"`, agrupación de 5 velas en un bucket de 5 minutos más una
+vela sola en el bucket siguiente, las 6 velas en un único bucket de 15 minutos, y un caso de `"1h"` con
+fusión dentro de una hora más una vela que cae en la hora siguiente. `price-chart.test.tsx` — nueva
+prueba: el título refleja el timeframe recibido por props. `dashboard.test.tsx` — nueva prueba: hacer
+clic en "5m" cambia el `aria-pressed` de ambos botones y el título del chart a "Velas de 5 minutos".
+
+**Verificado visualmente en navegador real:** los cuatro botones alternan correctamente su estado
+presionado; el título del chart y las marcas de tiempo del eje horizontal cambian de acuerdo al
+timeframe seleccionado (1m → 5m → 15m → 1h → 1m); sin errores en consola.

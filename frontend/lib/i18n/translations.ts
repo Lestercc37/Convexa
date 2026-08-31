@@ -40,7 +40,8 @@ export type Translations = {
   };
   priceChart: {
     eyebrow: string;
-    title: (symbol: string) => string;
+    title: (symbol: string, timeframeLabel: string) => string;
+    timeframeLabels: Record<"1m" | "5m" | "15m" | "1h", string>;
     levelModeAriaLabel: string;
     levelsLegend: string;
     staticButton: string;

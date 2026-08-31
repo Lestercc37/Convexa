@@ -134,7 +134,6 @@ button, select { font: inherit; }
   padding: 5px 9px;
 }
 .tv-timeframe[aria-pressed="true"] { background: var(--tv-panel-raised); color: var(--tv-text); }
-.tv-timeframe:disabled { cursor: default; opacity: 0.4; }
 
 .tv-body { display: flex; flex: 1 1 auto; min-height: 0; }
 

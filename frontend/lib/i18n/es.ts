@@ -45,7 +45,13 @@ export const es: Translations = {
   },
   priceChart: {
     eyebrow: "Precio intradía · memoria local",
-    title: (symbol) => `${symbol} · Velas de 1 minuto`,
+    title: (symbol, timeframeLabel) => `${symbol} · ${timeframeLabel}`,
+    timeframeLabels: {
+      "1m": "Velas de 1 minuto",
+      "5m": "Velas de 5 minutos",
+      "15m": "Velas de 15 minutos",
+      "1h": "Velas de 1 hora",
+    },
     levelModeAriaLabel: "Modo de niveles",
     levelsLegend: "Niveles:",
     staticButton: "Estático",
