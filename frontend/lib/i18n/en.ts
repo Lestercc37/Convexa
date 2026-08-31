@@ -44,7 +44,13 @@ export const en: Translations = {
   },
   priceChart: {
     eyebrow: "Intraday price · client-side memory",
-    title: (symbol) => `${symbol} · 1-minute candles`,
+    title: (symbol, timeframeLabel) => `${symbol} · ${timeframeLabel}`,
+    timeframeLabels: {
+      "1m": "1-minute candles",
+      "5m": "5-minute candles",
+      "15m": "15-minute candles",
+      "1h": "1-hour candles",
+    },
     levelModeAriaLabel: "Level mode",
     levelsLegend: "Levels:",
     staticButton: "Static",

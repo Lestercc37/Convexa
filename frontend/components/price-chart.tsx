@@ -15,7 +15,7 @@ import {
   type UTCTimestamp,
 } from "lightweight-charts";
 import { getGammaHistory } from "@/lib/api";
-import type { MinuteCandle, VwapPoint } from "@/lib/candles";
+import type { MinuteCandle, Timeframe, VwapPoint } from "@/lib/candles";
 import { useLanguage } from "@/lib/i18n/language-context";
 import type { AtrRange, GammaHistoryItem, GammaResponse } from "@/lib/types";
 import { LEVEL_MERGE_THRESHOLD } from "./gravity-map";
@@ -26,6 +26,7 @@ type PriceChartProps = {
   gamma: GammaResponse;
   vwapPoints?: VwapPoint[];
   atrRange?: AtrRange;
+  timeframe?: Timeframe;
 };
 
 type GammaLevel = {
@@ -198,6 +199,7 @@ export function PriceChart({
   gamma,
   vwapPoints = [],
   atrRange,
+  timeframe = "1m",
 }: PriceChartProps) {
   const { t } = useLanguage();
   const containerRef = useRef<HTMLDivElement>(null);
@@ -425,7 +427,9 @@ export function PriceChart({
       <div className="panel-heading">
         <div>
           <p className="eyebrow">{t.priceChart.eyebrow}</p>
-          <h2 id="price-chart-title">{t.priceChart.title(symbol)}</h2>
+          <h2 id="price-chart-title">
+            {t.priceChart.title(symbol, t.priceChart.timeframeLabels[timeframe])}
+          </h2>
         </div>
         <div className="chart-controls">
           <fieldset className="level-mode-selector" aria-label={t.priceChart.levelModeAriaLabel}>

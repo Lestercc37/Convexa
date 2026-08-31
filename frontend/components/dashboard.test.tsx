@@ -381,4 +381,22 @@ describe("Dashboard", () => {
     await user.click(screen.getByRole("button", { name: "Cerrar" }));
     expect(screen.queryByText("Guía de Interpretación de los Motores")).not.toBeInTheDocument();
   });
+
+  it("re-renders the chart with aggregated candles when a timeframe button is clicked", async () => {
+    const user = userEvent.setup();
+    renderWithLanguage(<Dashboard />);
+    await screen.findByLabelText("Chart de velas para SPY");
+
+    const oneMinuteButton = screen.getByRole("button", { name: "1m" });
+    const fiveMinuteButton = screen.getByRole("button", { name: "5m" });
+    expect(oneMinuteButton).toHaveAttribute("aria-pressed", "true");
+    expect(fiveMinuteButton).toHaveAttribute("aria-pressed", "false");
+    expect(screen.getByText("SPY · Velas de 1 minuto")).toBeInTheDocument();
+
+    await user.click(fiveMinuteButton);
+
+    expect(fiveMinuteButton).toHaveAttribute("aria-pressed", "true");
+    expect(oneMinuteButton).toHaveAttribute("aria-pressed", "false");
+    expect(screen.getByText("SPY · Velas de 5 minutos")).toBeInTheDocument();
+  });
 });

@@ -153,6 +153,22 @@ describe("PriceChart", () => {
     expect(chartMocks.createPriceLine).toHaveBeenCalledTimes(4);
   });
 
+  it("labels the chart title with the selected timeframe", () => {
+    renderWithLanguage(
+      <PriceChart
+        symbol="SPY"
+        gamma={gamma}
+        candles={[
+          { time: 1_786_026_600, open: 548, high: 552, low: 548, close: 550 },
+        ]}
+        timeframe="15m"
+      />,
+    );
+
+    expect(screen.getByText("SPY · Velas de 15 minutos")).toBeInTheDocument();
+    expect(screen.queryByText("SPY · Velas de 1 minuto")).not.toBeInTheDocument();
+  });
+
   it("merges Flip and Absolute Gamma overlays inside the 2% threshold", () => {
     renderWithLanguage(
       <PriceChart
