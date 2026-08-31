@@ -11,6 +11,7 @@ import type { GammaResponse, MarketResponse, Underlying } from "@/lib/types";
 import { AlertsPanel } from "./alerts-panel";
 import { ClosingDynamicsPanel } from "./closing-dynamics-panel";
 import { DerivedMetricsBar } from "./derived-metrics-bar";
+import { EnginesGuidePanel } from "./engines-guide-panel";
 import { ExpectedMoveWidget } from "./expected-move-widget";
 import { PreSessionPanel } from "./pre-session-panel";
 import { PriceChart } from "./price-chart";
@@ -47,6 +48,7 @@ export function Dashboard() {
   // instead of being frozen in whichever language was active when the
   // request failed.
   const [error, setError] = useState<unknown>(null);
+  const [showEnginesGuide, setShowEnginesGuide] = useState(false);
   const candles = useMemo(() => aggregateMinuteCandles(pricePoints), [pricePoints]);
   const latestCandle = candles.at(-1) ?? null;
 
@@ -207,7 +209,21 @@ export function Dashboard() {
             {t.dashboard.preSessionButton}
           </button>
         </div>
+        <div className="tv-topbar-right">
+          <button
+            type="button"
+            className="tv-settings-button"
+            aria-label={t.enginesGuide.triggerAriaLabel}
+            onClick={() => setShowEnginesGuide(true)}
+          >
+            ☰
+          </button>
+        </div>
       </header>
+
+      {showEnginesGuide && (
+        <EnginesGuidePanel onClose={() => setShowEnginesGuide(false)} />
+      )}
 
       {error ? (
         <section className="panel status error" role="alert">

@@ -631,3 +631,50 @@ dentro de `.tv-alerts-sidebar` y abre `WhaleThresholdsPanel` correctamente; el R
 renderiza en Pre-Sesión en el espacio confirmado (147px de alto, sin superposición, con ~102-166px de
 margen adicional debajo según la resolución) y no aparece en "En vivo". Sin scroll de página completa
 en ninguna combinación de vista/resolución probada. Columna de Whale Alerts intacta.
+
+## 24. Panel de referencia: Guía de Interpretación de los Motores (reemplaza el PDF externo)
+
+Hasta ahora, entender qué calcula cada motor de Convexa y cómo clasificarlo (estándar de industria vs.
+métrica propia) exigía abrir el PDF externo "Convexa — Guía de Interpretación Objetiva de los Motores".
+Este panel trae ese contenido dentro del dashboard, sin backend nuevo — los datos ya estaban escritos
+en `docs/derived-metrics.md` (única fuente con la clasificación 🟢/🟡 explícita; `use-cases.md` y este
+documento describen los motores pero no los clasifican) y en las descripciones ya existentes de cada
+motor en el resto de este documento.
+
+**Estructura de datos:** `frontend/lib/engines-reference.ts` — `ENGINES_REFERENCE`, un array de
+`{ id, classification: "standard" | "proprietary", citation? }` en el orden en que deben listarse.
+Deliberadamente NO lleva nombre/descripción: ese texto es traducible y vive en
+`t.enginesGuide.engines[id]` (i18n), separando lo estructural (id, orden, clasificación, cita
+académica) de lo traducible — mismo patrón que `PRESETS`/`ENGINES_REFERENCE` en `quick-screener.tsx`.
+Clasificación "proprietary" para Dealer Impact Score, Signal Alignment Score y Market Bias por estar
+explícitamente etiquetados en `derived-metrics.md` §5 con la nota "métrica propia de Convexa, no un
+estándar de mercado"; Pin Risk Score se clasifica igual por inferencia de la sección 9 de este
+documento (misma nota obligatoria), sin tener una etiqueta 🟢/🟡 explícita en ningún doc. El resto
+(GEX, Gamma Flip, Call/Put Wall, Max Pain, Absolute Gamma Strike, Vega/Theta/Vanna/Charm Exposure,
+Whale Alerts/BVC, Anchored VWAP, ATR Range, Expected Move, Volatility Regime) es "standard" — incluso
+cuando el detalle de implementación (p.ej. la ventana de 60 días de Volatility Regime, en vez de las
+52 semanas habituales) es propio de Convexa, el concepto y la fórmula subyacente son estándar de
+industria. Vanna/Charm Exposure y Whale Alerts/BVC llevan cita académica (Black-Scholes-Merton/Haug y
+Easley-López de Prado-O'Hara respectivamente), ya usadas en otras partes de la documentación.
+
+**Panel:** `EnginesGuidePanel` — mismo patrón modal que `WhaleThresholdsPanel`
+(`.modal-overlay` + `.modal`, cierre por ×, click en overlay o Escape), pero sin estado de carga:
+es contenido estático, no hay fetch. Lista cada motor de `ENGINES_REFERENCE` con su nombre,
+descripción, badge de clasificación (🟢/🟡) y, si aplica, su cita académica.
+
+**Disparador:** ícono "☰" en `.tv-topbar-right` — slot que existía originalmente en el topbar y quedó
+vacío tras la sección 23 (una vez el engranaje de Whale Alerts y el Regime Badge se mudaron a sus
+propios paneles). Se reutiliza en vez de crear un slot nuevo porque esta guía es, a diferencia de esos
+dos elementos, genuinamente global al dashboard completo — no pertenece a un panel específico. Glifo
+distinto ("☰" vs. "⚙" de los paneles de configuración) para diferenciar visualmente "referencia" de
+"ajustes".
+
+**i18n:** `t.enginesGuide` (ES/EN completo) — textos del panel (eyebrow, título, descripción,
+aria-labels, etiquetas de badge y de cita) más `engines: Record<string, { name, description }>` con
+las 18 entradas.
+
+**Tests:** `engines-guide-panel.test.tsx` (nuevo) — renderiza los 18 motores con nombre/descripción y
+al menos un badge de cada clasificación visible; la cita académica aparece solo en los motores que la
+tienen; cierra por botón ×, click en overlay, y Escape; un click dentro del modal no lo cierra.
+`dashboard.test.tsx` — nueva prueba: el ícono del topbar abre el panel (confirmando que muestra al
+menos una entrada) y lo cierra por ×.

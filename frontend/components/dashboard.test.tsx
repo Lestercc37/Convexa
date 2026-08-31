@@ -363,4 +363,22 @@ describe("Dashboard", () => {
     await user.click(screen.getByRole("button", { name: "Cerrar" }));
     expect(screen.queryByText("Umbrales de Whale Alerts")).not.toBeInTheDocument();
   });
+
+  it("opens the engines interpretation guide from the topbar icon, and closes it", async () => {
+    const user = userEvent.setup();
+    renderWithLanguage(<Dashboard />);
+    await screen.findByLabelText("Chart de velas para SPY");
+
+    expect(screen.queryByText("Guía de Interpretación de los Motores")).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Guía de interpretación de los motores" }));
+
+    expect(
+      await screen.findByText("Guía de Interpretación de los Motores"),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Gamma Exposure (GEX) / Net Gamma")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Cerrar" }));
+    expect(screen.queryByText("Guía de Interpretación de los Motores")).not.toBeInTheDocument();
+  });
 });

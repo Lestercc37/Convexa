@@ -161,4 +161,15 @@ export type Translations = {
       actions: string;
     };
   };
+  enginesGuide: {
+    eyebrow: string;
+    title: string;
+    description: string;
+    triggerAriaLabel: string;
+    closeButtonAriaLabel: string;
+    standardBadge: string;
+    proprietaryBadge: string;
+    citationLabel: string;
+    engines: Record<string, { name: string; description: string }>;
+  };
 };
