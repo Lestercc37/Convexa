@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from functools import lru_cache
+from typing import Literal
 
 from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -24,6 +25,13 @@ class Settings(BaseSettings):
     )
     database_echo: bool = Field(default=False)
     enable_scheduler: bool = Field(default=True)
+    # "mock" (default, no external dependency) or "thetadata" (real Theta
+    # Terminal v3, local REST + WebSocket) — switchable without a code
+    # change specifically so a real-data incident can be diagnosed by
+    # falling back to Mock without spending real ThetaData quota.
+    data_provider: Literal["mock", "thetadata"] = Field(default="mock")
+    thetadata_rest_url: str = Field(default="http://localhost:25503")
+    thetadata_ws_url: str = Field(default="ws://127.0.0.1:25520/v1/events")
 
 
 @lru_cache

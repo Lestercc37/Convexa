@@ -23,6 +23,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     configure_logging(container.settings)
     app.state.container = container
     logger.info("Starting %s", container.settings.app_name)
+    await container.market_data_provider.start()
     scheduler = UnderlyingRefreshScheduler(container) if container.settings.enable_scheduler else None
     if scheduler is not None:
         scheduler.start()
@@ -31,6 +32,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     finally:
         if scheduler is not None:
             await scheduler.stop()
+        await container.market_data_provider.stop()
         if container.storage_engine is not None:
             container.storage_engine.dispose()
         await container.database_engine.dispose()

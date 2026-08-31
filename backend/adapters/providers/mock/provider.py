@@ -71,6 +71,12 @@ class MockDataProvider:
         if False:
             yield
 
+    async def start(self) -> None:
+        """No persistent connection to open — deterministic, in-process data."""
+
+    async def stop(self) -> None:
+        """No persistent connection to close."""
+
 
 def _contract(
     symbol: str, strike: Decimal, expiration: date, contract_type: ContractType
