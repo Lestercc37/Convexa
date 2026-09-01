@@ -6,12 +6,13 @@ from datetime import datetime, timedelta
 from decimal import Decimal
 from enum import StrEnum
 
-from backend.domain.entities import OptionChain, OptionContract
+from backend.domain.entities import FlowEvent, LatestQuote, OptionChain, Side
 from backend.domain.ports import IStorage
 from backend.domain.use_cases.calculate_bvc import (
     calculate_bvc_split,
     calculate_price_volatility,
 )
+from backend.domain.use_cases.calculate_lee_ready import classify_trade_side
 
 
 class WhaleAlertType(StrEnum):
@@ -85,6 +86,11 @@ class _ContractState:
     bucket_sell_volume: Decimal = Decimal(0)
     sustained_buy_volumes: deque[Decimal] = field(default_factory=lambda: deque(maxlen=15))
     sustained_sell_volumes: deque[Decimal] = field(default_factory=lambda: deque(maxlen=15))
+    # Lee-Ready only (process_trade, tracked in a separate _trade_states
+    # dict — see WhaleAlertsEngine.__init__) — the tick rule's "carry
+    # forward on a zero tick" memory. process()/BVC never reads or writes
+    # this field, so this addition changes nothing about that path.
+    previous_side: Side = Side.UNKNOWN
 
 
 class WhaleAlertsEngine:
@@ -124,6 +130,13 @@ class WhaleAlertsEngine:
         self._storage = storage
         self._default_thresholds = default_thresholds or WhaleAlertThresholds()
         self._states: dict[str, _ContractState] = {}
+        # Separate from _states (process()/BVC) on purpose — process_trade()
+        # (Lee-Ready) keeps its own per-contract bucketing state so the two
+        # mechanisms can run concurrently under ThetaDataProvider (which
+        # still polls for greeks/IV/OI while also streaming trades) without
+        # either one's volume ever being double-counted into the other's
+        # bucket. See _ContractState and process_trade().
+        self._trade_states: dict[str, _ContractState] = {}
         self._alerts: deque[WhaleAlert] = deque(maxlen=alert_limit)
 
     def _resolve_thresholds(self, symbol: str) -> WhaleAlertThresholds:
@@ -191,51 +204,16 @@ class WhaleAlertsEngine:
             state.previous_price = contract.last
 
             if current_bucket_start != state.bucket_start:
-                finalized_amount = state.bucket_amount
-                finalized_buy_volume = state.bucket_buy_volume
-                finalized_sell_volume = state.bucket_sell_volume
-
-                if len(state.previous_amounts) == self._WINDOW_SIZE:
-                    average_amount = sum(state.previous_amounts, Decimal()) / self._WINDOW_SIZE
-                    alert_type = self._classify(finalized_amount, average_amount, thresholds)
-                    if alert_type is not None:
-                        generated.append(
-                            self._emit(
-                                chain,
-                                contract,
-                                alert_type,
-                                finalized_amount,
-                                finalized_buy_volume,
-                                finalized_sell_volume,
-                            )
-                        )
-
-                state.sustained_amounts.append(finalized_amount)
-                state.sustained_buy_volumes.append(finalized_buy_volume)
-                state.sustained_sell_volumes.append(finalized_sell_volume)
-                if len(state.sustained_amounts) == self._SUSTAINED_WINDOW_SIZE:
-                    sustained_total = sum(state.sustained_amounts, Decimal())
-                    if sustained_total >= thresholds.sustained_flow_min:
-                        if not state.sustained_alerted:
-                            state.sustained_alerted = True
-                            generated.append(
-                                self._emit(
-                                    chain,
-                                    contract,
-                                    WhaleAlertType.SUSTAINED_FLOW,
-                                    sustained_total,
-                                    sum(state.sustained_buy_volumes, Decimal()),
-                                    sum(state.sustained_sell_volumes, Decimal()),
-                                )
-                            )
-                    else:
-                        state.sustained_alerted = False
-
-                state.previous_amounts.append(finalized_amount)
-                state.bucket_start = current_bucket_start
-                state.bucket_amount = Decimal(0)
-                state.bucket_buy_volume = Decimal(0)
-                state.bucket_sell_volume = Decimal(0)
+                generated.extend(
+                    self._finalize_bucket(
+                        state,
+                        chain.symbol,
+                        contract.occ_symbol,
+                        chain.as_of,
+                        thresholds,
+                        current_bucket_start,
+                    )
+                )
 
             state.bucket_amount += amount
             state.bucket_buy_volume += buy_volume
@@ -243,21 +221,155 @@ class WhaleAlertsEngine:
 
         return tuple(generated)
 
+    def process_trade(self, event: FlowEvent, quote: LatestQuote | None) -> tuple[WhaleAlert, ...]:
+        """Classify one individual trade with Lee-Ready (1991) and feed it
+        into the same per-minute bucketing / Sustained Flow mechanism
+        process() already uses — see calculate_lee_ready.py for the
+        classification itself, and _ContractState/__init__ for why this
+        keeps its own separate state (_trade_states, not _states).
+
+        `quote` is whatever the caller (StreamWhaleAlertsUseCase) last saw
+        on the Quote Stream for this contract — `None` means no quote has
+        arrived yet (e.g. right at startup), which classify_trade_side
+        already treats as a documented neutral case, not a guess.
+
+        Known limitation, deliberately out of scope here: unlike process(),
+        this has no volume-counter-based session-rollover detection (a
+        continuous trade stream has no equivalent counter to watch) — the
+        5-minute/15-minute rolling windows are not explicitly cleared
+        across a session boundary. Swapping the classification mechanism
+        was this change's only goal; rollover handling for the streaming
+        path is a separate concern to revisit later.
+        """
+        thresholds = self._resolve_thresholds(event.symbol)
+        current_bucket_start = _floor_to_minute(event.as_of)
+
+        state = self._trade_states.get(event.occ_symbol)
+        if state is None:
+            state = _ContractState(cumulative_volume=0, bucket_start=current_bucket_start)
+            self._trade_states[event.occ_symbol] = state
+
+        # FlowEvent carries `premium` (price × size × 100), not the raw
+        # per-contract trade price the quote rule/tick rule need directly.
+        # Recovered by undoing that exact multiplication — exact under
+        # Decimal, no rounding introduced — rather than adding a
+        # price-specific field to FlowEvent, which is also reconstructed
+        # from a persisted schema with no such column (postgresql.py).
+        price = event.premium / (Decimal(event.size) * self._CONTRACT_MULTIPLIER)
+        bid = quote.bid if quote is not None else None
+        ask = quote.ask if quote is not None else None
+        side = classify_trade_side(price, bid, ask, state.previous_price, state.previous_side)
+        state.previous_price = price
+        state.previous_side = side
+
+        if side is Side.BUY:
+            buy_volume, sell_volume = event.premium, Decimal(0)
+        elif side is Side.SELL:
+            buy_volume, sell_volume = Decimal(0), event.premium
+        else:
+            half = event.premium / 2
+            buy_volume, sell_volume = half, half
+
+        generated: list[WhaleAlert] = []
+        if current_bucket_start != state.bucket_start:
+            generated.extend(
+                self._finalize_bucket(
+                    state,
+                    event.symbol,
+                    event.occ_symbol,
+                    event.as_of,
+                    thresholds,
+                    current_bucket_start,
+                )
+            )
+
+        state.bucket_amount += event.premium
+        state.bucket_buy_volume += buy_volume
+        state.bucket_sell_volume += sell_volume
+        return tuple(generated)
+
+    def _finalize_bucket(
+        self,
+        state: _ContractState,
+        symbol: str,
+        occ_symbol: str,
+        as_of: datetime,
+        thresholds: WhaleAlertThresholds,
+        new_bucket_start: datetime,
+    ) -> list[WhaleAlert]:
+        """Close `state`'s in-progress bucket: classify it against the
+        trailing 5-minute average, roll it into the 15-minute Sustained
+        Flow window, then reset the bucket for `new_bucket_start`. Shared
+        by process() and process_trade() — identical bucketing/alerting
+        rules regardless of which classifier (BVC or Lee-Ready) produced
+        the bucket's buy/sell split.
+        """
+        generated: list[WhaleAlert] = []
+        finalized_amount = state.bucket_amount
+        finalized_buy_volume = state.bucket_buy_volume
+        finalized_sell_volume = state.bucket_sell_volume
+
+        if len(state.previous_amounts) == self._WINDOW_SIZE:
+            average_amount = sum(state.previous_amounts, Decimal()) / self._WINDOW_SIZE
+            alert_type = self._classify(finalized_amount, average_amount, thresholds)
+            if alert_type is not None:
+                generated.append(
+                    self._emit(
+                        symbol,
+                        occ_symbol,
+                        as_of,
+                        alert_type,
+                        finalized_amount,
+                        finalized_buy_volume,
+                        finalized_sell_volume,
+                    )
+                )
+
+        state.sustained_amounts.append(finalized_amount)
+        state.sustained_buy_volumes.append(finalized_buy_volume)
+        state.sustained_sell_volumes.append(finalized_sell_volume)
+        if len(state.sustained_amounts) == self._SUSTAINED_WINDOW_SIZE:
+            sustained_total = sum(state.sustained_amounts, Decimal())
+            if sustained_total >= thresholds.sustained_flow_min:
+                if not state.sustained_alerted:
+                    state.sustained_alerted = True
+                    generated.append(
+                        self._emit(
+                            symbol,
+                            occ_symbol,
+                            as_of,
+                            WhaleAlertType.SUSTAINED_FLOW,
+                            sustained_total,
+                            sum(state.sustained_buy_volumes, Decimal()),
+                            sum(state.sustained_sell_volumes, Decimal()),
+                        )
+                    )
+            else:
+                state.sustained_alerted = False
+
+        state.previous_amounts.append(finalized_amount)
+        state.bucket_start = new_bucket_start
+        state.bucket_amount = Decimal(0)
+        state.bucket_buy_volume = Decimal(0)
+        state.bucket_sell_volume = Decimal(0)
+        return generated
+
     def _emit(
         self,
-        chain: OptionChain,
-        contract: OptionContract,
+        symbol: str,
+        occ_symbol: str,
+        as_of: datetime,
         alert_type: WhaleAlertType,
         amount: Decimal,
         estimated_buy_volume: Decimal,
         estimated_sell_volume: Decimal,
     ) -> WhaleAlert:
         alert = WhaleAlert(
-            symbol=chain.symbol,
-            occ_symbol=contract.occ_symbol,
+            symbol=symbol,
+            occ_symbol=occ_symbol,
             alert_type=alert_type,
             amount=amount,
-            as_of=chain.as_of,
+            as_of=as_of,
             estimated_buy_volume=estimated_buy_volume,
             estimated_sell_volume=estimated_sell_volume,
         )

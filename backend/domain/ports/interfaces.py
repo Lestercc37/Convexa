@@ -14,6 +14,7 @@ from backend.domain.entities import (
     MarketSnapshot,
     MaxPain,
     OptionChain,
+    QuoteEvent,
     ScreenerPreset,
     ScreenerPresetSettings,
     Underlying,
@@ -27,6 +28,10 @@ class IDataProvider(Protocol):
     def get_underlying_snapshot(self, underlying: str) -> MarketSnapshot: ...
     def get_daily_bars(self, underlying: str, days: int = 20) -> list[DailyBar]: ...
     def stream_trades(self, underlying: str) -> AsyncIterator[FlowEvent]: ...
+    # Added alongside stream_trades for Lee-Ready (StreamWhaleAlertsUseCase,
+    # calculate_lee_ready.py) — the quote-rule needs the bid/ask prevailing
+    # at each trade, which stream_trades alone never carries.
+    def stream_quotes(self, underlying: str) -> AsyncIterator[QuoteEvent]: ...
     # Lifecycle hooks for providers backed by a persistent connection (e.g.
     # a streaming WebSocket) that must be opened/closed with the process,
     # not per-call. A no-op for providers with nothing to start (MockData

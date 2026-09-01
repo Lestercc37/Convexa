@@ -32,6 +32,7 @@ from backend.domain.use_cases.calculate_gamma_aggregate import CalculateGammaAgg
 from backend.domain.use_cases.calculate_gamma_exposure import CalculateGammaExposureUseCase
 from backend.domain.use_cases.calculate_gamma_flip import CalculateGammaFlipUseCase
 from backend.domain.use_cases.calculate_greeks import CalculateGreeksUseCase
+from backend.domain.use_cases.calculate_lee_ready import classify_trade_side
 from backend.domain.use_cases.calculate_max_pain import CalculateMaxPainUseCase
 from backend.domain.use_cases.calculate_walls import CalculateWallsUseCase
 from backend.domain.use_cases.flow import (
@@ -56,6 +57,7 @@ from backend.domain.use_cases.screener_presets import (
     ScreenerPresetResult,
     get_screener_preset,
 )
+from backend.domain.use_cases.stream_whale_alerts import StreamWhaleAlertsUseCase
 
 __all__ = [
     "ATR_WINDOW_DAYS",
@@ -75,6 +77,7 @@ __all__ = [
     "RefreshUnderlyingSnapshotUseCase",
     "ScreenerPreset",
     "ScreenerPresetResult",
+    "StreamWhaleAlertsUseCase",
     "WhaleAlert",
     "WhaleAlertThresholds",
     "WhaleAlertType",
@@ -94,6 +97,7 @@ __all__ = [
     "calculate_time_to_close_pct",
     "calculate_vanna_interpretation",
     "capture_daily_gamma_reference",
+    "classify_trade_side",
     "get_flow",
     "get_gamma_exposure",
     "get_gamma_history",

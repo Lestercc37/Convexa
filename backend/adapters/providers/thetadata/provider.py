@@ -20,6 +20,7 @@ from backend.domain.entities import (
     OptionChain,
     OptionContract,
     OptionGreeks,
+    QuoteEvent,
     Side,
     UnderlyingKind,
     utc_now,
@@ -361,6 +362,169 @@ class ThetaTradeStream:
                 )
 
 
+class ThetaQuoteStream:
+    """Owns a persistent WebSocket connection to Theta Terminal's Quote
+    Stream and dispatches each incoming quote to subscribers, for
+    Lee-Ready's quote rule (calculate_lee_ready.py, StreamWhaleAlertsUseCase).
+
+    Confirmed against ThetaData's public v3 docs (Streaming/US-Options/
+    Quote-Stream) before writing this: same `msg_type`/`sec_type`/
+    `contract` shape as the Trade Stream, just `req_type: "QUOTE"` and a
+    `quote` object (`bid`, `ask`, ...) instead of `trade`.
+
+    A separate WebSocket connection from ThetaTradeStream, not one
+    multiplexing both TRADE and QUOTE subscriptions (ThetaData's protocol
+    does support that on a single connection) — this keeps the
+    already-validated, incident-hardened Trade Stream (see its own
+    docstring) completely untouched, at the cost of one extra lightweight
+    connection to a local Theta Terminal process, not a rate-limited
+    remote server.
+
+    Same reconnection hardening as ThetaTradeStream (STATUS heartbeat,
+    exponential backoff) — no volume reconciliation here, since quotes
+    have no cumulative-volume concept to reconcile against REST.
+    """
+
+    def __init__(self, ws_url: str) -> None:
+        self._ws_url = ws_url
+        self._contracts: dict[str, tuple[str, date, ContractType, Decimal]] = {}
+        self._subscribers: dict[str, list[asyncio.Queue[QuoteEvent]]] = {}
+        self._task: asyncio.Task[None] | None = None
+        self._next_request_id = 1
+
+    def register_contract(
+        self,
+        occ_symbol: str,
+        root: str,
+        expiration: date,
+        contract_type: ContractType,
+        strike: Decimal,
+    ) -> None:
+        self._contracts[occ_symbol] = (root, expiration, contract_type, strike)
+
+    def start(self) -> None:
+        if self._task is not None:
+            return
+        self._task = asyncio.create_task(self._run())
+
+    async def stop(self) -> None:
+        if self._task is None:
+            return
+        self._task.cancel()
+        try:
+            await self._task
+        except asyncio.CancelledError:
+            pass
+        self._task = None
+
+    def subscribe_queue(self, underlying: str) -> asyncio.Queue[QuoteEvent]:
+        queue: asyncio.Queue[QuoteEvent] = asyncio.Queue()
+        self._subscribers.setdefault(underlying.upper(), []).append(queue)
+        return queue
+
+    async def _run(self) -> None:
+        delay = RECONNECT_BASE_DELAY_SECONDS
+        while True:
+            try:
+                await self._connect_and_consume()
+                delay = RECONNECT_BASE_DELAY_SECONDS
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.exception("ThetaData quote stream disconnected, reconnecting in %ss", delay)
+                await asyncio.sleep(delay)
+                delay = min(delay * 2, RECONNECT_MAX_DELAY_SECONDS)
+
+    async def _connect_and_consume(self) -> None:
+        async with websockets.connect(self._ws_url) as websocket:
+            for root, expiration, contract_type, strike in self._contracts.values():
+                await self._subscribe(websocket, root, expiration, contract_type, strike)
+            last_status_at = utc_now()
+            while True:
+                try:
+                    raw = await asyncio.wait_for(
+                        websocket.recv(), timeout=STATUS_STALE_AFTER_SECONDS
+                    )
+                except TimeoutError as exc:
+                    raise ConnectionError(
+                        "No message from Theta Terminal within heartbeat window"
+                    ) from exc
+                message = json.loads(raw)
+                header = message.get("header", {})
+                status = header.get("status")
+                if header.get("type") == "STATUS":
+                    if status != "CONNECTED":
+                        raise ConnectionError(f"Theta Terminal reported status: {status}")
+                    last_status_at = utc_now()
+                elif header.get("type") == "QUOTE":
+                    self._handle_quote(message)
+
+                now = utc_now()
+                if (now - last_status_at).total_seconds() > STATUS_STALE_AFTER_SECONDS:
+                    raise ConnectionError("Heartbeat stale — no STATUS message recently")
+
+    async def _subscribe(
+        self,
+        websocket: websockets.ClientConnection,
+        root: str,
+        expiration: date,
+        contract_type: ContractType,
+        strike: Decimal,
+    ) -> None:
+        payload = {
+            "msg_type": "STREAM",
+            "sec_type": "OPTION",
+            "req_type": "QUOTE",
+            "add": True,
+            "id": self._next_request_id,
+            "contract": {
+                "root": root,
+                "expiration": int(expiration.strftime("%Y%m%d")),
+                "strike": int(strike * 1000),
+                "right": "C" if contract_type == ContractType.CALL else "P",
+            },
+        }
+        self._next_request_id += 1
+        await websocket.send(json.dumps(payload))
+
+    def _handle_quote(self, message: dict[str, Any]) -> None:
+        contract = message.get("contract", {})
+        quote = message.get("quote", {})
+        root = contract.get("root")
+        expiration_raw = contract.get("expiration")
+        strike_raw = contract.get("strike")
+        right = contract.get("right")
+        bid = quote.get("bid")
+        ask = quote.get("ask")
+        if (
+            root is None
+            or expiration_raw is None
+            or strike_raw is None
+            or bid is None
+            or ask is None
+        ):
+            return
+        expiration_digits = str(expiration_raw)
+        expiration = date(
+            int(expiration_digits[:4]), int(expiration_digits[4:6]), int(expiration_digits[6:8])
+        )
+        contract_type = ContractType.CALL if right == "C" else ContractType.PUT
+        strike = Decimal(strike_raw) / Decimal(1000)
+        occ_symbol = _build_occ_symbol(root, expiration, contract_type, strike)
+
+        queues = self._subscribers.get(root.upper(), [])
+        for queue in queues:
+            queue.put_nowait(
+                QuoteEvent(
+                    symbol=root.upper(),
+                    occ_symbol=occ_symbol,
+                    as_of=utc_now(),
+                    bid=Decimal(str(bid)),
+                    ask=Decimal(str(ask)),
+                )
+            )
+
+
 class ThetaDataProvider:
     """Real IDataProvider adapter backed by a local Theta Terminal v3.
 
@@ -372,6 +536,7 @@ class ThetaDataProvider:
     def __init__(self, rest_base_url: str, ws_url: str) -> None:
         self._client = httpx.Client(base_url=rest_base_url, timeout=10.0)
         self._stream = ThetaTradeStream(ws_url, self._client)
+        self._quote_stream = ThetaQuoteStream(ws_url)
         self._rate_cache: tuple[date, Decimal] | None = None
 
     async def start(self) -> None:
@@ -392,10 +557,15 @@ class ThetaDataProvider:
                 self._stream.register_contract(
                     occ_symbol, symbol, chain.expiration, contract_type, strike
                 )
+                self._quote_stream.register_contract(
+                    occ_symbol, symbol, chain.expiration, contract_type, strike
+                )
         self._stream.start()
+        self._quote_stream.start()
 
     async def stop(self) -> None:
         await self._stream.stop()
+        await self._quote_stream.stop()
         self._client.close()
 
     def _get_json(self, path: str, **params: object) -> dict[str, Any]:
@@ -626,5 +796,10 @@ class ThetaDataProvider:
 
     async def stream_trades(self, underlying: str) -> AsyncIterator[FlowEvent]:
         queue = self._stream.subscribe_queue(underlying)
+        while True:
+            yield await queue.get()
+
+    async def stream_quotes(self, underlying: str) -> AsyncIterator[QuoteEvent]:
+        queue = self._quote_stream.subscribe_queue(underlying)
         while True:
             yield await queue.get()

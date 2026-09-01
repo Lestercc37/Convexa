@@ -10,6 +10,7 @@ import pytest
 
 from backend.adapters.providers.thetadata.provider import (
     ThetaDataProvider,
+    ThetaQuoteStream,
     ThetaTradeStream,
     _build_occ_symbol,
     _parse_et_timestamp,
@@ -439,9 +440,92 @@ class TestTradeStream:
         assert sleep_calls[2] == 8
 
 
+class TestQuoteStream:
+    def test_handle_quote_publishes_a_quote_event_to_subscribers(self) -> None:
+        stream = ThetaQuoteStream(WS_URL)
+        queue = stream.subscribe_queue("SPY")
+        message = {
+            "header": {"type": "QUOTE", "status": "CONNECTED"},
+            "contract": {
+                "security_type": "OPTION",
+                "root": "SPY",
+                "expiration": 20260918,
+                "strike": 770000,
+                "right": "C",
+            },
+            "quote": {
+                "ms_of_day": 26622025,
+                "bid_size": 7,
+                "bid": 1.08,
+                "ask_size": 7,
+                "ask": 1.09,
+                "date": 20261219,
+            },
+        }
+
+        stream._handle_quote(message)
+        event = queue.get_nowait()
+
+        occ = _build_occ_symbol("SPY", date(2026, 9, 18), ContractType.CALL, Decimal("770"))
+        assert event.symbol == "SPY"
+        assert event.occ_symbol == occ
+        assert event.bid == Decimal("1.08")
+        assert event.ask == Decimal("1.09")
+
+    def test_handle_quote_ignores_incomplete_messages(self) -> None:
+        stream = ThetaQuoteStream(WS_URL)
+        queue = stream.subscribe_queue("SPY")
+
+        stream._handle_quote({"contract": {"root": "SPY"}, "quote": {"bid": 1.08}})
+
+        assert queue.empty()
+
+    @pytest.mark.asyncio
+    async def test_run_backs_off_exponentially_between_reconnect_attempts(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        stream = ThetaQuoteStream(WS_URL)
+        sleep_calls: list[float] = []
+
+        async def fake_sleep(seconds: float) -> None:
+            sleep_calls.append(seconds)
+            if len(sleep_calls) >= 3:
+                raise asyncio.CancelledError
+
+        async def failing_connect() -> None:
+            raise ConnectionError("simulated disconnect")
+
+        monkeypatch.setattr(asyncio, "sleep", fake_sleep)
+        monkeypatch.setattr(stream, "_connect_and_consume", failing_connect)
+
+        with pytest.raises(asyncio.CancelledError):
+            await stream._run()
+
+        assert sleep_calls[0] == 2
+        assert sleep_calls[1] == 4
+        assert sleep_calls[2] == 8
+
+    @pytest.mark.asyncio
+    async def test_start_and_stop_manage_a_single_background_task(self) -> None:
+        stream = ThetaQuoteStream(WS_URL)
+        stream.start()
+        task = stream._task
+        assert task is not None
+
+        # A second start() while already running is a no-op — same
+        # contract as ThetaTradeStream.start().
+        stream.start()
+        assert stream._task is task
+
+        await stream.stop()
+        assert stream._task is None
+
+
 class TestProviderLifecycle:
     @pytest.mark.asyncio
     async def test_stop_closes_the_rest_client_and_stream(self) -> None:
         provider = ThetaDataProvider(REST_URL, WS_URL)
         await provider.stop()
         assert provider._client.is_closed
+        assert provider._stream._task is None
+        assert provider._quote_stream._task is None

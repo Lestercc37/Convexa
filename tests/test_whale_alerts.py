@@ -8,7 +8,13 @@ from fastapi.testclient import TestClient
 
 from backend.adapters.providers.mock import MockDataProvider
 from backend.adapters.storage.memory import InMemoryStorage
-from backend.domain.entities import OptionChain
+from backend.domain.entities import (
+    FlowEvent,
+    FlowEventType,
+    LatestQuote,
+    OptionChain,
+    Side,
+)
 from backend.domain.use_cases import (
     WhaleAlert,
     WhaleAlertsEngine,
@@ -311,3 +317,157 @@ def test_sustained_flow_resets_and_refires_after_dropping_below_threshold() -> N
     # Sustained Flow fires a second, independent time.
     phase3 = run(37, 15, 400)
     assert len(sustained(phase3)) == 1
+
+
+# --- process_trade() / Lee-Ready — separate from the OptionChain-based
+# process()/BVC tests above; see flow.py's _trade_states for why these two
+# paths keep fully independent per-contract state.
+
+TRADE_SYMBOL = "IWM"
+TRADE_OCC_SYMBOL = "IWM260220C00185000"
+TRADE_BASE_TIME = datetime(2026, 1, 15, 14, 30, tzinfo=UTC)
+# A midpoint far below any premium/size combination used in these tests —
+# every trade here classifies as a clean quote-rule BUY regardless of its
+# own premium, so tests about bucketing/thresholds don't also have to
+# reason about the buy/sell split (that's covered by the dedicated
+# split-specific tests below, and by tests/test_lee_ready.py for the pure
+# function itself).
+BUY_LEANING_QUOTE = LatestQuote(bid=Decimal("0.01"), ask=Decimal("0.02"), as_of=TRADE_BASE_TIME)
+
+
+def _trade(period: int, premium: str, size: int = 1) -> FlowEvent:
+    return FlowEvent(
+        symbol=TRADE_SYMBOL,
+        occ_symbol=TRADE_OCC_SYMBOL,
+        as_of=TRADE_BASE_TIME + timedelta(minutes=period),
+        event_type=FlowEventType.UNUSUAL,
+        premium=Decimal(premium),
+        size=size,
+        aggressor_side=Side.UNKNOWN,
+    )
+
+
+def test_process_trade_emits_unusual_with_a_full_buy_classification() -> None:
+    engine = WhaleAlertsEngine(InMemoryStorage())
+
+    for period in range(6):
+        assert engine.process_trade(_trade(period, "100"), BUY_LEANING_QUOTE) == ()
+
+    # Lands in period 6's still-open bucket.
+    engine.process_trade(_trade(6, "45000"), BUY_LEANING_QUOTE)
+    # Period 7's trade finalizes period 6's bucket — this is what gets
+    # classified against the trailing 5-period average built above.
+    alerts = engine.process_trade(_trade(7, "100"), BUY_LEANING_QUOTE)
+
+    assert len(alerts) == 1
+    assert alerts[0].alert_type is WhaleAlertType.UNUSUAL
+    assert alerts[0].amount == Decimal("45000")
+    # Quote rule: every trade here prices well above BUY_LEANING_QUOTE's
+    # midpoint, so the whole bucket is classified as buyer-initiated.
+    assert alerts[0].estimated_buy_volume == Decimal("45000")
+    assert alerts[0].estimated_sell_volume == Decimal("0")
+
+
+def test_process_trade_classifies_a_trade_below_midpoint_as_a_full_sell() -> None:
+    engine = WhaleAlertsEngine(InMemoryStorage())
+    # Midpoint (1000.02) sits above every trade's own derived price used in
+    # this test (premium / (size * 100), at most 450 for the $45,000
+    # trade) — the mirror image of BUY_LEANING_QUOTE, which sits below all
+    # of them.
+    sell_leaning_quote = LatestQuote(
+        bid=Decimal("1000.00"), ask=Decimal("1000.04"), as_of=TRADE_BASE_TIME
+    )
+
+    for period in range(6):
+        assert engine.process_trade(_trade(period, "100"), sell_leaning_quote) == ()
+
+    engine.process_trade(_trade(6, "45000"), sell_leaning_quote)
+    alerts = engine.process_trade(_trade(7, "100"), sell_leaning_quote)
+
+    assert len(alerts) == 1
+    assert alerts[0].estimated_buy_volume == Decimal("0")
+    assert alerts[0].estimated_sell_volume == Decimal("45000")
+
+
+def test_process_trade_neutral_split_when_no_quote_known_yet() -> None:
+    # Documented edge case: no LatestQuote yet for this contract (e.g.
+    # right at startup, before the Quote Stream's first message) — a
+    # neutral 50/50 split, same convention as BVC's sigma == 0 fallback.
+    engine = WhaleAlertsEngine(InMemoryStorage())
+
+    for period in range(6):
+        assert engine.process_trade(_trade(period, "100"), None) == ()
+
+    engine.process_trade(_trade(6, "45000"), None)
+    alerts = engine.process_trade(_trade(7, "100"), None)
+
+    assert len(alerts) == 1
+    assert alerts[0].estimated_buy_volume == Decimal("22500")
+    assert alerts[0].estimated_sell_volume == Decimal("22500")
+    assert alerts[0].estimated_buy_volume + alerts[0].estimated_sell_volume == Decimal("45000")
+
+
+def test_process_trade_sustained_flow_fires_once() -> None:
+    # Unlike process()/BVC, process_trade() has no "first call only
+    # establishes a baseline, contributes $0" step — every trade
+    # contributes its own premium to its own bucket immediately. A steady
+    # $40,000/min flow across 16 straight minutes therefore finalizes 15
+    # buckets of $40,000 each (periods 0-14, finalized as periods 1-15
+    # arrive) for a total of $600,000, crossing sustained_flow_min
+    # ($500,000) the moment the 15th bucket closes.
+    engine = WhaleAlertsEngine(InMemoryStorage())
+
+    for period in range(15):
+        assert engine.process_trade(_trade(period, "40000"), BUY_LEANING_QUOTE) == ()
+
+    # Finalizes period 14's bucket — the 15th push into the 15-slot
+    # Sustained Flow window — so the alert fires on this same call.
+    sustained_alerts = engine.process_trade(_trade(15, "40000"), BUY_LEANING_QUOTE)
+
+    assert len(sustained_alerts) == 1
+    assert sustained_alerts[0].alert_type is WhaleAlertType.SUSTAINED_FLOW
+    assert sustained_alerts[0].amount == Decimal("600000")
+    assert sustained_alerts[0].estimated_buy_volume == Decimal("600000")
+
+
+def test_process_and_process_trade_never_share_state_for_the_same_contract() -> None:
+    # Confirms the design decision behind _trade_states being a separate
+    # dict from _states: under ThetaDataProvider, process() (still
+    # polling for greeks/IV/OI) and process_trade() (the new streaming
+    # path) can run concurrently for the very same occ_symbol without
+    # either one's volume leaking into the other's bucket.
+    engine = WhaleAlertsEngine(InMemoryStorage())
+    base = MockDataProvider().get_option_chain("IWM")
+    shared_occ_symbol = base.contracts[0].occ_symbol
+
+    # Warm up process()'s own 5-period window exactly like the existing
+    # OptionChain-based tests, interleaved period-by-period with an
+    # unrelated, much larger process_trade() flow on the same occ_symbol.
+    cumulative = 100
+    engine.process(_chain(base, cumulative, 0))
+    engine.process_trade(
+        FlowEvent(
+            symbol="IWM",
+            occ_symbol=shared_occ_symbol,
+            as_of=TRADE_BASE_TIME,
+            event_type=FlowEventType.UNUSUAL,
+            premium=Decimal("999999"),
+            size=1,
+            aggressor_side=Side.UNKNOWN,
+        ),
+        BUY_LEANING_QUOTE,
+    )
+    for period in range(1, 6):
+        cumulative += 100
+        assert engine.process(_chain(base, cumulative, period)) == ()
+
+    cumulative += 450
+    assert engine.process(_chain(base, cumulative, 6)) == ()
+    alerts = engine.process(_chain(base, cumulative, 7))
+
+    # Identical result to test_engine_emits_unusual_after_five_previous_periods
+    # (which has no process_trade() calls at all) — proof the interleaved
+    # $999,999 trade-stream premium never touched process()'s own bucket.
+    assert len(alerts) == 1
+    assert alerts[0].alert_type is WhaleAlertType.UNUSUAL
+    assert alerts[0].amount == Decimal("45000.00")

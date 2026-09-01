@@ -12,6 +12,7 @@ from backend.api.serializers import error_response
 from backend.core.container import build_container
 from backend.core.logging import configure_logging
 from backend.core.scheduler import UnderlyingRefreshScheduler
+from backend.core.whale_alerts_stream import WhaleAlertsStreamManager
 from backend.domain.use_cases.errors import QllError
 
 logger = logging.getLogger(__name__)
@@ -27,11 +28,20 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     scheduler = UnderlyingRefreshScheduler(container) if container.settings.enable_scheduler else None
     if scheduler is not None:
         scheduler.start()
+    # Gated by the same flag as the scheduler — both are live background
+    # tasks a `TestClient(app)` run must not start (see tests/conftest.py).
+    whale_alerts_stream = (
+        WhaleAlertsStreamManager(container) if container.settings.enable_scheduler else None
+    )
+    if whale_alerts_stream is not None:
+        whale_alerts_stream.start()
     try:
         yield
     finally:
         if scheduler is not None:
             await scheduler.stop()
+        if whale_alerts_stream is not None:
+            await whale_alerts_stream.stop()
         await container.market_data_provider.stop()
         if container.storage_engine is not None:
             container.storage_engine.dispose()
