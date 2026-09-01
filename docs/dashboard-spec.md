@@ -723,3 +723,63 @@ clic en "5m" cambia el `aria-pressed` de ambos botones y el título del chart a 
 **Verificado visualmente en navegador real:** los cuatro botones alternan correctamente su estado
 presionado; el título del chart y las marcas de tiempo del eje horizontal cambian de acuerdo al
 timeframe seleccionado (1m → 5m → 15m → 1h → 1m); sin errores en consola.
+
+## 26. Herramienta de dibujo: línea de tendencia (sin persistencia)
+
+Una sola herramienta de dibujo sobre el chart principal — línea de tendencia por click-drag, se pierde
+al recargar la página. No un sistema de dibujo completo (sin múltiples formas, sin guardar).
+
+**Investigación previa:** Lightweight Charts (v5, ya en uso) no trae herramientas de dibujo nativas.
+El mecanismo más simple que no rompe overlays existentes es reutilizar la misma primitiva `LineSeries`
+ya usada para VWAP e Historical Levels — una línea de tendencia es, en el fondo, solo dos puntos
+`{time, value}` sobre el mismo sistema de coordenadas del chart, así que participa gratis en pan/zoom
+y auto-scale exactamente igual que cualquier otro overlay, sin código de sincronización manual (a
+diferencia de las bandas ATR, que sí necesitan recalcular su posición en píxeles en cada cambio de
+rango visible porque son `div`s posicionados por fuera del chart).
+
+**Captura del gesto:** listeners nativos de DOM (`mousedown`/`mousemove` en el contenedor del chart,
+`mouseup` en `window` para que soltar el botón fuera del chart también termine el arrastre) traducen
+la posición del mouse a coordenadas de chart con `chart.timeScale().coordinateToTime(x)` y
+`series.coordinateToPrice(y)` — el mismo par de APIs ya usado en sentido inverso
+(`priceToCoordinate`) para las bandas ATR. Solo se activan mientras "modo dibujo" está encendido.
+
+**Sin pelear con el pan/zoom nativo:** en vez de intentar que el gesto de arrastre de la librería (pan)
+y el propio conflicten por los mismos eventos de mouse, `chart.applyOptions({ handleScroll: false,
+handleScale: false })` desactiva el pan/zoom nativo mientras el modo dibujo está activo, y lo restaura
+al desactivarlo — separación limpia sin tocar el manejo interno de eventos de la librería.
+
+**Limitación conocida y aceptada, por la naturaleza de `LineSeries`:** los dos puntos de la línea deben
+caer en tiempos de barra reales — si el arrastre no cruza a una barra distinta de la inicial (arrastre
+corto dentro del mismo minuto, o chart con muy pocas velas todavía), no se dibuja nada en vez de una
+línea degenerada de longitud cero (`setData()` de la librería exige tiempos estrictamente ascendentes,
+dos puntos con el mismo tiempo lo violarían). Un clic sin arrastre tampoco dibuja nada. No es un
+sistema de dibujo de precisión de píxel como las herramientas nativas de TradingView — aceptable dado
+que la tarea pide explícitamente "versión simple, no un sistema completo".
+
+**UI:** nuevo fieldset "Dibujo:" en `chart-controls` (mismo estilo visual que "Niveles:", clase
+`level-mode-selector` reutilizada) con dos botones — "Línea de tendencia" (`aria-pressed` refleja el
+modo activo) y "Borrar línea" (`disabled` mientras no hay línea dibujada). El contenedor del chart
+cambia el cursor a `crosshair` mientras el modo dibujo está activo, única señal visual de que el
+arrastre ahora dibuja en vez de hacer pan.
+
+**Sin persistencia:** el estado `trendline` vive solo en memoria de `PriceChart` — se pierde al
+recargar la página o cambiar de símbolo/timeframe (el `key` de `PriceChart` ya fuerza un remount en
+ambos casos, sección 25), tal como pide la tarea.
+
+**Tests:** `price-chart.test.tsx`, nuevo describe `PriceChart trendline drawing` — activa/desactiva el
+modo dibujo y confirma que `applyOptions({handleScroll, handleScale})` se llama correctamente en cada
+sentido; dibuja una línea vía `mousedown`/`mousemove`/`mouseup` simulados (con `coordinateToTime`/
+`coordinateToPrice` mockeados de forma determinística) y confirma que el VWAP ya activo en el mismo
+chart sigue recibiendo su propio `setData` sin interferencia; arrastre que no cruza de barra no dibuja
+nada; clic sin arrastre no dibuja nada; sin modo dibujo activo, el mismo gesto de arrastre no dispara
+`applyOptions` ni deja el botón de borrar habilitado. Un test preexistente (`toHaveBeenCalledTimes(3)`
+para las 3 series de Historical Levels) se ajustó a 4 — la serie de tendencia ahora también llama
+`setData([])` una vez al montar, exista o no una línea dibujada.
+
+**Verificado visualmente en navegador real:** el botón "Línea de tendencia" alterna correctamente su
+estado; con el modo activo, un arrastre sobre el chart no lo desplaza (pan desactivado); con muy pocas
+velas en memoria (estado real del entorno de desarrollo, datos aún acumulando) el arrastre cae dentro
+de la misma barra y correctamente no dibuja nada — el botón "Borrar línea" permanece deshabilitado,
+confirmando que la guardia contra líneas degeneradas funciona; cambiar entre "Estático"/"Histórico" y
+los checkboxes de overlays sigue funcionando sin regresión después de activar y desactivar el modo
+dibujo; sin errores en consola.

@@ -17,7 +17,10 @@ const chartMocks = vi.hoisted(() => ({
   removePriceLine: vi.fn(),
   removeSeries: vi.fn(),
   remove: vi.fn(),
+  applyOptions: vi.fn(),
   priceToCoordinate: vi.fn(),
+  coordinateToPrice: vi.fn(),
+  coordinateToTime: vi.fn(),
   subscribeVisibleLogicalRangeChange: vi.fn(),
   unsubscribeVisibleLogicalRangeChange: vi.fn(),
   subscribeSizeChange: vi.fn(),
@@ -47,15 +50,17 @@ beforeAll(() => {
           createPriceLine: chartMocks.createPriceLine,
           removePriceLine: chartMocks.removePriceLine,
           priceToCoordinate: chartMocks.priceToCoordinate,
+          coordinateToPrice: chartMocks.coordinateToPrice,
         }
       : { setData: chartMocks.lineSetData },
   );
   chartMocks.createChart.mockReturnValue({
     addSeries: chartMocks.addSeries,
     removeSeries: chartMocks.removeSeries,
-    applyOptions: vi.fn(),
+    applyOptions: chartMocks.applyOptions,
     timeScale: () => ({
       fitContent: vi.fn(),
+      coordinateToTime: chartMocks.coordinateToTime,
       subscribeVisibleLogicalRangeChange: chartMocks.subscribeVisibleLogicalRangeChange,
       unsubscribeVisibleLogicalRangeChange: chartMocks.unsubscribeVisibleLogicalRangeChange,
       subscribeSizeChange: chartMocks.subscribeSizeChange,
@@ -68,6 +73,8 @@ beforeAll(() => {
 beforeEach(() => {
   vi.clearAllMocks();
   chartMocks.priceToCoordinate.mockImplementation(() => null);
+  chartMocks.coordinateToPrice.mockImplementation(() => null);
+  chartMocks.coordinateToTime.mockImplementation(() => null);
   chartMocks.getGammaHistory.mockResolvedValue({
     schema_version: 1,
     symbol: "SPY",
@@ -204,7 +211,10 @@ describe("PriceChart", () => {
         expect.any(AbortSignal),
       ),
     );
-    await waitFor(() => expect(chartMocks.lineSetData).toHaveBeenCalledTimes(3));
+    // 3 historical levels + 1 for the trendline series' initial (empty)
+    // setData call, made once at mount regardless of whether anything has
+    // been drawn.
+    await waitFor(() => expect(chartMocks.lineSetData).toHaveBeenCalledTimes(4));
 
     const historicalOptions = chartMocks.addSeries.mock.calls
       .filter(([definition]) => definition === "LineSeries")
@@ -528,6 +538,145 @@ describe("PriceChart", () => {
     // which is what's asserted here.
     expect(chartMocks.setData).toHaveBeenCalledWith(
       candlesWithRange.map((candle) => ({ ...candle, time: candle.time })),
+    );
+  });
+});
+
+describe("PriceChart trendline drawing", () => {
+  it("toggles draw mode, disabling and re-enabling chart pan/zoom", async () => {
+    const user = userEvent.setup();
+    renderWithLanguage(<PriceChart symbol="SPY" gamma={gamma} candles={candlesWithRange} />);
+
+    const drawButton = screen.getByRole("button", { name: "Línea de tendencia" });
+    expect(drawButton).toHaveAttribute("aria-pressed", "false");
+
+    await user.click(drawButton);
+    expect(drawButton).toHaveAttribute("aria-pressed", "true");
+    expect(chartMocks.applyOptions).toHaveBeenLastCalledWith({
+      handleScroll: false,
+      handleScale: false,
+    });
+
+    await user.click(drawButton);
+    expect(drawButton).toHaveAttribute("aria-pressed", "false");
+    expect(chartMocks.applyOptions).toHaveBeenLastCalledWith({
+      handleScroll: true,
+      handleScale: true,
+    });
+  });
+
+  it("draws a trendline via click-drag, without disturbing the VWAP overlay already on the chart", async () => {
+    const user = userEvent.setup();
+    chartMocks.coordinateToTime.mockImplementation((x: number) => 1_786_026_600 + x);
+    chartMocks.coordinateToPrice.mockImplementation((y: number) => 550 - y);
+
+    renderWithLanguage(
+      <PriceChart
+        symbol="SPY"
+        gamma={gamma}
+        candles={candlesWithRange}
+        vwapPoints={[{ timestamp: "2026-08-03T13:30:00Z", value: 549 }]}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Línea de tendencia" }));
+    const chartContainer = screen.getByLabelText("Chart de velas para SPY");
+    const clearButton = screen.getByRole("button", { name: "Borrar línea" });
+    expect(clearButton).toBeDisabled();
+
+    act(() => {
+      chartContainer.dispatchEvent(
+        new MouseEvent("mousedown", { bubbles: true, clientX: 0, clientY: 50 }),
+      );
+      chartContainer.dispatchEvent(
+        new MouseEvent("mousemove", { bubbles: true, clientX: 10, clientY: 40 }),
+      );
+      window.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
+    });
+
+    // Drag start: time 1_786_026_600, price 500. Drag end: time
+    // 1_786_026_610, price 510 — already ascending by time.
+    expect(chartMocks.lineSetData).toHaveBeenCalledWith([
+      { time: 1_786_026_600, value: 500 },
+      { time: 1_786_026_610, value: 510 },
+    ]);
+    // The VWAP overlay (a separate LineSeries sharing this same mocked
+    // setData) is unaffected by the trendline being drawn alongside it.
+    expect(chartMocks.lineSetData).toHaveBeenCalledWith([
+      { time: 1_785_763_800, value: 549 },
+    ]);
+    expect(clearButton).not.toBeDisabled();
+
+    await user.click(clearButton);
+    expect(chartMocks.lineSetData).toHaveBeenLastCalledWith([]);
+    expect(clearButton).toBeDisabled();
+  });
+
+  it("ignores a drag that never leaves the starting bar (start and end resolve to the same time)", async () => {
+    const user = userEvent.setup();
+    chartMocks.coordinateToTime.mockImplementation(() => 1_786_026_600);
+    chartMocks.coordinateToPrice.mockImplementation((y: number) => 550 - y);
+
+    renderWithLanguage(<PriceChart symbol="SPY" gamma={gamma} candles={candlesWithRange} />);
+    await user.click(screen.getByRole("button", { name: "Línea de tendencia" }));
+    const chartContainer = screen.getByLabelText("Chart de velas para SPY");
+
+    act(() => {
+      chartContainer.dispatchEvent(
+        new MouseEvent("mousedown", { bubbles: true, clientX: 0, clientY: 50 }),
+      );
+      chartContainer.dispatchEvent(
+        new MouseEvent("mousemove", { bubbles: true, clientX: 3, clientY: 40 }),
+      );
+      window.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
+    });
+
+    expect(screen.getByRole("button", { name: "Borrar línea" })).toBeDisabled();
+    expect(chartMocks.lineSetData).not.toHaveBeenCalledWith([
+      expect.anything(),
+      expect.anything(),
+    ]);
+  });
+
+  it("draws nothing for a plain click with no drag", async () => {
+    const user = userEvent.setup();
+    chartMocks.coordinateToTime.mockImplementation((x: number) => 1_786_026_600 + x);
+    chartMocks.coordinateToPrice.mockImplementation((y: number) => 550 - y);
+
+    renderWithLanguage(<PriceChart symbol="SPY" gamma={gamma} candles={candlesWithRange} />);
+    await user.click(screen.getByRole("button", { name: "Línea de tendencia" }));
+    const chartContainer = screen.getByLabelText("Chart de velas para SPY");
+
+    act(() => {
+      chartContainer.dispatchEvent(
+        new MouseEvent("mousedown", { bubbles: true, clientX: 0, clientY: 50 }),
+      );
+      window.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
+    });
+
+    expect(screen.getByRole("button", { name: "Borrar línea" })).toBeDisabled();
+  });
+
+  it("does not draw while draw mode is off, even on click-drag over the chart", async () => {
+    chartMocks.coordinateToTime.mockImplementation((x: number) => 1_786_026_600 + x);
+    chartMocks.coordinateToPrice.mockImplementation((y: number) => 550 - y);
+
+    renderWithLanguage(<PriceChart symbol="SPY" gamma={gamma} candles={candlesWithRange} />);
+    const chartContainer = screen.getByLabelText("Chart de velas para SPY");
+
+    act(() => {
+      chartContainer.dispatchEvent(
+        new MouseEvent("mousedown", { bubbles: true, clientX: 0, clientY: 50 }),
+      );
+      chartContainer.dispatchEvent(
+        new MouseEvent("mousemove", { bubbles: true, clientX: 10, clientY: 40 }),
+      );
+      window.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
+    });
+
+    expect(screen.getByRole("button", { name: "Borrar línea" })).toBeDisabled();
+    expect(chartMocks.applyOptions).not.toHaveBeenCalledWith(
+      expect.objectContaining({ handleScroll: false }),
     );
   });
 });

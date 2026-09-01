@@ -56,6 +56,14 @@ const HISTORICAL_LEVELS = [
 
 const VWAP_COLOR = "#f3c969";
 
+// Neutral, distinct from every color already in use on this chart (candles,
+// Gamma levels, VWAP, ATR bands) — a user-drawn annotation, not something
+// Convexa calculated.
+const TRENDLINE_COLOR = "#e6e6e6";
+
+type TrendlinePoint = { time: UTCTimestamp; price: number };
+type Trendline = { start: TrendlinePoint; end: TrendlinePoint };
+
 function gammaLevels(gamma: GammaResponse): GammaLevel[] {
   const range = gamma.call_wall - gamma.put_wall;
   const mergeFlipAndAbsolute =
@@ -205,12 +213,16 @@ export function PriceChart({
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const seriesRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
+  const trendlineSeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
+  const dragStartRef = useRef<TrendlinePoint | null>(null);
   const initialCandlesRef = useRef(candles);
   const recomputeBandRectsRef = useRef<() => void>(() => {});
   const [levelMode, setLevelMode] = useState<LevelMode>("static");
   const [history, setHistory] = useState<GammaHistoryItem[]>([]);
   const [showVwap, setShowVwap] = useState(true);
   const [showAtr, setShowAtr] = useState(true);
+  const [drawMode, setDrawMode] = useState(false);
+  const [trendline, setTrendline] = useState<Trendline | null>(null);
   const referenceLevelsRef = useRef(referenceLevelPrices(gamma, atrRange, showAtr));
   const [bandRects, setBandRects] = useState<{ outer: BandRect | null; inner: BandRect | null }>({
     outer: null,
@@ -265,6 +277,19 @@ export function PriceChart({
     chartRef.current = chart;
     seriesRef.current = series;
 
+    // Created once, alongside the candlestick series, and kept for the
+    // whole component lifetime — its data is just re-set (see the
+    // `[trendline]` effect below) whenever the user draws or clears the
+    // line, rather than recreating the series itself each time.
+    const trendlineSeries = chart.addSeries(LineSeries, {
+      color: TRENDLINE_COLOR,
+      lineWidth: 2,
+      priceLineVisible: false,
+      lastValueVisible: false,
+      crosshairMarkerVisible: false,
+    });
+    trendlineSeriesRef.current = trendlineSeries;
+
     const handleSizeChange = () => recomputeBandRectsRef.current();
     chart.timeScale().subscribeSizeChange(handleSizeChange);
 
@@ -273,6 +298,7 @@ export function PriceChart({
       chart.remove();
       chartRef.current = null;
       seriesRef.current = null;
+      trendlineSeriesRef.current = null;
     };
   }, []);
 
@@ -280,6 +306,74 @@ export function PriceChart({
     const latest = candles.at(-1);
     if (latest) seriesRef.current?.update(chartCandle(latest));
   }, [candles]);
+
+  useEffect(() => {
+    trendlineSeriesRef.current?.setData(
+      trendline
+        ? // Lightweight Charts requires setData() input strictly ascending
+          // by time — the user can drag either direction, so the two
+          // endpoints aren't necessarily already in that order.
+          [trendline.start, trendline.end]
+            .sort((left, right) => left.time - right.time)
+            .map((point) => ({ time: point.time, value: point.price }))
+        : [],
+    );
+  }, [trendline]);
+
+  // Drawing a line by dragging conflicts with the chart's own default
+  // click-drag gesture (panning) — disable pan/zoom for the duration of draw
+  // mode instead of trying to make both interpret the same mouse events.
+  useEffect(() => {
+    chartRef.current?.applyOptions({ handleScroll: !drawMode, handleScale: !drawMode });
+  }, [drawMode]);
+
+  useEffect(() => {
+    const container = containerRef.current;
+    const chart = chartRef.current;
+    const series = seriesRef.current;
+    if (!drawMode || !container || !chart || !series) return;
+
+    const pointFromEvent = (event: MouseEvent): TrendlinePoint | null => {
+      const rect = container.getBoundingClientRect();
+      const time = chart.timeScale().coordinateToTime(event.clientX - rect.left);
+      const price = series.coordinateToPrice(event.clientY - rect.top);
+      if (time === null || price === null) return null;
+      return { time: time as UTCTimestamp, price };
+    };
+
+    const handleMouseDown = (event: MouseEvent) => {
+      dragStartRef.current = pointFromEvent(event);
+    };
+
+    const handleMouseMove = (event: MouseEvent) => {
+      const start = dragStartRef.current;
+      if (!start) return;
+      const end = pointFromEvent(event);
+      // Two points at the same bar time would violate setData()'s strictly
+      // ascending requirement — treat that as "not enough drag yet" rather
+      // than drawing a degenerate single-instant line.
+      if (!end || end.time === start.time) return;
+      setTrendline({ start, end });
+    };
+
+    const handleMouseUp = () => {
+      dragStartRef.current = null;
+    };
+
+    container.addEventListener("mousedown", handleMouseDown);
+    container.addEventListener("mousemove", handleMouseMove);
+    // On window, not the container: releasing the mouse outside the chart
+    // must still end the drag, or the next mouse move over the chart would
+    // resume dragging the old line.
+    window.addEventListener("mouseup", handleMouseUp);
+
+    return () => {
+      container.removeEventListener("mousedown", handleMouseDown);
+      container.removeEventListener("mousemove", handleMouseMove);
+      window.removeEventListener("mouseup", handleMouseUp);
+      dragStartRef.current = null;
+    };
+  }, [drawMode]);
 
   useEffect(() => {
     if (levelMode !== "historical") return;
@@ -468,13 +562,33 @@ export function PriceChart({
               {t.priceChart.atrRangeLabel}
             </label>
           </fieldset>
+          <fieldset
+            className="level-mode-selector drawing-tools"
+            aria-label={t.priceChart.drawingToolsAriaLabel}
+          >
+            <legend>{t.priceChart.drawingToolsLegend}</legend>
+            <button
+              type="button"
+              aria-pressed={drawMode}
+              onClick={() => setDrawMode((current) => !current)}
+            >
+              {t.priceChart.trendlineButton}
+            </button>
+            <button
+              type="button"
+              disabled={!trendline}
+              onClick={() => setTrendline(null)}
+            >
+              {t.priceChart.clearTrendlineButton}
+            </button>
+          </fieldset>
           <span className="mode-pill">{t.dashboard.liveButton}</span>
         </div>
       </div>
       <div className="price-chart-frame">
         <div
           ref={containerRef}
-          className="price-chart"
+          className={`price-chart${drawMode ? " price-chart-drawing" : ""}`}
           aria-label={t.priceChart.chartAriaLabel(symbol)}
         />
         {bandRects.outer && (
