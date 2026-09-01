@@ -34,6 +34,11 @@ from backend.domain.use_cases.calculate_gamma_flip import CalculateGammaFlipUseC
 from backend.domain.use_cases.calculate_greeks import CalculateGreeksUseCase
 from backend.domain.use_cases.calculate_lee_ready import classify_trade_side
 from backend.domain.use_cases.calculate_max_pain import CalculateMaxPainUseCase
+from backend.domain.use_cases.calculate_near_the_money_width import (
+    ATR_WIDTH_MULTIPLIER,
+    FIXED_WIDTH_BY_SYMBOL,
+    calculate_near_the_money_width,
+)
 from backend.domain.use_cases.calculate_walls import CalculateWallsUseCase
 from backend.domain.use_cases.flow import (
     WhaleAlert,
@@ -60,8 +65,10 @@ from backend.domain.use_cases.screener_presets import (
 from backend.domain.use_cases.stream_whale_alerts import StreamWhaleAlertsUseCase
 
 __all__ = [
+    "ATR_WIDTH_MULTIPLIER",
     "ATR_WINDOW_DAYS",
     "CLOSING_WINDOW_THRESHOLD_PCT",
+    "FIXED_WIDTH_BY_SYMBOL",
     "REQUIRED_DAILY_BARS",
     "BsmGreeks",
     "CalculateDerivedMetricsUseCase",
@@ -91,6 +98,7 @@ __all__ = [
     "calculate_closing_dynamics",
     "calculate_expected_move",
     "calculate_gamma_exposure",
+    "calculate_near_the_money_width",
     "calculate_pin_risk_score",
     "calculate_price_volatility",
     "calculate_session_open",

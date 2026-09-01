@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 
 import httpx
@@ -48,6 +48,30 @@ def _open_interest_entry(strike: str, right: str, oi: int, expiration: str = "20
         "contract": {"symbol": "SPY", "expiration": expiration, "right": right, "strike": float(strike)},
         "data": [{"open_interest": oi, "timestamp": "2026-08-31T06:30:00.000"}],
     }
+
+
+def _daily_bars_response(
+    count: int = 20, base_close: float = 769.0, daily_range: float = 2.0
+) -> dict[str, object]:
+    """Enough closed daily bars for a real (non-provisional) ATR — every
+    near-the-money fetch now pulls this once per symbol per day to size
+    its width. `daily_range` $ high/low range each day, flat close, gives
+    ATR = daily_range (see tests/test_atr_range.py's own hand-verified
+    flat-bar case) — pass 0 to get a degenerate zero-width ATR."""
+    half_range = daily_range / 2
+    rows = []
+    for offset in range(count, 0, -1):
+        day = date(2026, 8, 31) - timedelta(days=offset)
+        rows.append(
+            {
+                "last_trade": f"{day.isoformat()}T16:00:00.000",
+                "open": base_close - half_range / 2,
+                "high": base_close + half_range,
+                "low": base_close - half_range,
+                "close": base_close,
+            }
+        )
+    return {"response": rows}
 
 
 def _make_client(handler: httpx.MockTransport | None, transport_handler=None) -> httpx.Client:
@@ -120,6 +144,8 @@ class TestGetOptionChain:
                 return httpx.Response(
                     200, json={"response": [{"rate": 3.64, "created": "2026-08-31"}]}
                 )
+            if "stock/history/eod" in str(request.url):
+                return httpx.Response(200, json=_daily_bars_response())
             raise AssertionError(f"unexpected request: {request.url}")
 
         provider = _provider_with_transport(handler)
@@ -175,6 +201,8 @@ class TestGetOptionChain:
                 return httpx.Response(
                     200, json={"response": [{"rate": 3.64, "created": "2026-08-31"}]}
                 )
+            if "stock/history/eod" in str(request.url):
+                return httpx.Response(200, json=_daily_bars_response())
             raise AssertionError(f"unexpected request: {request.url}")
 
         provider = _provider_with_transport(handler)
@@ -223,6 +251,8 @@ class TestGetUnderlyingSnapshot:
                         ]
                     },
                 )
+            if "stock/history/eod" in str(request.url):
+                return httpx.Response(200, json=_daily_bars_response())
             raise AssertionError(f"unexpected request: {request.url}")
 
         provider = _provider_with_transport(handler)
@@ -529,3 +559,146 @@ class TestProviderLifecycle:
         assert provider._client.is_closed
         assert provider._stream._task is None
         assert provider._quote_stream._task is None
+
+
+class TestNearTheMoneyWidthFiltering:
+    def test_overfetches_with_the_generous_strike_range(self) -> None:
+        seen_strike_range = None
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            nonlocal seen_strike_range
+            if "greeks/first_order" in str(request.url):
+                seen_strike_range = request.url.params.get("strike_range")
+                return httpx.Response(
+                    200, json={"response": [_first_order_entry("769.00", "CALL")]}
+                )
+            if "open_interest" in str(request.url):
+                return httpx.Response(200, json={"response": []})
+            if "interest_rate/history/eod" in str(request.url):
+                return httpx.Response(
+                    200, json={"response": [{"rate": 3.64, "created": "2026-08-31"}]}
+                )
+            if "stock/history/eod" in str(request.url):
+                return httpx.Response(200, json=_daily_bars_response())
+            raise AssertionError(f"unexpected request: {request.url}")
+
+        provider = _provider_with_transport(handler)
+        provider.get_option_chain("SPY")
+
+        assert seen_strike_range == "100"
+
+    def test_filters_out_strikes_beyond_the_atr_derived_width(self) -> None:
+        # $2 daily range -> ATR=2 -> width=3 (ATR_WIDTH_MULTIPLIER=1.5).
+        # Spot is 769.36 (the fixture default) -- 769.00 is within width
+        # (diff 0.36), 900.00 is nowhere close.
+        def handler(request: httpx.Request) -> httpx.Response:
+            if "greeks/first_order" in str(request.url):
+                return httpx.Response(
+                    200,
+                    json={
+                        "response": [
+                            _first_order_entry("769.00", "CALL"),
+                            _first_order_entry("900.00", "CALL"),
+                        ]
+                    },
+                )
+            if "open_interest" in str(request.url):
+                return httpx.Response(200, json={"response": []})
+            if "interest_rate/history/eod" in str(request.url):
+                return httpx.Response(
+                    200, json={"response": [{"rate": 3.64, "created": "2026-08-31"}]}
+                )
+            if "stock/history/eod" in str(request.url):
+                return httpx.Response(200, json=_daily_bars_response())
+            raise AssertionError(f"unexpected request: {request.url}")
+
+        provider = _provider_with_transport(handler)
+        chain = provider.get_option_chain("SPY")
+
+        assert len(chain.contracts) == 1
+        assert chain.contracts[0].strike == Decimal("769.00")
+
+    def test_caches_the_width_per_day_without_a_second_daily_bars_request(self) -> None:
+        history_request_count = 0
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            nonlocal history_request_count
+            if "greeks/first_order" in str(request.url):
+                return httpx.Response(
+                    200, json={"response": [_first_order_entry("769.00", "CALL")]}
+                )
+            if "open_interest" in str(request.url):
+                return httpx.Response(200, json={"response": []})
+            if "interest_rate/history/eod" in str(request.url):
+                return httpx.Response(
+                    200, json={"response": [{"rate": 3.64, "created": "2026-08-31"}]}
+                )
+            if "stock/history/eod" in str(request.url):
+                history_request_count += 1
+                return httpx.Response(200, json=_daily_bars_response())
+            raise AssertionError(f"unexpected request: {request.url}")
+
+        provider = _provider_with_transport(handler)
+        provider.get_option_chain("SPY")
+        provider.get_option_chain("SPY")
+
+        assert history_request_count == 1
+
+    def test_logs_the_computed_width_on_first_calculation(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        def handler(request: httpx.Request) -> httpx.Response:
+            if "greeks/first_order" in str(request.url):
+                return httpx.Response(
+                    200, json={"response": [_first_order_entry("769.00", "CALL")]}
+                )
+            if "open_interest" in str(request.url):
+                return httpx.Response(200, json={"response": []})
+            if "interest_rate/history/eod" in str(request.url):
+                return httpx.Response(
+                    200, json={"response": [{"rate": 3.64, "created": "2026-08-31"}]}
+                )
+            if "stock/history/eod" in str(request.url):
+                return httpx.Response(200, json=_daily_bars_response())
+            raise AssertionError(f"unexpected request: {request.url}")
+
+        provider = _provider_with_transport(handler)
+        with caplog.at_level(logging.INFO):
+            provider.get_option_chain("SPY")
+
+        assert any("Near-the-money width for SPY" in record.message for record in caplog.records)
+
+    def test_guarantees_a_minimum_number_of_entries_when_width_filtering_matches_nothing(
+        self,
+    ) -> None:
+        # Zero daily range -> ATR=0 -> width=0 -- filtering by "strike
+        # within 0 of spot" matches nothing in practice, so the minimum-
+        # entries fallback (closest strikes to spot) must kick in instead
+        # of returning an empty chain.
+        def handler(request: httpx.Request) -> httpx.Response:
+            if "greeks/first_order" in str(request.url):
+                return httpx.Response(
+                    200,
+                    json={
+                        "response": [
+                            _first_order_entry(strike, "CALL")
+                            for strike in ("760.00", "765.00", "769.00", "774.00", "779.00", "784.00", "800.00")
+                        ]
+                    },
+                )
+            if "open_interest" in str(request.url):
+                return httpx.Response(200, json={"response": []})
+            if "interest_rate/history/eod" in str(request.url):
+                return httpx.Response(
+                    200, json={"response": [{"rate": 3.64, "created": "2026-08-31"}]}
+                )
+            if "stock/history/eod" in str(request.url):
+                return httpx.Response(200, json=_daily_bars_response(daily_range=0.0))
+            raise AssertionError(f"unexpected request: {request.url}")
+
+        provider = _provider_with_transport(handler)
+        chain = provider.get_option_chain("SPY")
+
+        assert len(chain.contracts) == 6
+        strikes = {contract.strike for contract in chain.contracts}
+        assert Decimal("800.00") not in strikes  # farthest from spot 769.36 — excluded
