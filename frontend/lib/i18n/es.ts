@@ -75,6 +75,7 @@ export const es: Translations = {
     gexToggleButton: "GEX por Strike",
     flowToggleButton: "Flujo Whale Alerts",
     gexChartAriaLabel: (symbol) => `GEX por strike para ${symbol}`,
+    gexSpotPriceAriaLabel: (price) => `Precio spot: ${price}`,
     gexLoading: "Cargando GEX por strike…",
     gexNoBreakdown: "Sin desglose por strike disponible.",
     flowChartAriaLabel: (symbol) => `Flujo acumulado de Whale Alerts para ${symbol}`,

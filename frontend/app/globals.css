@@ -246,12 +246,18 @@ button, select { font: inherit; }
 .chart-secondary-caption { margin: 2px 0 0; font-size: 0.66rem; color: var(--tv-text-dim); text-align: center; }
 
 .secondary-gex-chart { flex: 1 1 auto; width: 100%; min-height: 0; }
-.secondary-gex-axis { stroke: var(--tv-border); stroke-width: 1.5; }
+.secondary-gex-zero { stroke: var(--tv-border); stroke-width: 1.5; }
 /* Same buy/sell color pair Whale Alerts already uses (--calm/--risk),
    consistent with pre-session-panel.tsx's own Calls/Puts bars. */
 .secondary-gex-bar.call { fill: var(--calm); }
 .secondary-gex-bar.put { fill: var(--risk); }
-.secondary-gex-strike-label { fill: var(--tv-text-dim); font-size: 11px; text-anchor: start; }
+.secondary-gex-strike-label { fill: var(--tv-text-dim); font-size: 11px; text-anchor: middle; }
+/* Same accent used for Absolute Gamma / Max Pain reference lines
+   elsewhere on the dashboard (price-chart.tsx, pre-session-panel.tsx) —
+   a "this is a live reference marker" color, distinct from the calm/
+   risk pair the bars themselves use. */
+.secondary-gex-spot { stroke: var(--accent); stroke-width: 1.5; stroke-dasharray: 3 3; }
+.secondary-gex-spot-label { fill: var(--accent); font-size: 11px; font-weight: 700; text-anchor: middle; }
 
 .secondary-flow-chart { flex: 1 1 auto; width: 100%; min-height: 0; }
 .secondary-flow-zero { stroke: var(--tv-border); stroke-width: 1; stroke-dasharray: 4 4; }

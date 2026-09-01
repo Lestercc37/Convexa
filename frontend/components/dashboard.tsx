@@ -334,7 +334,11 @@ export function Dashboard() {
                     atrRange={market.atr_range}
                     timeframe={timeframe}
                   />
-                  <ChartSecondaryPanel key={`chart-secondary-${symbol}`} symbol={symbol} />
+                  <ChartSecondaryPanel
+                    key={`chart-secondary-${symbol}`}
+                    symbol={symbol}
+                    spotPrice={market.price}
+                  />
                 </>
               ) : (
                 <PreSessionPanel

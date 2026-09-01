@@ -65,6 +65,7 @@ export type Translations = {
     gexToggleButton: string;
     flowToggleButton: string;
     gexChartAriaLabel: (symbol: string) => string;
+    gexSpotPriceAriaLabel: (price: string) => string;
     gexLoading: string;
     gexNoBreakdown: string;
     flowChartAriaLabel: (symbol: string) => string;

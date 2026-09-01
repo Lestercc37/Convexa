@@ -967,3 +967,87 @@ arrastrar más allá de esos límites; lo mismo para el separador derecho contra
 (300px/640px). Recargar la página después de arrastrar mantiene el tamaño elegido (confirmado leyendo
 `localStorage["react-resizable-panels:convexa-dashboard-panels"]` antes y después del reload) — la
 preferencia persiste tal como pide la tarea. Cero errores de consola en una pestaña nueva.
+
+## 29. GEX por Strike, estilo SpotGamma: barras verticales, precio spot en vivo
+
+Reemplaza por completo la vista "GEX por Strike" del toggle de la sección 27 (barras horizontales,
+eje de strike vertical, heredada de `pre-session-panel.tsx`) por un perfil vertical estilo SpotGamma
+— eje X = strike, eje Y = magnitud de exposición, barras de calls hacia arriba y de puts hacia abajo,
+con una línea de precio spot en vivo superpuesta. La otra vista del toggle (Flujo Acumulado de Whale
+Alerts, sección 27) no se tocó.
+
+**Investigación previa, confirmada antes de implementar:**
+
+1. **`GammaAggregateResponse.items` — suficiente, y mejor de lo esperado.** Rastreado hasta
+   `backend/adapters/providers/mock/gamma_exposure.py`: `sign = -1` para `PUT` está incorporado en
+   `dealer_gamma_exposure` desde el cálculo más básico (la convención estándar de posicionamiento de
+   dealers), antes de cualquier agregación por strike. `call_gamma_exposure` siempre es ≥0 y
+   `put_gamma_exposure` siempre es ≤0 en cada `GammaAggregateItem` — no un detalle de los fixtures de
+   test, así es como se calcula el número, con el mismo calculador sin importar el proveedor
+   (Mock o ThetaData). Consecuencia directa: **cero lógica de inversión de signo en el frontend** —
+   `call_gamma_exposure` se dibuja tal cual como barra hacia arriba, `put_gamma_exposure` (ya
+   negativo) tal cual como barra hacia abajo.
+2. **Precio spot en vivo — una corrección al planteamiento de la tarea, no un mecanismo nuevo.**
+   Confirmado con grep que no existe ningún WebSocket/SSE del lado del frontend. El streaming de
+   ThetaData (Trade Stream + Quote Stream, PR #80) es enteramente interno al backend de Python,
+   consumido solo por `WhaleAlertsEngine.process_trade` para la clasificación Lee-Ready — nunca se
+   expone al frontend. Lo que sí llega como "tiempo real" es el poll REST existente de 30 segundos
+   (`GET /market/{symbol}`, `POLLING_INTERVAL_MS`), que ya alimenta el estado `market` de `Dashboard`
+   — mismo mecanismo, sin inventar nada nuevo, siguiendo el precedente ya establecido
+   (`<VolatilitySmile marketPrice={market.price} />`). `ChartSecondaryPanel` gana un nuevo prop
+   `spotPrice: number`, pasado desde `Dashboard` como `market.price`.
+3. **Escalado del eje Y — una sola escala lineal compartida, confirmado con el usuario antes de
+   implementar.** Si calls domina 10x sobre puts, calls ocupa genuinamente ~91% del espacio vertical
+   y puts ~9% — representando el desequilibrio real en vez de normalizar cada lado por separado
+   (lo que haría que ambos lados parecieran "igual de grandes" sin importar la proporción real,
+   potencialmente engañoso). `GEX_MIN_BAR_HEIGHT` (2px) evita que el lado dominado desaparezca
+   visualmente sin falsear su magnitud real.
+
+**Implementación:**
+
+- `gexX(strike)` — escala lineal continua (no ordinal) de precio de strike a coordenada X, con
+  padding del 20% del rango de strikes a cada lado para que ni las barras externas ni la línea de
+  spot queden pegadas al borde del plot.
+- `gexY(value)` — una sola escala compartida sobre `[gexMinPut, gexMaxCall]` (el mínimo real de puts
+  y el máximo real de calls entre todos los strikes, no normalizados independientemente), con
+  `gexZeroY` como línea base.
+- `gexBarRect(value)` — helper que calcula `y`/`height` del rect: para valores positivos crece hacia
+  arriba desde la línea cero, para negativos crece hacia abajo, con `GEX_MIN_BAR_HEIGHT` como piso de
+  altura visible.
+- **Línea de precio spot con clamp real, no solo teórico.** Verificado en vivo: con los strikes de
+  fixture de `MockDataProvider` (540/545/550) y su precio spot sintético (552.25, ligeramente fuera
+  de ese rango incluso con el padding del 20%), la línea de spot terminaba exactamente en el borde
+  derecho del plot — un caso real, no hipotético. `gexSpotX` se clampa explícitamente entre
+  `GEX_PLOT.left` y `GEX_PLOT.right` para que la línea/etiqueta de precio nunca queden fuera del área
+  visible, sin importar cuánto se aleje el spot del rango de strikes actual entre actualizaciones de
+  la cadena de opciones.
+- Mismos colores compra/venta que el resto del dashboard (`--calm`/`--risk`, calls/puts) y el mismo
+  color de referencia (`--accent`) que ya usan las líneas de Max Pain/Absolute Gamma en
+  `price-chart.tsx`/`pre-session-panel.tsx` para la línea de spot — un color "esto es un marcador de
+  referencia en vivo", distinto de la pareja calm/risk que ya usan las barras.
+
+**Tests:** `chart-secondary-panel.test.tsx` — las barras de calls suben desde la línea cero y las de
+puts bajan (verificado con `y`/`height` de los `<rect>`, no valores de píxel hardcodeados); el strike
+545 (call mayor) produce una barra de calls más alta que el strike 550 (call menor) — prueba directa
+de que la escala es compartida, no normalizada por lado; la línea y etiqueta de precio spot se
+renderizan y se actualizan correctamente al cambiar el prop `spotPrice` (re-render); el clamp
+mantiene la línea de spot dentro del plot incluso con un precio muy fuera del rango de strikes. El
+resto de los tests ya existentes (toggle, error traducido, acumulación de Whale Alerts, estado de
+carga) siguen pasando sin cambios — confirma que la vista de Flujo no se tocó.
+
+**Bug real encontrado y corregido durante la implementación:** al reescribir el componente completo,
+una reconstrucción manual del árbol JSX perdió por accidente la distinción `hasFetchedAlerts` (el
+`else` final colapsó a mostrar siempre "Sin alertas todavía en esta sesión", nunca el estado de
+carga) — detectado porque el test `"shows the loading state before the first alerts poll resolves"`
+(ya existente, de la sección 27, sin relación aparente con este cambio) empezó a fallar. Confirmado
+como una regresión real (no un test flaky) corriendo el archivo original sin mis cambios antes de
+corregir — la vista de Flujo, aunque "fuera de alcance", terminó siendo tocada por accidente al
+reescribir el archivo completo en vez de editar solo la sección de GEX; corregido y verificado que
+los 9 tests (incluyendo los 5 ya existentes de Flujo) pasan intactos.
+
+**Verificado visualmente en navegador real:** las 3 barras (strikes 540/545/550) renderizan con calls
+en verde hacia arriba y puts en rojo hacia abajo; la línea de precio spot (azul, punteada) aparece
+correctamente con su etiqueta "552.25", clampada al borde derecho del plot dado el desajuste real
+entre el spot sintético de `MockDataProvider` y sus 3 strikes de fixture; sin errores de consola en
+una pestaña nueva (confirmado igual que en secciones anteriores: un error visto en una pestaña con
+historial de HMR resultó ser un mensaje obsoleto, no uno en vivo).
