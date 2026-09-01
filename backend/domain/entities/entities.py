@@ -565,6 +565,44 @@ class FlowEvent:
 
 
 @dataclass(frozen=True, slots=True)
+class QuoteEvent:
+    """One prevailing bid/ask reading from a provider's live Quote Stream.
+
+    The wire-level event a `stream_quotes()` implementation yields — see
+    `LatestQuote` for the lighter per-contract state built from these
+    (dropping `symbol`/`occ_symbol`, which the caller already has as the
+    dict key), same split as `FlowEvent` (wire event, carries identity)
+    versus `_ContractState` (per-contract state, does not).
+    """
+
+    symbol: str
+    occ_symbol: str
+    as_of: datetime
+    bid: Decimal
+    ask: Decimal
+
+
+@dataclass(frozen=True, slots=True)
+class LatestQuote:
+    """The most recently known bid/ask for one contract.
+
+    No time-indexed history — just whatever `QuoteEvent` arrived last for
+    that `occ_symbol`, kept in a plain `dict[occ_symbol, LatestQuote]` by
+    the consumer (`StreamWhaleAlertsUseCase`). "Vigente en ese instante"
+    on a live stream reduces to "most recently received," matching the
+    same timestamp precision the rest of this codebase already has for
+    trades (`FlowEvent.as_of` is stamped at local receipt time too, not a
+    reconciled on-exchange timestamp) — building anything more precise
+    than this would outrun what the project's own trade timestamps
+    already support.
+    """
+
+    bid: Decimal
+    ask: Decimal
+    as_of: datetime
+
+
+@dataclass(frozen=True, slots=True)
 class OptionSnapshot:
     contract: OptionContract
     greeks: OptionGreeks

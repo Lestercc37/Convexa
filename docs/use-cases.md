@@ -101,11 +101,16 @@ reales; no se presupone que una calibración de IWM sea válida, por ejemplo, pa
 El ciclo interno que obtiene y persiste el `OptionChain` entrega el mismo snapshot al motor. Las
 alertas recientes se consultan sin disparar cálculo mediante `GET /api/v1/alerts/{symbol}`.
 
-**Bulk Volume Classification (BVC) — estimación de compra/venta, no dato confirmado.** Cada alerta
-(Whale, Unusual o Sustained Flow) incluye `estimated_buy_volume` y `estimated_sell_volume`,
-etiquetados explícitamente como estimación — el motor nunca ve el lado real (compra o venta) de una
-operación, solo infiere una probabilidad a partir del movimiento de precio. Método académico real,
-no una fórmula propia:
+**Bulk Volume Classification (BVC) — reemplazada por Lee-Ready como método principal; se mantiene
+como fallback honesto para proveedores sin streaming en vivo.** Todo lo que sigue en esta subsección
+describe `process()` tal como sigue funcionando HOY, sin cambios, para `MockDataProvider`, para los
+tests, y para cualquier proveedor REST-only futuro — nunca se borró, porque sigue siendo la única
+clasificación disponible cuando no hay Trade Stream + Quote Stream en vivo detrás. Ver más abajo
+("Lee-Ready — clasificación real por operación individual") para el mecanismo nuevo, el que
+`ThetaDataProvider` usa en su lugar. Cada alerta (Whale, Unusual o Sustained Flow) incluye
+`estimated_buy_volume` y `estimated_sell_volume`, etiquetados explícitamente como estimación — el
+motor nunca ve el lado real (compra o venta) de una operación, solo infiere una probabilidad a partir
+del movimiento de precio. Método académico real, no una fórmula propia:
 
 > Easley, D., López de Prado, M., O'Hara, M. (2012). "Flow Toxicity and Liquidity in a
 > High-Frequency World." *Review of Financial Studies*, 25(5), 1457-1493.
@@ -148,6 +153,115 @@ cerrados que ya alimentan su monto acumulado (dos `deque(maxlen=15)` adicionales
 contrato que ya mantenía el motor (`_ContractState`) — no se creó ninguna tabla nueva; el motor de
 Whale Alerts nunca persistió su estado en base de datos, solo los umbrales configurados
 (`whale_thresholds`).
+
+**Lee-Ready — clasificación real por operación individual, para proveedores con streaming en vivo.**
+Reemplaza a BVC como método principal de clasificación compra/venta en `ThetaDataProvider`. Mientras
+BVC infiere una *probabilidad* a partir del movimiento de precio agregado de un período, Lee-Ready
+clasifica *cada operación* contra la cotización bid/ask realmente vigente en ese instante — una señal
+real de microestructura de mercado, no un proxy estadístico. Requiere datos por operación individual
+(precio + una cotización contemporánea), algo que BVC nunca tuvo disponible porque se construyó
+cuando el proyecto solo tenía datos OHLC agregados de FlashAlpha. Método académico real:
+
+> Lee, C. M. C., & Ready, M. J. (1991). "Inferring Trade Direction from Intraday Data." *The Journal
+> of Finance*, 46(2), 733-746.
+
+*Investigación previa, confirmada antes de escribir código:*
+
+1. **¿ThetaData tiene un Quote Stream real, separado del Trade Stream?** Confirmado contra la
+   documentación pública de ThetaData v3
+   (`Streaming/US-Options/Quote-Stream`, `docs.thetadata.us`) — sí, y es un espejo estructural exacto
+   del Trade Stream ya implementado: mismo `msg_type`/`sec_type`/forma de `contract`, solo
+   `req_type: "QUOTE"` en vez de `"TRADE"`, y un objeto `quote` (`bid`, `ask`, `bid_size`,
+   `ask_size`, `ms_of_day`, ...) en vez de `trade`. No existía ninguna implementación de esto en el
+   proyecto antes de este PR — solo un comentario en esta misma página (ver la sección
+   `ThetaDataProvider` más abajo) que documentaba haber confirmado su existencia durante la
+   investigación de PR #76, sin construirlo entonces porque nada lo necesitaba todavía.
+2. **Mecanismo de sincronización bid/ask ↔ operaciones.** Exactamente el propuesto antes de
+   implementar: una suscripción paralela al nuevo Quote Stream, actualizando un
+   `dict[occ_symbol, LatestQuote]` en memoria (sin historial indexado por tiempo — solo el último
+   valor recibido por contrato), consultado por el clasificador cada vez que llega un trade. Esto
+   coincide, sin necesidad de construir nada más preciso, con la precisión de timestamping que ya
+   tiene el resto del proyecto: `FlowEvent.as_of` ya se marca al momento de recepción local
+   (`utc_now()`), no con el timestamp real de la bolsa — "vigente en ese instante" en un stream en
+   vivo se reduce, en la práctica, a "el más reciente recibido hasta ahora".
+3. **Qué se reutiliza de `flow.py`, qué se reemplaza.** El bucketing por minuto, el promedio de 5
+   minutos, la ventana de Sustained Flow de 15 minutos y el flag `sustained_alerted` son
+   clasificador-agnósticos — nunca les importó *cómo* se calculó el split compra/venta de una
+   lectura, solo que exista como par `(buy_volume, sell_volume)` para acumular. Se extrajo ese tramo
+   compartido a `WhaleAlertsEngine._finalize_bucket()`, usado tanto por `process()` como por el nuevo
+   `process_trade()`. Lo que sí cambia por completo es el cálculo mismo de la clasificación
+   (`calculate_bvc_split` → `classify_trade_side`, `calculate_lee_ready.py`) y las entradas que lo
+   alimentan (`ΔP`/`σ` sobre una ventana móvil → precio de la operación + bid/ask vigente + precio de
+   la operación anterior, sin ventana móvil de ningún tipo).
+4. **Caso borde: operación sin ninguna cotización conocida todavía** (ej. justo al arrancar, antes de
+   que llegue el primer mensaje del Quote Stream para ese contrato). Mismo criterio documentado que
+   usa `calculate_bvc_split` para `σ = 0` y `calculate_iv_rank` para una ventana de IV plana: split
+   neutral 50/50, no una adivinanza. Toma prioridad incluso cuando el tick rule sí tendría una
+   dirección disponible.
+
+**El algoritmo, en `classify_trade_side` (`calculate_lee_ready.py`), función pura:**
+
+1. **Quote rule** (regla principal): si el precio de la operación está por encima del punto medio
+   `(bid + ask) / 2` de la cotización vigente → iniciada por el comprador. Por debajo → iniciada por
+   el vendedor.
+2. **Tick rule** (desempate, solo si la operación imprime exactamente en el punto medio): comparar
+   contra el precio de la operación anterior del mismo contrato — más alto que la anterior = 
+   comprador, más bajo = vendedor, exactamente igual ("zero tick") = mantener la clasificación de la
+   operación anterior en vez de adivinar.
+3. **Sin cotización vigente** (`bid`/`ask` desconocidos): neutral, ver caso borde #4 arriba.
+
+**`process_trade(event: FlowEvent, quote: LatestQuote | None)` — nuevo método del motor, estado
+separado de `process()`.** Alimentado por `StreamWhaleAlertsUseCase`
+(`backend/domain/use_cases/stream_whale_alerts.py`), que consume `IDataProvider.stream_trades()` y el
+nuevo `IDataProvider.stream_quotes()` concurrentemente, mantiene el `dict[occ_symbol, LatestQuote]`
+descrito arriba, y llama a `engine.process_trade(trade_event, ultima_cotización_conocida)` por cada
+operación. Deliberadamente **NO comparte** `_states` con `process()` — usa su propio diccionario
+(`_trade_states`), reutilizando la misma `_ContractState` como forma de datos (con un campo nuevo,
+`previous_side`, que `process()`/BVC nunca lee ni escribe) pero en una instancia completamente
+separada por contrato. Esto es a propósito: bajo `ThetaDataProvider`, el scheduler REST sigue
+consultando greeks/IV/OI en su cadencia habitual (`docs/use-cases.md`, sección `ThetaDataProvider`
+más abajo — nada de eso tiene equivalente por streaming), así que `process(chain)` puede seguir
+ejecutándose para el mismo `occ_symbol` al mismo tiempo que `process_trade()` — con estado
+compartido, el mismo volumen se contaría dos veces en dos buckets independientes. `price` se recupera
+de `event.premium / (event.size × 100)` (deshaciendo exactamente la multiplicación que
+`ThetaTradeStream._handle_trade` ya hace) en vez de agregar un campo nuevo a `FlowEvent` — ese
+dataclass también se reconstruye desde una fila de Postgres sin columna de precio propia
+(`PostgreSQLStorage.get_flow_events`), fuera del alcance de este cambio.
+
+**Limitación conocida, fuera de alcance de este PR:** a diferencia de `process()`, `process_trade()`
+no tiene una detección de reinicio de sesión equivalente (un stream continuo de operaciones no tiene
+un contador de volumen que pueda "bajar" para señalizarlo) — las ventanas móviles de 5 y 15 minutos
+no se limpian explícitamente al cruzar la medianoche/apertura de sesión. Reemplazar el mecanismo de
+clasificación era el único objetivo de este cambio; el manejo de reinicio de sesión para el camino de
+streaming queda como un problema separado a revisar más adelante.
+
+**`ThetaQuoteStream` — nueva clase en `backend/adapters/providers/thetadata/provider.py`, análoga
+directa a `ThetaTradeStream`.** Misma dureza de reconexión (heartbeat `STATUS`, backoff exponencial
+2s/4s/8s.../60s tope) — sin la reconciliación periódica contra REST que sí tiene el Trade Stream,
+porque las cotizaciones no tienen ningún concepto de "volumen acumulado" contra el cual reconciliar.
+Usa **una conexión WebSocket separada** de `ThetaTradeStream`, no una que multiplexe ambas
+suscripciones (`TRADE` y `QUOTE`) sobre el mismo socket — el protocolo de ThetaData sí soporta eso,
+pero mantener el Trade Stream ya validado (con dos incidentes reales de desconexión documentados en
+su propio docstring) completamente intacto valió más que ahorrarse una conexión adicional, liviana,
+hacia un Theta Terminal local (no un servidor remoto con límite de tasa). `IDataProvider` gana
+`stream_quotes(underlying) -> AsyncIterator[QuoteEvent]` junto a `stream_trades`, y
+`MockDataProvider.stream_quotes` es el mismo patrón `if False: yield` que ya usa `stream_trades` — un
+generador async válido, inmediatamente agotado.
+
+**Conectado de punta a punta, no solo implementado.** La brecha que dejó PR #76 ("`stream_trades()`
+... sin consumidor todavía", documentado explícitamente en la sección `ThetaDataProvider` de esta
+misma página) se cierra aquí: `WhaleAlertsStreamManager`
+(`backend/core/whale_alerts_stream.py`) crea una tarea `asyncio.Task` de larga vida por cada símbolo
+de `ACTIVE_UNDERLYINGS`, cada una corriendo `StreamWhaleAlertsUseCase.run(symbol)` — mismo patrón
+`start()`/`stop()` que ya usa `UnderlyingRefreshScheduler`, pero con N tareas concurrentes de larga
+vida en vez de un solo ciclo periódico (las suscripciones de streaming nunca retornan por sí solas, a
+diferencia de un poll REST programado, así que no pueden recorrerse secuencialmente como sí hace el
+ciclo del scheduler). Se arranca/detiene en `backend/main.py`, con el mismo flag
+`enable_scheduler` que ya usa el scheduler — `tests/conftest.py` ya pone ese flag en `False` para
+cualquier test que abra `TestClient(app)`, así que ningún test existente empieza a abrir conexiones de
+red reales por este cambio. Es un no-op inofensivo bajo `MockDataProvider` (sus dos streams son un
+generador async inmediatamente agotado), consistente con el mismo criterio de "agnóstico al proveedor
+concreto" que ya sigue el scheduler.
 
 **Umbrales editables en caliente, sin reiniciar el backend.** Hasta este punto,
 `WhaleAlertsEngine` construía su `thresholds_by_symbol` una sola vez, al arrancar
@@ -400,15 +514,15 @@ no un contador simple por contrato (confirmado en la investigación). Cada 20 mi
 volumen acumulado contra `GET /v3/option/history/ohlc` para el mismo contrato/día — una discrepancia
 mayor al 10% se loggea como advertencia clara, nunca falla en silencio.
 
-**`stream_trades()` — el método del puerto que ya existía sin usar, ahora implementado, sin
-consumidor todavía.** Confirmado antes de escribir el adaptador: ningún caso de uso construye
-`FlowEvent` ni llama `stream_trades()` en ningún lugar del proyecto — es infraestructura declarada en
-el puerto desde antes, nunca conectada. La implementación en `ThetaDataProvider` reenvía cada
-operación cruda del Trade Stream como un `FlowEvent`, pero como una operación cruda de OPRA no trae
-ninguna clasificación de comprador/vendedor ni de tipo de flujo (sweep/block/unusual) propia,
-`aggressor_side` queda en `Side.UNKNOWN` y `event_type` en `FlowEventType.UNUSUAL` como valores
-honestos por defecto, no una clasificación real — documentado explícitamente en el código como algo a
-revisar el día que algo consuma este método.
+**`stream_trades()` — el método del puerto que ya existía sin usar, implementado en este PR sin
+consumidor todavía; ya tiene uno, ver la sección Lee-Ready más arriba.** Confirmado antes de escribir
+el adaptador original (PR #76): ningún caso de uso construía `FlowEvent` ni llamaba `stream_trades()`
+en ningún lugar del proyecto — era infraestructura declarada en el puerto desde antes, nunca
+conectada. `aggressor_side` sigue en `Side.UNKNOWN` y `event_type` en `FlowEventType.UNUSUAL` en el
+`FlowEvent` que emite el Trade Stream (una operación cruda de OPRA no trae esa clasificación por sí
+sola) — eso no cambió; lo que sí cambió es que ahora existe un consumidor real:
+`StreamWhaleAlertsUseCase` clasifica cada `FlowEvent` con Lee-Ready por su cuenta, en vez de esperar
+que el propio evento ya viniera clasificado.
 
 **`start()`/`stop()` — nuevo en el puerto `IDataProvider`, no específico de este adaptador.** Ganchos
 de ciclo de vida para un proveedor con una conexión persistente que abrir/cerrar junto con el proceso
@@ -417,10 +531,12 @@ de ciclo de vida para un proveedor con una conexión persistente que abrir/cerra
 concreto, mismo criterio que ya mantiene a `UnderlyingRefreshScheduler` sin saber qué proveedor tiene
 detrás. El scheduler en sí **no necesitó ningún cambio de rol** — sigue llamando a
 `RefreshUnderlyingSnapshotUseCase.execute(symbol)` en su cadencia habitual, porque greeks/IV/OI no
-tienen ningún equivalente por streaming (confirmado en la investigación previa a este PR: el Trade
+tienen ningún equivalente por streaming (confirmado en la investigación previa a PR #76: el Trade
 Stream y el Quote Stream traen exactamente los mismos campos fragmentados que sus equivalentes REST,
 nada más completo) — lo único que deja de necesitar una llamada de red en el momento de pedirlo es el
-volumen, servido desde el estado que el stream ya mantiene en memoria.
+volumen, servido desde el estado que el stream ya mantiene en memoria. El Quote Stream mencionado ahí
+sí se terminó construyendo — como `ThetaQuoteStream`, ver la sección Lee-Ready más arriba — una vez
+que Lee-Ready le dio un motivo real para existir.
 
 ---
 
