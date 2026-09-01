@@ -783,3 +783,90 @@ de la misma barra y correctamente no dibuja nada — el botón "Borrar línea" p
 confirmando que la guardia contra líneas degeneradas funciona; cambiar entre "Estático"/"Histórico" y
 los checkboxes de overlays sigue funcionando sin regresión después de activar y desactivar el modo
 dibujo; sin errores en consola.
+
+## 27. `.chart-secondary-panel` deja de ser un placeholder: GEX por Strike / Flujo Whale Alerts
+
+Llena el espacio reservado en la sección 22 ("Próximamente") con dos histogramas alternables por un
+toggle de dos botones — reemplaza el `<p>` placeholder por `ChartSecondaryPanel`, un componente nuevo
+con su propio polling (mismo patrón ya usado por `AlertsPanel`/`VolatilitySmile`: fetch inmediato +
+`setInterval(POLLING_INTERVAL_MS)`).
+
+**Investigación previa, confirmada antes de implementar:**
+
+1. **GEX por Strike — sin endpoint nuevo.** `GET /gamma/{symbol}/profile` ya existe y ya devuelve
+   `items: GammaAggregateItem[]` con `call_gamma_exposure`/`put_gamma_exposure`/`net_gamma` reales por
+   strike (ThetaData y MockDataProvider devuelven consistentemente 3 strikes por chain — el rango
+   near-the-money de ambos proveedores). `pre-session-panel.tsx` ya tenía un histograma SVG completo
+   para esta forma exacta de dato (eje de strike vertical, barras horizontales calls-derecha/
+   puts-izquierda desde una línea central) — reutilizado como plantilla, comprimido verticalmente para
+   caber en el espacio real de este panel (`GEX_PLOT` usa las mismas proporciones horizontales que el
+   `PLOT` de `pre-session-panel.tsx`, solo con un rango vertical mucho más corto). El único hueco real:
+   la vista en vivo nunca llamaba a este endpoint (solo Pre-Sesión, una vez por símbolo) — este panel
+   agrega su propio polling de `getGammaProfile`, cada `POLLING_INTERVAL_MS` (30s), independiente del
+   ciclo de refresco de `Dashboard`.
+2. **Flujo acumulado de Whale Alerts — sin endpoint nuevo, pero con una limitación real, documentada
+   explícitamente, no oculta.** `GET /alerts/{symbol}` ya soporta `?limit=` (hasta 1000, ya usado por
+   este panel: `getAlerts(symbol, signal, 1000)`), pero `WhaleAlertsEngine._alerts` es un único
+   `deque(maxlen=1000)` **compartido entre todos los símbolos**, solo en memoria del proceso — nunca
+   persistido a base de datos. Ver la sección "Limitación conocida, con pendiente futuro real" más
+   abajo.
+3. **Dimensiones de `.chart-secondary-panel`** — ya medidas en la sección 22: 171.9px/121.5px de alto
+   a 1920×1080/1366×768 respectivamente, proporción de flex-grow constante (~17% de `.tv-center`). Con
+   solo 3 strikes típicos, el histograma de GEX cabe cómodamente; el de flujo (una sola polilínea) no
+   tiene esa restricción de conteo de filas.
+
+**Acumulación del lado del cliente, con caché por `alertKey`.** `ChartSecondaryPanel` mantiene
+`alertsByKey: Map<string, WhaleAlert>` (misma identidad de deduplicación que `alerts-panel.tsx` ya usa:
+`symbol-contract-timestamp`), fusionando cada poll dentro del Map en vez de reemplazarlo — así el
+flujo neto (`estimated_buy_volume - estimated_sell_volume`, acumulado y ordenado por timestamp) crece
+con el tiempo en vez de mostrar solo el snapshot del poll más reciente. Recalculado desde cero en cada
+cambio (no un total corriente incremental) — más simple y sin riesgo de desincronización, barato dado
+el tope de 1000 alertas.
+
+**Limitación conocida, con pendiente futuro real — no resuelta en este PR, documentada con la misma
+honestidad que `volume=0` o el calendario de feriados de `is_market_open`.** El flujo acumulado es
+*best-effort*, no una garantía de sesión completa:
+
+- `WhaleAlertsEngine._alerts` vive solo en memoria del proceso — un reinicio del backend borra todo el
+  historial. Si el equipo llega a operar con Convexa varias horas seguidas sin reiniciar el backend,
+  el `deque(maxlen=1000)` **compartido entre los 11 símbolos activos** puede llenarse y empezar a
+  descartar las alertas más viejas de un símbolo activo mucho antes de que termine la sesión de
+  mercado — sin ninguna señal de que eso ocurrió, ni una forma de recuperarlas.
+- **Pendiente real para revisar más adelante** (no un TODO en el código, un problema de arquitectura
+  a decidir con más contexto de uso real): si esta limitación se vuelve molesta en la práctica, la
+  solución no es aumentar `maxlen` indefinidamente (retrasa el problema, no lo resuelve) sino
+  persistencia real — una tabla `whale_alerts` + métodos en `IStorage`
+  (`save_alert`/`get_alerts_since`), con `WhaleAlertsEngine` escribiendo cada alerta al emitirla. Fuera
+  de alcance de este PR (ver "solo lectura salvo justificación explícita" — agregar un write-path
+  nuevo sin una necesidad ya confirmada sería adelantarse).
+- **Visible para el usuario, no solo en un comentario de código.** El panel muestra
+  `"Datos desde las {hora} — memoria del backend, sin persistencia"` bajo el gráfico, calculado desde
+  el timestamp real de la alerta más antigua todavía en `alertsByKey` — no un texto genérico y
+  estático. Si el backend se reinició hace 10 minutos, la hora mostrada lo hace evidente sin que el
+  usuario tenga que adivinar por qué el gráfico "empieza de la nada" en vez de cubrir todo el día.
+
+**UI:** toggle de dos botones ("GEX por Strike" / "Flujo Whale Alerts") en `chart-secondary-heading`,
+mismo patrón visual `aria-pressed` que el resto del dashboard (`.level-mode-selector`,
+`.tv-timeframe`). Mismos colores compra/venta que ya usa Whale Alerts y el histograma de
+`pre-session-panel.tsx` (`--calm` verde para calls/compra, `--risk` rojo para puts/venta) — la
+polilínea de flujo también cambia de color según si el último valor acumulado es positivo o negativo.
+
+**i18n:** `t.chartSecondaryPanel` completo (ES/EN) — se eliminó la clave `placeholder`, ya sin uso.
+
+**Tests:** `chart-secondary-panel.test.tsx` (nuevo) — la vista GEX renderiza por defecto con una barra
+por strike; el toggle cambia entre ambas vistas y de vuelta; un error de red en el perfil de gamma
+muestra el mensaje traducido correspondiente; la acumulación a través de dos polls (con temporizadores
+simulados) deduplica una alerta repetida y termina con exactamente los puntos esperados en la
+polilínea, sin que el "Datos desde..." se mueva solo porque corrió un poll; el estado de carga se
+muestra antes de que resuelva el primer poll de alertas. `dashboard.test.tsx` — la prueba que
+verificaba el placeholder "Próximamente" se reemplazó por una que confirma el panel real (con su
+propio `aria-label` y el histograma de GEX) reemplazó el placeholder en la vista en vivo.
+
+**Verificado visualmente en navegador real:** el histograma de GEX por strike renderiza con barras
+reales (3 strikes, calls a la derecha en verde, puts a la izquierda en rojo); el toggle cambia
+correctamente a "Flujo Whale Alerts" (estado vacío honesto, "Sin alertas todavía en esta sesión.",
+correcto dado que el entorno de desarrollo con MockDataProvider no genera Whale Alerts reales) y de
+vuelta a GEX sin perder el estado; sin errores en consola en una pestaña nueva (las líneas de error
+observadas en una pestaña con historial de recompilaciones de Turbopack resultaron ser mensajes
+obsoletos de un ciclo de HMR anterior, no un error en vivo — confirmado abriendo una pestaña nueva y
+verificando el árbol de accesibilidad en vivo, que ya mostraba el `aria-label` correcto).

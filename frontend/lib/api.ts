@@ -76,8 +76,9 @@ export function getMarket(symbol: string, signal?: AbortSignal) {
   return getJson<MarketResponse>(`/market/${encodeURIComponent(symbol)}`, signal);
 }
 
-export function getAlerts(symbol: string, signal?: AbortSignal) {
-  return getJson<WhaleAlertsResponse>(`/alerts/${encodeURIComponent(symbol)}`, signal);
+export function getAlerts(symbol: string, signal?: AbortSignal, limit?: number) {
+  const query = limit ? `?${new URLSearchParams({ limit: String(limit) }).toString()}` : "";
+  return getJson<WhaleAlertsResponse>(`/alerts/${encodeURIComponent(symbol)}${query}`, signal);
 }
 
 export function getScreenerPreset(

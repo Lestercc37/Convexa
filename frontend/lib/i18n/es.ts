@@ -68,9 +68,19 @@ export const es: Translations = {
     emptyState: "Esperando la primera muestra de precio…",
   },
   chartSecondaryPanel: {
-    ariaLabel: "Panel adicional del chart, próximamente",
+    ariaLabel: "GEX por strike y flujo acumulado de Whale Alerts",
     eyebrow: "Convexa",
-    placeholder: "Próximamente",
+    toggleGroupAriaLabel: "Vista del panel secundario",
+    gexToggleButton: "GEX por Strike",
+    flowToggleButton: "Flujo Whale Alerts",
+    gexChartAriaLabel: (symbol) => `GEX por strike para ${symbol}`,
+    gexLoading: "Cargando GEX por strike…",
+    gexNoBreakdown: "Sin desglose por strike disponible.",
+    flowChartAriaLabel: (symbol) => `Flujo acumulado de Whale Alerts para ${symbol}`,
+    flowLoading: "Cargando flujo de Whale Alerts…",
+    flowEmpty: "Sin alertas todavía en esta sesión.",
+    flowSinceLabel: (time) =>
+      `Datos desde las ${time} — memoria del backend, sin persistencia`,
   },
   preSessionPanel: {
     eyebrow: "Preparación pre-sesión",

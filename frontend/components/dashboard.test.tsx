@@ -199,15 +199,18 @@ describe("Dashboard", () => {
     consoleError.mockRestore();
   });
 
-  it("reserves the secondary chart panel below the price chart, in the live view", async () => {
+  it("renders the GEX/Whale Alerts flow panel below the price chart, in the live view", async () => {
     renderWithLanguage(<Dashboard />);
 
     await screen.findByLabelText("Chart de velas para SPY");
 
     expect(
-      screen.getByLabelText("Panel adicional del chart, próximamente"),
+      await screen.findByLabelText("GEX por strike y flujo acumulado de Whale Alerts"),
     ).toBeInTheDocument();
-    expect(screen.getByText("Próximamente")).toBeInTheDocument();
+    await waitFor(() =>
+      expect(apiMocks.getGammaProfile).toHaveBeenCalledWith("SPY", expect.any(AbortSignal)),
+    );
+    expect(await screen.findByLabelText("GEX por strike para SPY")).toBeInTheDocument();
   });
 
   it("survives repeated symbol switches without crashing (regression for #54/#55)", async () => {

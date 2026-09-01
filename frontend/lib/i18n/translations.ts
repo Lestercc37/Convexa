@@ -60,7 +60,16 @@ export type Translations = {
   chartSecondaryPanel: {
     ariaLabel: string;
     eyebrow: string;
-    placeholder: string;
+    toggleGroupAriaLabel: string;
+    gexToggleButton: string;
+    flowToggleButton: string;
+    gexChartAriaLabel: (symbol: string) => string;
+    gexLoading: string;
+    gexNoBreakdown: string;
+    flowChartAriaLabel: (symbol: string) => string;
+    flowLoading: string;
+    flowEmpty: string;
+    flowSinceLabel: (time: string) => string;
   };
   preSessionPanel: {
     eyebrow: string;
