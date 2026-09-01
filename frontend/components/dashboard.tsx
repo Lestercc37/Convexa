@@ -15,6 +15,7 @@ import { useLanguage, type Language } from "@/lib/i18n/language-context";
 import { POLLING_INTERVAL_MS } from "@/lib/polling";
 import type { GammaResponse, MarketResponse, Underlying } from "@/lib/types";
 import { AlertsPanel } from "./alerts-panel";
+import { ChartSecondaryPanel } from "./chart-secondary-panel";
 import { ClosingDynamicsPanel } from "./closing-dynamics-panel";
 import { DerivedMetricsBar } from "./derived-metrics-bar";
 import { EnginesGuidePanel } from "./engines-guide-panel";
@@ -258,15 +259,7 @@ export function Dashboard() {
                   atrRange={market.atr_range}
                   timeframe={timeframe}
                 />
-                <section
-                  className="chart-secondary-panel"
-                  aria-label={t.chartSecondaryPanel.ariaLabel}
-                >
-                  <p className="eyebrow">{t.chartSecondaryPanel.eyebrow}</p>
-                  <p className="chart-secondary-panel-placeholder">
-                    {t.chartSecondaryPanel.placeholder}
-                  </p>
-                </section>
+                <ChartSecondaryPanel key={`chart-secondary-${symbol}`} symbol={symbol} />
               </>
             ) : (
               <PreSessionPanel

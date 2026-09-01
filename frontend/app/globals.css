@@ -205,25 +205,44 @@ button, select { font: inherit; }
    Ratio, not a fixed px height, so it holds proportionally at any
    viewport height rather than only at the two resolutions checked. */
 .price-chart-panel { position: relative; flex: 5 1 0; display: flex; flex-direction: column; min-height: 0; border-radius: 0; border-width: 0; overflow: hidden; }
-/* Reserved space (section 22) — deliberately just a labeled
-   placeholder, no chart/content yet; a future PR decides what goes
-   here. Same ~17% share every time (flex: 1, see .price-chart-panel
-   above), border-top as the seam between the two stacked sections —
-   same divider pattern .tv-sidebar/.tv-alerts-sidebar use for their
-   column borders, just rotated to a horizontal split. */
+/* Section 25 (GEX by Strike / Whale Alerts flow toggle) fills the space
+   section 22 reserved — same ~17% share every time (flex: 1, see
+   .price-chart-panel above), border-top as the seam between the two
+   stacked sections — same divider pattern .tv-sidebar/.tv-alerts-sidebar
+   use for their column borders, just rotated to a horizontal split. */
 .chart-secondary-panel {
   flex: 1 1 0;
   min-height: 0;
   display: flex;
   flex-direction: column;
-  align-items: center;
-  justify-content: center;
   gap: 4px;
+  padding: 6px 10px;
   border-top: 1px solid var(--tv-border);
+  border-radius: 0;
   color: var(--tv-text-dim);
 }
-.chart-secondary-panel .eyebrow { margin: 0; }
-.chart-secondary-panel-placeholder { margin: 0; font-size: 0.8rem; }
+.chart-secondary-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.chart-secondary-heading .eyebrow { margin: 0; }
+.chart-secondary-toggle { display: flex; align-items: center; gap: 3px; padding: 3px; border: 1px solid var(--tv-border); border-radius: 8px; }
+.chart-secondary-toggle button { border: 0; border-radius: 6px; background: transparent; color: var(--tv-text-dim); cursor: pointer; font: inherit; font-size: 0.68rem; padding: 3px 7px; }
+.chart-secondary-toggle button[aria-pressed="true"] { background: var(--tv-panel-raised); color: var(--tv-text); }
+.chart-secondary-status { flex: 1 1 auto; display: flex; align-items: center; justify-content: center; margin: 0; font-size: 0.78rem; text-align: center; }
+.chart-secondary-status.error { color: var(--risk); }
+.chart-secondary-caption { margin: 2px 0 0; font-size: 0.66rem; color: var(--tv-text-dim); text-align: center; }
+
+.secondary-gex-chart { flex: 1 1 auto; width: 100%; min-height: 0; }
+.secondary-gex-axis { stroke: var(--tv-border); stroke-width: 1.5; }
+/* Same buy/sell color pair Whale Alerts already uses (--calm/--risk),
+   consistent with pre-session-panel.tsx's own Calls/Puts bars. */
+.secondary-gex-bar.call { fill: var(--calm); }
+.secondary-gex-bar.put { fill: var(--risk); }
+.secondary-gex-strike-label { fill: var(--tv-text-dim); font-size: 11px; text-anchor: start; }
+
+.secondary-flow-chart { flex: 1 1 auto; width: 100%; min-height: 0; }
+.secondary-flow-zero { stroke: var(--tv-border); stroke-width: 1; stroke-dasharray: 4 4; }
+.secondary-flow-line { fill: none; stroke-width: 2; }
+.secondary-flow-line.buy { stroke: var(--calm); }
+.secondary-flow-line.sell { stroke: var(--risk); }
 .price-chart-panel .panel-heading { padding: 10px 14px; border-bottom: 1px solid var(--tv-border); }
 .price-chart-panel .panel-heading h2 { margin: 0; font-size: 0.86rem; }
 .price-chart-frame { position: relative; flex: 1 1 auto; min-height: 0; }
