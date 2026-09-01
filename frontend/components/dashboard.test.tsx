@@ -1,5 +1,6 @@
 import { screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import type { ReactNode } from "react";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { renderWithLanguage } from "@/lib/i18n/test-utils";
 import { derivedMetricsFixture } from "@/test/fixtures";
@@ -21,6 +22,40 @@ const chartMocks = vi.hoisted(() => ({
   createChart: vi.fn(),
 }));
 
+// react-resizable-panels needs a real browser layout engine to turn pixel
+// defaultSize/minSize/maxSize into flex percentages — confirmed live
+// (a throwaway probe render) that in jsdom, which has no layout engine at
+// all, every Panel instead collapses to an even 50/50 split regardless of
+// its props. Real drag/constraint behavior is verified manually in an
+// actual browser (dashboard-spec.md section 28); this mock only proves
+// Dashboard wires the right props to the library — same reasoning
+// already applied to mocking lightweight-charts above, for the same
+// class of "real layout/canvas math jsdom can't do" problem.
+const panelsMocks = vi.hoisted(() => ({
+  useDefaultLayout: vi.fn(),
+}));
+
+type MockGroupProps = {
+  children: ReactNode;
+  className?: string;
+  id: string;
+  defaultLayout?: Record<string, number>;
+  onLayoutChanged?: (...args: unknown[]) => void;
+};
+
+type MockPanelProps = {
+  children: ReactNode;
+  id: string;
+  defaultSize?: number;
+  minSize?: number;
+  maxSize?: number;
+};
+
+type MockSeparatorProps = {
+  className?: string;
+  "aria-label"?: string;
+};
+
 vi.mock("@/lib/api", async () => {
   const actual = await vi.importActual<typeof import("@/lib/api")>("@/lib/api");
   return { ...actual, ...apiMocks };
@@ -31,6 +66,32 @@ vi.mock("lightweight-charts", () => ({
   ColorType: { Solid: "solid" },
   LineStyle: { Dashed: 2, Solid: 0 },
   createChart: chartMocks.createChart,
+}));
+vi.mock("react-resizable-panels", () => ({
+  Group: ({ children, className, id, defaultLayout, onLayoutChanged }: MockGroupProps) => (
+    <div
+      className={className}
+      data-testid={`group-${id}`}
+      data-default-layout={JSON.stringify(defaultLayout ?? null)}
+      data-has-on-layout-changed={String(typeof onLayoutChanged === "function")}
+    >
+      {children}
+    </div>
+  ),
+  Panel: ({ children, id, defaultSize, minSize, maxSize }: MockPanelProps) => (
+    <div
+      data-testid={`panel-${id}`}
+      data-default-size={defaultSize}
+      data-min-size={minSize}
+      data-max-size={maxSize}
+    >
+      {children}
+    </div>
+  ),
+  Separator: ({ className, "aria-label": ariaLabel }: MockSeparatorProps) => (
+    <div role="separator" className={className} aria-label={ariaLabel} />
+  ),
+  useDefaultLayout: panelsMocks.useDefaultLayout,
 }));
 
 beforeAll(() => {
@@ -53,6 +114,11 @@ beforeAll(() => {
     }),
     remove: vi.fn(),
   });
+  panelsMocks.useDefaultLayout.mockReturnValue({
+    defaultLayout: undefined,
+    onLayoutChange: vi.fn(),
+    onLayoutChanged: vi.fn(),
+  });
   vi.stubGlobal(
     "ResizeObserver",
     class ResizeObserver {
@@ -60,6 +126,17 @@ beforeAll(() => {
       disconnect() {}
     },
   );
+  // jsdom has no real layout engine, so there's no meaningful viewport
+  // width to match against — defaults to "not narrow" (matches: false),
+  // exercising the same resizable Group/Panel layout every other test in
+  // this file already asserts on. A dedicated test below overrides this
+  // per-call to cover the narrow-viewport branch.
+  vi.stubGlobal("matchMedia", (query: string) => ({
+    matches: false,
+    media: query,
+    addEventListener: vi.fn(),
+    removeEventListener: vi.fn(),
+  }));
 });
 
 function gammaFor(symbol: string) {
@@ -401,5 +478,90 @@ describe("Dashboard", () => {
     expect(fiveMinuteButton).toHaveAttribute("aria-pressed", "true");
     expect(oneMinuteButton).toHaveAttribute("aria-pressed", "false");
     expect(screen.getByText("SPY · Velas de 5 minutos")).toBeInTheDocument();
+  });
+
+  describe("resizable main panels", () => {
+    // Real drag/constraint behavior can't be meaningfully asserted in
+    // jsdom (see the react-resizable-panels mock above) — these tests
+    // instead prove Dashboard wires the three columns to the exact same
+    // pixel values the layout previously hardcoded as fixed CSS
+    // (256px/400px), which is what react-resizable-panels needs in
+    // order to enforce those limits once real layout is available.
+
+    it("wires the three columns to the same default/min/max pixel sizes the layout previously hardcoded", async () => {
+      renderWithLanguage(<Dashboard />);
+      await screen.findByLabelText("Chart de velas para SPY");
+
+      const alerts = screen.getByTestId("panel-alerts");
+      expect(alerts).toHaveAttribute("data-default-size", "256");
+      expect(alerts).toHaveAttribute("data-min-size", "200");
+      expect(alerts).toHaveAttribute("data-max-size", "480");
+
+      const center = screen.getByTestId("panel-center");
+      expect(center).not.toHaveAttribute("data-default-size");
+      expect(center).toHaveAttribute("data-min-size", "420");
+
+      const metrics = screen.getByTestId("panel-metrics");
+      expect(metrics).toHaveAttribute("data-default-size", "400");
+      expect(metrics).toHaveAttribute("data-min-size", "300");
+      expect(metrics).toHaveAttribute("data-max-size", "640");
+    });
+
+    it("renders a draggable separator between each pair of adjacent columns", async () => {
+      renderWithLanguage(<Dashboard />);
+      await screen.findByLabelText("Chart de velas para SPY");
+
+      const separators = screen.getAllByRole("separator", { name: "Redimensionar paneles" });
+      expect(separators).toHaveLength(2);
+    });
+
+    it("keeps each column's real content inside its resizable Panel", async () => {
+      renderWithLanguage(<Dashboard />);
+      await screen.findByLabelText("Chart de velas para SPY");
+
+      expect(
+        screen.getByTestId("panel-alerts").querySelector(".tv-alerts-sidebar"),
+      ).toBeInTheDocument();
+      expect(screen.getByTestId("panel-center").querySelector(".tv-center")).toBeInTheDocument();
+      expect(screen.getByTestId("panel-metrics").querySelector(".tv-sidebar")).toBeInTheDocument();
+    });
+
+    it("persists the layout via useDefaultLayout, keyed by a stable id and backed by localStorage", async () => {
+      renderWithLanguage(<Dashboard />);
+      await screen.findByLabelText("Chart de velas para SPY");
+
+      expect(panelsMocks.useDefaultLayout).toHaveBeenCalledWith(
+        expect.objectContaining({ id: "convexa-dashboard-panels", storage: window.localStorage }),
+      );
+
+      const group = screen.getByTestId("group-convexa-dashboard-panels");
+      expect(group).toHaveAttribute("data-has-on-layout-changed", "true");
+    });
+
+    it("falls back to the plain stacked layout (no Group/Panel) on a narrow viewport", async () => {
+      // Group's own inline flex-direction can't be overridden by the
+      // existing @media (max-width: 960px) stacking rule the way the old
+      // plain-flex .tv-body could — confirms Dashboard renders the
+      // original div-based layout instead in that case, not a Group that
+      // the media query would fail to actually stack.
+      vi.stubGlobal("matchMedia", (query: string) => ({
+        matches: true,
+        media: query,
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+      }));
+
+      renderWithLanguage(<Dashboard />);
+      await screen.findByLabelText("Chart de velas para SPY");
+
+      expect(screen.queryByTestId("group-convexa-dashboard-panels")).not.toBeInTheDocument();
+      expect(screen.queryByTestId("panel-alerts")).not.toBeInTheDocument();
+      expect(screen.queryByRole("separator", { name: "Redimensionar paneles" })).not.toBeInTheDocument();
+
+      const body = document.querySelector(".tv-body");
+      expect(body?.querySelector(".tv-alerts-sidebar")).toBeInTheDocument();
+      expect(body?.querySelector(".tv-center")).toBeInTheDocument();
+      expect(body?.querySelector(".tv-sidebar")).toBeInTheDocument();
+    });
   });
 });

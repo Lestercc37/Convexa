@@ -135,15 +135,35 @@ button, select { font: inherit; }
 }
 .tv-timeframe[aria-pressed="true"] { background: var(--tv-panel-raised); color: var(--tv-text); }
 
-.tv-body { display: flex; flex: 1 1 auto; min-height: 0; }
+/* `display: flex` (and flex-direction/flex-wrap/overflow) is set
+   internally by Group itself and cannot be overridden — react-resizable-
+   panels (section 28) owns each column's width now, replacing the fixed
+   256px/400px flex-basis this row used to hardcode. */
+.tv-body { flex: 1 1 auto; min-height: 0; }
+
+/* Draggable divider between the three main columns — sizing (flex-grow/
+   shrink) is owned by the library and can't be overridden here; only
+   cosmetic width/color. The library sets its own drag cursor
+   automatically. */
+.tv-resize-separator {
+  width: 3px;
+  background: var(--tv-border);
+  cursor: col-resize;
+  transition: background-color 0.15s ease;
+}
+.tv-resize-separator:hover,
+.tv-resize-separator:active {
+  background: var(--accent);
+}
 
 /* Replaces the old decorative 44px toolbar — same slot in the row, now a
-   real functional panel (dashboard-spec.md section 17). */
+   real functional panel (dashboard-spec.md section 17). Sizing (width)
+   now lives one level up, on the wrapping Panel (section 28) — this
+   class only carries the cosmetic/internal-layout rules. */
 .tv-alerts-sidebar {
   display: flex;
   flex-direction: column;
-  flex: 0 0 256px;
-  width: 256px;
+  height: 100%;
   min-height: 0;
   padding: 10px;
   border-right: 1px solid var(--tv-border);
@@ -154,22 +174,17 @@ button, select { font: inherit; }
    reserved secondary-panel space, each sized by its own flex-grow
    share of .tv-center's height (see .price-chart-panel/.chart-
    secondary-panel below) instead of a fixed split, so the ~83/17 ratio
-   holds at any viewport height. */
-.tv-center { flex: 1 1 auto; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
+   holds at any viewport height. Width is now owned by the wrapping
+   Panel (section 28) — min-width: 0 stays here, still needed so the
+   chart's own content doesn't force this column wider than its
+   allotted Panel size. */
+.tv-center { height: 100%; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
 
 .tv-sidebar {
   display: flex;
   flex-direction: column;
   gap: 10px;
-  /* 400px (up from 256px, section 22) — widened to give the metrics
-     column real breathing room, per the same ~10-20% chart-shrink
-     budget as the height split above. A fixed px width (not a
-     percentage) matches .tv-alerts-sidebar's own fixed-width
-     convention; the chart (`.tv-center`, flex: 1 1 auto) absorbs
-     whatever's left automatically, so no chart-specific change was
-     needed to shrink it. */
-  flex: 0 0 400px;
-  width: 400px;
+  height: 100%;
   min-height: 0;
   padding: 10px;
   border-left: 1px solid var(--tv-border);
@@ -584,16 +599,29 @@ button, select { font: inherit; }
      stacked column below, so there's no fixed-height row layout left to
      bound, unlike the desktop cap above. */
   .tv-shell { height: auto; min-height: 100vh; }
+  /* Plain stacked flex — Dashboard renders .tv-body without Group/Panel
+     at this breakpoint (section 28, useIsNarrowLayout), so this rule
+     applies directly instead of being shadowed by Group's own inline
+     flex-direction the way it would be at desktop widths. */
   .tv-body { flex-direction: column; }
   .tv-alerts-sidebar {
     width: 100%;
+    height: auto;
     flex: 0 0 auto;
     min-height: auto;
     max-height: 240px;
     border-right: 0;
     border-bottom: 1px solid var(--tv-border);
   }
-  .tv-sidebar { width: 100%; flex: 0 0 auto; min-height: auto; border-left: 0; border-top: 1px solid var(--tv-border); }
+  .tv-center { height: auto; }
+  .tv-sidebar {
+    width: 100%;
+    height: auto;
+    flex: 0 0 auto;
+    min-height: auto;
+    border-left: 0;
+    border-top: 1px solid var(--tv-border);
+  }
   .tv-topbar { flex-wrap: wrap; height: auto; }
   .tv-price-readout { order: 3; width: 100%; }
 }

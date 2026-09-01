@@ -870,3 +870,100 @@ vuelta a GEX sin perder el estado; sin errores en consola en una pestaña nueva 
 observadas en una pestaña con historial de recompilaciones de Turbopack resultaron ser mensajes
 obsoletos de un ciclo de HMR anterior, no un error en vivo — confirmado abriendo una pestaña nueva y
 verificando el árbol de accesibilidad en vivo, que ya mostraba el `aria-label` correcto).
+
+## 28. Paneles principales redimensionables por arrastre (react-resizable-panels)
+
+Las tres columnas de `.tv-body` (Whale Alerts / chart / métricas) tenían anchos fijos en CSS
+(256px/400px) — este PR las hace redimensionables arrastrando la línea divisoria entre columnas,
+mismo patrón que herramientas de trading de escritorio (NinjaTrader 8).
+
+**Investigación previa, confirmada antes de implementar:**
+
+1. **Librería vs. construir desde cero — `react-resizable-panels`, confirmado contra el registro de
+   npm, no solo memoria previa (la API cambió en su versión mayor más reciente).** v4.12.3, **cero
+   dependencias de runtime**, peer deps `react: ^18 || ^19` — compatible con React 19.2.4, ya en uso.
+   Tipos de TypeScript incluidos. Resuelve las tres piezas que la tarea pedía evaluar (arrastre,
+   límites mínimo/máximo, persistencia) sin código propio para ninguna — mismo criterio ya aplicado
+   evitando APScheduler/scipy: no reinventar un problema ya bien resuelto por una dependencia
+   liviana y madura. Alternativas descartadas: `react-split-pane` (esencialmente sin mantenimiento),
+   `re-resizable` (redimensiona un panel a la vez, sin concepto de "grupo" — habría que construir a
+   mano la lógica de "achicar el vecino al agrandar este"), `allotment` (viable pero con adopción y
+   documentación más débiles).
+2. **Invasividad del layout — baja.** `.tv-body` es un `<div>` flex plano con exactamente 3 hijos
+   directos (`.tv-alerts-sidebar`, `.tv-center`, `.tv-sidebar`); cero selectores CSS calificados por
+   tag (confirmado por grep) — envolver esos 3 hijos en `Group`/`Panel`/`Separator` no requirió tocar
+   ningún componente interno (`AlertsPanel`, `PriceChart`, `ChartSecondaryPanel`,
+   `DerivedMetricsBar`, etc. siguen recibiendo las mismas classNames, sin saber que ahora viven
+   dentro de un `Panel`). El cambio real fue más angosto: las reglas de *tamaño* (`flex: 0 0 256px`,
+   `width: 256px`, etc.) se eliminaron de esas 3 clases — el tamaño ahora lo controla la librería —
+   pero todo lo demás (padding, bordes, background, `overflow-y: auto`) se quedó igual.
+3. **Persistencia — localStorage, según el mismo patrón SSR-safe ya usado en
+   `language-context.tsx`.** Confirmado que ya era el único otro uso de localStorage en el proyecto
+   (el toggle de idioma) antes de este PR. `useDefaultLayout({ id, storage })` (v4 — reemplaza el
+   `autoSaveId` de v3) devuelve `{ defaultLayout, onLayoutChanged }` para pasarle a `Group`. Mismo
+   guard `typeof window === "undefined"` que ya usa el toggle de idioma para evitar un mismatch de
+   hidratación — leer el valor real solo después del montaje.
+
+**API real de v4 (verificada contra el `.d.ts` instalado, no contra documentación desactualizada de
+v3):** `Group`/`Panel`/`Separator` (`PanelGroup`/`PanelResizeHandle` eran los nombres en v3).
+`Panel` acepta `defaultSize`/`minSize`/`maxSize` — números interpretados directamente como píxeles
+(mapeo 1:1 con los 256px/400px que ya existían, sin conversión de unidades). `Separator` usa
+`role="separator"` nativo y pone su propio cursor de arrastre — ninguna de las dos cosas hubo que
+construirlas a mano.
+
+**Bug real encontrado y corregido antes de terminar: `useDefaultLayout` no es SSR-safe con
+`storage: undefined`.** Pasar `storage: typeof window === "undefined" ? undefined : window.
+localStorage` (el guard correcto, en teoría) igual crasheaba el render en el servidor con
+`ReferenceError: localStorage is not defined` — confirmado en vivo con el overlay de errores de
+Next.js. La librería, cuando `storage` es `undefined`, cae internamente a referenciar el global
+`localStorage` sin comprobarlo (razonable para una SPA pura sin SSR, no para Next.js). Solución: un
+stub no-op explícito (`{ getItem: () => null, setItem: () => {} }`) en vez de `undefined` — nunca deja
+que la librería intente su propio fallback. Verificado en vivo: el overlay de error desaparece, cero
+errores de consola en una pestaña nueva.
+
+**Límites elegidos (px), mapeando 1:1 los valores previos:**
+
+| Panel | Default | Mínimo | Máximo |
+|---|---:|---:|---:|
+| Whale Alerts (`alerts`) | 256px | 200px | 480px |
+| Chart (`center`) | auto (resto) | 420px | — |
+| Métricas (`metrics`) | 400px | 300px | 640px |
+
+El panel central no tiene `defaultSize` explícito — la librería le asigna automáticamente el espacio
+restante, igual que `flex: 1 1 auto` ya hacía. Sí tiene `minSize` propio (420px) para que el chart no
+pueda quedar inutilizable aunque ambos paneles laterales se arrastren a su máximo simultáneamente.
+
+**Regresión real encontrada y corregida antes de terminar: el layout apilado de viewport angosto
+(`@media (max-width: 960px)`, ya existente) dejaba de funcionar.** `Group` fija `flex-direction`
+internamente por estilo inline y documenta explícitamente que **no se puede sobreescribir** —
+la regla `.tv-body { flex-direction: column }` de ese media query, que antes apilaba las 3 columnas en
+viewports angostos, ya no tiene ningún efecto contra un `Group` real. Solución: `useIsNarrowLayout()`
+(mismo hook `matchMedia` + listener de cambio, mismo patrón SSR-safe post-montaje) — en viewports
+≤960px, `Dashboard` renderiza el `<div className="tv-body">` plano original (sin `Group`/`Panel`) en
+vez del layout redimensionable; el contenido de las 3 columnas se extrae una sola vez como variables
+JSX (`alertsContent`/`centerContent`/`metricsContent`) y se reutiliza en ambas ramas, sin duplicar
+ningún componente. Verificado en vivo a 800×1400: la columna de Whale Alerts se apila arriba (con su
+`max-height: 240px` original), seguida del panel GEX/Flujo, luego las métricas — igual que antes de
+este PR, sin ningún separador de arrastre visible (no tiene sentido en un layout apilado). A 1600×900
+el layout redimensionable de escritorio sigue intacto.
+
+**Tests:** dado que jsdom no tiene motor de layout real (confirmado con un render de prueba: con
+`defaultSize={256}` en píxeles, ambos paneles caían a un 50/50 arbitrario porque la librería no puede
+convertir píxeles a porcentaje sin medir un ancho real), `react-resizable-panels` se mockea en
+`dashboard.test.tsx` — mismo criterio ya aplicado a `lightweight-charts` para la misma clase de
+problema ("matemática de layout/canvas real que jsdom no puede hacer"). Los tests nuevos verifican
+que Dashboard pasa exactamente los props correctos a la librería (default/min/max por panel, el `id`
+estable, `storage: window.localStorage`) en vez de re-testear la lógica de arrastre de la propia
+librería (ya es su responsabilidad, ya probada — la razón misma de elegir una dependencia madura).
+También: el layout apilado (sin `Group`) se activa correctamente cuando `matchMedia` reporta un
+viewport angosto. El comportamiento real de arrastre/límites/persistencia se verificó a mano en
+navegador real (ver abajo).
+
+**Verificado visualmente en navegador real (1600×900):** con `localStorage` vacío, las 3 columnas
+arrancan en exactamente 256px/resto/400px — igual que el CSS fijo anterior. Arrastrar el separador
+izquierdo hace crecer/achicar Whale Alerts en tiempo real sin romper el chart (se re-dimensiona
+correctamente, sin overflow); el mínimo (200px) y el máximo (480px) se respetan exactamente al
+arrastrar más allá de esos límites; lo mismo para el separador derecho contra el panel de métricas
+(300px/640px). Recargar la página después de arrastrar mantiene el tamaño elegido (confirmado leyendo
+`localStorage["react-resizable-panels:convexa-dashboard-panels"]` antes y después del reload) — la
+preferencia persiste tal como pide la tarea. Cero errores de consola en una pestaña nueva.

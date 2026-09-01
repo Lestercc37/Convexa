@@ -2,6 +2,7 @@
 
 import Image from "next/image";
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { Group, Panel, Separator, useDefaultLayout } from "react-resizable-panels";
 import { getGamma, getMarket, getUnderlyings } from "@/lib/api";
 import {
   aggregateCandles,
@@ -30,6 +31,67 @@ import { VolatilitySmile } from "./volatility-smile";
 // client-side aggregation of that same data, via aggregateCandles.
 const TIMEFRAMES: Timeframe[] = ["1m", "5m", "15m", "1h"];
 
+// Same three columns' fixed pixel widths this layout has always had
+// (256px/400px) — now the *default*/min/max for a resizable Group
+// instead of a hardcoded CSS flex-basis (dashboard-spec.md section 28).
+// Mins are generous enough that neither sidebar can collapse into an
+// unusable sliver; the center panel gets its own min so the chart can't
+// be squeezed to nothing if both sidebars are dragged toward their max
+// at once.
+const PANELS_LAYOUT_ID = "convexa-dashboard-panels";
+const ALERTS_PANEL_ID = "alerts";
+const CENTER_PANEL_ID = "center";
+const METRICS_PANEL_ID = "metrics";
+const ALERTS_PANEL_MIN_PX = 200;
+const ALERTS_PANEL_DEFAULT_PX = 256;
+const ALERTS_PANEL_MAX_PX = 480;
+const CENTER_PANEL_MIN_PX = 420;
+const METRICS_PANEL_MIN_PX = 300;
+const METRICS_PANEL_DEFAULT_PX = 400;
+const METRICS_PANEL_MAX_PX = 640;
+
+// react-resizable-panels' useDefaultLayout falls back to referencing the
+// bare `localStorage` global internally when `storage` is left
+// undefined — fine for a pure SPA, but that global doesn't exist during
+// Next.js server rendering, so an explicit undefined here still crashed
+// SSR ("localStorage is not defined"). A no-op stub sidesteps that
+// fallback entirely: reads nothing, writes nothing, never touches the
+// real global, so it's safe on the server and harmless on the client's
+// pre-hydration render (matches the same "no stored layout yet" case a
+// genuinely empty localStorage would produce).
+const NOOP_LAYOUT_STORAGE: Pick<Storage, "getItem" | "setItem"> = {
+  getItem: () => null,
+  setItem: () => {},
+};
+
+// Same breakpoint the existing @media (max-width: 960px) rule already
+// uses to stack .tv-body into a column on narrow viewports.
+const NARROW_LAYOUT_QUERY = "(max-width: 960px)";
+
+function useIsNarrowLayout(): boolean {
+  // Defaults to false (desktop/resizable layout) for the server render
+  // and the first client render before hydration — same "read real state
+  // only after mount" tradeoff already accepted for the language toggle
+  // and the panel-size storage above (a possible one-frame flash on a
+  // narrow device, never a hydration mismatch). A change listener keeps
+  // it in sync afterward: Group's own inline `flex-direction: row`
+  // (dashboard-spec.md section 28) can't be overridden by the existing
+  // narrow-viewport CSS the way the old plain-flex .tv-body could — a
+  // narrow viewport now needs an actually different layout tree, not
+  // just different CSS applied to the same one.
+  const [isNarrow, setIsNarrow] = useState(false);
+
+  useEffect(() => {
+    const query = window.matchMedia(NARROW_LAYOUT_QUERY);
+    const update = () => setIsNarrow(query.matches);
+    update();
+    query.addEventListener("change", update);
+    return () => query.removeEventListener("change", update);
+  }, []);
+
+  return isNarrow;
+}
+
 const PRICE_FORMAT = new Intl.NumberFormat("en-US", {
   minimumFractionDigits: 2,
   maximumFractionDigits: 2,
@@ -42,6 +104,17 @@ const EXPOSURE_FORMAT = new Intl.NumberFormat("en-US", {
 
 export function Dashboard() {
   const { language, setLanguage, t } = useLanguage();
+  // `storage` is undefined during server rendering (and the very first
+  // client render, pre-hydration) — `window` doesn't exist there. Same
+  // "read the real stored value only after mount" tradeoff already
+  // accepted for the language toggle (language-context.tsx): a possible
+  // one-frame flash to the default layout if the stored one differs,
+  // never a hydration mismatch.
+  const { defaultLayout, onLayoutChanged } = useDefaultLayout({
+    id: PANELS_LAYOUT_ID,
+    storage: typeof window === "undefined" ? NOOP_LAYOUT_STORAGE : window.localStorage,
+  });
+  const isNarrowLayout = useIsNarrowLayout();
   const [underlyings, setUnderlyings] = useState<Underlying[]>([]);
   const [symbol, setSymbol] = useState("");
   const [view, setView] = useState<"live" | "pre-session">("live");
@@ -242,72 +315,134 @@ export function Dashboard() {
           {describeError(error, t)}
         </section>
       ) : gamma && market ? (
-        <div className="tv-body">
-          <aside className="tv-alerts-sidebar">
-            <AlertsPanel underlyings={underlyings} orientation="vertical" />
-          </aside>
-
-          <div className="tv-center">
-            {view === "live" ? (
-              <>
-                <PriceChart
-                  key={`price-chart-${symbol}-${timeframe}`}
+        (() => {
+          const alertsContent = (
+            <aside className="tv-alerts-sidebar">
+              <AlertsPanel underlyings={underlyings} orientation="vertical" />
+            </aside>
+          );
+          const centerContent = (
+            <div className="tv-center">
+              {view === "live" ? (
+                <>
+                  <PriceChart
+                    key={`price-chart-${symbol}-${timeframe}`}
+                    symbol={symbol}
+                    candles={displayedCandles}
+                    gamma={gamma}
+                    vwapPoints={vwapPoints}
+                    atrRange={market.atr_range}
+                    timeframe={timeframe}
+                  />
+                  <ChartSecondaryPanel key={`chart-secondary-${symbol}`} symbol={symbol} />
+                </>
+              ) : (
+                <PreSessionPanel
+                  key={`pre-session-${symbol}`}
                   symbol={symbol}
-                  candles={displayedCandles}
                   gamma={gamma}
-                  vwapPoints={vwapPoints}
-                  atrRange={market.atr_range}
-                  timeframe={timeframe}
+                  market={market}
                 />
-                <ChartSecondaryPanel key={`chart-secondary-${symbol}`} symbol={symbol} />
-              </>
-            ) : (
-              <PreSessionPanel
-                key={`pre-session-${symbol}`}
+              )}
+            </div>
+          );
+          const metricsContent = (
+            <aside className="tv-sidebar">
+              <DerivedMetricsBar metrics={gamma.derived_metrics} />
+              <section
+                className="panel exposure-panel"
+                aria-label={t.dashboard.exposureGroupAriaLabel}
+              >
+                <p className="eyebrow">{t.dashboard.aggregatedGreeksEyebrow}</p>
+                <div className="exposure-row">
+                  <div>
+                    <span className="exposure-label">Charm Exposure</span>
+                    <strong className="exposure-value">
+                      {EXPOSURE_FORMAT.format(gamma.charm_exposure)}
+                    </strong>
+                  </div>
+                  <div>
+                    <span className="exposure-label">Vanna Exposure</span>
+                    <strong className="exposure-value">
+                      {EXPOSURE_FORMAT.format(gamma.vanna_exposure)}
+                    </strong>
+                  </div>
+                </div>
+              </section>
+              {/* Right after the raw Charm/Vanna Exposure numbers above, since
+                  this panel is their translated, closing-window-scoped
+                  interpretation — conditional by design (dashboard-spec.md
+                  section 9), not a toggle, so it renders nothing outside the
+                  closing window. */}
+              <ClosingDynamicsPanel closingDynamics={market.closing_dynamics} />
+              <ExpectedMoveWidget key={`expected-move-${symbol}`} expectedMove={market.expected_move} />
+              <VolatilitySmile
+                key={`volatility-smile-${symbol}`}
                 symbol={symbol}
-                gamma={gamma}
-                market={market}
+                marketPrice={market.price}
               />
-            )}
-          </div>
+              <QuickScreener />
+            </aside>
+          );
 
-          <aside className="tv-sidebar">
-            <DerivedMetricsBar metrics={gamma.derived_metrics} />
-            <section
-              className="panel exposure-panel"
-              aria-label={t.dashboard.exposureGroupAriaLabel}
-            >
-              <p className="eyebrow">{t.dashboard.aggregatedGreeksEyebrow}</p>
-              <div className="exposure-row">
-                <div>
-                  <span className="exposure-label">Charm Exposure</span>
-                  <strong className="exposure-value">
-                    {EXPOSURE_FORMAT.format(gamma.charm_exposure)}
-                  </strong>
-                </div>
-                <div>
-                  <span className="exposure-label">Vanna Exposure</span>
-                  <strong className="exposure-value">
-                    {EXPOSURE_FORMAT.format(gamma.vanna_exposure)}
-                  </strong>
-                </div>
+          // Narrow viewports keep the original plain-flex stacked layout
+          // (unchanged from before react-resizable-panels) rather than a
+          // resizable one — Group's own inline flex-direction can't be
+          // overridden by the existing @media stacking rule, and dragging
+          // to resize isn't a meaningful gesture on a touch-sized screen
+          // anyway. See useIsNarrowLayout above.
+          if (isNarrowLayout) {
+            return (
+              <div className="tv-body">
+                {alertsContent}
+                {centerContent}
+                {metricsContent}
               </div>
-            </section>
-            {/* Right after the raw Charm/Vanna Exposure numbers above, since
-                this panel is their translated, closing-window-scoped
-                interpretation — conditional by design (dashboard-spec.md
-                section 9), not a toggle, so it renders nothing outside the
-                closing window. */}
-            <ClosingDynamicsPanel closingDynamics={market.closing_dynamics} />
-            <ExpectedMoveWidget key={`expected-move-${symbol}`} expectedMove={market.expected_move} />
-            <VolatilitySmile
-              key={`volatility-smile-${symbol}`}
-              symbol={symbol}
-              marketPrice={market.price}
-            />
-            <QuickScreener />
-          </aside>
-        </div>
+            );
+          }
+
+          return (
+            <Group
+              className="tv-body"
+              orientation="horizontal"
+              id={PANELS_LAYOUT_ID}
+              defaultLayout={defaultLayout}
+              onLayoutChanged={onLayoutChanged}
+            >
+              <Panel
+                id={ALERTS_PANEL_ID}
+                defaultSize={ALERTS_PANEL_DEFAULT_PX}
+                minSize={ALERTS_PANEL_MIN_PX}
+                maxSize={ALERTS_PANEL_MAX_PX}
+              >
+                {alertsContent}
+              </Panel>
+
+              <Separator
+                className="tv-resize-separator"
+                aria-label={t.dashboard.resizeSeparatorAriaLabel}
+              />
+
+              <Panel id={CENTER_PANEL_ID} minSize={CENTER_PANEL_MIN_PX}>
+                {centerContent}
+              </Panel>
+
+              <Separator
+                className="tv-resize-separator"
+                aria-label={t.dashboard.resizeSeparatorAriaLabel}
+              />
+
+              <Panel
+                id={METRICS_PANEL_ID}
+                defaultSize={METRICS_PANEL_DEFAULT_PX}
+                minSize={METRICS_PANEL_MIN_PX}
+                maxSize={METRICS_PANEL_MAX_PX}
+              >
+                {metricsContent}
+              </Panel>
+            </Group>
+          );
+        })()
       ) : (
         <section className="panel status" aria-live="polite">
           {t.dashboard.loadingRegime}
