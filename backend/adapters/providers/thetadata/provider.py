@@ -27,17 +27,31 @@ from backend.domain.entities import (
 )
 from backend.domain.underlyings import ACTIVE_UNDERLYINGS_BY_SYMBOL
 from backend.domain.use_cases.calculate_bsm_greeks import calculate_bsm_greeks
+from backend.domain.use_cases.calculate_near_the_money_width import calculate_near_the_money_width
 from backend.domain.use_cases.market_hours import EASTERN_TIME, MARKET_CLOSE_ET
 
 logger = logging.getLogger(__name__)
 
-# Real, filtered chain — same shape MockDataProvider._contract() already
-# uses (nearest expiration, 3 strikes around spot × 2 contract types = 6
-# contracts per underlying), confirmed against ThetaData's real per-
-# contract quota cost (2026-08 investigation: cost is per call, not per
-# contract returned, so `strike_range` narrowing server-side is free —
-# NEAR_THE_MONEY_STRIKE_RANGE=1 gives 1 strike below + ATM + 1 above).
-NEAR_THE_MONEY_STRIKE_RANGE = 1
+# Confirmed with the user (2026-09-01 investigation, docs/use-cases.md):
+# ThetaData's per-call quota cost doesn't depend on how many strikes a
+# response returns, and the documented Options Standard concurrent-
+# subscription caps (10,000 quote / 15,000 trade) leave enormous
+# headroom even at ATR x 1.5-derived widths for all 11 active symbols —
+# so this over-fetches generously (201 strikes: 100 below + ATM + 100
+# above) and filters client-side to spot +/- the width from
+# calculate_near_the_money_width, instead of asking ThetaData for
+# exactly the strikes needed (its `strike_range` parameter is a strike
+# COUNT, not a price distance, so there's no way to ask for "just the
+# strikes within $X of spot" server-side). 100 is generous margin above
+# every width in the investigation's table, including a stress-scenario
+# ATR — see calculate_near_the_money_width.py for the width itself.
+NEAR_THE_MONEY_OVERFETCH_STRIKE_RANGE = 100
+# Guaranteed minimum entries kept even if ATR x 1.5 filtering would
+# otherwise produce zero matches (e.g. an unusually calm 14-day window
+# giving a width narrower than this symbol's own strike spacing) — the
+# closest strikes to spot, same order of magnitude as the old fixed
+# n=1 baseline (3 strikes x 2 contract types), never nothing.
+MINIMUM_NEAR_THE_MONEY_ENTRIES = 6
 
 # Data sources per field, confirmed with real ThetaData responses before
 # this adapter was written (see docs/use-cases.md):
@@ -538,6 +552,12 @@ class ThetaDataProvider:
         self._stream = ThetaTradeStream(ws_url, self._client)
         self._quote_stream = ThetaQuoteStream(ws_url)
         self._rate_cache: tuple[date, Decimal] | None = None
+        # ATR (and therefore the near-the-money width derived from it)
+        # only changes once a *closed* trading day is added to the
+        # history — recomputing it on every ~30s poll would be pure
+        # waste, so it's cached per symbol per day, same pattern as
+        # `_rate_cache` above.
+        self._width_cache: dict[str, tuple[date, Decimal]] = {}
 
     async def start(self) -> None:
         for symbol in ACTIVE_UNDERLYINGS_BY_SYMBOL:
@@ -598,27 +618,62 @@ class ThetaDataProvider:
         self._rate_cache = (today, rate)
         return rate
 
+    def _resolve_width(self, symbol: str, spot_price: Decimal) -> Decimal:
+        today = datetime.now(EASTERN_TIME).date()
+        cached = self._width_cache.get(symbol)
+        if cached is not None and cached[0] == today:
+            return cached[1]
+        daily_bars = self.get_daily_bars(symbol)
+        width = calculate_near_the_money_width(symbol, daily_bars, spot_price)
+        self._width_cache[symbol] = (today, width)
+        # Confirmed with the user before implementing: log the real width
+        # on every fresh (once-per-symbol-per-day) computation, to check
+        # against the investigation's illustrative estimate table.
+        logger.info("Near-the-money width for %s: $%s (spot $%s)", symbol, width, spot_price)
+        return width
+
+    def _filter_near_the_money(
+        self, symbol: str, entries: list[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
+        spot_price = Decimal(str(entries[0]["data"][0]["underlying_price"]))
+        width = self._resolve_width(symbol, spot_price)
+        filtered = [
+            entry
+            for entry in entries
+            if abs(Decimal(str(entry["contract"]["strike"])) - spot_price) <= width
+        ]
+        if filtered:
+            return filtered
+        # Degenerate width (e.g. an unusually calm 14-day ATR window
+        # narrower than this symbol's own strike spacing) — guarantee at
+        # least the strikes immediately surrounding spot instead of
+        # returning nothing.
+        return sorted(
+            entries,
+            key=lambda entry: abs(Decimal(str(entry["contract"]["strike"])) - spot_price),
+        )[:MINIMUM_NEAR_THE_MONEY_ENTRIES]
+
     def _fetch_near_the_money(self, symbol: str, expiration: date | None) -> _NearTheMoneyChain:
         expiration_param = expiration.strftime("%Y-%m-%d") if expiration else "*"
         body = self._get_json(
             "/v3/option/snapshot/greeks/first_order",
             symbol=symbol,
             expiration=expiration_param,
-            strike_range=NEAR_THE_MONEY_STRIKE_RANGE,
+            strike_range=NEAR_THE_MONEY_OVERFETCH_STRIKE_RANGE,
             format="json",
         )
         entries = [entry for entry in body.get("response", []) if entry.get("data")]
         if not entries:
             raise RuntimeError(f"ThetaData returned no near-the-money contracts for {symbol}")
         if expiration is not None:
-            return _NearTheMoneyChain(expiration, entries)
+            return _NearTheMoneyChain(expiration, self._filter_near_the_money(symbol, entries))
         nearest = min(date.fromisoformat(entry["contract"]["expiration"]) for entry in entries)
         nearest_entries = [
             entry
             for entry in entries
             if date.fromisoformat(entry["contract"]["expiration"]) == nearest
         ]
-        return _NearTheMoneyChain(nearest, nearest_entries)
+        return _NearTheMoneyChain(nearest, self._filter_near_the_money(symbol, nearest_entries))
 
     def _fetch_open_interest(
         self, symbol: str, expiration: date
@@ -627,7 +682,12 @@ class ThetaDataProvider:
             "/v3/option/snapshot/open_interest",
             symbol=symbol,
             expiration=expiration.strftime("%Y-%m-%d"),
-            strike_range=NEAR_THE_MONEY_STRIKE_RANGE,
+            # Same over-fetch width as _fetch_near_the_money — every
+            # contract that survives that method's price-width filter
+            # must also have real open-interest data available here,
+            # not a silent 0 fallback for strikes beyond the old narrow
+            # range.
+            strike_range=NEAR_THE_MONEY_OVERFETCH_STRIKE_RANGE,
             format="json",
         )
         result: dict[tuple[Decimal, str], int] = {}

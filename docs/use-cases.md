@@ -538,6 +538,78 @@ volumen, servido desde el estado que el stream ya mantiene en memoria. El Quote 
 sí se terminó construyendo — como `ThetaQuoteStream`, ver la sección Lee-Ready más arriba — una vez
 que Lee-Ready le dio un motivo real para existir.
 
+#### Ancho dinámico de la cadena filtrada near-the-money, anclado a ATR Range
+
+Reemplaza el ancho fijo de la cadena filtrada (antes `strike_range=1`, es decir 3 strikes: 1 abajo +
+ATM + 1 arriba, heredado sin revisar de la era de FlashAlpha con tope de 2,500 solicitudes/día) por un
+ancho dinámico anclado al ATR Range de cada símbolo (`calculate_atr_range`, ya construido y validado),
+en vez de un número fijo o una tabla de porcentajes a mano — el ATR ya refleja la volatilidad real de
+cada símbolo automáticamente.
+
+**Fórmula:** `ancho_en_precio = ATR Range del símbolo × 1.5` (`calculate_near_the_money_width.py`,
+`ATR_WIDTH_MULTIPLIER`). Como ThetaData no tiene un parámetro nativo de "distancia de precio" (solo
+`strike_range=n`, que da `2n+1` strikes alrededor del spot), el adaptador sobre-pide con
+`NEAR_THE_MONEY_OVERFETCH_STRIKE_RANGE=100` (201 strikes) y filtra del lado del cliente a los
+contratos dentro de `spot ± ancho_en_precio` — confirmado con el usuario antes de implementar que 100
+da margen real incluso en un escenario de estrés (ATR de 14 días subiendo a ~$150 en SPX, un promedio
+extendido, no un solo día atípico, ya que ATR es una media móvil que no reacciona a una sola sesión) y
+que el costo de sobre-pedir es solo un payload JSON más grande en UNA llamada REST — sin costo de
+cuota adicional (confirmado en la investigación previa a este PR) ni de más suscripciones de streaming
+(esas solo se crean para lo que sobrevive al filtro por precio, no para lo sobre-pedido).
+
+**Bootstrap en frío — confirmado que funciona en la práctica, no solo en teoría.** `calculate_atr_range`
+recibe `daily_bars` y `session_readings` como parámetros independientes; el campo `atr` en sí se
+calcula únicamente a partir de `daily_bars` (líneas 34-52 de ese archivo) — `session_readings` solo se
+usa para `today_open`, necesario para las bandas de precio, no para `atr`. Esto significa que
+`calculate_atr_range(daily_bars, [])` (con `session_readings` vacío) devuelve un `atr` real siempre
+que haya 15+ días — sembrado enteramente desde `get_daily_bars()`, independiente de cualquier cadena
+de opciones en vivo, confirmado leyendo la lógica real de la función, no asumido.
+
+**Dos casos especiales de ancho fijo, con razones distintas — no una sola excepción genérica**
+(`FIXED_WIDTH_BY_SYMBOL`):
+
+- **VIX ($6, fijo):** revierte a la media con picos abruptos de cambio de régimen (15 → 40 en un día
+  durante estrés) — un ATR de 14 días es una señal de tamaño pobre específicamente para VIX: demasiado
+  angosto justo antes de un pico, o artificialmente ancho por semanas después de uno, porque los
+  valores elevados de True Range durante el pico siguen inflando el promedio incluso después de que
+  VIX ya se calmó. Lester no opera VIX directamente, solo lo mira como referencia de sentimiento para
+  NQ, así que la precisión aquí no vale la pena perseguir.
+- **ES ($100, fijo):** no tiene historial de daily bars del cual derivar un ATR, nunca —
+  `ThetaDataProvider.get_daily_bars()` devuelve `[]` incondicionalmente para futuros (no existe un
+  endpoint de EOD de futuros que funcione en ThetaData, ver el comentario propio de ese método). Ancho
+  fijo del mismo orden de magnitud que SPX, ya que ES sigue al S&P 500 en puntos de índice.
+
+**Caso borde adicional — sin relación con VIX/ES, defensivo únicamente:** si `atr` resulta `None` por
+historial insuficiente (menos de 15 días), el ancho cae a `spot_price × 0.02`
+(`INSUFFICIENT_DATA_WIDTH_FRACTION`) — escalado al precio del símbolo en vez de un monto fijo en
+dólares, para no reutilizar un ancho pensado para un símbolo de un orden de magnitud de precio
+completamente distinto. No se espera que esto se dispare para ninguno de los 11 símbolos activos hoy
+(todos tienen años de historial vía ThetaData) — existe para un símbolo futuro con poco historial, o
+un hueco de datos transitorio.
+
+**Caché por símbolo por día, no por poll.** ATR solo cambia cuando se agrega un día *cerrado* al
+historial — recalcularlo en cada ciclo de ~30s del scheduler sería puro desperdicio.
+`ThetaDataProvider._width_cache: dict[str, tuple[date, Decimal]]` sigue el mismo patrón ya establecido
+por `_rate_cache` (la tasa libre de riesgo) en el mismo archivo.
+
+**Garantía de cobertura mínima.** Si el filtrado por ancho no deja ningún contrato (un ATR
+inusualmente bajo, más angosto que el propio espaciado de strikes del símbolo), se usan en su lugar
+los `MINIMUM_NEAR_THE_MONEY_ENTRIES=6` strikes más cercanos al spot — nunca una cadena vacía.
+
+**Logging real, para confirmar contra la tabla ilustrativa de la investigación.** Cada vez que el
+ancho se recalcula (una vez por símbolo por día, no en cada poll — ver el caché arriba),
+`ThetaDataProvider._resolve_width` loggea el ancho real en dólares junto con el spot del momento —
+confirmado con el usuario que esto reemplaza, con números reales de producción, la tabla de ATR
+ilustrativa (no verificada en vivo) que acompañó la investigación previa a este PR.
+
+**Impacto de suscripciones/cómputo recalculado con el nuevo mecanismo:** incluso con anchos
+ilustrativos de referencia (no verificados en vivo — ver el logging real arriba como la fuente de
+verdad definitiva), el total de suscripciones de streaming a través de los 11 símbolos activos queda
+muy por debajo de los topes documentados de Options Standard (10,000 en Quote Stream, 15,000 en Trade
+Stream) — con margen real incluso si los anchos ilustrativos estuvieran equivocados por 2-3x. Max Pain
+(ya confirmado `O(strikes²)` en la investigación previa) es el término a vigilar si los anchos reales
+resultan más amplios que lo ilustrativo, no el conteo de suscripciones de streaming.
+
 ---
 
 ## Resumen de mapeo a contratos existentes
