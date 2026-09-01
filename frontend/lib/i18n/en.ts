@@ -19,6 +19,7 @@ export const en: Translations = {
     aggregatedGreeksEyebrow: "Aggregated Greeks",
     loadingRegime: "Loading regime and levels…",
     settingsButtonAriaLabel: "Whale Alerts threshold settings",
+    resizeSeparatorAriaLabel: "Resize panels",
   },
   regimeBadge: {
     ariaLabel: "Gamma regime",

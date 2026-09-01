@@ -17,6 +17,7 @@ export type Translations = {
     aggregatedGreeksEyebrow: string;
     loadingRegime: string;
     settingsButtonAriaLabel: string;
+    resizeSeparatorAriaLabel: string;
   };
   regimeBadge: {
     ariaLabel: string;
