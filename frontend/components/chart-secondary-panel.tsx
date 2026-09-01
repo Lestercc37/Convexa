@@ -7,17 +7,21 @@ import { useLanguage } from "@/lib/i18n/language-context";
 import { POLLING_INTERVAL_MS } from "@/lib/polling";
 import type { GammaAggregateItem, GammaAggregateResponse, WhaleAlert } from "@/lib/types";
 
-type ChartSecondaryPanelProps = { symbol: string };
+type ChartSecondaryPanelProps = { symbol: string; spotPrice: number };
 type SecondaryView = "gex" | "flow";
 
-// Only up to ~3-4 rows ever render here (near-the-money strike range,
-// both MockDataProvider and ThetaDataProvider) — this panel is a fixed
-// ~17% share of .tv-center's height (dashboard-spec.md section 22,
-// ~172px/122px measured at 1920x1080/1366x768), nowhere near enough for
-// pre-session-panel.tsx's full-size GEX Profile. Same horizontal
-// proportions as that chart (reused for visual consistency across the
-// app), just compressed vertically.
-const GEX_PLOT = { top: 6, bottom: 94, centerLeft: 120, centerRight: 640, edgeLeft: 20, edgeRight: 740 };
+// SpotGamma-style vertical profile: strike on the X axis, exposure
+// magnitude on the Y axis, calls above the zero line and puts below it
+// (call_gamma_exposure/put_gamma_exposure already carry that sign —
+// dealer positioning convention baked in at calculation time, see
+// backend/adapters/providers/mock/gamma_exposure.py — no sign-flip
+// needed here). `labelY` sits below `bottom` so strike labels never
+// overlap a put bar reaching the floor of the plot.
+const GEX_PLOT = { left: 30, right: 740, top: 8, bottom: 74, labelY: 92 };
+// A non-zero exposure always stays visually present even when the
+// opposite side completely dominates the shared scale (see gexY below)
+// — legible without pretending both sides are equally sized.
+const GEX_MIN_BAR_HEIGHT = 2;
 const FLOW_PLOT = { top: 10, bottom: 80, left: 20, right: 740 };
 
 const level = new Intl.NumberFormat("en-US", { maximumFractionDigits: 2 });
@@ -31,13 +35,7 @@ function scale(value: number, minimum: number, maximum: number, start: number, e
   return start + ((value - minimum) / (maximum - minimum)) * (end - start);
 }
 
-function magnitude(value: number, peak: number, start: number, end: number) {
-  if (peak <= 0) return start;
-  const ratio = Math.min(1, Math.abs(value) / peak);
-  return start + ratio * (end - start);
-}
-
-export function ChartSecondaryPanel({ symbol }: ChartSecondaryPanelProps) {
+export function ChartSecondaryPanel({ symbol, spotPrice }: ChartSecondaryPanelProps) {
   const { t } = useLanguage();
   const [view, setView] = useState<SecondaryView>("gex");
   const [profile, setProfile] = useState<GammaAggregateResponse | null>(null);
@@ -105,29 +103,52 @@ export function ChartSecondaryPanel({ symbol }: ChartSecondaryPanelProps) {
   }, [symbol]);
 
   const gexItems = useMemo<GammaAggregateItem[]>(
-    () => [...(profile?.items ?? [])].sort((a, b) => b.strike - a.strike),
+    () => [...(profile?.items ?? [])].sort((a, b) => a.strike - b.strike),
     [profile],
-  );
-  const gexPeak = useMemo(
-    () =>
-      gexItems.reduce(
-        (max, item) => Math.max(max, Math.abs(item.call_gamma_exposure), Math.abs(item.put_gamma_exposure)),
-        0,
-      ),
-    [gexItems],
   );
   const gexStrikes = gexItems.map((item) => item.strike);
   const gexMinStrike = gexStrikes.length ? Math.min(...gexStrikes) : 0;
   const gexMaxStrike = gexStrikes.length ? Math.max(...gexStrikes) : 0;
-  const gexY = (strike: number) => scale(strike, gexMinStrike, gexMaxStrike, GEX_PLOT.bottom, GEX_PLOT.top);
-  const gexRowHeight =
-    gexItems.length > 1 ? (GEX_PLOT.bottom - GEX_PLOT.top) / (gexItems.length - 1) : GEX_PLOT.bottom - GEX_PLOT.top;
-  const gexBarHeight = Math.min(18, Math.max(4, gexRowHeight * 0.6));
+  // Padding on both sides of the strike range so the outermost bars (and
+  // the spot price line, if it sits right at an edge strike) aren't
+  // flush against the plot border.
+  const gexStrikePadding = (gexMaxStrike - gexMinStrike || 1) * 0.2;
+  const gexXMin = gexMinStrike - gexStrikePadding;
+  const gexXMax = gexMaxStrike + gexStrikePadding;
+  const gexX = (strike: number) => scale(strike, gexXMin, gexXMax, GEX_PLOT.left, GEX_PLOT.right);
+  const gexBarWidth = gexItems.length
+    ? Math.min(56, ((GEX_PLOT.right - GEX_PLOT.left) / gexItems.length) * 0.55)
+    : 0;
 
-  // Sorted ascending by time (Map insertion order isn't chronological once
-  // two polls' responses interleave) and re-summed from scratch on every
-  // change — simpler and safer than an incremental running total, and
-  // cheap given the 1000-alert cap.
+  // One shared linear scale for both directions (not independently
+  // normalized per side) — if calls dominate 10x over puts, calls
+  // genuinely occupy ~91% of the vertical space and puts ~9%, truthfully
+  // representing the imbalance instead of making both sides look equally
+  // tall. GEX_MIN_BAR_HEIGHT below is what keeps the dominated side from
+  // visually disappearing.
+  const gexMaxCall = Math.max(0, ...gexItems.map((item) => item.call_gamma_exposure));
+  const gexMinPut = Math.min(0, ...gexItems.map((item) => item.put_gamma_exposure));
+  const gexY = (value: number) => scale(value, gexMinPut, gexMaxCall, GEX_PLOT.bottom, GEX_PLOT.top);
+  const gexZeroY = gexY(0);
+
+  function gexBarRect(value: number): { y: number; height: number } {
+    if (value === 0) return { y: gexZeroY, height: 0 };
+    if (value > 0) {
+      const height = Math.max(gexZeroY - gexY(value), GEX_MIN_BAR_HEIGHT);
+      return { y: gexZeroY - height, height };
+    }
+    const height = Math.max(gexY(value) - gexZeroY, GEX_MIN_BAR_HEIGHT);
+    return { y: gexZeroY, height };
+  }
+
+  // Clamped to the visible plot — the live spot price can legitimately
+  // sit outside the current near-the-money strike range for a poll or
+  // two (e.g. price moved since the chain was last fetched), and the
+  // line should stay readable at the edge instead of drifting off-canvas.
+  const gexSpotX = gexItems.length
+    ? Math.min(GEX_PLOT.right, Math.max(GEX_PLOT.left, gexX(spotPrice)))
+    : 0;
+
   const flowPoints = useMemo(() => {
     const sorted = [...alertsByKey.values()].sort(
       (left, right) => Date.parse(left.timestamp) - Date.parse(right.timestamp),
@@ -145,7 +166,8 @@ export function ChartSecondaryPanel({ symbol }: ChartSecondaryPanelProps) {
   const flowMaxValue = flowValues.length ? Math.max(0, ...flowValues) : 1;
   const flowMinTime = flowPoints.length ? Date.parse(flowPoints[0].timestamp) : 0;
   const flowMaxTime = flowPoints.length ? Date.parse(flowPoints.at(-1)!.timestamp) : 0;
-  const flowX = (timestamp: string) => scale(Date.parse(timestamp), flowMinTime, flowMaxTime, FLOW_PLOT.left, FLOW_PLOT.right);
+  const flowX = (timestamp: string) =>
+    scale(Date.parse(timestamp), flowMinTime, flowMaxTime, FLOW_PLOT.left, FLOW_PLOT.right);
   const flowYForValue = (value: number) => scale(value, flowMinValue, flowMaxValue, FLOW_PLOT.bottom, FLOW_PLOT.top);
   const flowZeroY = flowYForValue(0);
   const flowPath = flowPoints.map((point) => `${flowX(point.timestamp)},${flowYForValue(point.value)}`).join(" ");
@@ -185,36 +207,54 @@ export function ChartSecondaryPanel({ symbol }: ChartSecondaryPanelProps) {
             aria-label={t.chartSecondaryPanel.gexChartAriaLabel(symbol)}
           >
             <line
-              className="secondary-gex-axis"
-              x1={GEX_PLOT.centerLeft}
-              y1={GEX_PLOT.top}
-              x2={GEX_PLOT.centerLeft}
-              y2={GEX_PLOT.bottom}
+              className="secondary-gex-zero"
+              x1={GEX_PLOT.left}
+              y1={gexZeroY}
+              x2={GEX_PLOT.right}
+              y2={gexZeroY}
             />
-            {gexItems.map((item) => (
-              <g key={item.strike} aria-label={`Strike ${item.strike}`}>
-                <rect
-                  className="secondary-gex-bar call"
-                  x={GEX_PLOT.centerLeft}
-                  y={gexY(item.strike) - gexBarHeight / 2}
-                  width={magnitude(item.call_gamma_exposure, gexPeak, 0, GEX_PLOT.centerRight - GEX_PLOT.centerLeft)}
-                  height={gexBarHeight}
-                />
-                <rect
-                  className="secondary-gex-bar put"
-                  x={
-                    GEX_PLOT.centerLeft -
-                    magnitude(item.put_gamma_exposure, gexPeak, 0, GEX_PLOT.centerLeft - GEX_PLOT.edgeLeft)
-                  }
-                  y={gexY(item.strike) - gexBarHeight / 2}
-                  width={magnitude(item.put_gamma_exposure, gexPeak, 0, GEX_PLOT.centerLeft - GEX_PLOT.edgeLeft)}
-                  height={gexBarHeight}
-                />
-                <text className="secondary-gex-strike-label" x={GEX_PLOT.edgeRight + 4} y={gexY(item.strike) + 4}>
-                  {level.format(item.strike)}
-                </text>
-              </g>
-            ))}
+            {gexItems.map((item) => {
+              const callRect = gexBarRect(item.call_gamma_exposure);
+              const putRect = gexBarRect(item.put_gamma_exposure);
+              const x = gexX(item.strike) - gexBarWidth / 2;
+              return (
+                <g key={item.strike} aria-label={`Strike ${item.strike}`}>
+                  <rect
+                    className="secondary-gex-bar call"
+                    x={x}
+                    y={callRect.y}
+                    width={gexBarWidth}
+                    height={callRect.height}
+                  />
+                  <rect
+                    className="secondary-gex-bar put"
+                    x={x}
+                    y={putRect.y}
+                    width={gexBarWidth}
+                    height={putRect.height}
+                  />
+                  <text
+                    className="secondary-gex-strike-label"
+                    x={gexX(item.strike)}
+                    y={GEX_PLOT.labelY}
+                  >
+                    {level.format(item.strike)}
+                  </text>
+                </g>
+              );
+            })}
+            <g aria-label={t.chartSecondaryPanel.gexSpotPriceAriaLabel(level.format(spotPrice))}>
+              <line
+                className="secondary-gex-spot"
+                x1={gexSpotX}
+                y1={GEX_PLOT.top}
+                x2={gexSpotX}
+                y2={GEX_PLOT.bottom}
+              />
+              <text className="secondary-gex-spot-label" x={gexSpotX} y={GEX_PLOT.top - 1}>
+                {level.format(spotPrice)}
+              </text>
+            </g>
           </svg>
         ) : profile ? (
           <p className="chart-secondary-status">{t.chartSecondaryPanel.gexNoBreakdown}</p>
