@@ -50,6 +50,10 @@ export type Translations = {
     overlaysLegend: string;
     vwapAnchoredLabel: string;
     atrRangeLabel: string;
+    drawingToolsAriaLabel: string;
+    drawingToolsLegend: string;
+    trendlineButton: string;
+    clearTrendlineButton: string;
     chartAriaLabel: (symbol: string) => string;
     emptyState: string;
   };

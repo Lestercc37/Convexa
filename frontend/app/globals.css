@@ -256,6 +256,11 @@ button, select { font: inherit; }
 .chart-toggle { display: inline-flex; align-items: center; gap: 5px; color: var(--tv-text-dim); font-size: 0.7rem; cursor: pointer; user-select: none; }
 .chart-toggle input { accent-color: var(--warning); }
 
+.drawing-tools button:disabled { cursor: default; opacity: 0.4; }
+/* Signals that click-drag on the chart now draws instead of panning —
+   the chart itself has no native "drawing mode" cursor of its own. */
+.price-chart-drawing { cursor: crosshair; }
+
 /* ---------- Right sidebar: stacked, compact ---------- */
 
 .tv-sidebar .panel { padding: 0; }
