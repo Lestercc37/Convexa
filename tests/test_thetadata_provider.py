@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import threading
+import time
 from datetime import date, datetime, timedelta
 from decimal import Decimal
 
@@ -9,6 +11,7 @@ import httpx
 import pytest
 
 from backend.adapters.providers.thetadata.provider import (
+    THETADATA_MAX_CONCURRENT_REQUESTS,
     ThetaDataProvider,
     ThetaQuoteStream,
     ThetaTradeStream,
@@ -702,3 +705,161 @@ class TestNearTheMoneyWidthFiltering:
         assert len(chain.contracts) == 6
         strikes = {contract.strike for contract in chain.contracts}
         assert Decimal("800.00") not in strikes  # farthest from spot 769.36 — excluded
+
+
+class TestRequestConcurrencyLimit:
+    def test_limits_concurrent_rest_calls_to_the_documented_account_cap(self) -> None:
+        # ThetaData's real, documented Options Standard concurrency cap
+        # (2026-09 investigation) — a handler that blocks until released
+        # proves no more than this many calls ever run at once, even
+        # when far more are requested simultaneously.
+        in_flight = 0
+        max_observed = 0
+        lock = threading.Lock()
+        release_event = threading.Event()
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            nonlocal in_flight, max_observed
+            with lock:
+                in_flight += 1
+                max_observed = max(max_observed, in_flight)
+            release_event.wait(timeout=5)
+            with lock:
+                in_flight -= 1
+            return httpx.Response(200, json={"response": []})
+
+        provider = _provider_with_transport(handler)
+        thread_count = THETADATA_MAX_CONCURRENT_REQUESTS + 2
+        threads = [
+            threading.Thread(target=lambda: provider._get_json("/v3/some/path"))
+            for _ in range(thread_count)
+        ]
+        for thread in threads:
+            thread.start()
+
+        deadline = time.monotonic() + 2.0
+        while time.monotonic() < deadline and in_flight < THETADATA_MAX_CONCURRENT_REQUESTS:
+            time.sleep(0.01)
+        # Give the two excess threads a moment to prove they stay queued
+        # rather than sneaking past the cap.
+        time.sleep(0.1)
+
+        try:
+            assert in_flight == THETADATA_MAX_CONCURRENT_REQUESTS
+            assert max_observed == THETADATA_MAX_CONCURRENT_REQUESTS
+        finally:
+            release_event.set()
+            for thread in threads:
+                thread.join(timeout=5)
+
+        assert in_flight == 0
+
+
+class TestNearTheMoneyCaching:
+    def test_get_underlying_snapshot_reuses_get_option_chains_near_the_money_fetch(self) -> None:
+        first_order_calls = 0
+        open_interest_calls = 0
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            nonlocal first_order_calls, open_interest_calls
+            if "greeks/first_order" in str(request.url):
+                first_order_calls += 1
+                return httpx.Response(
+                    200, json={"response": [_first_order_entry("769.00", "CALL")]}
+                )
+            if "open_interest" in str(request.url):
+                open_interest_calls += 1
+                return httpx.Response(200, json={"response": []})
+            if "interest_rate/history/eod" in str(request.url):
+                return httpx.Response(
+                    200, json={"response": [{"rate": 3.64, "created": "2026-08-31"}]}
+                )
+            if "stock/history/eod" in str(request.url):
+                return httpx.Response(200, json=_daily_bars_response())
+            raise AssertionError(f"unexpected request: {request.url}")
+
+        provider = _provider_with_transport(handler)
+        provider.get_option_chain("SPY")
+        provider.get_underlying_snapshot("SPY")
+
+        # Without the cache this would be 2 and 2 — get_underlying_snapshot
+        # requests the exact same near-the-money data get_option_chain
+        # already fetched moments earlier in the same refresh cycle.
+        assert first_order_calls == 1
+        assert open_interest_calls == 1
+
+    def test_cached_data_still_produces_correct_snapshot_values(self) -> None:
+        # Same fixture/expected values as
+        # TestGetUnderlyingSnapshot.test_approximates_atm_iv_and_pc_oi_ratio_from_near_the_money_chain
+        # — proves the cache-hit path is observably identical to the
+        # cache-miss (standalone) path, not just fewer requests.
+        def handler(request: httpx.Request) -> httpx.Response:
+            if "greeks/first_order" in str(request.url):
+                return httpx.Response(
+                    200,
+                    json={
+                        "response": [
+                            _first_order_entry("768.00", "CALL"),
+                            _first_order_entry("769.00", "CALL"),
+                        ]
+                    },
+                )
+            if "open_interest" in str(request.url):
+                return httpx.Response(
+                    200,
+                    json={
+                        "response": [
+                            _open_interest_entry("768.00", "CALL", 400),
+                            _open_interest_entry("769.00", "CALL", 600),
+                        ]
+                    },
+                )
+            if "interest_rate/history/eod" in str(request.url):
+                return httpx.Response(
+                    200, json={"response": [{"rate": 3.64, "created": "2026-08-31"}]}
+                )
+            if "stock/history/eod" in str(request.url):
+                return httpx.Response(200, json=_daily_bars_response())
+            raise AssertionError(f"unexpected request: {request.url}")
+
+        provider = _provider_with_transport(handler)
+        provider.get_option_chain("SPY")
+        snapshot = provider.get_underlying_snapshot("SPY")
+
+        assert snapshot.symbol == "SPY"
+        assert snapshot.price == Decimal("769.36")
+        assert snapshot.volume == 0
+        assert snapshot.atm_iv == Decimal("0.16")
+        assert snapshot.pc_oi_ratio == Decimal(0)
+        assert snapshot.skew_25d == Decimal(0)
+
+    def test_cache_does_not_leak_across_symbols(self) -> None:
+        calls_by_symbol: dict[str, int] = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            if "greeks/first_order" in str(request.url):
+                requested_symbol = request.url.params.get("symbol")
+                calls_by_symbol[requested_symbol] = calls_by_symbol.get(requested_symbol, 0) + 1
+                return httpx.Response(
+                    200,
+                    json={
+                        "response": [
+                            _first_order_entry("769.00", "CALL", underlying_price="769.36")
+                        ]
+                    },
+                )
+            if "open_interest" in str(request.url):
+                return httpx.Response(200, json={"response": []})
+            if "interest_rate/history/eod" in str(request.url):
+                return httpx.Response(
+                    200, json={"response": [{"rate": 3.64, "created": "2026-08-31"}]}
+                )
+            if "stock/history/eod" in str(request.url):
+                return httpx.Response(200, json=_daily_bars_response())
+            raise AssertionError(f"unexpected request: {request.url}")
+
+        provider = _provider_with_transport(handler)
+        provider.get_option_chain("SPY")
+        provider.get_option_chain("QQQ")
+
+        assert calls_by_symbol == {"SPY": 1, "QQQ": 1}
