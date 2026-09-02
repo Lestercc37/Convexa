@@ -1051,3 +1051,56 @@ correctamente con su etiqueta "552.25", clampada al borde derecho del plot dado 
 entre el spot sintético de `MockDataProvider` y sus 3 strikes de fixture; sin errores de consola en
 una pestaña nueva (confirmado igual que en secciones anteriores: un error visto en una pestaña con
 historial de HMR resultó ser un mensaje obsoleto, no uno en vivo).
+
+## 30. Espaciado dinámico de etiquetas en GEX por Strike (regresión del ancho ATR-anclado, PR #84)
+
+El histograma vertical estilo SpotGamma (sección 29) se diseñó y probó con exactamente 3 strikes por
+símbolo — el ancho fijo de entonces. Una vez el PR #84 (ancho dinámico anclado a ATR) llegó a
+producción, símbolos como SPX empezaron a traer muchos más strikes (32 confirmados en vivo contra
+`GET /gamma/SPX/profile` al momento de esta investigación, con espaciado de $5) y cada strike seguía
+generando su propia etiqueta de precio sin ningún criterio de espaciado — se superponían de forma
+ilegible en el eje horizontal.
+
+**Diagnóstico confirmado con datos reales, no una tabla ilustrativa** (a diferencia de PR #84): se
+consultó el endpoint real `/gamma/SPX/profile` en vivo para obtener el conteo exacto de strikes antes
+de diseñar la solución. El resto de los símbolos activos seguían en 3 strikes al momento de la
+investigación — SPX es, por ahora, el único caso real que dispara este problema.
+
+**Solución implementada — espaciado dinámico, sin rotación, sin cambio de tamaño de fuente:**
+
+- `gexLabelStep`, calculado a partir del strike formateado más largo actualmente en pantalla (no un
+  conteo de caracteres fijo) y el ancho disponible del eje — se autoajusta al símbolo/dataset que se
+  esté mostrando en cada momento, sin necesitar un número por símbolo hardcodeado. Con 3 strikes
+  (la mayoría de los símbolos hoy) el step calculado es 1 — comportamiento idéntico al anterior, sin
+  regresión para el caso común.
+- La etiqueta del strike más cercano al precio spot en vivo siempre se muestra, sin importar el
+  patrón de `gexLabelStep` — la referencia más relevante del gráfico nunca debe ser la que se salte
+  por coincidencia del módulo.
+- Sin rotación de etiquetas ni reducción de tamaño de fuente — ninguna otra gráfica del proyecto usa
+  etiquetas rotadas, y el espaciado dinámico por sí solo resolvió el problema sin necesitar esas
+  palancas adicionales (quedan documentadas como opción futura si algún símbolo llegara a traer
+  strikes con espaciado aún más denso).
+
+**Bug real encontrado y corregido durante la verificación en navegador, no solo en teoría — la
+"etiqueta más cercana al spot siempre visible" podía chocar con su vecina del patrón de espaciado.**
+Verificado midiendo `getBoundingClientRect()` de las etiquetas ya renderizadas contra la cadena real
+de SPX (no una estimación): cuando el strike más cercano al spot cae justo al lado de un índice ya
+mostrado por el patrón de espaciado, ambas etiquetas colisionaban (~8px de superposición real medida,
+en la zona más importante del gráfico — justo donde está el precio spot). Corregido suprimiendo la
+etiqueta del patrón que quede a menos de un `gexLabelStep` de distancia del índice forzado por spot,
+en vez de mostrar ambas — la etiqueta forzada ya cubre esa zona del eje, no se pierde información real
+al suprimir su vecina. Verificado de nuevo en vivo contra SPX tras la corrección: cero superposiciones
+medidas (antes: 2 pares superpuestos).
+
+**Tests:** `chart-secondary-panel.test.tsx` — un fixture de 32 strikes ($5 de separación, igual al
+caso real de SPX) confirma que las 32 barras siempre renderizan (el espaciado solo afecta las
+etiquetas de texto, nunca los datos) mientras las etiquetas se reducen a 16; un segundo test confirma
+que la etiqueta del strike más cercano al spot se muestra aunque el patrón de espaciado la hubiera
+saltado; un tercer test — el que capturó la regresión de superposición real — confirma que las
+etiquetas vecinas del patrón se suprimen correctamente cuando colisionarían con la etiqueta forzada
+por el spot.
+
+**Pendiente para seguimiento aparte, fuera de alcance de esta tarea:** `GET /gamma/SPY/profile`
+devolvió 0 strikes durante esta investigación, mientras QQQ/VIX/ES/TSLA seguían en 3 y SPX en 32 — un
+comportamiento inesperado que merece su propia investigación (no relacionado con el espaciado de
+etiquetas de esta sección).

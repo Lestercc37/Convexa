@@ -22,6 +22,11 @@ const GEX_PLOT = { left: 30, right: 740, top: 8, bottom: 74, labelY: 92 };
 // opposite side completely dominates the shared scale (see gexY below)
 // — legible without pretending both sides are equally sized.
 const GEX_MIN_BAR_HEIGHT = 2;
+// Empirical per-character width at the strike label's 11px font
+// (.secondary-gex-strike-label in globals.css), plus a small gap so
+// adjacent labels never touch even at their estimated worst case.
+const GEX_LABEL_CHAR_WIDTH = 6.5;
+const GEX_LABEL_GAP = 6;
 const FLOW_PLOT = { top: 10, bottom: 80, left: 20, right: 740 };
 
 const level = new Intl.NumberFormat("en-US", { maximumFractionDigits: 2 });
@@ -149,6 +154,50 @@ export function ChartSecondaryPanel({ symbol, spotPrice }: ChartSecondaryPanelPr
     ? Math.min(GEX_PLOT.right, Math.max(GEX_PLOT.left, gexX(spotPrice)))
     : 0;
 
+  // Dynamic label thinning — the ATR-anchored width (docs/use-cases.md)
+  // can bring anywhere from 3 strikes (most symbols) to 30+ (SPX at its
+  // $5 spacing), and every strike used to get its own label
+  // unconditionally, which overlapped badly once that count grew past
+  // what the plot's width can legibly hold. Sized from the *longest*
+  // formatted strike currently on screen (a wide symbol like SPX needs
+  // more room per label than a 3-digit one), not a fixed character
+  // count, so it self-adjusts to whichever symbol/dataset is showing —
+  // recomputed fresh from the real data every render, not tuned to one
+  // symbol in particular.
+  const gexLongestLabelLength = gexItems.length
+    ? Math.max(...gexItems.map((item) => level.format(item.strike).length))
+    : 0;
+  const gexLabelWidth = gexLongestLabelLength * GEX_LABEL_CHAR_WIDTH + GEX_LABEL_GAP;
+  const gexMaxVisibleLabels =
+    gexLabelWidth > 0
+      ? Math.max(1, Math.floor((GEX_PLOT.right - GEX_PLOT.left) / gexLabelWidth))
+      : gexItems.length;
+  const gexLabelStep = gexItems.length
+    ? Math.max(1, Math.ceil(gexItems.length / gexMaxVisibleLabels))
+    : 1;
+  // The strike nearest the live spot is always labeled regardless of the
+  // step pattern above — the single most relevant reference point on
+  // this chart should never be the one silently skipped.
+  const gexNearestToSpotIndex = gexItems.reduce(
+    (nearest, item, index) =>
+      Math.abs(item.strike - spotPrice) < Math.abs(gexItems[nearest].strike - spotPrice)
+        ? index
+        : nearest,
+    0,
+  );
+
+  // A step-pattern index within one step of the forced nearest-to-spot
+  // label collides with it (verified live against a real SPX chain,
+  // not just estimated: the forced label and its immediate step-pattern
+  // neighbor measured ~8px of actual overlap) — suppress that neighbor
+  // instead of showing both. The forced label already covers that part
+  // of the axis, so nothing is lost.
+  function gexShowLabel(index: number): boolean {
+    if (index === gexNearestToSpotIndex) return true;
+    if (index % gexLabelStep !== 0) return false;
+    return Math.abs(index - gexNearestToSpotIndex) >= gexLabelStep;
+  }
+
   const flowPoints = useMemo(() => {
     const sorted = [...alertsByKey.values()].sort(
       (left, right) => Date.parse(left.timestamp) - Date.parse(right.timestamp),
@@ -213,10 +262,13 @@ export function ChartSecondaryPanel({ symbol, spotPrice }: ChartSecondaryPanelPr
               x2={GEX_PLOT.right}
               y2={gexZeroY}
             />
-            {gexItems.map((item) => {
+            {gexItems.map((item, index) => {
               const callRect = gexBarRect(item.call_gamma_exposure);
               const putRect = gexBarRect(item.put_gamma_exposure);
               const x = gexX(item.strike) - gexBarWidth / 2;
+              // Bars always render for every strike — only the text
+              // label is thinned, never the data itself.
+              const showLabel = gexShowLabel(index);
               return (
                 <g key={item.strike} aria-label={`Strike ${item.strike}`}>
                   <rect
@@ -233,13 +285,15 @@ export function ChartSecondaryPanel({ symbol, spotPrice }: ChartSecondaryPanelPr
                     width={gexBarWidth}
                     height={putRect.height}
                   />
-                  <text
-                    className="secondary-gex-strike-label"
-                    x={gexX(item.strike)}
-                    y={GEX_PLOT.labelY}
-                  >
-                    {level.format(item.strike)}
-                  </text>
+                  {showLabel && (
+                    <text
+                      className="secondary-gex-strike-label"
+                      x={gexX(item.strike)}
+                      y={GEX_PLOT.labelY}
+                    >
+                      {level.format(item.strike)}
+                    </text>
+                  )}
                 </g>
               );
             })}
