@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiError } from "@/lib/api";
 import { renderWithLanguage } from "@/lib/i18n/test-utils";
-import type { GammaAggregateResponse, WhaleAlert, WhaleAlertsResponse } from "@/lib/types";
+import type { GammaAggregateItem, GammaAggregateResponse, WhaleAlert, WhaleAlertsResponse } from "@/lib/types";
 import { ChartSecondaryPanel } from "./chart-secondary-panel";
 
 const apiMocks = vi.hoisted(() => ({ getGammaProfile: vi.fn(), getAlerts: vi.fn() }));
@@ -51,6 +51,21 @@ function profile(overrides: Partial<GammaAggregateResponse> = {}): GammaAggregat
     ],
     ...overrides,
   };
+}
+
+// Mirrors a real SPX snapshot observed in production after the
+// ATR-anchored width shipped (PR #84): 32 strikes, $5 apart, starting
+// at 7555 — the scenario that first exposed the strike-label overlap.
+function manyStrikeItems(count: number, start: number, step: number): GammaAggregateItem[] {
+  return Array.from({ length: count }, (_, index) => ({
+    strike: start + index * step,
+    total_gamma_exposure: 300,
+    call_gamma_exposure: 200,
+    put_gamma_exposure: -100,
+    net_gamma: 100,
+    contract_count: 2,
+    absolute_gamma: 100,
+  }));
 }
 
 function alert(overrides: Partial<WhaleAlert> = {}): WhaleAlert {
@@ -262,5 +277,59 @@ describe("ChartSecondaryPanel", () => {
 
     resolveAlerts(alertsResponse([]));
     expect(await screen.findByText("Sin alertas todavía en esta sesión.")).toBeInTheDocument();
+  });
+
+  it("renders a bar for every strike but thins labels once there are too many to fit legibly", async () => {
+    const items = manyStrikeItems(32, 7555, 5);
+    apiMocks.getGammaProfile.mockResolvedValue(profile({ symbol: "SPX", items }));
+
+    // 7557 is closest to strike 7555 (index 0), which the label-thinning
+    // step (2, at these 32 strikes) already keeps on its own — isolates
+    // this test to the thinning behavior itself, not the "always show
+    // nearest" override (covered separately below).
+    renderWithLanguage(<ChartSecondaryPanel symbol="SPX" spotPrice={7557} />);
+    await screen.findByLabelText("GEX por strike para SPX");
+
+    expect(document.querySelectorAll(".secondary-gex-bar.call")).toHaveLength(32);
+    expect(document.querySelectorAll(".secondary-gex-bar.put")).toHaveLength(32);
+
+    const labels = document.querySelectorAll(".secondary-gex-strike-label");
+    expect(labels.length).toBeGreaterThan(0);
+    expect(labels.length).toBeLessThan(32);
+    expect(labels).toHaveLength(16);
+  });
+
+  it("always labels the strike closest to spot even when the thinning pattern would skip it", async () => {
+    const items = manyStrikeItems(32, 7555, 5);
+    apiMocks.getGammaProfile.mockResolvedValue(profile({ symbol: "SPX", items }));
+
+    // Strike 7,560 is index 1 (odd) — the computed step (2) at these 32
+    // strikes only labels even indices, so this strike would be skipped
+    // by the pattern alone. 7561 is closest to it.
+    renderWithLanguage(<ChartSecondaryPanel symbol="SPX" spotPrice={7561} />);
+    await screen.findByLabelText("GEX por strike para SPX");
+
+    expect(screen.getByText("7,560")).toBeInTheDocument();
+  });
+
+  it("suppresses a step-pattern label that would collide with the forced nearest-to-spot label", async () => {
+    // Regression test for a real overlap caught by measuring actual
+    // rendered label positions against a live SPX chain: strikes 7,555
+    // (index 0) and 7,565 (index 2) are both on the step-2 pattern and
+    // both sit within one step of index 1 (7,560, forced by the test
+    // above) — showing all three visually overlapped in the browser.
+    // Only the forced label should render in that neighborhood.
+    const items = manyStrikeItems(32, 7555, 5);
+    apiMocks.getGammaProfile.mockResolvedValue(profile({ symbol: "SPX", items }));
+
+    renderWithLanguage(<ChartSecondaryPanel symbol="SPX" spotPrice={7561} />);
+    await screen.findByLabelText("GEX por strike para SPX");
+
+    expect(screen.getByText("7,560")).toBeInTheDocument();
+    expect(screen.queryByText("7,555")).not.toBeInTheDocument();
+    expect(screen.queryByText("7,565")).not.toBeInTheDocument();
+    // 16 from the pattern minus the two suppressed neighbors, plus the
+    // one forced label: 16 - 2 + 1 = 15.
+    expect(document.querySelectorAll(".secondary-gex-strike-label")).toHaveLength(15);
   });
 });
