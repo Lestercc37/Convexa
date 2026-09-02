@@ -610,6 +610,74 @@ Stream) — con margen real incluso si los anchos ilustrativos estuvieran equivo
 (ya confirmado `O(strikes²)` en la investigación previa) es el término a vigilar si los anchos reales
 resultan más amplios que lo ilustrativo, no el conteo de suscripciones de streaming.
 
+#### Límite real de concurrencia REST de ThetaData (4 por cuenta) y deduplicación de llamadas redundantes
+
+Investigación previa confirmó un límite real, documentado por ThetaData, no investigado hasta
+entonces: la concurrencia de solicitudes REST es **por cuenta completa**, no por endpoint ni por
+símbolo, y no se suma entre suscripciones — el nivel más alto entre todas las suscripciones del
+usuario determina el límite total. Con Options Standard como la suscripción más alta de Convexa, el
+límite real es **4 solicitudes REST concurrentes para todo el backend**. Confirmado también: la
+seguridad de hoy (concurrencia real ~1, casi nunca 2) es un efecto secundario accidental del scheduler
+siendo secuencial (`for symbol in symbols: await asyncio.to_thread(...)`), no una protección diseñada
+— si ese loop se paralelizara algún día por rendimiento, nada impediría exceder el límite real.
+
+**A. Semáforo real, `threading.Semaphore(4)` — no `asyncio.Semaphore`.** Las llamadas REST de
+`ThetaDataProvider` corren de forma síncrona dentro de hilos de worker (vía `asyncio.to_thread` desde
+el scheduler, o el threadpool de Starlette para las rutas síncronas de la API) — nunca en el event
+loop en sí, así que un primitivo de `asyncio` no coordinaría nada real entre esos hilos. El semáforo
+se instancia una sola vez en `ThetaDataProvider.__init__` (`THETADATA_MAX_CONCURRENT_REQUESTS = 4`) y
+envuelve la única llamada HTTP real dentro de `_get_json` (`self._client.get(...)`) — el chokepoint
+que ya atraviesan las 4 rutas de llamada (cadena de opciones, snapshot del subyacente, daily bars,
+open interest/tasa) — cubriendo todo de una sola vez sin tocar cada método individualmente.
+
+**B. Deduplicación de las 2 llamadas REST redundantes por ciclo — implementada dentro del adaptador,
+no en `RefreshUnderlyingSnapshotUseCase`.** El plan original proponía eliminar la llamada redundante
+reescribiendo `RefreshUnderlyingSnapshotUseCase.execute()` para derivar el `MarketSnapshot`
+directamente del `OptionChain` ya obtenido (`OptionContract` ya carga `iv`/`open_interest` por
+contrato, suficiente en teoría para recalcular `atm_iv`/`pc_oi_ratio` sin ninguna llamada nueva). Se
+descartó al confirmar que `MockDataProvider.get_underlying_snapshot()` devuelve valores de fixture
+completamente independientes y no derivados de su propia cadena (`volume=1_250_000`,
+`pc_oi_ratio=Decimal("1.10")`, `skew_25d=Decimal("0.04")`, `atm_iv=Decimal("0.22")`, hardcodeados) —
+hacer que el caso de uso, agnóstico de proveedor, dejara de llamar a `get_underlying_snapshot()`
+habría cambiado el comportamiento observable de Mock silenciosamente, violando la regla explícita de
+"sin cambio de funcionalidad" de esta tarea.
+
+La deduplicación real vive en `ThetaDataProvider._fetch_near_the_money`/`_fetch_open_interest`: un
+caché en memoria de corta duración (`NEAR_THE_MONEY_CACHE_TTL_SECONDS = 10.0`), con clave
+`(symbol, expiration)`, que ambos métodos ya comparten como argumentos — confirmado que
+`get_option_chain()` y `get_underlying_snapshot()` piden exactamente los mismos datos cercanos al
+precio (`_fetch_near_the_money(symbol, expiration=None)` y `_fetch_open_interest(symbol,
+chain.expiration)`) cuando se llaman uno después del otro para el mismo símbolo, como ya hace
+`RefreshUnderlyingSnapshotUseCase.execute()`. El TTL queda muy por debajo del intervalo de 30s del
+scheduler — nunca podría abarcar dos ciclos distintos — y por encima del tiempo real que toma la
+secuencia completa `get_option_chain → get_underlying_snapshot` dentro de un mismo ciclo. `IDataProvider`
+como puerto no cambia — `MockDataProvider` y cualquier otro llamador de `get_underlying_snapshot()`
+en aislamiento (sin una llamada previa a `get_option_chain()` para el mismo símbolo) siguen
+funcionando exactamente igual, ya que el caché simplemente no tiene nada que reutilizar en ese caso
+(fallback correcto: una consulta real, igual que hoy).
+
+**Llamadas por ciclo, antes/después (símbolo en estado estable, con los cachés de tasa/ancho ya
+calientes del ciclo anterior):**
+
+| | Antes | Después |
+|---|---|---|
+| `get_option_chain` (near-the-money + open interest) | 2 | 2 |
+| `get_underlying_snapshot` (near-the-money + open interest) | 2 | 0 (caché) |
+| `get_daily_bars` directo (guardado de daily bars) | 1 | 1 |
+| **Total por símbolo** | **5** | **3** |
+
+Con los 11 símbolos activos reales hoy: **55 → 33 llamadas/ciclo** (22 ahorradas). Con el universo de
+15 símbolos referenciado en la tarea: **75 → 45 llamadas/ciclo** — la cifra de 75 coincide exactamente
+con 15 × 5 llamadas antes del cambio.
+
+**Tests:** `tests/test_thetadata_provider.py` — `TestRequestConcurrencyLimit` (un handler que bloquea
+hasta ser liberado, con 6 hilos concurrentes, confirma que nunca más de
+`THETADATA_MAX_CONCURRENT_REQUESTS` entran al handler a la vez); `TestNearTheMoneyCaching` (confirma
+que `get_underlying_snapshot()` tras `get_option_chain()` para el mismo símbolo genera 1 sola llamada
+a cada endpoint, no 2; confirma que los valores del snapshot con caché caliente son idénticos al caso
+sin caché ya probado en `TestGetUnderlyingSnapshot`; confirma que el caché no se filtra entre
+símbolos distintos).
+
 ---
 
 ## Resumen de mapeo a contratos existentes

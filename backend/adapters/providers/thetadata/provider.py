@@ -3,6 +3,8 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import threading
+import time
 from collections.abc import AsyncIterator
 from datetime import date, datetime, timedelta
 from decimal import Decimal
@@ -111,6 +113,39 @@ RECONCILE_INTERVAL_SECONDS = 20 * 60
 STATUS_STALE_AFTER_SECONDS = 15
 RECONNECT_BASE_DELAY_SECONDS = 2
 RECONNECT_MAX_DELAY_SECONDS = 60
+
+# ThetaData's real concurrency limit is per ACCOUNT, not per endpoint or
+# symbol, and doesn't add up across subscriptions — the highest tier
+# among them governs (confirmed against ThetaData's own docs, 2026-09
+# investigation): Options Standard, our highest tier, caps concurrent
+# REST requests at 4 for the whole backend. Nothing enforced this
+# before — the near-zero real concurrency observed today was an
+# accidental side effect of the scheduler's sequential per-symbol loop
+# (backend/core/scheduler.py), not a designed safeguard, so this is
+# preventive: if that loop is ever parallelized for performance, this
+# still holds the real limit. `threading.Semaphore`, not
+# `asyncio.Semaphore` — every REST call here runs synchronously inside
+# a worker thread (via `asyncio.to_thread` from the scheduler, or
+# Starlette's threadpool for the sync route handlers), never on the
+# event loop itself, so an asyncio primitive wouldn't coordinate
+# anything real across those threads.
+THETADATA_MAX_CONCURRENT_REQUESTS = 4
+
+# Short-lived, in-process cache for the near-the-money chain and its
+# open interest, keyed by (symbol, expiration) — get_option_chain() and
+# get_underlying_snapshot() both request the exact same near-the-money
+# data for a symbol when called back-to-back for the same refresh cycle
+# (confirmed: both call _fetch_near_the_money(symbol, expiration=None)
+# and _fetch_open_interest(symbol, chain.expiration)), so the second
+# call reuses the first's result instead of re-fetching it. Deliberately
+# NOT hoisted into the provider-agnostic RefreshUnderlyingSnapshotUseCase
+# — MockDataProvider's get_underlying_snapshot() returns independent,
+# hand-picked fixture values (not derived from its chain at all), so
+# skipping that provider call there would silently change Mock's
+# behavior. Kept well under the scheduler's 30s cycle interval so it
+# never risks spanning across cycles, comfortably above the real
+# elapsed time between these two calls in practice.
+NEAR_THE_MONEY_CACHE_TTL_SECONDS = 10.0
 
 
 def _build_occ_symbol(
@@ -551,6 +586,7 @@ class ThetaDataProvider:
         self._client = httpx.Client(base_url=rest_base_url, timeout=10.0)
         self._stream = ThetaTradeStream(ws_url, self._client)
         self._quote_stream = ThetaQuoteStream(ws_url)
+        self._request_semaphore = threading.Semaphore(THETADATA_MAX_CONCURRENT_REQUESTS)
         self._rate_cache: tuple[date, Decimal] | None = None
         # ATR (and therefore the near-the-money width derived from it)
         # only changes once a *closed* trading day is added to the
@@ -558,6 +594,11 @@ class ThetaDataProvider:
         # waste, so it's cached per symbol per day, same pattern as
         # `_rate_cache` above.
         self._width_cache: dict[str, tuple[date, Decimal]] = {}
+        # See NEAR_THE_MONEY_CACHE_TTL_SECONDS above for why these exist.
+        self._near_the_money_cache: dict[tuple[str, date | None], tuple[float, _NearTheMoneyChain]] = {}
+        self._open_interest_cache: dict[
+            tuple[str, date], tuple[float, dict[tuple[Decimal, str], int]]
+        ] = {}
 
     async def start(self) -> None:
         for symbol in ACTIVE_UNDERLYINGS_BY_SYMBOL:
@@ -589,7 +630,12 @@ class ThetaDataProvider:
         self._client.close()
 
     def _get_json(self, path: str, **params: object) -> dict[str, Any]:
-        response = self._client.get(path, params=params)
+        # The one chokepoint every REST call passes through — bounding
+        # it here covers get_option_chain, get_underlying_snapshot,
+        # get_daily_bars, and the open-interest/rate lookups uniformly,
+        # without touching each of them individually.
+        with self._request_semaphore:
+            response = self._client.get(path, params=params)
         if response.status_code != 200:
             raise RuntimeError(
                 f"ThetaData request failed: GET {path} {params} -> "
@@ -654,6 +700,11 @@ class ThetaDataProvider:
         )[:MINIMUM_NEAR_THE_MONEY_ENTRIES]
 
     def _fetch_near_the_money(self, symbol: str, expiration: date | None) -> _NearTheMoneyChain:
+        cache_key = (symbol, expiration)
+        cached = self._near_the_money_cache.get(cache_key)
+        if cached is not None and time.monotonic() - cached[0] < NEAR_THE_MONEY_CACHE_TTL_SECONDS:
+            return cached[1]
+
         expiration_param = expiration.strftime("%Y-%m-%d") if expiration else "*"
         body = self._get_json(
             "/v3/option/snapshot/greeks/first_order",
@@ -666,18 +717,27 @@ class ThetaDataProvider:
         if not entries:
             raise RuntimeError(f"ThetaData returned no near-the-money contracts for {symbol}")
         if expiration is not None:
-            return _NearTheMoneyChain(expiration, self._filter_near_the_money(symbol, entries))
-        nearest = min(date.fromisoformat(entry["contract"]["expiration"]) for entry in entries)
-        nearest_entries = [
-            entry
-            for entry in entries
-            if date.fromisoformat(entry["contract"]["expiration"]) == nearest
-        ]
-        return _NearTheMoneyChain(nearest, self._filter_near_the_money(symbol, nearest_entries))
+            result = _NearTheMoneyChain(expiration, self._filter_near_the_money(symbol, entries))
+        else:
+            nearest = min(date.fromisoformat(entry["contract"]["expiration"]) for entry in entries)
+            nearest_entries = [
+                entry
+                for entry in entries
+                if date.fromisoformat(entry["contract"]["expiration"]) == nearest
+            ]
+            result = _NearTheMoneyChain(nearest, self._filter_near_the_money(symbol, nearest_entries))
+
+        self._near_the_money_cache[cache_key] = (time.monotonic(), result)
+        return result
 
     def _fetch_open_interest(
         self, symbol: str, expiration: date
     ) -> dict[tuple[Decimal, str], int]:
+        cache_key = (symbol, expiration)
+        cached = self._open_interest_cache.get(cache_key)
+        if cached is not None and time.monotonic() - cached[0] < NEAR_THE_MONEY_CACHE_TTL_SECONDS:
+            return cached[1]
+
         body = self._get_json(
             "/v3/option/snapshot/open_interest",
             symbol=symbol,
@@ -698,6 +758,8 @@ class ThetaDataProvider:
             contract_meta = entry["contract"]
             key = (Decimal(str(contract_meta["strike"])), contract_meta["right"])
             result[key] = int(data_points[0]["open_interest"])
+
+        self._open_interest_cache[cache_key] = (time.monotonic(), result)
         return result
 
     def get_option_chain(self, underlying: str, expiration: date | None = None) -> OptionChain:
