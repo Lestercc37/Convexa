@@ -678,6 +678,55 @@ a cada endpoint, no 2; confirma que los valores del snapshot con caché caliente
 sin caché ya probado en `TestGetUnderlyingSnapshot`; confirma que el caché no se filtra entre
 símbolos distintos).
 
+#### Scheduler paralelo (no secuencial) y caché de Open Interest ampliado a 20 minutos
+
+Investigación previa (2026-09) midió en vivo, contra el ancho de cadena dinámico de ATR ya en
+producción (SPX en ~32 strikes), que un ciclo completo secuencial del scheduler para los 11 símbolos
+activos reales tomaba **~30 segundos** — prácticamente el mismo `REFRESH_INTERVAL_SECONDS` (30s) del
+propio scheduler. Como `_run()` duerme el intervalo **después** de que el ciclo termina (`await
+self._run_cycle(); await asyncio.sleep(interval)`), la cadencia real de refresco terminaba siendo
+más cercana a **~60 segundos**, no los 30 previstos — y empeora con un universo de símbolos más grande.
+La misma investigación confirmó que el semáforo de 4 (sección anterior) nunca era el cuello de botella
+real: como el scheduler despachaba un símbolo a la vez, la concurrencia real nunca llegaba ni a 2.
+
+**Cambio 1 — scheduler paralelo, semáforo como única protección real.**
+`UnderlyingRefreshScheduler._run_cycle()` reemplaza el `for symbol in symbols: await
+asyncio.to_thread(...)` secuencial por `asyncio.gather(*(self._refresh_symbol(symbol) for symbol in
+symbols))` — los 11 símbolos se despachan de una sola vez. La seguridad real contra el límite de
+ThetaData sigue siendo el `threading.Semaphore(4)` que ya vive dentro de `ThetaDataProvider`
+(sección anterior) — es el único chokepoint real que atraviesa cada llamada REST sin importar qué
+hilo de símbolo la generó, así que el scheduler despachando todo a la vez es seguro por construcción y
+ya no necesita preocuparse por ese límite. `_refresh_symbol(symbol) -> bool` reemplaza el manejo de
+excepciones que antes vivía inline en el loop — cada símbolo captura su propia excepción y devuelve
+`False` en vez de dejarla propagar, para que el fallo de uno nunca cancele a los demás bajo
+`asyncio.gather` (mismo comportamiento de "un fallo no detiene el ciclo" que ya existía, preservado
+explícitamente).
+
+Se dejó fuera de este PR, a propósito, el reordenamiento/prioridad de símbolos (ej. mover SPX al
+frente) — confirmado que deja de aportar algo real una vez que el scheduler no es secuencial: con
+todos los símbolos despachándose a la vez, la posición de cualquiera en la lista ya no determina
+cuánto espera.
+
+**Cambio 2 — caché de Open Interest ampliado de 10s a 20 minutos.** `OPEN_INTEREST_CACHE_TTL_SECONDS`
+(nueva constante, separada de `NEAR_THE_MONEY_CACHE_TTL_SECONDS`, que se queda en 10s) — confirmado
+en la investigación previa, con datos reales, que Open Interest no cambia intradía: comparando los 64
+contratos de SPX entre dos lecturas reales separadas por ~70 segundos (con una llamada REST nueva
+confirmada de por medio, no una caché), 0 de 64 valores de `open_interest` cambiaron, mientras que
+bid/ask/IV cambiaron en los 64 — descartando un feed obsoleto como explicación. Consistente con el
+hecho de mercado bien documentado (no un detalle específico de ThetaData): el Open Interest de
+opciones en EE.UU. lo calcula y publica la OCC una vez al día, no continuamente. 20 minutos sigue
+siendo conservador frente a "cambia una vez al día", no un límite ajustado al mínimo.
+
+**Tests:** `tests/test_scheduler.py` — `test_run_cycle_dispatches_symbols_concurrently_not_sequentially`
+(11 símbolos con 0.15s de delay cada uno terminan en <0.6s, no en los ~1.65s que tomaría secuencial);
+`test_semaphore_still_caps_real_rest_concurrency_under_parallel_dispatch` (un `RefreshUnderlyingSnapshotUseCase`
+real, con un `ThetaDataProvider` real de transporte simulado —no un stub—, confirma que incluso con
+los 11 símbolos despachados a la vez por el scheduler paralelo, nunca más de
+`THETADATA_MAX_CONCURRENT_REQUESTS` llamadas REST están en vuelo al mismo tiempo). Los dos tests
+existentes que verificaban el orden exacto de símbolos procesados (`stub.calls == ACTIVE_SYMBOLS`) se
+ajustaron a comparación por conjunto (`sorted(...) == sorted(...)`) — el orden ya no está garantizado
+bajo despacho concurrente, un cambio de comportamiento esperado y correcto, no una regresión.
+
 ---
 
 ## Resumen de mapeo a contratos existentes
