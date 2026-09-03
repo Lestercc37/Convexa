@@ -53,4 +53,23 @@ describe("GravityMap", () => {
     expect(screen.getByText("Flip / Abs. Gamma")).toBeInTheDocument();
     expect(screen.queryByText("Gamma Flip")).not.toBeInTheDocument();
   });
+
+  it("skips the Gamma Flip marker instead of crashing when gamma_flip is null", () => {
+    // gamma_flip=null is a legitimate "no sign crossing found" value, not
+    // an error -- level()'s .toLocaleString() call throws on null (see
+    // price-chart.tsx's own containment fix), so this must render without
+    // it rather than crash the whole panel. The API type still says
+    // `number` (see lib/types.ts) pending the coordinated design decision,
+    // so this is the real runtime shape despite the declared type.
+    const gammaWithNoFlip: GammaResponse = { ...gamma(550), gamma_flip: null as unknown as number };
+
+    render(<GravityMap gamma={gammaWithNoFlip} market={market} />);
+
+    expect(screen.queryByText("Gamma Flip")).not.toBeInTheDocument();
+    expect(screen.queryByText("Flip / Abs. Gamma")).not.toBeInTheDocument();
+    expect(screen.getByText("Put Wall")).toBeInTheDocument();
+    expect(screen.getByText("Call Wall")).toBeInTheDocument();
+    expect(screen.getByText("Abs. Gamma")).toBeInTheDocument();
+    expect(screen.getByText("Precio 549.1")).toBeInTheDocument();
+  });
 });
