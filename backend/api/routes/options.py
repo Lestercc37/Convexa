@@ -7,6 +7,7 @@ from fastapi import APIRouter, Query, Request
 from backend.api.schemas import (
     FlowResponse,
     GammaAggregateResponse,
+    GammaFlipResponse,
     GammaHistoryResponse,
     GammaResponse,
     OptionChainResponse,
@@ -16,11 +17,13 @@ from backend.api.serializers import (
     chain_response,
     flow_response,
     gamma_aggregate_response,
+    gamma_flip_response,
     gamma_history_response,
     gamma_response,
     underlyings_response,
 )
 from backend.core.container import Container
+from backend.domain.entities import GammaFlip
 from backend.domain.use_cases import (
     get_flow,
     get_gamma_exposure,
@@ -68,6 +71,25 @@ def gamma_profile(symbol: str, request: Request) -> GammaAggregateResponse:
     container: Container = request.app.state.container
     gamma = get_gamma_exposure(container.storage, symbol)
     return GammaAggregateResponse.model_validate(gamma_aggregate_response(gamma))
+
+
+@router.get("/gamma/{symbol}/flip", response_model=GammaFlipResponse)
+def gamma_flip(symbol: str, request: Request) -> GammaFlipResponse:
+    """The one honest, correctly-nullable representation of gamma_flip --
+    GammaFlipResponse/gamma_flip_response() already existed for this
+    (flip_found + a nullable gamma_flip_price) but no route used them
+    before this. Reconstructed from the persisted GammaAggregate rather
+    than a separately-stored GammaFlip -- only gamma_flip_price and
+    flip_found are knowable from what's persisted; the interpolation
+    detail fields (lower/upper_strike, lower/upper_gamma,
+    interpolation_ratio) are transient, computed fresh on every cycle by
+    CalculateGammaFlipUseCase, and never persisted at that level of
+    detail, so they're honestly None here too, not guessed.
+    """
+    container: Container = request.app.state.container
+    gamma = get_gamma_exposure(container.storage, symbol)
+    flip = GammaFlip(gamma_flip_price=gamma.gamma_flip, flip_found=gamma.gamma_flip is not None)
+    return GammaFlipResponse.model_validate(gamma_flip_response(flip))
 
 
 @router.get("/gamma/{symbol}/history", response_model=GammaHistoryResponse)

@@ -1415,6 +1415,141 @@ de estilo en este archivo — ninguno nuevo de otro tipo, confirmado por `git st
 
 ---
 
+#### Bug 1 (diagnóstico previo): columnas de gamma aggregate perdidas en Postgres
+
+`total_market_gamma`, `positive_gamma`, `negative_gamma` y `peak_gamma_value` se calculaban
+correctamente en memoria (`FakeGammaAggregateCalculator.calculate()`) pero `gamma_aggregates` ni
+siquiera tenía esas columnas — `save_gamma_aggregate()` nunca las incluía en el INSERT, y
+`_gamma_from_row()` nunca las leía de vuelta. Siempre `0` al leer desde el storage real de producción
+(Postgres); `InMemoryStorage` nunca tuvo este problema, porque guarda el objeto Python directo, sin
+serialización de por medio.
+
+**El arreglo.** Migración `0020_gamma_aggregate_totals.py` — mismo patrón que `0009` (la migración que
+agregó `absolute_gamma_strike`): `add_column` con `server_default=sa.text("0")` para no romper filas
+existentes, luego `alter_column` quitando ese default para que futuros INSERTs deban proveerlo
+explícitamente. `save_gamma_aggregate()` ahora incluye las 4 columnas en el INSERT y el `ON CONFLICT DO
+UPDATE`; las dos consultas `SELECT` (`get_latest_gamma_aggregate`, `get_gamma_history`) y
+`_gamma_from_row()` ahora las piden y las leen de vuelta.
+
+**Nombre de la migración más corto de lo esperado — límite real de Alembic, no estilístico.** El
+primer intento (`0020_gamma_aggregate_market_totals`, 35 caracteres) aplicó el DDL correctamente pero
+falló al actualizar `alembic_version` — esa tabla usa `varchar(32)` por defecto, y el id se pasaba por
+3 caracteres. Confirmado que la transacción completa (DDL incluido) se revirtió limpiamente sola, sin
+dejar columnas huérfanas — no hubo que deshacer nada a mano. Se renombró a `0020_gamma_aggregate_totals`
+(27 caracteres) y aplicó sin problema.
+
+**Verificado en vivo, contra Postgres real, no memoria.** `GET /api/v1/gamma/SPX/profile` después del
+fix: `total_market_gamma=161867465670.44`, `positive_gamma=161867465670.44` (igual al total — consistente
+con que hoy todos los strikes de SPX tienen net_gamma positivo, confirmado en la investigación previa),
+`negative_gamma=0` (real, no bug — no hay ningún strike negativo en el rango actual), `peak_gamma_value=
+30840500004.30`. También se actualizó `test_gamma_aggregate_round_trip_against_postgresql`
+(`tests/test_postgresql_integration.py`, corre contra la base real, no mockeada) — antes dejaba estos 4
+campos en su default `Decimal("0")`, así que el round-trip pasaba sin haber probado nada real; ahora usa
+valores distintos y no-cero para cada uno, y pasa contra la base real.
+
+**Datos históricos con estos campos en 0 — reportado, no tocado.** De **15,574** filas totales en
+`gamma_aggregates` (2026-01-15 a hoy), **15,559 (99.9%)** tienen los 4 campos nuevos en `0` — son las
+filas escritas antes de este fix, con el valor de relleno que puso la migración. Solo las ~15 filas
+escritas después del fix (mientras verificaba en vivo) tienen valores reales. Ninguna se tocó.
+
+---
+
+#### Bug 2 (diagnóstico previo): `gamma_flip_price` colapsando `None` a `0`
+
+`gamma.py:96` hacía `gamma_flip=gamma_flip.gamma_flip_price or aggregate.gamma_flip` — cuando no hay
+cruce de signo en el rango de strikes mirado, `gamma_flip_price` es correctamente `None`
+(`FakeGammaFlipCalculator` ya lo reportaba bien), pero el `or` lo colapsaba hacia el default del
+dataclass (`Decimal("0")`), perdiendo la señal honesta. El schema correcto (`GammaFlipResponse`, con
+`flip_found`/`gamma_flip_price: None`) ya existía en el código, sin ninguna ruta real conectada.
+
+**El arreglo — se hizo genuinamente nullable, no solo se agregó un flag aparte.** `GammaAggregate.
+gamma_flip` pasó de `Decimal = Decimal("0")` a `Decimal | None = None` — `None` significa "no se
+encontró cruce en el rango", distinto de "el cruce está en el strike 0" (antes, indistinguibles).
+`gamma.py` ya no tiene el `or` — usa `gamma_flip.gamma_flip_price` directamente. De paso, el `or`
+tenía un segundo problema real, más sutil: un cruce encontrado exactamente en 0 (strike 0, un caso
+degenerado pero posible en teoría) también se habría descartado, porque `Decimal(0)` es "falsy" en
+Python — el fix nuevo no tiene ese problema tampoco.
+
+**Alcance de lo que había que tocar para que `None` no reventara nada — mayor de lo que parecía a
+primera vista.** `gamma.gamma_flip` se lee en 2 sitios que hacen comparación numérica directa, no solo
+mostrarlo: `MarketSnapshot._price_dealer_mode()` (`self.price >= gamma.gamma_flip`, usado por
+`dealer_mode`/`dealer_mode_confirmed`/`dealer_mode_source`) y `agreement_component()`
+(`calculate_derived_metrics.py`, alimenta `signal_alignment_score`). Ambos habrían lanzado
+`TypeError` al comparar contra `None`. Se decidió: cuando no hay `gamma_flip`, no hay señal
+independiente con la cual estar de acuerdo o en desacuerdo — así que ambos sitios ahora reportan
+"confirmado"/"100" (sin inventar un tercer valor de `dealer_mode_source`, que el schema actual solo
+permite `"agree"`/`"price_vs_flip"`). **Marcado explícitamente como una decisión de diseño para
+revisar, no como la única opción sensata** — mismo espíritu que la pregunta sobre el frontend.
+
+**Persistencia — el `NOT NULL` de la columna también había que quitarlo, no solo el código Python.**
+Migración `0021_gamma_flip_nullable.py`: `ALTER COLUMN gamma_flip DROP NOT NULL` sobre la columna YA
+existente (no hizo falta una columna nueva, a diferencia del Bug 1). `_gamma_from_row()` ahora
+distingue `NULL` de `Decimal("0")` al reconstruir.
+
+**Ruta nueva, conectando el schema que ya existía.** `GET /gamma/{symbol}/flip` — reconstruye un
+`GammaFlip` a partir del `GammaAggregate` persistido (`gamma_flip_price=gamma.gamma_flip,
+flip_found=gamma.gamma_flip is not None`); los campos de detalle de interpolación
+(`lower_strike`/`upper_strike`/`lower_gamma`/`upper_gamma`/`interpolation_ratio`) quedan honestamente
+`None` porque no se persisten a ese nivel de detalle — no se inventan. Antes de agregarla, se revisó
+`tests/test_gamma_flip_engine.py` y se encontró que **ya existió una ruta `/options/gamma-flip`
+(POST, con payload arbitrario del cliente) y se eliminó deliberadamente** en el commit "Make gamma API
+read-only" (2026-08-02) — la ruta nueva NO es una resurrección de esa: es del mismo patrón que
+`/gamma/{symbol}` y `/gamma/{symbol}/profile` ya vigente (GET, solo lee lo persistido por símbolo, sin
+aceptar ningún payload) — consistente con la razón por la que la anterior se quitó, no en conflicto
+con ella.
+
+**Verificado en vivo, los 4 endpoints a la vez:** `GET /gamma/SPX` → `"gamma_flip":null`,
+`"dealer_position":"long_gamma"`. `GET /gamma/SPX/profile` → `"gamma_flip":null`. `GET
+/gamma/SPX/flip` (ruta nueva) → `{"gamma_flip_price":null,...,"flip_found":false}`. `GET /market/SPX`
+→ `"gamma_flip":null`, `"dealer_mode":"long_gamma"`, `"dealer_mode_source":"agree"`,
+`"dealer_mode_confirmed":true` — sin ningún error 500, tal como se diseñó.
+
+**Frontend — investigado, no construido, tal como se pidió.** `gamma_flip` en el frontend tiene 4
+tipos TS que quedaron desincronizados con la API real (`GammaResponse`, `GammaHistoryItem`,
+`GammaAggregateResponse`: los tres siguen tipados `number`, no `number | null` — el único ya
+correctamente `number | null` es el de los presets del screener). Más importante que el tipo: **4 de
+5 componentes que leen `gamma_flip` harían algo incorrecto con `null` en tiempo de ejecución ahora
+mismo, en vivo, ya que el backend ya está desplegado:**
+- `price-chart.tsx` (`gammaLevels()`): `Math.abs(gamma.gamma_flip - gamma.absolute_gamma_strike)` —
+  JS convierte `null` a `0`, así que la comparación para decidir si fusionar las etiquetas "Gamma
+  Flip"/"Abs. Gamma" queda basada en un número sin sentido, no en una decisión real; y si no se
+  fusionan, pasa `{ price: null, ... }` como nivel de precio al chart — exactamente el mismo problema
+  de "0 se confunde con un número real" que se acaba de arreglar en el backend, ahora en el frontend.
+- `regime-badge.tsx`: `market.price >= gamma.gamma_flip` — con `null` coercionado a `0`, esto es
+  `price >= 0`, casi siempre verdadero, así que mostraría "above" (o el texto equivalente) de forma
+  incorrecta, no un estado "sin cruce". Y `currency.format(gamma.gamma_flip)` con `null` — muy
+  probablemente revienta o muestra "$NaN", no lo confirmé línea por línea contra el runtime real de
+  `Intl.NumberFormat`.
+- `gravity-map.tsx`: mismo patrón de comparación de fusión que `price-chart.tsx`, más
+  `position(gamma.gamma_flip)` (cálculo de posición en píxeles) y `level(gamma.gamma_flip)`
+  (formateo de texto) — ambos alimentados con `null`.
+- `pre-session-panel.tsx`: `y(profile.gamma_flip)` (posición Y del trazo SVG) y
+  `level.format(profile.gamma_flip)` (etiqueta de texto) — mismo problema.
+- `quick-screener.tsx` es el único de los 5 que ya está bien: su `number()` ya está tipado
+  `value: number | null` desde antes de este PR, sin relación con este fix.
+
+**No se tocó nada del frontend** — el usuario pidió decidir texto/diseño antes de construir, y dado
+que son 4 componentes distintos necesitando la misma decisión coordinada (¿ocultar la línea? ¿mostrar
+"Sin cruce en rango"? ¿algo más?), se reporta completo para esa decisión, no se asume una por
+componente.
+
+**Tests:** `tests/test_gamma_flip_none_propagation.py` (nuevo) — cruce real propagado como `Decimal`
+end-to-end a través del orchestrator real (no solo del calculador aislado, que ya tenía sus propios
+tests en `test_gamma_flip_engine.py`); sin cruce propagado como `None` end-to-end; `dealer_mode` y
+`agreement_component` no revientan con `None` y devuelven el fallback diseñado; la ruta nueva
+`/gamma/{symbol}/flip` responde `flip_found` correctamente en ambos casos. Se agregó también
+`test_gamma_flip_none_round_trips_against_postgresql_as_null_not_zero` en
+`tests/test_postgresql_integration.py` (contra la base real) confirmando que `None` vuelve como
+`None`, no como `0`. Se corrigió `test_gamma_profile_returns_frozen_snapshot_with_per_strike_items`
+(usaba `float(stored.gamma_flip)` sin considerar que ahora puede ser `None` legítimamente).
+
+294 tests, suite completa, en verde. `ruff check`: mismos 82 hallazgos preexistentes de siempre + 5
+nuevos, todos del mismo patrón `FURB157` ya aceptado como convención de estilo — confirmado por `git
+stash`. Se corrigió además un problema real de orden de imports (`I001`) en el archivo de test nuevo,
+detectado por el propio `ruff`.
+
+---
+
 ## Resumen de mapeo a contratos existentes
 
 | Caso de uso | REST | WebSocket |

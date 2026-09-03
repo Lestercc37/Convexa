@@ -116,6 +116,15 @@ def test_gamma_aggregate_round_trip_against_postgresql(
         charm_exposure=Decimal("125000"),
         vanna_exposure=Decimal("250000"),
         absolute_gamma_strike=Decimal("550"),
+        # Deliberately non-zero and each distinct from the others and
+        # from every other field above -- these 4 used to silently come
+        # back as 0 from PostgreSQLStorage regardless of what was saved
+        # (missing columns), which a fixture leaving them at their
+        # Decimal("0") dataclass default would never have caught.
+        total_market_gamma=Decimal("-1250000"),
+        positive_gamma=Decimal("130"),
+        negative_gamma=Decimal("-40"),
+        peak_gamma_value=Decimal("90"),
     )
 
     storage.save_gamma_aggregate(aggregate)
@@ -131,6 +140,29 @@ def test_gamma_aggregate_round_trip_against_postgresql(
     # get_gamma_history intentionally does not reconstruct items — nothing
     # reads them from historical rows, only from the latest snapshot.
     assert history == [replace(aggregate, items=())]
+
+
+def test_gamma_flip_none_round_trips_against_postgresql_as_null_not_zero(
+    postgresql_storage: tuple[PostgreSQLStorage, Engine, str],
+) -> None:
+    """gamma_flip=None (no sign crossing found -- see GammaAggregate's own
+    field comment) must come back as None, not silently become 0 --
+    confirmed against the real database, not memory. gamma_aggregates.
+    gamma_flip used to be NOT NULL; this is the real column the migration
+    changed."""
+    storage, _, symbol = postgresql_storage
+    aggregate = GammaAggregate(
+        symbol=symbol,
+        as_of=datetime.now(timezone.utc),
+        gamma_flip=None,
+        net_gamma=Decimal("100"),
+    )
+
+    storage.save_gamma_aggregate(aggregate)
+    loaded = storage.get_latest_gamma_aggregate(symbol)
+
+    assert loaded is not None
+    assert loaded.gamma_flip is None
 
 
 def test_flow_event_round_trip_against_postgresql(

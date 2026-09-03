@@ -350,7 +350,12 @@ class GammaAggregate:
     positive_gamma: Decimal = Decimal("0")
     negative_gamma: Decimal = Decimal("0")
     total_gamma: Decimal = Decimal("0")
-    gamma_flip: Decimal = Decimal("0")
+    # None means "no sign crossing found in the range of strikes looked
+    # at" -- a real, distinct outcome from "the flip is at strike 0",
+    # which a numeric-only field with a 0 default used to conflate
+    # (confirmed live, 2026-09: SPX's net_gamma was positive at every
+    # strike in range, which is exactly this case, not a bug).
+    gamma_flip: Decimal | None = None
     call_wall: Decimal = Decimal("0")
     put_wall: Decimal = Decimal("0")
     max_pain: Decimal = Decimal("0")
@@ -372,7 +377,6 @@ class GammaAggregate:
             "positive_gamma",
             "negative_gamma",
             "total_gamma",
-            "gamma_flip",
             "call_wall",
             "put_wall",
             "max_pain",
@@ -386,6 +390,10 @@ class GammaAggregate:
             "peak_gamma_value",
         ):
             _ensure_finite_decimal(getattr(self, name), InvalidOptionError, name)
+        # gamma_flip is the one field here allowed to be None -- see its
+        # own field comment above.
+        if self.gamma_flip is not None:
+            _ensure_finite_decimal(self.gamma_flip, InvalidOptionError, "gamma_flip")
 
     @property
     def strikes(self) -> tuple[GammaAggregateItem, ...]:
@@ -663,7 +671,12 @@ class MarketSnapshot:
         gamma = self._required_gamma()
         if self.dealer_mode_confirmed:
             return gamma.dealer_position
-        return self._price_dealer_mode()
+        # Only reached when _price_dealer_mode() disagreed with
+        # dealer_position, which (see dealer_mode_confirmed) is only
+        # possible when it returned a real value, not None.
+        price_mode = self._price_dealer_mode()
+        assert price_mode is not None
+        return price_mode
 
     @property
     def dealer_mode_source(self) -> str:
@@ -671,14 +684,26 @@ class MarketSnapshot:
 
     @property
     def dealer_mode_confirmed(self) -> bool:
-        return self._required_gamma().dealer_position == self._price_dealer_mode()
+        price_mode = self._price_dealer_mode()
+        if price_mode is None:
+            # No gamma_flip to compare price against (no sign crossing
+            # found in range -- see GammaAggregate.gamma_flip's own
+            # comment). There's no independent signal to disagree with,
+            # so this reports "confirmed" (dealer_position alone) rather
+            # than inventing a third dealer_mode_source value the API
+            # schema doesn't have -- flagged for review, not a fully
+            # settled design choice.
+            return True
+        return self._required_gamma().dealer_position == price_mode
 
     @property
     def gamma_as_of(self) -> datetime:
         return self._required_gamma().as_of
 
-    def _price_dealer_mode(self) -> str:
+    def _price_dealer_mode(self) -> str | None:
         gamma = self._required_gamma()
+        if gamma.gamma_flip is None:
+            return None
         # Project convention: a price exactly at gamma flip counts as long gamma.
         return "long_gamma" if self.price >= gamma.gamma_flip else "short_gamma"
 

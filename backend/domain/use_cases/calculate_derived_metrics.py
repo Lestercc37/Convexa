@@ -125,6 +125,15 @@ def percentile_rank(current: Decimal, values: list[Decimal]) -> Decimal:
 
 
 def agreement_component(gamma: GammaAggregate, current_price: Decimal) -> Decimal:
+    if gamma.gamma_flip is None:
+        # No sign crossing found in the scanned strike range (see
+        # GammaAggregate.gamma_flip's own comment) -- no independent
+        # price-vs-flip signal to compare dealer_position against, so
+        # this reports full agreement instead of inventing a mismatch.
+        # Same "confirmed when there's nothing to disagree with"
+        # convention as MarketSnapshot.dealer_mode_confirmed -- flagged
+        # for review, not a fully settled design choice.
+        return Decimal("100")
     gamma_mode = gamma.dealer_position
     price_mode = "long_gamma" if current_price >= gamma.gamma_flip else "short_gamma"
     return Decimal("100") if gamma_mode == price_mode else Decimal("40")
