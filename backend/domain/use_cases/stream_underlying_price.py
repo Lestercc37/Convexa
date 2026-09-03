@@ -17,6 +17,13 @@ message shapes and a real, still-open gap found in that verification
 (option trades sharing an underlying's root symbol currently aren't
 filtered out) that can corrupt the price this use case persists for an
 affected symbol until that gap is fixed.
+
+Gated on is_market_open (see _maybe_persist): ThetaData's real Trade
+Stream keeps printing outside 09:30-16:00 ET (extended hours), and
+persisting one of those ticks was the one path that put an
+extended-hours point on the chart, since dashboard.tsx has no filter
+of its own on what it polls. Confirmed live, 2026-09: a tick as late as
+17:11 ET reached storage before this gate existed.
 """
 
 from __future__ import annotations
@@ -25,6 +32,7 @@ import time
 
 from backend.domain.entities import MarketPrice, UnderlyingTradeEvent
 from backend.domain.ports import IDataProvider, IStorage
+from backend.domain.use_cases.market_hours import is_market_open
 
 # A liquid stock's Trade Stream can print many times per second, and
 # IStorage.save_market_price() appends to an unbounded in-memory history
@@ -60,6 +68,16 @@ class StreamUnderlyingPriceUseCase:
             self._maybe_persist(event)
 
     def _maybe_persist(self, event: UnderlyingTradeEvent) -> None:
+        # Nothing gated this stream on market hours -- confirmed live,
+        # 2026-09: a real tick with as_of past 16:00 ET still got written,
+        # and dashboard.tsx appends every MarketPrice.as_of it polls onto
+        # the chart's pricePoints with no filter of its own, so an
+        # extended-hours tick reaching storage always reached the chart.
+        # The chart is meant to show only the regular 09:30-16:00 ET
+        # session -- reusing the same is_market_open the REST scheduler
+        # already gates on, not a new check.
+        if not is_market_open(event.as_of):
+            return
         now = time.monotonic()
         last_written_at = self._last_written_at.get(event.symbol)
         if last_written_at is not None and now - last_written_at < self._min_write_interval_seconds:
