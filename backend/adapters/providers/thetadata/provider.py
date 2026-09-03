@@ -88,13 +88,17 @@ MINIMUM_NEAR_THE_MONEY_ENTRIES = 6
 #   (2026-08-31, 9:32-10:22 AM ET): 100.6-100.8% coverage against the
 #   same window's REST OHLC volume/count, zero disconnections in 50
 #   minutes spanning the historically riskiest window for this vendor.
-# - Stocks/Indices subscriptions (needed for the underlying's own share
-#   volume, used by Anchored VWAP) were not active as of this adapter's
-#   investigation — `MarketSnapshot.volume` is `0`, the same limitation
-#   the FlashAlpha investigation ran into with its own equivalent gap.
-#   `underlying_price` itself is NOT affected — it comes from the
-#   options endpoint above regardless of the Stocks/Indices subscription
-#   state.
+# - MarketSnapshot.volume (the underlying's own session-cumulative share
+#   volume, used by Anchored VWAP): originally blocked on the Stocks/
+#   Indices subscriptions not being active, the same limitation the
+#   FlashAlpha investigation ran into with its own equivalent gap. That
+#   subscription turned out to be unnecessary — GET /v3/stock/snapshot/
+#   ohlc (or /v3/index/snapshot/ohlc for indices, whose own volume is
+#   always 0 — an index has no share volume of its own) is a plain REST
+#   snapshot call that already returns this, confirmed live (2026-09
+#   investigation, SPY: 16,396,508) — see _fetch_underlying_volume.
+#   `underlying_price` itself was never affected by this gap either way
+#   — it comes from the options endpoint above.
 # - get_daily_bars: GET /v3/stock/history/eod (equities) or
 #   /v3/index/history/eod (indices) — both confirmed working against
 #   real data without needing the Stocks/Indices live-quote
@@ -193,6 +197,40 @@ def _time_to_expiration_years(expiration_date: date, now_et: datetime) -> Decima
     if seconds_remaining <= 0:
         return Decimal(0)
     return Decimal(seconds_remaining) / Decimal(86400) / Decimal(365)
+
+
+def _log_req_response(stream_name: str, message: dict[str, Any]) -> None:
+    """Logs ThetaData's per-subscription acknowledgment — confirmed live
+    (2026-09 investigation against the real Theta Terminal, Stocks/Index
+    plans active) that a `{"header": {"type": "REQ_RESPONSE", ...,
+    "response": "SUBSCRIBED", "req_id": N}}` message arrives immediately
+    after every subscribe request. Previously fell through the unhandled-
+    message-type case in all three stream classes below (only "STATUS"
+    and "TRADE"/"QUOTE" were branched on) — a rejected subscription
+    (`response` anything other than "SUBSCRIBED") would have looked
+    identical to "no data yet", with no way to tell the two apart.
+
+    Deliberately logs rather than raising: one contract/symbol among
+    many being rejected shouldn't tear down a connection that's still
+    correctly serving everything else it subscribed to. A real rejection
+    has never been observed — forcing one would mean risking the shared,
+    already-running Theta Terminal the live backend depends on — so this
+    is the logging half of the fix, verified with simulated messages
+    only (see tests/test_thetadata_provider.py).
+    """
+    header = message.get("header", {})
+    response = header.get("response")
+    req_id = header.get("req_id")
+    if response == "SUBSCRIBED":
+        logger.debug("%s subscription confirmed (req_id=%s)", stream_name, req_id)
+    else:
+        logger.error(
+            "%s subscription NOT confirmed (req_id=%s): response=%r, message=%s",
+            stream_name,
+            req_id,
+            response,
+            message,
+        )
 
 
 class _NearTheMoneyChain:
@@ -305,6 +343,8 @@ class ThetaTradeStream:
                     last_status_at = utc_now()
                 elif header.get("type") == "TRADE":
                     self._handle_trade(message)
+                elif header.get("type") == "REQ_RESPONSE":
+                    _log_req_response("ThetaTradeStream", message)
 
                 now = utc_now()
                 if (now - last_status_at).total_seconds() > STATUS_STALE_AFTER_SECONDS:
@@ -523,6 +563,8 @@ class ThetaQuoteStream:
                     last_status_at = utc_now()
                 elif header.get("type") == "QUOTE":
                     self._handle_quote(message)
+                elif header.get("type") == "REQ_RESPONSE":
+                    _log_req_response("ThetaQuoteStream", message)
 
                 now = utc_now()
                 if (now - last_status_at).total_seconds() > STATUS_STALE_AFTER_SECONDS:
@@ -700,6 +742,8 @@ class ThetaUnderlyingTradeStream:
                     last_status_at = utc_now()
                 elif header.get("type") == "TRADE":
                     self._handle_trade(message)
+                elif header.get("type") == "REQ_RESPONSE":
+                    _log_req_response("ThetaUnderlyingTradeStream", message)
 
                 now = utc_now()
                 if (now - last_status_at).total_seconds() > STATUS_STALE_AFTER_SECONDS:
@@ -946,6 +990,46 @@ class ThetaDataProvider:
         self._open_interest_cache[cache_key] = (time.monotonic(), result)
         return result
 
+    def _fetch_underlying_volume(self, symbol: str, kind: UnderlyingKind) -> int:
+        """Session-cumulative share volume for `symbol` — confirmed live
+        (2026-09 investigation) via GET /v3/stock/snapshot/ohlc (equities,
+        SPY: 16,396,508) and /v3/index/snapshot/ohlc (indices — always 0,
+        since an index has no share volume of its own, only its component
+        stocks do). Closes the gap documented on MarketSnapshot.volume
+        below: earlier investigation found no live Stocks/Indices
+        subscription to source this from, but this is a plain REST
+        snapshot call, unrelated to that streaming gap.
+
+        Deliberately uncached, unlike _fetch_near_the_money/
+        _fetch_open_interest above — volume changes continuously through
+        the session (unlike open interest) and this is already called at
+        most once per get_underlying_snapshot() invocation (unlike the
+        near-the-money chain, which get_option_chain() and
+        get_underlying_snapshot() both fetch back-to-back), so there is
+        no repeated within-cycle call here to save.
+
+        Falls back to 0 (this field's existing, already-handled value —
+        see calculate_anchored_vwap) on any fetch failure rather than
+        raising, so a transient problem with this one field doesn't fail
+        the whole snapshot refresh cycle the way a raise here would.
+        """
+        if kind == UnderlyingKind.FUTURE:
+            # No working futures OHLC snapshot endpoint confirmed — same
+            # documented gap as get_daily_bars' futures case below.
+            return 0
+        endpoint = (
+            "/v3/index/snapshot/ohlc" if kind == UnderlyingKind.INDEX else "/v3/stock/snapshot/ohlc"
+        )
+        try:
+            body = self._get_json(endpoint, symbol=symbol, format="json")
+            rows = body.get("response", [])
+            if not rows:
+                return 0
+            return int(rows[0]["volume"])
+        except (httpx.HTTPError, RuntimeError, ValueError, KeyError):
+            logger.exception("Failed to fetch underlying volume for %s", symbol)
+            return 0
+
     def get_option_chain(self, underlying: str, expiration: date | None = None) -> OptionChain:
         symbol = underlying.upper()
         chain = self._fetch_near_the_money(symbol, expiration)
@@ -1016,6 +1100,9 @@ class ThetaDataProvider:
         symbol = underlying.upper()
         chain = self._fetch_near_the_money(symbol, expiration=None)
         open_interest_by_key = self._fetch_open_interest(symbol, chain.expiration)
+        active = ACTIVE_UNDERLYINGS_BY_SYMBOL.get(symbol)
+        kind = active.kind if active is not None else UnderlyingKind.EQUITY
+        volume = self._fetch_underlying_volume(symbol, kind)
 
         price: Decimal | None = None
         as_of = utc_now()
@@ -1049,12 +1136,18 @@ class ThetaDataProvider:
             symbol=symbol,
             as_of=as_of,
             price=price,
-            # Stocks/Indices subscriptions not active as of this adapter's
-            # investigation (confirmed live, both 403 FREE-tier) — no
-            # source anywhere for the underlying's own share volume.
-            # Anchored VWAP already handles this safely on its own
-            # (provisional=True, value=None) — see calculate_anchored_vwap.
-            volume=0,
+            # Session-cumulative share volume from GET /v3/stock/snapshot/
+            # ohlc (or /v3/index/snapshot/ohlc for indices, always 0 there
+            # — an index has no share volume of its own). Previously
+            # hardcoded 0 here (no live Stocks/Indices subscription to
+            # source it from) — that gap is closed by _fetch_underlying_
+            # volume above, a plain REST snapshot call unrelated to that
+            # streaming limitation. calculate_anchored_vwap already
+            # expects exactly this session-cumulative-with-reset-at-9:30
+            # shape (see its own docstring), so wiring a real value in
+            # here doesn't change its contract, only lets it stop being
+            # permanently provisional.
+            volume=volume,
             pc_oi_ratio=pc_oi_ratio,
             # No 25-delta strikes in the near-the-money range this
             # adapter fetches — computing a real skew would need

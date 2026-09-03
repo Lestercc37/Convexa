@@ -18,6 +18,7 @@ from backend.adapters.providers.thetadata.provider import (
     ThetaTradeStream,
     ThetaUnderlyingTradeStream,
     _build_occ_symbol,
+    _log_req_response,
     _parse_et_timestamp,
     _time_to_expiration_years,
 )
@@ -258,6 +259,8 @@ class TestGetUnderlyingSnapshot:
                 )
             if "stock/history/eod" in str(request.url):
                 return httpx.Response(200, json=_daily_bars_response())
+            if "stock/snapshot/ohlc" in str(request.url):
+                return httpx.Response(200, json={"response": [{"volume": 16396508}]})
             raise AssertionError(f"unexpected request: {request.url}")
 
         provider = _provider_with_transport(handler)
@@ -265,15 +268,79 @@ class TestGetUnderlyingSnapshot:
 
         assert snapshot.symbol == "SPY"
         assert snapshot.price == Decimal("769.36")
-        # Documented limitation: no live Stocks/Indices subscription ->
-        # no source anywhere for the underlying's own share volume.
-        assert snapshot.volume == 0
+        # GET /v3/stock/snapshot/ohlc closes the gap that used to leave
+        # this hardcoded at 0 -- confirmed live against the real value
+        # for SPY (see _fetch_underlying_volume's own docstring).
+        assert snapshot.volume == 16396508
         assert snapshot.atm_iv == Decimal("0.16")
         # All open interest sampled above is CALL-side (no puts in this
         # response) -> put_oi is 0 -> documented pc_oi_ratio fallback.
         assert snapshot.pc_oi_ratio == Decimal(0)
         # No 25-delta strikes fetched -> documented as 0, not guessed.
         assert snapshot.skew_25d == Decimal(0)
+
+
+class TestFetchUnderlyingVolume:
+    def test_routes_equities_to_stock_snapshot_ohlc(self) -> None:
+        seen_paths = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen_paths.append(request.url.path)
+            return httpx.Response(200, json={"response": [{"volume": 16396508}]})
+
+        provider = _provider_with_transport(handler)
+        volume = provider._fetch_underlying_volume("SPY", UnderlyingKind.EQUITY)
+
+        assert seen_paths == ["/v3/stock/snapshot/ohlc"]
+        assert volume == 16396508
+
+    def test_routes_indices_to_index_snapshot_ohlc(self) -> None:
+        seen_paths = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen_paths.append(request.url.path)
+            # Confirmed live: an index's own OHLC snapshot volume is
+            # always 0 -- it has no share volume of its own, only its
+            # component stocks do.
+            return httpx.Response(200, json={"response": [{"volume": 0}]})
+
+        provider = _provider_with_transport(handler)
+        volume = provider._fetch_underlying_volume("SPX", UnderlyingKind.INDEX)
+
+        assert seen_paths == ["/v3/index/snapshot/ohlc"]
+        assert volume == 0
+
+    def test_futures_return_zero_without_any_request(self) -> None:
+        def handler(request: httpx.Request) -> httpx.Response:
+            raise AssertionError("no request should be made for a future underlying")
+
+        provider = _provider_with_transport(handler)
+        assert provider._fetch_underlying_volume("ES", UnderlyingKind.FUTURE) == 0
+
+    def test_falls_back_to_zero_without_raising_on_a_failed_request(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        # 472 is ThetaData's own custom status code for "no data found"
+        # (confirmed live, 2026-09 investigation) -- _get_json raises
+        # RuntimeError on any non-200, which must not escape here and
+        # fail the whole snapshot refresh cycle over one field.
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(472, text="No data found for your request")
+
+        provider = _provider_with_transport(handler)
+
+        with caplog.at_level(logging.ERROR):
+            volume = provider._fetch_underlying_volume("SPY", UnderlyingKind.EQUITY)
+
+        assert volume == 0
+        assert any("SPY" in record.message for record in caplog.records)
+
+    def test_falls_back_to_zero_when_response_has_no_rows(self) -> None:
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(200, json={"response": []})
+
+        provider = _provider_with_transport(handler)
+        assert provider._fetch_underlying_volume("SPY", UnderlyingKind.EQUITY) == 0
 
 
 class TestGetDailyBars:
@@ -365,6 +432,86 @@ class TestRiskFreeRateCaching:
         provider = _provider_with_transport(handler)
         with pytest.raises(RuntimeError):
             provider._risk_free_rate()
+
+
+class TestReqResponseHandling:
+    """Simulated only — a real rejection was never observed (see
+    _log_req_response's own docstring), forcing one would mean risking
+    the shared, already-running Theta Terminal. Exact message shape
+    confirmed live (2026-09 investigation): {"header": {"type":
+    "REQ_RESPONSE", "status": "CONNECTED", "response": "SUBSCRIBED",
+    "req_id": N}}."""
+
+    def test_accepted_subscription_logs_at_debug_not_error(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        message = {
+            "header": {
+                "type": "REQ_RESPONSE",
+                "status": "CONNECTED",
+                "response": "SUBSCRIBED",
+                "req_id": 7,
+            }
+        }
+
+        with caplog.at_level(logging.DEBUG):
+            _log_req_response("ThetaTradeStream", message)
+
+        assert any(
+            record.levelno == logging.DEBUG and "7" in record.message
+            for record in caplog.records
+        )
+        assert not any(record.levelno == logging.ERROR for record in caplog.records)
+
+    def test_rejected_subscription_logs_visibly_as_an_error(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        message = {
+            "header": {
+                "type": "REQ_RESPONSE",
+                "status": "CONNECTED",
+                "response": "SYMBOL_NOT_FOUND",
+                "req_id": 12,
+            }
+        }
+
+        with caplog.at_level(logging.DEBUG):
+            _log_req_response("ThetaQuoteStream", message)
+
+        errors = [record for record in caplog.records if record.levelno == logging.ERROR]
+        assert len(errors) == 1
+        assert "ThetaQuoteStream" in errors[0].message
+        assert "SYMBOL_NOT_FOUND" in errors[0].message
+        assert "12" in errors[0].message
+
+    def test_missing_response_field_is_treated_as_a_rejection_not_ignored(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        # Anything other than the literal "SUBSCRIBED" string must be
+        # visible, per the user's own instruction -- including malformed
+        # or unexpected messages, not just a known rejection reason.
+        message = {"header": {"type": "REQ_RESPONSE", "status": "CONNECTED", "req_id": 3}}
+
+        with caplog.at_level(logging.DEBUG):
+            _log_req_response("ThetaUnderlyingTradeStream", message)
+
+        assert any(record.levelno == logging.ERROR for record in caplog.records)
+
+    def test_all_three_stream_classes_route_req_response_through_the_shared_helper(
+        self,
+    ) -> None:
+        """Confirms the elif branch exists in all 3 _connect_and_consume
+        methods (not just that _log_req_response itself works) -- reads
+        the compiled source directly rather than driving a full
+        websocket loop, matching this file's own convention of testing
+        _handle_trade/_handle_quote directly instead of the recv() loop
+        around them."""
+        import inspect
+
+        for stream_class in (ThetaTradeStream, ThetaQuoteStream, ThetaUnderlyingTradeStream):
+            source = inspect.getsource(stream_class._connect_and_consume)
+            assert '"REQ_RESPONSE"' in source
+            assert "_log_req_response" in source
 
 
 class TestTradeStream:
@@ -971,6 +1118,8 @@ class TestNearTheMoneyCaching:
                 )
             if "stock/history/eod" in str(request.url):
                 return httpx.Response(200, json=_daily_bars_response())
+            if "stock/snapshot/ohlc" in str(request.url):
+                return httpx.Response(200, json={"response": [{"volume": 16396508}]})
             raise AssertionError(f"unexpected request: {request.url}")
 
         provider = _provider_with_transport(handler)
@@ -1015,6 +1164,8 @@ class TestNearTheMoneyCaching:
                 )
             if "stock/history/eod" in str(request.url):
                 return httpx.Response(200, json=_daily_bars_response())
+            if "stock/snapshot/ohlc" in str(request.url):
+                return httpx.Response(200, json={"response": [{"volume": 16396508}]})
             raise AssertionError(f"unexpected request: {request.url}")
 
         provider = _provider_with_transport(handler)
@@ -1023,7 +1174,7 @@ class TestNearTheMoneyCaching:
 
         assert snapshot.symbol == "SPY"
         assert snapshot.price == Decimal("769.36")
-        assert snapshot.volume == 0
+        assert snapshot.volume == 16396508
         assert snapshot.atm_iv == Decimal("0.16")
         assert snapshot.pc_oi_ratio == Decimal(0)
         assert snapshot.skew_25d == Decimal(0)
