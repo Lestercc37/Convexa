@@ -8,6 +8,7 @@ import {
   createChart,
   LineSeries,
   LineStyle,
+  TickMarkType,
   type AutoscaleInfo,
   type IChartApi,
   type IPriceLine,
@@ -17,7 +18,7 @@ import {
 import { getGammaHistory } from "@/lib/api";
 import type { MinuteCandle, Timeframe, VwapPoint } from "@/lib/candles";
 import { useLanguage } from "@/lib/i18n/language-context";
-import { regularSessionRange } from "@/lib/market-session";
+import { EASTERN_TIME_ZONE, regularSessionRange } from "@/lib/market-session";
 import type { AtrRange, GammaHistoryItem, GammaResponse } from "@/lib/types";
 import { LEVEL_MERGE_THRESHOLD } from "./gravity-map";
 
@@ -94,6 +95,45 @@ function gammaLevels(gamma: GammaResponse): GammaLevel[] {
 
 function chartCandle(candle: MinuteCandle) {
   return { ...candle, time: candle.time as UTCTimestamp };
+}
+
+// lightweight-charts formats every axis tick mark from the *UTC* digits of
+// the given timestamp (confirmed by reading its own source -- it builds a
+// Date from getUTCHours()/getUTCMinutes()/etc. and locale-formats that,
+// never the browser's local timezone). MinuteCandle.time and the session
+// anchor above are both real UTC epoch seconds, so left alone, a candle
+// at the real moment 15:59 ET (EDT, UTC-4) prints as "19:59" -- the axis
+// showing extended-hours-looking labels for perfectly in-session data,
+// confirmed live, 2026-09. Intl.DateTimeFormat with an explicit
+// `timeZone` resolves the correct ET offset for whatever date is given
+// (EDT or EST), so this holds across the DST transition without
+// hardcoding either offset.
+function tickMarkFormatter(timeSeconds: UTCTimestamp, tickMarkType: TickMarkType, locale: string): string {
+  const date = new Date(timeSeconds * 1000);
+  const options: Intl.DateTimeFormatOptions = { timeZone: EASTERN_TIME_ZONE };
+  switch (tickMarkType) {
+    case TickMarkType.Year:
+      options.year = "numeric";
+      break;
+    case TickMarkType.Month:
+      options.month = "short";
+      break;
+    case TickMarkType.DayOfMonth:
+      options.day = "numeric";
+      break;
+    case TickMarkType.Time:
+      options.hour12 = false;
+      options.hour = "2-digit";
+      options.minute = "2-digit";
+      break;
+    case TickMarkType.TimeWithSeconds:
+      options.hour12 = false;
+      options.hour = "2-digit";
+      options.minute = "2-digit";
+      options.second = "2-digit";
+      break;
+  }
+  return new Intl.DateTimeFormat(locale, options).format(date);
 }
 
 // Prepends a whitespace point (a bar with only a `time`, no OHLC values --
@@ -292,7 +332,7 @@ export function PriceChart({
         vertLines: { color: "rgba(42, 46, 57, 0.6)" },
         horzLines: { color: "rgba(42, 46, 57, 0.6)" },
       },
-      timeScale: { timeVisible: true, secondsVisible: false },
+      timeScale: { timeVisible: true, secondsVisible: false, tickMarkFormatter },
       rightPriceScale: { borderColor: "#2A2E39" },
     });
     // TradingView-native candle colors — never the Convexa brand pair above,
