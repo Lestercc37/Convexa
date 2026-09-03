@@ -21,7 +21,13 @@ function level(value: number) {
 
 export function GravityMap({ gamma, market }: GravityMapProps) {
   const range = gamma.call_wall - gamma.put_wall;
+  // gamma_flip is a legitimate null (no sign crossing found in the
+  // current window, not an error) -- level()'s .toLocaleString() call
+  // throws on null, so every branch below must skip rendering that
+  // marker entirely rather than calling level()/position() on it. This
+  // is containment only, not the final "no crossing" design.
   const mergeLevels =
+    gamma.gamma_flip !== null &&
     range > 0 &&
     Math.abs(gamma.gamma_flip - gamma.absolute_gamma_strike) <
       LEVEL_MERGE_THRESHOLD * range;
@@ -49,7 +55,7 @@ export function GravityMap({ gamma, market }: GravityMapProps) {
           <span className="marker-value">{level(gamma.call_wall)}</span>
         </div>
 
-        {mergeLevels ? (
+        {mergeLevels && gamma.gamma_flip !== null ? (
           <div className="marker" style={{ left: position(gamma.gamma_flip) }}>
             <span className="marker-label">Flip / Abs. Gamma</span>
             <span className="marker-value">
@@ -59,11 +65,13 @@ export function GravityMap({ gamma, market }: GravityMapProps) {
           </div>
         ) : (
           <>
-            <div className="marker" style={{ left: position(gamma.gamma_flip) }}>
-              <span className="marker-label">Gamma Flip</span>
-              <span className="marker-value">{level(gamma.gamma_flip)}</span>
-              <span className="marker-line" />
-            </div>
+            {gamma.gamma_flip !== null && (
+              <div className="marker" style={{ left: position(gamma.gamma_flip) }}>
+                <span className="marker-label">Gamma Flip</span>
+                <span className="marker-value">{level(gamma.gamma_flip)}</span>
+                <span className="marker-line" />
+              </div>
+            )}
             <div className="marker" style={{ left: position(gamma.absolute_gamma_strike) }}>
               <span className="marker-label">Abs. Gamma</span>
               <span className="marker-value">{level(gamma.absolute_gamma_strike)}</span>

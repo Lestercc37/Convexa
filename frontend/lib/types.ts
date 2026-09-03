@@ -115,6 +115,12 @@ export type GammaResponse = {
   schema_version: number;
   symbol: string;
   as_of: string;
+  // Genuinely nullable at the API boundary (no sign crossing found in
+  // the current window) -- kept as `number` here, matching every other
+  // reader of this type, until the pending "how should no-crossing look"
+  // design decision lands everywhere at once instead of piecemeal.
+  // price-chart.tsx and gravity-map.tsx defend against the real null at
+  // runtime regardless of what this declared type claims.
   gamma_flip: number;
   call_wall: number;
   put_wall: number;
@@ -133,6 +139,8 @@ export type GammaHistoryItem = {
   schema_version: number;
   symbol: string;
   as_of: string;
+  // See GammaResponse.gamma_flip above -- same "genuinely nullable, kept
+  // as number for now" situation.
   gamma_flip: number;
   call_wall: number;
   put_wall: number;
@@ -166,6 +174,8 @@ export type GammaAggregateResponse = {
   schema_version: number;
   symbol: string;
   as_of: string;
+  // See GammaResponse.gamma_flip above -- same "genuinely nullable, kept
+  // as number for now" situation.
   gamma_flip: number;
   max_pain: number;
   total_market_gamma: number;

@@ -191,6 +191,32 @@ describe("PriceChart", () => {
     );
   });
 
+  it("skips the Gamma Flip price line instead of crashing when gamma_flip is null (regression)", () => {
+    // gamma_flip=null is a legitimate "no sign crossing found" value, not
+    // an error, and occurs with real frequency on single-stock symbols.
+    // series.createPriceLine() asserts its price is a number and throws
+    // otherwise (confirmed crash: META/NVDA/SPX/SPY/TSLA) -- the type
+    // still says `number` (see lib/types.ts) pending the coordinated
+    // design decision, so this is the real runtime shape despite that.
+    renderWithLanguage(
+      <PriceChart
+        symbol="SPY"
+        gamma={{ ...gamma, gamma_flip: null as unknown as number }}
+        candles={[]}
+      />,
+    );
+
+    // Put Wall, Abs. Gamma, Call Wall -- Gamma Flip is skipped, not
+    // drawn with a null price.
+    expect(chartMocks.createPriceLine).toHaveBeenCalledTimes(3);
+    expect(chartMocks.createPriceLine).not.toHaveBeenCalledWith(
+      expect.objectContaining({ price: null }),
+    );
+    expect(chartMocks.createPriceLine).not.toHaveBeenCalledWith(
+      expect.objectContaining({ title: "Gamma Flip" }),
+    );
+  });
+
   it("switches to three historical level series without Absolute Gamma", async () => {
     const user = userEvent.setup();
     renderWithLanguage(<PriceChart symbol="SPY" gamma={gamma} candles={[]} />);
@@ -230,6 +256,67 @@ describe("PriceChart", () => {
     );
     expect(chartMocks.lineSetData).toHaveBeenLastCalledWith([
       { time: 1_785_767_400, value: 540 },
+    ]);
+  });
+
+  it("drops a null-valued historical point instead of crashing (regression)", async () => {
+    // Same legitimate-null situation as the static-mode price line above,
+    // but for a history item -- historyItem.gamma_flip can also be null.
+    // series.setData() asserts every point's value is a number and
+    // throws otherwise, so the null point is dropped rather than passed
+    // through, keeping any other real point for that same level.
+    chartMocks.getGammaHistory.mockResolvedValue({
+      schema_version: 1,
+      symbol: "SPY",
+      items: [
+        {
+          schema_version: 1,
+          symbol: "SPY",
+          as_of: "2026-08-03T14:00:00Z",
+          gamma_flip: 545,
+          call_wall: 560,
+          put_wall: 540,
+          absolute_gamma_strike: 550,
+          max_pain: 549,
+          net_gamma: 1,
+          vega_exposure: 2,
+          theta_exposure: 3,
+          charm_exposure: 4,
+          vanna_exposure: 5,
+          dealer_position: "long_gamma",
+        },
+        {
+          schema_version: 1,
+          symbol: "SPY",
+          as_of: "2026-08-03T14:30:00Z",
+          gamma_flip: null as unknown as number,
+          call_wall: 560,
+          put_wall: 540,
+          absolute_gamma_strike: 550,
+          max_pain: 549,
+          net_gamma: 1,
+          vega_exposure: 2,
+          theta_exposure: 3,
+          charm_exposure: 4,
+          vanna_exposure: 5,
+          dealer_position: "long_gamma",
+        },
+      ],
+    });
+    const user = userEvent.setup();
+    renderWithLanguage(<PriceChart symbol="SPY" gamma={gamma} candles={[]} />);
+
+    await user.click(screen.getByRole("button", { name: "Histórico" }));
+    await waitFor(() => expect(chartMocks.lineSetData).toHaveBeenCalledTimes(4));
+
+    expect(chartMocks.lineSetData).not.toHaveBeenCalledWith(
+      expect.arrayContaining([expect.objectContaining({ value: null })]),
+    );
+    // Gamma Flip's own series is the 2nd of the 3 historical additions
+    // (HISTORICAL_LEVELS order: Call Wall, Gamma Flip, Put Wall) -- only
+    // the point with a real value survives.
+    expect(chartMocks.lineSetData.mock.calls[2][0]).toEqual([
+      { time: 1_785_765_600, value: 545 },
     ]);
   });
 

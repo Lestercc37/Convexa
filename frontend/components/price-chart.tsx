@@ -30,7 +30,13 @@ type PriceChartProps = {
 };
 
 type GammaLevel = {
-  price: number;
+  // null is a legitimate gamma_flip (no sign crossing found in the
+  // current window, not an error) -- every consumer of this price must
+  // skip the level rather than pass null into a lightweight-charts call,
+  // which asserts its price/value arguments are numbers and throws
+  // otherwise. This is containment only, not the final "no crossing"
+  // display design.
+  price: number | null;
   title: string;
   color: string;
 };
@@ -67,6 +73,7 @@ type Trendline = { start: TrendlinePoint; end: TrendlinePoint };
 function gammaLevels(gamma: GammaResponse): GammaLevel[] {
   const range = gamma.call_wall - gamma.put_wall;
   const mergeFlipAndAbsolute =
+    gamma.gamma_flip !== null &&
     range > 0 &&
     Math.abs(gamma.gamma_flip - gamma.absolute_gamma_strike) <
       LEVEL_MERGE_THRESHOLD * range;
@@ -184,7 +191,9 @@ function referenceLevelPrices(
 ): number[] {
   const bands = showAtr ? atrBands(atrRange) : null;
   return [
-    ...gammaLevels(gamma).map((level) => level.price),
+    ...gammaLevels(gamma)
+      .map((level) => level.price)
+      .filter((price): price is number => price !== null),
     ...(bands ? [bands.outerUpper, bands.outerLower] : []),
   ];
 }
@@ -391,14 +400,21 @@ export function PriceChart({
   useEffect(() => {
     const series = seriesRef.current;
     if (!series || levelMode !== "static") return;
-    const lines: IPriceLine[] = gammaLevels(gamma).map((level) =>
-      series.createPriceLine({
-        ...level,
-        lineStyle: LineStyle.Dashed,
-        lineWidth: 1,
-        axisLabelVisible: true,
-      }),
-    );
+    // gamma_flip can legitimately be null (no sign crossing found in the
+    // current window) -- createPriceLine() asserts price is a number and
+    // throws otherwise, so that level is skipped entirely rather than
+    // drawn. Containment only; how "no crossing" should look is a
+    // separate, still-pending design decision.
+    const lines: IPriceLine[] = gammaLevels(gamma)
+      .filter((level): level is GammaLevel & { price: number } => level.price !== null)
+      .map((level) =>
+        series.createPriceLine({
+          ...level,
+          lineStyle: LineStyle.Dashed,
+          lineWidth: 1,
+          axisLabelVisible: true,
+        }),
+      );
     return () => {
       // The chart-creation effect's cleanup may already have disposed the
       // chart (and this series with it) — e.g. on a symbol change, which
@@ -442,11 +458,17 @@ export function PriceChart({
         priceLineVisible: false,
         lastValueVisible: true,
       });
+      // Same null-price crash as the static-mode price lines above
+      // (item.gamma_flip can legitimately be null) -- setData() asserts
+      // every value is a number and throws otherwise, so points with a
+      // null value for this level are dropped rather than plotted.
       line.setData(
-        history.map((item) => ({
-          time: Math.floor(new Date(item.as_of).getTime() / 1000) as UTCTimestamp,
-          value: item[level.field],
-        })),
+        history
+          .filter((item) => item[level.field] !== null)
+          .map((item) => ({
+            time: Math.floor(new Date(item.as_of).getTime() / 1000) as UTCTimestamp,
+            value: item[level.field] as number,
+          })),
       );
       return line;
     });
