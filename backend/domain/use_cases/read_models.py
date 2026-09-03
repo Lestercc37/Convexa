@@ -15,6 +15,7 @@ from backend.domain.use_cases.calculate_expected_move import (
     calculate_time_to_close_pct,
 )
 from backend.domain.use_cases.errors import NotFoundError
+from backend.domain.use_cases.market_hours import is_market_open
 
 DEFAULT_FRESHNESS_SECONDS = 60
 
@@ -27,10 +28,17 @@ def get_option_chain(
     freshness_seconds: int = DEFAULT_FRESHNESS_SECONDS,
 ) -> OptionChain:
     chain = storage.get_latest_chain_snapshot(underlying, expiration)
-    if (
-        chain is not None
-        and (datetime.now(timezone.utc) - chain.as_of).total_seconds() <= freshness_seconds
+    now = datetime.now(timezone.utc)
+    if chain is not None and (
+        (now - chain.as_of).total_seconds() <= freshness_seconds or not is_market_open(now)
     ):
+        # Outside market hours the scheduler has already gone quiet (same
+        # is_market_open gate as CalculateGammaExposureOrchestrator's own
+        # storage-only reads) -- serve the stored snapshot no matter its
+        # age instead of refreshing live, so this endpoint stops being the
+        # one path that still hit the provider after close (confirmed
+        # live, 2026-09: it was overwriting a good pre-close snapshot with
+        # a degenerate all-zero-gamma one, see calculate_bsm_greeks).
         return chain
     chain = provider.get_option_chain(underlying, expiration)
     storage.save_chain_snapshot(chain)
