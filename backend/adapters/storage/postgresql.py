@@ -325,14 +325,18 @@ class PostgreSQLStorage:
                         max_pain, net_gamma, dealer_gamma_notional,
                         vega_exposure, theta_exposure, charm_exposure,
                         vanna_exposure,
-                        absolute_gamma_strike
+                        absolute_gamma_strike,
+                        total_market_gamma, positive_gamma, negative_gamma,
+                        peak_gamma_value
                     )
                     VALUES (
                         :time, :underlying_id, :gamma_flip, :call_wall, :put_wall,
                         :max_pain, :net_gamma, :dealer_gamma_notional,
                         :vega_exposure, :theta_exposure, :charm_exposure,
                         :vanna_exposure,
-                        :absolute_gamma_strike
+                        :absolute_gamma_strike,
+                        :total_market_gamma, :positive_gamma, :negative_gamma,
+                        :peak_gamma_value
                     )
                     ON CONFLICT (underlying_id, time) DO UPDATE SET
                         gamma_flip = EXCLUDED.gamma_flip,
@@ -345,7 +349,11 @@ class PostgreSQLStorage:
                         theta_exposure = EXCLUDED.theta_exposure,
                         charm_exposure = EXCLUDED.charm_exposure,
                         vanna_exposure = EXCLUDED.vanna_exposure,
-                        absolute_gamma_strike = EXCLUDED.absolute_gamma_strike
+                        absolute_gamma_strike = EXCLUDED.absolute_gamma_strike,
+                        total_market_gamma = EXCLUDED.total_market_gamma,
+                        positive_gamma = EXCLUDED.positive_gamma,
+                        negative_gamma = EXCLUDED.negative_gamma,
+                        peak_gamma_value = EXCLUDED.peak_gamma_value
                     """
                 ),
                 {
@@ -362,6 +370,10 @@ class PostgreSQLStorage:
                     "charm_exposure": gamma.charm_exposure,
                     "vanna_exposure": gamma.vanna_exposure,
                     "absolute_gamma_strike": gamma.absolute_gamma_strike,
+                    "total_market_gamma": gamma.total_market_gamma,
+                    "positive_gamma": gamma.positive_gamma,
+                    "negative_gamma": gamma.negative_gamma,
+                    "peak_gamma_value": gamma.peak_gamma_value,
                 },
             )
             for item in gamma.items:
@@ -415,7 +427,9 @@ class PostgreSQLStorage:
                            g.dealer_gamma_notional, g.vega_exposure,
                            g.theta_exposure, g.charm_exposure,
                            g.vanna_exposure,
-                           g.absolute_gamma_strike
+                           g.absolute_gamma_strike,
+                           g.total_market_gamma, g.positive_gamma, g.negative_gamma,
+                           g.peak_gamma_value
                     FROM gamma_aggregates AS g
                     JOIN underlyings AS u ON u.id = g.underlying_id
                     WHERE u.symbol = :symbol
@@ -476,7 +490,9 @@ class PostgreSQLStorage:
                            g.dealer_gamma_notional, g.vega_exposure,
                            g.theta_exposure, g.charm_exposure,
                            g.vanna_exposure,
-                           g.absolute_gamma_strike
+                           g.absolute_gamma_strike,
+                           g.total_market_gamma, g.positive_gamma, g.negative_gamma,
+                           g.peak_gamma_value
                     FROM gamma_aggregates AS g
                     JOIN underlyings AS u ON u.id = g.underlying_id
                     WHERE u.symbol = :symbol
@@ -801,4 +817,8 @@ class PostgreSQLStorage:
             charm_exposure=Decimal(mapping["charm_exposure"]),
             vanna_exposure=Decimal(mapping["vanna_exposure"]),
             absolute_gamma_strike=Decimal(mapping["absolute_gamma_strike"]),
+            total_market_gamma=Decimal(mapping["total_market_gamma"]),
+            positive_gamma=Decimal(mapping["positive_gamma"]),
+            negative_gamma=Decimal(mapping["negative_gamma"]),
+            peak_gamma_value=Decimal(mapping["peak_gamma_value"]),
         )

@@ -1415,6 +1415,45 @@ de estilo en este archivo — ninguno nuevo de otro tipo, confirmado por `git st
 
 ---
 
+#### Bug 1 (diagnóstico previo): columnas de gamma aggregate perdidas en Postgres
+
+`total_market_gamma`, `positive_gamma`, `negative_gamma` y `peak_gamma_value` se calculaban
+correctamente en memoria (`FakeGammaAggregateCalculator.calculate()`) pero `gamma_aggregates` ni
+siquiera tenía esas columnas — `save_gamma_aggregate()` nunca las incluía en el INSERT, y
+`_gamma_from_row()` nunca las leía de vuelta. Siempre `0` al leer desde el storage real de producción
+(Postgres); `InMemoryStorage` nunca tuvo este problema, porque guarda el objeto Python directo, sin
+serialización de por medio.
+
+**El arreglo.** Migración `0020_gamma_aggregate_totals.py` — mismo patrón que `0009` (la migración que
+agregó `absolute_gamma_strike`): `add_column` con `server_default=sa.text("0")` para no romper filas
+existentes, luego `alter_column` quitando ese default para que futuros INSERTs deban proveerlo
+explícitamente. `save_gamma_aggregate()` ahora incluye las 4 columnas en el INSERT y el `ON CONFLICT DO
+UPDATE`; las dos consultas `SELECT` (`get_latest_gamma_aggregate`, `get_gamma_history`) y
+`_gamma_from_row()` ahora las piden y las leen de vuelta.
+
+**Nombre de la migración más corto de lo esperado — límite real de Alembic, no estilístico.** El
+primer intento (`0020_gamma_aggregate_market_totals`, 35 caracteres) aplicó el DDL correctamente pero
+falló al actualizar `alembic_version` — esa tabla usa `varchar(32)` por defecto, y el id se pasaba por
+3 caracteres. Confirmado que la transacción completa (DDL incluido) se revirtió limpiamente sola, sin
+dejar columnas huérfanas — no hubo que deshacer nada a mano. Se renombró a `0020_gamma_aggregate_totals`
+(27 caracteres) y aplicó sin problema.
+
+**Verificado en vivo, contra Postgres real, no memoria.** `GET /api/v1/gamma/SPX/profile` después del
+fix: `total_market_gamma=161867465670.44`, `positive_gamma=161867465670.44` (igual al total — consistente
+con que hoy todos los strikes de SPX tienen net_gamma positivo, confirmado en la investigación previa),
+`negative_gamma=0` (real, no bug — no hay ningún strike negativo en el rango actual), `peak_gamma_value=
+30840500004.30`. También se actualizó `test_gamma_aggregate_round_trip_against_postgresql`
+(`tests/test_postgresql_integration.py`, corre contra la base real, no mockeada) — antes dejaba estos 4
+campos en su default `Decimal("0")`, así que el round-trip pasaba sin haber probado nada real; ahora usa
+valores distintos y no-cero para cada uno, y pasa contra la base real.
+
+**Datos históricos con estos campos en 0 — reportado, no tocado.** De **15,574** filas totales en
+`gamma_aggregates` (2026-01-15 a hoy), **15,559 (99.9%)** tienen los 4 campos nuevos en `0` — son las
+filas escritas antes de este fix, con el valor de relleno que puso la migración. Solo las ~15 filas
+escritas después del fix (mientras verificaba en vivo) tienen valores reales. Ninguna se tocó.
+
+---
+
 ## Resumen de mapeo a contratos existentes
 
 | Caso de uso | REST | WebSocket |

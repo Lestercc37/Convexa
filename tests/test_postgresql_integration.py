@@ -116,6 +116,15 @@ def test_gamma_aggregate_round_trip_against_postgresql(
         charm_exposure=Decimal("125000"),
         vanna_exposure=Decimal("250000"),
         absolute_gamma_strike=Decimal("550"),
+        # Deliberately non-zero and each distinct from the others and
+        # from every other field above -- these 4 used to silently come
+        # back as 0 from PostgreSQLStorage regardless of what was saved
+        # (missing columns), which a fixture leaving them at their
+        # Decimal("0") dataclass default would never have caught.
+        total_market_gamma=Decimal("-1250000"),
+        positive_gamma=Decimal("130"),
+        negative_gamma=Decimal("-40"),
+        peak_gamma_value=Decimal("90"),
     )
 
     storage.save_gamma_aggregate(aggregate)
