@@ -23,11 +23,24 @@ class UnderlyingRefreshScheduler:
     `asyncio.Task` that lives for the process's lifetime; each symbol runs
     in a worker thread (`asyncio.to_thread`) via
     `RefreshUnderlyingSnapshotUseCase` so a slow/blocking data provider
-    (e.g. a future real FlashAlpha connection, which does real HTTP I/O)
-    can't stall the event loop or the rest of the API while a cycle is in
-    flight — MockDataProvider is fast enough that this makes no observable
-    difference today, but the scheduler is deliberately independent of
+    (e.g. a real ThetaData REST connection, which does real HTTP I/O) can't
+    stall the event loop or the rest of the API while a cycle is in flight
+    — MockDataProvider is fast enough that this makes no observable
+    difference for it, but the scheduler is deliberately independent of
     which provider is behind it.
+
+    Symbols are dispatched concurrently (`asyncio.gather`), not one at a
+    time — measured against the real ATR-widened chain widths (2026-09
+    investigation): a fully sequential cycle across 11 symbols took
+    ~30 seconds, essentially the same as `interval_seconds` itself, so the
+    effective refresh cadence was closer to ~60s (`_run` sleeps *after*
+    a cycle finishes) than the intended 30s. Real REST-call safety against
+    ThetaData's actual account-wide concurrency cap is the
+    `threading.Semaphore` already living inside `ThetaDataProvider`
+    (`THETADATA_MAX_CONCURRENT_REQUESTS`) — it's the single real chokepoint
+    every REST call passes through regardless of which symbol's worker
+    thread issued it, so the scheduler dispatching all symbols at once is
+    safe by construction and doesn't need its own separate throttle.
     """
 
     def __init__(
@@ -63,22 +76,29 @@ class UnderlyingRefreshScheduler:
     async def _run_cycle(self) -> None:
         symbols = [underlying.symbol for underlying in ACTIVE_UNDERLYINGS]
         logger.info("Scheduler cycle starting for %d symbols", len(symbols))
-        failed: list[str] = []
-        for symbol in symbols:
-            try:
-                await asyncio.to_thread(
-                    self._container.refresh_underlying_snapshot_use_case.execute, symbol
-                )
-            except Exception:
-                failed.append(symbol)
-                logger.exception("Scheduler cycle failed for %s", symbol)
-        succeeded = len(symbols) - len(failed)
+        outcomes = await asyncio.gather(*(self._refresh_symbol(symbol) for symbol in symbols))
+        failed = [symbol for symbol, succeeded in zip(symbols, outcomes, strict=True) if not succeeded]
+        succeeded_count = len(symbols) - len(failed)
         if failed:
             logger.warning(
                 "Scheduler cycle finished: %d succeeded, %d failed (%s)",
-                succeeded,
+                succeeded_count,
                 len(failed),
                 ", ".join(failed),
             )
         else:
-            logger.info("Scheduler cycle finished: %d succeeded, 0 failed", succeeded)
+            logger.info("Scheduler cycle finished: %d succeeded, 0 failed", succeeded_count)
+
+    async def _refresh_symbol(self, symbol: str) -> bool:
+        """Refreshes one symbol, reporting success/failure instead of
+        raising — every symbol is dispatched via `_run_cycle`'s
+        `asyncio.gather` regardless of how others finish, so one symbol's
+        exception must never propagate out and cancel the rest."""
+        try:
+            await asyncio.to_thread(
+                self._container.refresh_underlying_snapshot_use_case.execute, symbol
+            )
+            return True
+        except Exception:
+            logger.exception("Scheduler cycle failed for %s", symbol)
+            return False

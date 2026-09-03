@@ -131,21 +131,36 @@ RECONNECT_MAX_DELAY_SECONDS = 60
 # anything real across those threads.
 THETADATA_MAX_CONCURRENT_REQUESTS = 4
 
-# Short-lived, in-process cache for the near-the-money chain and its
-# open interest, keyed by (symbol, expiration) — get_option_chain() and
-# get_underlying_snapshot() both request the exact same near-the-money
-# data for a symbol when called back-to-back for the same refresh cycle
-# (confirmed: both call _fetch_near_the_money(symbol, expiration=None)
-# and _fetch_open_interest(symbol, chain.expiration)), so the second
-# call reuses the first's result instead of re-fetching it. Deliberately
-# NOT hoisted into the provider-agnostic RefreshUnderlyingSnapshotUseCase
-# — MockDataProvider's get_underlying_snapshot() returns independent,
+# Short-lived, in-process cache for the near-the-money chain, keyed by
+# (symbol, expiration) — get_option_chain() and get_underlying_snapshot()
+# both request the exact same near-the-money data for a symbol when
+# called back-to-back for the same refresh cycle (confirmed: both call
+# _fetch_near_the_money(symbol, expiration=None)), so the second call
+# reuses the first's result instead of re-fetching it. Deliberately NOT
+# hoisted into the provider-agnostic RefreshUnderlyingSnapshotUseCase —
+# MockDataProvider's get_underlying_snapshot() returns independent,
 # hand-picked fixture values (not derived from its chain at all), so
 # skipping that provider call there would silently change Mock's
-# behavior. Kept well under the scheduler's 30s cycle interval so it
-# never risks spanning across cycles, comfortably above the real
-# elapsed time between these two calls in practice.
+# behavior. Kept well under the scheduler's cycle interval so it never
+# risks spanning across cycles, comfortably above the real elapsed time
+# between these two calls in practice. Deliberately short — unlike open
+# interest below, bid/ask/IV genuinely change from one poll to the next
+# (confirmed live, 2026-09 investigation: every contract's bid/ask/IV
+# changed across a ~70s window), so this cache must not outlive a single
+# refresh cycle's own back-to-back calls.
 NEAR_THE_MONEY_CACHE_TTL_SECONDS = 10.0
+
+# Open interest, unlike the near-the-money chain above, is confirmed
+# static intraday — Open Interest for US options is calculated and
+# published by the OCC once per trading day, not continuously (a market-
+# structure fact, not a ThetaData quirk); confirmed live too (2026-09
+# investigation): 0 of 64 SPX contracts' open_interest changed across a
+# ~70s window where every one of those same contracts' bid/ask/IV did
+# change, ruling out a stale/closed-market feed as the explanation.
+# Cached far longer than the near-the-money chain as a result — 20
+# minutes is still conservative relative to "changes once a day," not a
+# tight bound chosen to just barely avoid staleness.
+OPEN_INTEREST_CACHE_TTL_SECONDS = 20 * 60.0
 
 
 def _build_occ_symbol(
@@ -594,7 +609,8 @@ class ThetaDataProvider:
         # waste, so it's cached per symbol per day, same pattern as
         # `_rate_cache` above.
         self._width_cache: dict[str, tuple[date, Decimal]] = {}
-        # See NEAR_THE_MONEY_CACHE_TTL_SECONDS above for why these exist.
+        # See NEAR_THE_MONEY_CACHE_TTL_SECONDS/OPEN_INTEREST_CACHE_TTL_SECONDS
+        # above for why these exist and use different TTLs.
         self._near_the_money_cache: dict[tuple[str, date | None], tuple[float, _NearTheMoneyChain]] = {}
         self._open_interest_cache: dict[
             tuple[str, date], tuple[float, dict[tuple[Decimal, str], int]]
@@ -735,7 +751,7 @@ class ThetaDataProvider:
     ) -> dict[tuple[Decimal, str], int]:
         cache_key = (symbol, expiration)
         cached = self._open_interest_cache.get(cache_key)
-        if cached is not None and time.monotonic() - cached[0] < NEAR_THE_MONEY_CACHE_TTL_SECONDS:
+        if cached is not None and time.monotonic() - cached[0] < OPEN_INTEREST_CACHE_TTL_SECONDS:
             return cached[1]
 
         body = self._get_json(
