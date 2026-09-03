@@ -1284,6 +1284,137 @@ rastreado — el archivo se guardó, y `GET /api/v1/underlyings` ya devolvía lo
 
 ---
 
+#### Bug 1: SPX y NDX combinan ahora su root mensual con el semanal/0DTE (SPXW/NDXP)
+
+Confirmado en la investigación previa (Fase 2) y re-confirmado aquí antes de tocar código: `GET
+/api/v1/chain/SPX` solo devolvía `expiration: ["2026-09-18"]` — la app solo consultaba el root literal
+del símbolo activo (`SPX`, `NDX`), nunca su contraparte semanal/0DTE (`SPXW`, `NDXP`), dejando el
+Abs. Gamma Level de SPX calculado sin ninguna OI semanal.
+
+**¿Son mutuamente excluyentes los conjuntos de vencimientos, o hay solapamiento?** Hay solapamiento
+real, confirmado en vivo: SPX y SPXW comparten 5 fechas (los próximos 5 mensuales: 2026-09-18, 10-16,
+11-20, 12-18, 2027-01-15); NDX y NDXP comparten 3. **Y en esas fechas compartidas, no son el mismo
+contrato** — confirmado comparando la misma combinación strike+expiración+right entre ambos roots:
+bid/ask y el timestamp de cotización genuinamente difieren (ej. SPX 7250 CALL 09-18: bid 508.1 vs SPXW
+misma combinación: bid 499.1, cotizados a horas ligeramente distintas). Son contratos real e
+independientemente cotizados — probablemente el legado AM-settled (`SPX`) vs. el PM-settled
+(`SPXW`/`NDXP`), una convención real de CBOE para índices de liquidación en efectivo, no un capricho de
+ThetaData. Esto descarta deduplicar por (strike, expiración, right): **hay que combinar sumando ambos,
+nunca colapsar uno sobre el otro** — colapsar habría descartado silenciosamente el open interest real
+de uno de los dos.
+
+**Alcance — solo SPX y NDX, verificado antes de tocar código, no asumido.** Se probaron en vivo
+`SPYW`/`QQQW`/`DIAW`/`IWMW` (equities/ETFs) — no existen como roots de ThetaData (error 500), y sus
+roots base YA devuelven vencimientos diarios/semanales completos por sí solos (SPY: 35 vencimientos
+empezando hoy mismo) — no necesitan combinación. **VIX sí muestra el mismo patrón** (existe un root real
+`VIXW`, con vencimientos más cercanos que el propio root `VIX`) — **reportado, no corregido**, tal como
+pidió el usuario para cualquier símbolo fuera de los dos mencionados explícitamente.
+
+**El arreglo.** Nuevo `_WEEKLY_ROOT_BY_SYMBOL = {"SPX": "SPXW", "NDX": "NDXP"}` y
+`_roots_for_symbol(symbol)` en `backend/adapters/providers/thetadata/provider.py`.
+`_fetch_near_the_money` y `_fetch_open_interest` ahora iteran sobre `_roots_for_symbol(symbol)` en vez
+de consultar un único root, combinando (no deduplicando) las entradas de ambos. La clave de OI pasó de
+`(strike, right)` a `(root, strike, right)` — con solo `(strike, right)`, el mismo strike compartido en
+una fecha solapada habría dejado que un root pisara silenciosamente el OI del otro. `get_option_chain`,
+`get_underlying_snapshot` y `ThetaDataProvider.start()` ahora usan `contract_meta["symbol"]` (el root
+real de cada entrada, confirmado que ThetaData lo devuelve fielmente) en vez del símbolo de búsqueda
+para construir el OCC symbol y las suscripciones del stream — necesario para que dos contratos reales
+distintos en el mismo strike/expiración (uno por root) no colisionen en el mismo `occ_symbol` ni se
+suscriban al root equivocado.
+
+**Hallazgo real, no esperado, encontrado al desplegar el fix en vivo (no solo en tests):** ThetaData
+devuelve HTTP 472 ("no data found"), no un 200 vacío, al consultar un root para una fecha específica
+que ese root simplemente no lista (ej. `symbol=SPX, expiration=2026-09-03` — SPX no tiene ningún
+listado en esa fecha, solo SPXW). El primer despliegue de este fix hizo que el ciclo del scheduler
+**empezara a fallar para SPX y NDX en cada ciclo** (antes funcionaban, aunque con el vencimiento
+equivocado) — el 472 de un solo root abortaba toda la combinación, aunque el otro root sí tuviera datos
+válidos. Se agregó `_get_json_allow_no_data` (trata 472 como respuesta vacía, cualquier otro código de
+error sigue propagándose igual que antes) y se usa en ambos bucles por-root. Confirmado en vivo tras el
+arreglo: `Scheduler cycle finished: 15 succeeded, 0 failed`.
+
+**Impacto en presupuesto de llamadas REST — medido en vivo, no asumido.** Antes: 15 símbolos × 1
+llamada de near-the-money + 15 × 1 de open-interest = 30 llamadas/ciclo en estas dos categorías. Ahora:
+13 símbolos sin cambio + SPX (2+2) + NDX (2+2) = 34 llamadas/ciclo — **+4 llamadas por ciclo de 30s**
+(incluyendo los 472 confirmados en vivo, que sí cuentan contra el presupuesto real de ThetaData aunque
+no traigan datos). El resto del presupuesto (volumen del subyacente: 15/ciclo; daily bars e interest
+rate: cacheados por día, no por ciclo) no cambia. Ciclo completo observado en vivo: ~2-3 segundos,
+igual que antes — bien dentro de la ventana de 30s y del límite de concurrencia de la cuenta (4).
+
+**Abs. Gamma Level de SPX, re-consultado en vivo tras el arreglo:** pasó de **7800 a 7775** (spot
+~$7753-7755 en el momento de cada medición) — más cerca de SpotGamma (7700), pero no dramáticamente:
+de 100 puntos de diferencia a 75. Explicación honesta, no forzada a "ya está arreglado": el chain ahora
+usa el vencimiento 0DTE real (hoy, vía SPXW) en vez del mensual equivocado, pero la metodología de esta
+app sigue siendo "un solo vencimiento, el más cercano" — no agrega across-expiración como SpotGamma
+probablemente sí hace, y el gamma de 0DTE es intrínsecamente volátil (puede moverse en minutos). Esa
+diferencia metodológica (un solo vencimiento vs. agregado multi-vencimiento) es una limitación
+preexistente de la app, no algo que este fix se propuso resolver — el fix corrige *cuál* es el
+vencimiento más cercano, no *cuántos* vencimientos se consideran.
+
+**Volatility Smile — el default ya es correcto, pero el dropdown sigue mostrando un solo vencimiento,
+no varios.** Confirmado en vivo: `GET /api/v1/chain/SPX` (sin expiración) ahora devuelve
+`expiration: ["2026-09-03"]` — hoy, correcto. Pero sigue siendo **una sola fecha**, no una lista — y
+esto no es un efecto residual del bug: es un límite estructural de `_fetch_near_the_money` en modo
+"nearest" (`expiration=None`), que por diseño siempre reduce el resultado a un único vencimiento antes
+de devolverlo, confirmado que esto es así incluso para símbolos normales de un solo root (`GET
+/api/v1/chain/SPY` sin expiración también devuelve una sola fecha). El dropdown del frontend construye
+sus opciones directamente de esa única respuesta (`volatility-smile.tsx`), así que estructuralmente
+nunca podía mostrar más de una opción, combinando roots o no. Reportado tal cual — combinar roots
+corrige el default, pero convertir el dropdown en una lista real de vencimientos necesitaría una
+capacidad nueva (ej. un endpoint que enumere vencimientos) que no se pidió construir aquí.
+
+**Tests:** `TestWeeklyRootCombination` en `tests/test_thetadata_provider.py` — ambos roots consultados
+y combinados sin deduplicar contratos reales distintos, OI sin colisión entre roots en el mismo strike,
+"nearest" considera ambos roots (no solo el root literal), un 472 de un root no aborta la combinación
+(mientras que un error genuino sigue propagándose), y un chequeo de alcance explícito confirmando que
+SPY sigue haciendo exactamente 1 llamada, no 2.
+
+284 tests, suite completa, en verde. `ruff check`: mismos 5 hallazgos preexistentes de siempre + 4
+nuevos, los 4 del mismo patrón `FURB157` (constructor verboso de `Decimal`) ya aceptado como convención
+de estilo en este archivo — ninguno nuevo de otro tipo, confirmado por `git stash`.
+
+---
+
+#### Bug 2: contratos ya vencidos tratados como "vencimiento más cercano" válido
+
+`_fetch_near_the_money`'s selección de "nearest" (`expiration=None`) nunca excluía fechas ya pasadas —
+confirmado en vivo que ThetaData sigue devolviendo un contrato vencido con datos obviamente muertos
+(`bid=0.0`, `implied_vol=6.19` = 619%, última cotización a las 16:15 del día en que venció) por un
+tiempo después de expirar, y el filtro existente solo revisaba que hubiera `"data"`, nunca que la
+expiración no hubiera pasado ya.
+
+**El arreglo — un único punto, cubre los 15 símbolos, no solo los 4 mencionados.** Se agregó el filtro
+directamente dentro de `_fetch_near_the_money` (rama `expiration is None`), el único método compartido
+por `get_option_chain`, `get_underlying_snapshot` y `ThetaDataProvider.start()` — arreglarlo ahí cubre
+automáticamente los 15 símbolos activos, no requiere tocar cada símbolo por separado. Excluye cualquier
+expiración `< hoy` (ET) antes de calcular el mínimo; usa `>=`, no `>`, así que una expiración 0DTE
+genuina (vencimiento hoy mismo) nunca se excluye por error — probado explícitamente. Si, tras excluir
+lo vencido, no queda ninguna entrada (caso degenerado), lanza un error claro en vez de devolver
+silenciosamente un vencimiento vencido.
+
+**Deliberadamente NO toca el camino de expiración explícita** (`expiration is not None`) — un caller
+que pide una fecha específica, aunque sea pasada, sigue recibiendo esa fecha sin filtrar (ej. un futuro
+drill-down histórico) — el bug reportado era específicamente sobre la selección automática de "más
+cercano", no sobre pedir una fecha concreta.
+
+**Hallazgo real, no esperado: este bug bloqueaba activamente el Bug 1 en producción.** Al desplegar el
+fix del Bug 1 (combinar roots) antes de este, el ciclo del scheduler empezó a fallar para SPX y NDX en
+cada ciclo — la selección de "nearest" (aún sin este fix) seguía escogiendo una fecha ya vencida entre
+las entradas combinadas de ambos roots, y esa fecha vencida no tenía datos de open interest reales
+(HTTP 472). Los dos bugs son código separado, en commits separados como pidió el usuario, pero en la
+práctica el Bug 1 no funciona correctamente en producción sin este arreglo también aplicado.
+
+**Tests:** `TestExpiredContractFiltering` — un contrato vencido nunca gana frente a uno futuro real; una
+expiración 0DTE genuina (hoy) no se excluye por error; si todo lo disponible está vencido, lanza un
+error claro en vez de devolver algo vencido; una petición de expiración explícita (incluso pasada) no
+se filtra — confirma que el fix es específico al camino "nearest", no un cambio de comportamiento
+general.
+
+288 tests, suite completa, en verde. `ruff check`: mismos 5 hallazgos preexistentes de siempre + 4
+nuevos, los 4 del mismo patrón `FURB157` (constructor verboso de `Decimal`) ya aceptado como convención
+de estilo en este archivo — ninguno nuevo de otro tipo, confirmado por `git stash`.
+
+---
+
 ## Resumen de mapeo a contratos existentes
 
 | Caso de uso | REST | WebSocket |

@@ -7,6 +7,7 @@ import threading
 import time
 from datetime import date, datetime, timedelta
 from decimal import Decimal
+from typing import ClassVar
 
 import httpx
 import pytest
@@ -30,10 +31,14 @@ WS_URL = "ws://thetaterminal.test/v1/events"
 
 
 def _first_order_entry(
-    strike: str, right: str, expiration: str = "2026-09-18", underlying_price: str = "769.36"
+    strike: str,
+    right: str,
+    expiration: str = "2026-09-18",
+    underlying_price: str = "769.36",
+    root: str = "SPY",
 ) -> dict[str, object]:
     return {
-        "contract": {"symbol": "SPY", "expiration": expiration, "right": right, "strike": float(strike)},
+        "contract": {"symbol": root, "expiration": expiration, "right": right, "strike": float(strike)},
         "data": [
             {
                 "underlying_price": float(underlying_price),
@@ -49,9 +54,11 @@ def _first_order_entry(
     }
 
 
-def _open_interest_entry(strike: str, right: str, oi: int, expiration: str = "2026-09-18") -> dict[str, object]:
+def _open_interest_entry(
+    strike: str, right: str, oi: int, expiration: str = "2026-09-18", root: str = "SPY"
+) -> dict[str, object]:
     return {
-        "contract": {"symbol": "SPY", "expiration": expiration, "right": right, "strike": float(strike)},
+        "contract": {"symbol": root, "expiration": expiration, "right": right, "strike": float(strike)},
         "data": [{"open_interest": oi, "timestamp": "2026-08-31T06:30:00.000"}],
     }
 
@@ -232,6 +239,322 @@ class TestGetOptionChain:
         provider = _provider_with_transport(handler)
         with pytest.raises(RuntimeError, match="403"):
             provider.get_option_chain("SPY")
+
+
+class TestExpiredContractFiltering:
+    """ThetaData's snapshot endpoint keeps returning an already-expired
+    contract's last-known (dead) quote for a while after it expires --
+    confirmed live (2026-09 investigation): a contract dated the
+    previous day still came back with data (bid=0.0, implied_vol=6.19 =
+    619%, last quote timestamped 16:15 the day it expired). Before this
+    fix, `_fetch_near_the_money`'s "nearest expiration" selection
+    (expiration=None) could pick that dead contract as "nearest" since
+    it never excluded already-past dates. Fixture dates below are
+    computed relative to the real clock (not a fixed literal) so these
+    tests stay correct regardless of what day they're run."""
+
+    def test_an_already_expired_contract_is_never_picked_as_nearest(self) -> None:
+        yesterday = (datetime.now(EASTERN_TIME) - timedelta(days=1)).date().isoformat()
+        future = (datetime.now(EASTERN_TIME) + timedelta(days=15)).date().isoformat()
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            if "greeks/first_order" in str(request.url):
+                return httpx.Response(
+                    200,
+                    json={
+                        "response": [
+                            # Dead contract -- expired, but ThetaData
+                            # still returns it with obviously-stale data.
+                            _first_order_entry("770.00", "CALL", expiration=yesterday),
+                            _first_order_entry("769.00", "CALL", expiration=future),
+                        ]
+                    },
+                )
+            if "open_interest" in str(request.url):
+                return httpx.Response(200, json={"response": []})
+            if "interest_rate/history/eod" in str(request.url):
+                return httpx.Response(200, json={"response": [{"rate": 3.64, "created": "2026-08-31"}]})
+            if "stock/history/eod" in str(request.url):
+                return httpx.Response(200, json=_daily_bars_response())
+            raise AssertionError(f"unexpected request: {request.url}")
+
+        provider = _provider_with_transport(handler)
+        chain = provider.get_option_chain("SPY")  # no expiration -> nearest
+
+        assert chain.contracts[0].expiration == date.fromisoformat(future)
+
+    def test_a_genuine_0dte_expiration_is_not_excluded(self) -> None:
+        """The filter must exclude anything before today, not today
+        itself -- a real same-day expiration must still win."""
+        today = datetime.now(EASTERN_TIME).date().isoformat()
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            if "greeks/first_order" in str(request.url):
+                return httpx.Response(
+                    200,
+                    json={"response": [_first_order_entry("769.00", "CALL", expiration=today)]},
+                )
+            if "open_interest" in str(request.url):
+                return httpx.Response(200, json={"response": []})
+            if "interest_rate/history/eod" in str(request.url):
+                return httpx.Response(200, json={"response": [{"rate": 3.64, "created": "2026-08-31"}]})
+            if "stock/history/eod" in str(request.url):
+                return httpx.Response(200, json=_daily_bars_response())
+            raise AssertionError(f"unexpected request: {request.url}")
+
+        provider = _provider_with_transport(handler)
+        chain = provider.get_option_chain("SPY")
+
+        assert chain.contracts[0].expiration == date.fromisoformat(today)
+
+    def test_raises_when_every_available_expiration_is_already_expired(self) -> None:
+        yesterday = (datetime.now(EASTERN_TIME) - timedelta(days=1)).date().isoformat()
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            if "greeks/first_order" in str(request.url):
+                return httpx.Response(
+                    200,
+                    json={"response": [_first_order_entry("769.00", "CALL", expiration=yesterday)]},
+                )
+            raise AssertionError(f"unexpected request: {request.url}")
+
+        provider = _provider_with_transport(handler)
+        with pytest.raises(RuntimeError, match="unexpired"):
+            provider.get_option_chain("SPY")
+
+    def test_an_explicit_expiration_request_is_not_filtered(self) -> None:
+        """Scope check -- this fix is only about the "nearest" (no
+        expiration given) discovery path. A caller that explicitly asks
+        for a specific (even past) date is untouched -- that's a
+        different, deliberately out-of-scope question (e.g. a
+        historical drill-down), not what was reported or asked here."""
+        yesterday_date = datetime.now(EASTERN_TIME).date() - timedelta(days=1)
+        yesterday = yesterday_date.isoformat()
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            if "greeks/first_order" in str(request.url):
+                return httpx.Response(
+                    200,
+                    json={"response": [_first_order_entry("769.00", "CALL", expiration=yesterday)]},
+                )
+            if "open_interest" in str(request.url):
+                return httpx.Response(200, json={"response": []})
+            if "interest_rate/history/eod" in str(request.url):
+                return httpx.Response(200, json={"response": [{"rate": 3.64, "created": "2026-08-31"}]})
+            if "stock/history/eod" in str(request.url):
+                return httpx.Response(200, json=_daily_bars_response())
+            raise AssertionError(f"unexpected request: {request.url}")
+
+        provider = _provider_with_transport(handler)
+        chain = provider.get_option_chain("SPY", expiration=yesterday_date)
+
+        assert chain.contracts[0].expiration == yesterday_date
+
+
+class TestWeeklyRootCombination:
+    """SPX/NDX split their real open interest across two independently-
+    traded roots (SPX/SPXW, NDX/NDXP) -- confirmed live (2026-09
+    investigation) that even on a shared/overlapping expiration, the
+    same strike/right's bid/ask genuinely differs between the two roots,
+    so they must both be queried and combined, never deduplicated by
+    (strike, expiration, right) alone. See _roots_for_symbol's own
+    docstring in provider.py for the full investigation writeup."""
+
+    # Fixture data, keyed by (root, expiration) -- SPX's own root only
+    # lists the 09-18 monthly; SPXW additionally lists a genuinely
+    # nearer 09-03 expiration, and also lists 09-18 itself (real,
+    # confirmed overlap -- see this class's own docstring) with
+    # different bid/ask than SPX's 09-18 entry for the same strike.
+    _GREEKS_BY_ROOT_EXPIRATION: ClassVar[dict[tuple[str, str], list[dict[str, object]]]] = {
+        ("SPX", "2026-09-18"): [_first_order_entry("7700", "CALL", expiration="2026-09-18", root="SPX")],
+        ("SPXW", "2026-09-18"): [
+            {
+                **_first_order_entry("7700", "CALL", expiration="2026-09-18", root="SPXW"),
+                "data": [
+                    {
+                        "underlying_price": 7700.0,
+                        "delta": 0.55,
+                        "implied_vol": 0.15,
+                        "theta": -3.1,
+                        "vega": 9.0,
+                        "bid": 495.0,
+                        "ask": 505.0,
+                        "timestamp": "2026-09-03T13:46:42.253",
+                    }
+                ],
+            },
+        ],
+        ("SPXW", "2026-09-03"): [
+            _first_order_entry(
+                "7710", "PUT", expiration="2026-09-03", underlying_price="7700.0", root="SPXW"
+            ),
+        ],
+    }
+    _OI_BY_ROOT_EXPIRATION: ClassVar[dict[tuple[str, str], list[dict[str, object]]]] = {
+        ("SPX", "2026-09-18"): [_open_interest_entry("7700", "CALL", 700, root="SPX")],
+        ("SPXW", "2026-09-18"): [_open_interest_entry("7700", "CALL", 250, root="SPXW")],
+        ("SPXW", "2026-09-03"): [_open_interest_entry("7710", "PUT", 90, root="SPXW")],
+    }
+
+    def _spx_handler(self, request: httpx.Request) -> httpx.Response:
+        params = request.url.params
+        symbol = params.get("symbol")
+        expiration_param = params.get("expiration")
+        path = request.url.path
+        if path == "/v3/option/snapshot/greeks/first_order":
+            if expiration_param == "*":
+                # ThetaData's own "all expirations" mode -- return every
+                # fixture entry for this root, across every expiration.
+                entries = [
+                    entry
+                    for (root, _exp), rows in self._GREEKS_BY_ROOT_EXPIRATION.items()
+                    if root == symbol
+                    for entry in rows
+                ]
+            else:
+                entries = self._GREEKS_BY_ROOT_EXPIRATION.get((symbol, expiration_param), [])
+            return httpx.Response(200, json={"response": entries})
+        if path == "/v3/option/snapshot/open_interest":
+            entries = self._OI_BY_ROOT_EXPIRATION.get((symbol, expiration_param), [])
+            return httpx.Response(200, json={"response": entries})
+        if path == "/v3/interest_rate/history/eod":
+            return httpx.Response(200, json={"response": [{"rate": 3.64, "created": "2026-08-31"}]})
+        if path == "/v3/index/history/eod":
+            return httpx.Response(200, json=_daily_bars_response(base_close=7700.0, daily_range=50.0))
+        raise AssertionError(f"unexpected request: {request.url}")
+
+    def test_get_option_chain_queries_both_roots_and_combines_contracts(self) -> None:
+        provider = _provider_with_transport(self._spx_handler)
+
+        chain = provider.get_option_chain("SPX", expiration=date(2026, 9, 18))
+
+        assert len(chain.contracts) == 2
+        occ_symbols = {c.occ_symbol for c in chain.contracts}
+        # Distinct OCC symbols per root -- proves the two same-strike
+        # contracts were kept separate, not collapsed into one.
+        assert _build_occ_symbol("SPX", date(2026, 9, 18), ContractType.CALL, Decimal("7700")) in occ_symbols
+        assert _build_occ_symbol("SPXW", date(2026, 9, 18), ContractType.CALL, Decimal("7700")) in occ_symbols
+
+    def test_open_interest_does_not_collide_between_roots_on_the_same_strike(self) -> None:
+        provider = _provider_with_transport(self._spx_handler)
+
+        chain = provider.get_option_chain("SPX", expiration=date(2026, 9, 18))
+
+        spx_call = next(
+            c
+            for c in chain.contracts
+            if c.occ_symbol == _build_occ_symbol("SPX", date(2026, 9, 18), ContractType.CALL, Decimal("7700"))
+        )
+        spxw_call = next(
+            c
+            for c in chain.contracts
+            if c.occ_symbol == _build_occ_symbol("SPXW", date(2026, 9, 18), ContractType.CALL, Decimal("7700"))
+        )
+        # Each root's own OI survives intact -- a (strike, right)-only key
+        # would have let one silently overwrite the other.
+        assert spx_call.open_interest == 700
+        assert spxw_call.open_interest == 250
+        # And each root's own bid/ask survives too -- proves they weren't
+        # merged/averaged into a single contract.
+        assert spx_call.bid == Decimal("1.08")
+        assert spxw_call.bid == Decimal("495.0")
+
+    def test_nearest_expiration_considers_both_roots_not_just_the_bare_root(self) -> None:
+        # SPX's own root here only has the 09-18 monthly; SPXW has a
+        # genuinely nearer 09-03 expiration -- the combined "nearest"
+        # must be 09-03, not 09-18, exactly the live-confirmed bug.
+        provider = _provider_with_transport(self._spx_handler)
+
+        chain = provider.get_option_chain("SPX")  # no expiration -> nearest
+
+        assert chain.contracts[0].expiration == date(2026, 9, 3)
+        assert chain.contracts[0].occ_symbol.startswith("SPXW")
+
+    def test_one_roots_472_for_a_date_it_lacks_does_not_abort_the_combined_fetch(self) -> None:
+        """Confirmed live: querying a specific expiration for a root that
+        simply doesn't list that date returns HTTP 472 ("no data found"),
+        not an empty 200 -- e.g. SPX's own root has no 2026-09-03 listing
+        at all, only SPXW does. Reproduced the real live failure this
+        caused (get_option_chain("SPX") raising RuntimeError from the
+        SPX-root open-interest call alone, even though SPXW's own
+        open-interest call for that same date succeeded) before adding
+        _get_json_allow_no_data to fix it."""
+        expiration = date(2026, 9, 3)
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            params = request.url.params
+            symbol = params.get("symbol")
+            path = request.url.path
+            if path == "/v3/option/snapshot/greeks/first_order":
+                if symbol == "SPX":
+                    return httpx.Response(472, text="No data found for your request")
+                return httpx.Response(
+                    200,
+                    json={
+                        "response": [
+                            _first_order_entry(
+                                "7700", "CALL", expiration="2026-09-03", root="SPXW"
+                            )
+                        ]
+                    },
+                )
+            if path == "/v3/option/snapshot/open_interest":
+                if symbol == "SPX":
+                    return httpx.Response(472, text="No data found for your request")
+                return httpx.Response(
+                    200, json={"response": [_open_interest_entry("7700", "CALL", 250, root="SPXW")]}
+                )
+            if path == "/v3/interest_rate/history/eod":
+                return httpx.Response(200, json={"response": [{"rate": 3.64, "created": "2026-08-31"}]})
+            if path == "/v3/index/history/eod":
+                return httpx.Response(200, json=_daily_bars_response(base_close=7700.0, daily_range=50.0))
+            raise AssertionError(f"unexpected request: {request.url}")
+
+        provider = _provider_with_transport(handler)
+
+        chain = provider.get_option_chain("SPX", expiration=expiration)
+
+        assert len(chain.contracts) == 1
+        assert chain.contracts[0].occ_symbol.startswith("SPXW")
+        assert chain.contracts[0].open_interest == 250
+
+    def test_a_genuine_error_from_one_root_still_propagates(self) -> None:
+        """_get_json_allow_no_data only swallows 472 -- a real failure
+        (auth, 5xx, ...) on either root must still raise, not be silently
+        treated as "that root has nothing"."""
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            if "greeks/first_order" in str(request.url):
+                return httpx.Response(500, text="internal server error")
+            raise AssertionError(f"unexpected request: {request.url}")
+
+        provider = _provider_with_transport(handler)
+
+        with pytest.raises(RuntimeError, match="500"):
+            provider.get_option_chain("SPX", expiration=date(2026, 9, 18))
+
+    def test_equity_symbols_are_not_combined_with_a_second_root(self) -> None:
+        """Scope check -- SPY (and every other non-SPX/NDX symbol) must
+        keep making exactly one greeks/first_order request, not two."""
+        request_count = 0
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            nonlocal request_count
+            if "greeks/first_order" in str(request.url):
+                request_count += 1
+                return httpx.Response(200, json={"response": [_first_order_entry("769.00", "CALL")]})
+            if "open_interest" in str(request.url):
+                return httpx.Response(200, json={"response": []})
+            if "interest_rate/history/eod" in str(request.url):
+                return httpx.Response(200, json={"response": [{"rate": 3.64, "created": "2026-08-31"}]})
+            if "stock/history/eod" in str(request.url):
+                return httpx.Response(200, json=_daily_bars_response())
+            raise AssertionError(f"unexpected request: {request.url}")
+
+        provider = _provider_with_transport(handler)
+        provider.get_option_chain("SPY")
+
+        assert request_count == 1
 
 
 class TestGetUnderlyingSnapshot:

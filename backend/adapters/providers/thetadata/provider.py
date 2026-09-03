@@ -167,6 +167,37 @@ NEAR_THE_MONEY_CACHE_TTL_SECONDS = 10.0
 # tight bound chosen to just barely avoid staleness.
 OPEN_INTEREST_CACHE_TTL_SECONDS = 20 * 60.0
 
+# ThetaData splits certain broad-based, cash-settled index options into
+# two independently-quoted root symbols: the legacy AM-settled root
+# (e.g. "SPX") and the PM-settled weekly/0DTE root (e.g. "SPXW") — both
+# list real, distinct, separately-traded contracts, confirmed live
+# (2026-09 investigation): even on a shared/overlapping expiration
+# (e.g. both roots list 2026-09-18), the same strike/right's bid/ask
+# and quote timestamp genuinely differ between the two roots — they are
+# not aliases of one underlying order book, so combining them must
+# never deduplicate by (strike, expiration, right) alone, only add both
+# roots' contracts side by side. Before this, `_fetch_near_the_money`
+# only ever queried the bare root, so it could never see anything
+# nearer than the next AM-settled monthly (confirmed: SPX's own root
+# lists only 2026-09-18, 10-16, 11-20...; SPXW lists 2026-09-03, 09-04,
+# 09-08... same day). Confirmed this is genuinely a broad-index-option
+# thing, not something every symbol needs: SPY/QQQ/IWM/DIA (equity/ETF
+# options) already return same-day expirations under their own single
+# root, and "SPYW"/"QQQW"/"DIAW" aren't valid ThetaData roots at all.
+# VIX shows the same split (a real "VIXW" root exists, with nearer
+# expirations than VIX's own root) but is deliberately NOT included
+# here — reported separately, not fixed without asking, since this
+# constant is scoped to exactly what was confirmed and requested.
+_WEEKLY_ROOT_BY_SYMBOL: dict[str, str] = {
+    "SPX": "SPXW",
+    "NDX": "NDXP",
+}
+
+
+def _roots_for_symbol(symbol: str) -> tuple[str, ...]:
+    weekly_root = _WEEKLY_ROOT_BY_SYMBOL.get(symbol)
+    return (symbol, weekly_root) if weekly_root else (symbol,)
+
 
 def _build_occ_symbol(
     root: str, expiration: date, contract_type: ContractType, strike: Decimal
@@ -871,15 +902,23 @@ class ThetaDataProvider:
                 continue
             for entry in chain.entries:
                 contract_meta = entry["contract"]
+                # The actual root this entry came from — for SPX/NDX
+                # (see _roots_for_symbol) this can be the weekly root
+                # (e.g. "SPXW"), not the outer `symbol`. Registering with
+                # the wrong root would subscribe to a different contract
+                # entirely on an overlapping expiration (both roots list
+                # real, independent contracts there — see
+                # _roots_for_symbol's docstring), not just mislabel one.
+                root = contract_meta["symbol"]
                 right = contract_meta["right"]
                 contract_type = ContractType.CALL if right == "CALL" else ContractType.PUT
                 strike = Decimal(str(contract_meta["strike"]))
-                occ_symbol = _build_occ_symbol(symbol, chain.expiration, contract_type, strike)
+                occ_symbol = _build_occ_symbol(root, chain.expiration, contract_type, strike)
                 self._stream.register_contract(
-                    occ_symbol, symbol, chain.expiration, contract_type, strike
+                    occ_symbol, root, chain.expiration, contract_type, strike
                 )
                 self._quote_stream.register_contract(
-                    occ_symbol, symbol, chain.expiration, contract_type, strike
+                    occ_symbol, root, chain.expiration, contract_type, strike
                 )
         self._stream.start()
         self._quote_stream.start()
@@ -898,6 +937,31 @@ class ThetaDataProvider:
         # without touching each of them individually.
         with self._request_semaphore:
             response = self._client.get(path, params=params)
+        if response.status_code != 200:
+            raise RuntimeError(
+                f"ThetaData request failed: GET {path} {params} -> "
+                f"{response.status_code} {response.text}"
+            )
+        return response.json()
+
+    def _get_json_allow_no_data(self, path: str, **params: object) -> dict[str, Any]:
+        """Same as `_get_json`, except ThetaData's 472 ("no data found for
+        your request") is treated as an empty response instead of a raised
+        error. Confirmed live (2026-09 investigation): querying a SPECIFIC
+        expiration for a root that simply doesn't list that date (e.g.
+        `symbol=SPX, expiration=2026-09-03` — SPX's own root only has
+        monthlies) returns 472, not an empty 200. For a single-root symbol
+        this never matters (the caller only ever asks a root about an
+        expiration it just confirmed that same root has), but for
+        `_roots_for_symbol`'s two-root symbols it's an expected, normal
+        outcome for one of the two roots on any given expiration — not a
+        real failure — so it must not abort the whole combined fetch the
+        way `_get_json` correctly does for a genuine error (auth failure,
+        5xx, etc., which still raise here exactly as before)."""
+        with self._request_semaphore:
+            response = self._client.get(path, params=params)
+        if response.status_code == 472:
+            return {"response": []}
         if response.status_code != 200:
             raise RuntimeError(
                 f"ThetaData request failed: GET {path} {params} -> "
@@ -968,23 +1032,53 @@ class ThetaDataProvider:
             return cached[1]
 
         expiration_param = expiration.strftime("%Y-%m-%d") if expiration else "*"
-        body = self._get_json(
-            "/v3/option/snapshot/greeks/first_order",
-            symbol=symbol,
-            expiration=expiration_param,
-            strike_range=NEAR_THE_MONEY_OVERFETCH_STRIKE_RANGE,
-            format="json",
-        )
-        entries = [entry for entry in body.get("response", []) if entry.get("data")]
+        entries: list[dict[str, Any]] = []
+        for root in _roots_for_symbol(symbol):
+            # _get_json_allow_no_data, not _get_json: for a two-root
+            # symbol (see _roots_for_symbol) it's normal for one root to
+            # simply not list a given expiration the other root does —
+            # confirmed live, ThetaData answers that with a 472, not an
+            # empty 200 — and that must not abort the whole combined
+            # fetch just because one of the two roots has nothing here.
+            body = self._get_json_allow_no_data(
+                "/v3/option/snapshot/greeks/first_order",
+                symbol=root,
+                expiration=expiration_param,
+                strike_range=NEAR_THE_MONEY_OVERFETCH_STRIKE_RANGE,
+                format="json",
+            )
+            entries.extend(entry for entry in body.get("response", []) if entry.get("data"))
         if not entries:
             raise RuntimeError(f"ThetaData returned no near-the-money contracts for {symbol}")
         if expiration is not None:
             result = _NearTheMoneyChain(expiration, self._filter_near_the_money(symbol, entries))
         else:
-            nearest = min(date.fromisoformat(entry["contract"]["expiration"]) for entry in entries)
-            nearest_entries = [
+            # ThetaData's snapshot endpoint keeps returning an already-
+            # expired contract's last-known quote for a while after it
+            # expires (confirmed live, 2026-09: SPY's 2026-09-02 —
+            # yesterday relative to that check — still came back with
+            # data: bid=0.0, implied_vol=6.19 (619%), the last quote
+            # timestamped 16:15 the day it expired). Never filtered
+            # before, so `min()` below could pick a dead contract as
+            # "nearest" — this excludes anything before today first, and
+            # keeps today itself (>=, not >) so a genuine 0DTE expiration
+            # is never wrongly excluded.
+            today = datetime.now(EASTERN_TIME).date()
+            unexpired_entries = [
                 entry
                 for entry in entries
+                if date.fromisoformat(entry["contract"]["expiration"]) >= today
+            ]
+            if not unexpired_entries:
+                raise RuntimeError(
+                    f"ThetaData returned no unexpired near-the-money contracts for {symbol}"
+                )
+            nearest = min(
+                date.fromisoformat(entry["contract"]["expiration"]) for entry in unexpired_entries
+            )
+            nearest_entries = [
+                entry
+                for entry in unexpired_entries
                 if date.fromisoformat(entry["contract"]["expiration"]) == nearest
             ]
             result = _NearTheMoneyChain(nearest, self._filter_near_the_money(symbol, nearest_entries))
@@ -994,32 +1088,50 @@ class ThetaDataProvider:
 
     def _fetch_open_interest(
         self, symbol: str, expiration: date
-    ) -> dict[tuple[Decimal, str], int]:
+    ) -> dict[tuple[str, Decimal, str], int]:
+        # Keyed by (root, strike, right), not just (strike, right) — for
+        # symbols with a weekly root (see _roots_for_symbol), the same
+        # strike/right can legitimately exist under both roots as two
+        # separate contracts with independent open interest on a shared
+        # expiration; a (strike, right)-only key would silently let one
+        # root's OI overwrite the other's instead of keeping both.
         cache_key = (symbol, expiration)
         cached = self._open_interest_cache.get(cache_key)
         if cached is not None and time.monotonic() - cached[0] < OPEN_INTEREST_CACHE_TTL_SECONDS:
             return cached[1]
 
-        body = self._get_json(
-            "/v3/option/snapshot/open_interest",
-            symbol=symbol,
-            expiration=expiration.strftime("%Y-%m-%d"),
-            # Same over-fetch width as _fetch_near_the_money — every
-            # contract that survives that method's price-width filter
-            # must also have real open-interest data available here,
-            # not a silent 0 fallback for strikes beyond the old narrow
-            # range.
-            strike_range=NEAR_THE_MONEY_OVERFETCH_STRIKE_RANGE,
-            format="json",
-        )
-        result: dict[tuple[Decimal, str], int] = {}
-        for entry in body.get("response", []):
-            data_points = entry.get("data") or []
-            if not data_points:
-                continue
-            contract_meta = entry["contract"]
-            key = (Decimal(str(contract_meta["strike"])), contract_meta["right"])
-            result[key] = int(data_points[0]["open_interest"])
+        result: dict[tuple[str, Decimal, str], int] = {}
+        for root in _roots_for_symbol(symbol):
+            # _get_json_allow_no_data, not _get_json: confirmed live this
+            # returns 472 (not an empty 200) when a root has nothing at
+            # this specific expiration — expected for a two-root symbol
+            # whenever the resolved expiration only exists on the other
+            # root (e.g. SPX itself has no 2026-09-03 listing at all, only
+            # SPXW does), not a real failure. See the same reasoning in
+            # _fetch_near_the_money above.
+            body = self._get_json_allow_no_data(
+                "/v3/option/snapshot/open_interest",
+                symbol=root,
+                expiration=expiration.strftime("%Y-%m-%d"),
+                # Same over-fetch width as _fetch_near_the_money — every
+                # contract that survives that method's price-width filter
+                # must also have real open-interest data available here,
+                # not a silent 0 fallback for strikes beyond the old narrow
+                # range.
+                strike_range=NEAR_THE_MONEY_OVERFETCH_STRIKE_RANGE,
+                format="json",
+            )
+            for entry in body.get("response", []):
+                data_points = entry.get("data") or []
+                if not data_points:
+                    continue
+                contract_meta = entry["contract"]
+                key = (
+                    contract_meta["symbol"],
+                    Decimal(str(contract_meta["strike"])),
+                    contract_meta["right"],
+                )
+                result[key] = int(data_points[0]["open_interest"])
 
         self._open_interest_cache[cache_key] = (time.monotonic(), result)
         return result
@@ -1078,6 +1190,14 @@ class ThetaDataProvider:
         for entry in chain.entries:
             contract_meta = entry["contract"]
             data = entry["data"][0]
+            # The actual root this entry came from — for SPX/NDX this can
+            # be the weekly root (e.g. "SPXW"), which lists real,
+            # independently-traded contracts, not aliases of the bare
+            # root's own (see _roots_for_symbol's docstring). Used for the
+            # OCC symbol and the open-interest lookup so an overlapping
+            # expiration's two genuinely different contracts at the same
+            # strike/right don't collide into one.
+            root = contract_meta["symbol"]
             right = contract_meta["right"]
             contract_type = ContractType.CALL if right == "CALL" else ContractType.PUT
             strike = Decimal(str(contract_meta["strike"]))
@@ -1091,8 +1211,8 @@ class ThetaDataProvider:
             vega = Decimal(str(data["vega"]))
             bsm = calculate_bsm_greeks(underlying_price, strike, rate, iv, time_to_expiration)
 
-            occ_symbol = _build_occ_symbol(symbol, chain.expiration, contract_type, strike)
-            open_interest = open_interest_by_key.get((strike, right), 0)
+            occ_symbol = _build_occ_symbol(root, chain.expiration, contract_type, strike)
+            open_interest = open_interest_by_key.get((root, strike, right), 0)
             volume = self._stream.cumulative_volume(occ_symbol)
             as_of = _parse_et_timestamp(data["timestamp"])
             latest_as_of = max(latest_as_of, as_of)
@@ -1149,7 +1269,11 @@ class ThetaDataProvider:
             as_of = _parse_et_timestamp(data["timestamp"])
             ivs.append(Decimal(str(data["implied_vol"])))
             contract_meta = entry["contract"]
-            key = (Decimal(str(contract_meta["strike"])), contract_meta["right"])
+            key = (
+                contract_meta["symbol"],
+                Decimal(str(contract_meta["strike"])),
+                contract_meta["right"],
+            )
             oi = open_interest_by_key.get(key, 0)
             if contract_meta["right"] == "CALL":
                 call_oi += oi
