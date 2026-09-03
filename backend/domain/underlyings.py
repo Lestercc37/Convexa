@@ -8,6 +8,7 @@ ACTIVE_UNDERLYINGS: tuple[Underlying, ...] = (
     Underlying("IWM", UnderlyingKind.EQUITY, True),
     Underlying("SPX", UnderlyingKind.INDEX, True),
     Underlying("VIX", UnderlyingKind.INDEX, True),
+    Underlying("NDX", UnderlyingKind.INDEX, True),
     Underlying("TSLA", UnderlyingKind.EQUITY, True),
     Underlying("NVDA", UnderlyingKind.EQUITY, True),
     Underlying("META", UnderlyingKind.EQUITY, True),

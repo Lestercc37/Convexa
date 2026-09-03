@@ -64,12 +64,12 @@ def _scheduler_with_stub(
 
 
 @pytest.mark.asyncio
-async def test_cycle_processes_all_11_active_symbols() -> None:
+async def test_cycle_processes_every_active_symbol() -> None:
     scheduler, stub = _scheduler_with_stub()
 
     await scheduler._run_cycle()
 
-    assert len(ACTIVE_SYMBOLS) == 11
+    assert len(ACTIVE_SYMBOLS) == len(ACTIVE_UNDERLYINGS)
     # Order is no longer guaranteed — symbols are dispatched concurrently
     # (asyncio.gather), not one after another — so this checks the same
     # set of symbols was processed, not that they arrived in list order.
@@ -213,7 +213,7 @@ def _real_refresh_use_case_with_transport(handler) -> RefreshUnderlyingSnapshotU
 
 @pytest.mark.asyncio
 async def test_semaphore_still_caps_real_rest_concurrency_under_parallel_dispatch() -> None:
-    # The scheduler now fires all 11 symbols at once — this proves the
+    # The scheduler now fires every active symbol at once — this proves the
     # real ThetaDataProvider semaphore (PR #86), not the scheduler, is
     # what keeps concurrent REST calls at the documented account cap,
     # exactly as intended: the scheduler no longer needs to know about
