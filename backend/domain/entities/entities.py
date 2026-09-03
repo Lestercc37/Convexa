@@ -603,6 +603,23 @@ class LatestQuote:
 
 
 @dataclass(frozen=True, slots=True)
+class UnderlyingTradeEvent:
+    """One raw trade tick from a provider's live Stock Trade Stream — the
+    underlying's own price (e.g. SPY the equity), not an option contract's
+    (see `FlowEvent`/`QuoteEvent` for those, both of which require an
+    `occ_symbol` a bare stock tick doesn't have). Feeds
+    `StreamUnderlyingPriceUseCase`, which persists it as `MarketPrice` —
+    the same entity the REST scheduler already writes, additively, never
+    replacing it.
+    """
+
+    symbol: str
+    as_of: datetime
+    price: Decimal
+    size: int
+
+
+@dataclass(frozen=True, slots=True)
 class OptionSnapshot:
     contract: OptionContract
     greeks: OptionGreeks

@@ -13,6 +13,7 @@ from backend.domain.entities import (
     OptionChain,
     OptionContract,
     QuoteEvent,
+    UnderlyingTradeEvent,
     utc_now,
 )
 
@@ -73,6 +74,10 @@ class MockDataProvider:
             yield
 
     async def stream_quotes(self, underlying: str) -> AsyncIterator[QuoteEvent]:
+        if False:
+            yield
+
+    async def stream_underlying_trades(self, underlying: str) -> AsyncIterator[UnderlyingTradeEvent]:
         if False:
             yield
 

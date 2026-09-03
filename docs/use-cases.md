@@ -727,6 +727,143 @@ existentes que verificaban el orden exacto de símbolos procesados (`stub.calls 
 ajustaron a comparación por conjunto (`sorted(...) == sorted(...)`) — el orden ya no está garantizado
 bajo despacho concurrente, un cambio de comportamiento esperado y correcto, no una regresión.
 
+#### Precio del subyacente por streaming (Stock Trade Stream) — aditivo al scheduler REST, en borrador
+
+Reemplaza (en el sentido de "complementa, sin quitar nada") el único mecanismo que hoy alimenta el
+precio del chart de velas — el sondeo REST del scheduler cada 30s — con el Trade Stream del subyacente
+de ThetaData en tiempo real, siguiendo exactamente la misma arquitectura ya construida para Whale
+Alerts (PR #80): un stream WebSocket propio en el adaptador, un caso de uso de dominio que lo consume,
+y un manager en `backend/core/` que corre una tarea por símbolo durante la vida del proceso.
+
+**⚠️ El plan Stocks de ThetaData (necesario para este stream) no estaba activo al momento de este PR
+— se activa en los próximos días.** Este PR se entrega en borrador, sin verificación contra el stream
+real. Ver el desglose explícito de qué quedó verificado vs. qué no, al final de esta sección.
+
+**1. Arquitectura reutilizada de Whale Alerts, confirmada antes de escribir código — no un patrón
+nuevo:** `ThetaTradeStream`/`ThetaQuoteStream` (conexión WebSocket persistente, heartbeat STATUS,
+backoff exponencial 2s→60s, payload de suscripción, parseo de mensajes) → `StreamWhaleAlertsUseCase`
+(caso de uso de dominio que consume el stream vía el puerto `IDataProvider`, nunca un adaptador
+concreto) → `WhaleAlertsStreamManager` (una tarea de `asyncio` por símbolo activo, `try/except
+asyncio.CancelledError: raise / except Exception: logger.exception(...)` por tarea) → cableado en
+`backend/main.py`'s lifespan, con la misma bandera `enable_scheduler` que ya gatea el scheduler REST
+(para que un `TestClient(app)` de pruebas nunca arranque tareas de fondo reales). El nuevo consumidor
+sigue esta misma cadena exactamente, con nombres análogos: `ThetaUnderlyingTradeStream` →
+`StreamUnderlyingPriceUseCase` → `UnderlyingPriceStreamManager`.
+
+**2. Formato de mensajes citado de la documentación pública de ThetaData, no asumido**
+([Trade Stream | ThetaData v3](https://docs.thetadata.us/Streaming/US-Stocks/Trade-Stream.html),
+consultada 2026-09). Payload de suscripción:
+```json
+{"msg_type": "STREAM", "sec_type": "STOCK", "req_type": "TRADE", "add": true, "id": 0, "contract": {"root": "AAPL"}}
+```
+Mucho más simple que el de opciones (`ThetaTradeStream`/`ThetaQuoteStream`) — el "contract" de una
+acción es solo su símbolo raíz, sin expiración/strike/right. Mensaje de evento (ejemplo real de la
+propia documentación, usado tal cual como fixture de test):
+```json
+{"header": {"type": "TRADE", "status": "CONNECTED"},
+ "contract": {"security_type": "STOCK", "root": "AAPL"},
+ "trade": {"ms_of_day": 38437607, "sequence": 12150295, "size": 500, "condition": 0, "price": 184.5099, "exchange": 57, "date": 20240503}}
+```
+Se descartó deliberadamente el "Full Trade Stream" (`msg_type: "STREAM_BULK"`) — trae **todos** los
+símbolos del mercado a la vez, el equivalente stock del patrón que `ThetaTradeStream` ya evita para
+opciones (suscripción explícita por símbolo, no un firehose).
+
+**Corrección real encontrada durante la implementación, no solo en teoría — `sec_type: "STOCK"` no
+sirve para todos los símbolos activos.** El diseño inicial asumía un único `sec_type` para todo el
+universo de símbolos. Investigando antes de dar el PR por terminado, se confirmó que ThetaData tiene
+un **stream de índices genuinamente separado**
+([Price Stream | US-Indices](https://docs.thetadata.us/Streaming/US-Indices/Price-Stream.html),
+consultada 2026-09), con su propia suscripción ("Index Standard", distinta del plan Stocks) — SPX y
+VIX (`UnderlyingKind.INDEX`) necesitan `sec_type: "INDEX"`, no `"STOCK"`. La forma del mensaje de
+`trade` es idéntica entre ambos (mismos campos: `ms_of_day`, `sequence`, `size`, `condition`, `price`,
+`exchange`, `date` — confirmado comparando ambas páginas de documentación palabra por palabra), con
+una sola diferencia real: para índices, `size` siempre se reporta en `0` (la documentación de
+ThetaData lo dice explícitamente: "only the price field is updated"). `ThetaUnderlyingTradeStream`
+elige el `sec_type` correcto por símbolo según su `UnderlyingKind` — `register_symbol(symbol, kind)`,
+no solo `register_symbol(symbol)` como en el primer borrador.
+
+Para ES (`UnderlyingKind.FUTURE`) no se encontró ninguna documentación de un stream de futuros —
+mismo precedente ya establecido para `get_daily_bars` (que tampoco tiene un endpoint REST de futuros
+que funcione) — así que `ThetaDataProvider.start()` lo excluye explícitamente de este stream en vez
+de adivinar un `sec_type` sin evidencia.
+
+**3. `ThetaUnderlyingTradeStream` — más simple que `ThetaTradeStream` en dos aspectos deliberados:**
+sin reconciliación (no existe en este proyecto un endpoint REST de OHLC intradía para acciones contra
+el cual reconciliar — `get_daily_bars` solo trae velas *diarias*), y se suscribe directamente por
+símbolo del subyacente (`register_symbol`), no por contrato de opción descubierto. Misma conexión
+WebSocket separada de `ThetaTradeStream`/`ThetaQuoteStream` (mismo razonamiento ya documentado en
+esas dos: no tocar sus conexiones ya endurecidas, a costa de una conexión liviana más a un Theta
+Terminal local, no a un servidor remoto con límite de tasa).
+
+**4. Nueva entidad `UnderlyingTradeEvent`** (symbol, as_of, price, size) — ni `FlowEvent` ni
+`QuoteEvent` sirven, ambas requieren `occ_symbol` (concepto de opciones que un tick de acción no
+tiene) y `FlowEvent` no carga un precio crudo, solo `premium` derivado (precio × tamaño × 100).
+
+**5. Aditivo, no reemplazo — confirmado explícitamente antes de implementar.** El diseño inicial que
+se consideró (que `RefreshUnderlyingSnapshotUseCase` dejara de llamar a `get_underlying_snapshot()` y
+derivara el `MarketSnapshot` directamente del `OptionChain` ya obtenido) se descartó por la misma
+razón que ya descartó un diseño similar en la sección de deduplicación de llamadas REST arriba:
+`MockDataProvider.get_underlying_snapshot()` devuelve valores de fixture completamente
+independientes, no derivados de su propia cadena. `StreamUnderlyingPriceUseCase` en cambio solo
+persiste `MarketPrice` — la misma entidad que el scheduler REST ya escribe — de forma **más
+frecuente**, sin tocar el scheduler ni ningún caso de uso de Gamma/GEX/OI en absoluto.
+
+**Sin escritura ilimitada:** `IStorage.save_market_price()` acumula un historial en memoria sin
+límite de tamaño (`InMemoryStorage._price_history`, confirmado leyendo el código) — persistir cada
+operación cruda de un stream de una acción líquida (potencialmente varias por segundo) crecería ese
+historial sin control. `StreamUnderlyingPriceUseCase` aplica un debounce de
+`MIN_WRITE_INTERVAL_SECONDS = 1.0` por símbolo — sigue siendo ~30x más fresco que los 30s del
+scheduler, manteniendo el crecimiento del historial en un múltiplo deliberado y acotado de lo que ya
+existe hoy, no un firehose sin control.
+
+**6. Degradación con gracia — mismo precedente ya usado para Whale Alerts, no uno nuevo.** Si el
+stream no está disponible (plan Stocks inactivo, símbolo no soportado, conexión caída tras agotar los
+reintentos), `UnderlyingPriceStreamManager._run_symbol` captura la excepción por tarea, la loggea, y
+esa tarea simplemente termina — sin tocar el resto de tareas, sin tocar el proceso, sin ningún error
+visible para el usuario. El chart sigue funcionando exactamente como hoy, alimentado por las
+escrituras del scheduler REST — no porque `StreamUnderlyingPriceUseCase` tenga lógica de fallback
+explícita, sino porque simplemente nunca escribe nada si el stream nunca entrega nada, dejando el
+`MarketPrice` más reciente en storage exactamente donde el scheduler ya lo dejó.
+
+**Fuera de alcance de este PR, a propósito:** ningún cambio a Gamma/GEX/OI; ningún cambio al frontend
+(el chart ya sondea `GET /market/{symbol}` cada 30s — este PR hace que el valor almacenado esté más
+fresco entre ciclos del scheduler, pero **la cadencia de sondeo del navegador sigue siendo 30s** —
+para que el usuario vea actualizaciones genuinamente más frecuentes que 30s haría falta un mecanismo
+de push al frontend, ej. WebSocket propio expuesto por el backend, deliberadamente fuera de esta
+tarea); acumular un volumen real de la acción a partir del `size` de cada operación del stream (el
+`volume=0` de `MarketSnapshot` es una limitación ya documentada de `ThetaDataProvider`, sin fuente en
+vivo — este stream podría cerrar ese hueco en un PR futuro, no en este).
+
+**Tests — construidos con mensajes simulados basados en la documentación oficial, no inventados,
+dejado explícito en el código (`TestUnderlyingTradeStream`'s propio docstring en
+`tests/test_thetadata_provider.py`) que deben revalidarse contra el stream real en cuanto el plan
+esté activo:** `TestUnderlyingTradeStream` (parseo de mensajes, filtrado por símbolo entre
+suscriptores, mensajes incompletos ignorados, payload de suscripción exacto, backoff exponencial,
+ciclo de vida start/stop) — todo en `tests/test_thetadata_provider.py`;
+`tests/test_stream_underlying_price.py` (persiste en cada tick, debounce dentro de la ventana,
+persiste de nuevo tras la ventana, debounce independiente por símbolo, `run()` completa de inmediato
+para un proveedor sin nada que transmitir); `tests/test_underlying_price_stream.py` (una tarea por
+símbolo activo, `start()` idempotente, `stop()` limpia todas las tareas, el fallo de un símbolo no
+tumba a los demás) — mismos 3 niveles de test que ya existen para Whale Alerts, mismo patrón.
+
+**Qué quedó verificado con confianza vs. qué sigue genuinamente sin probar hasta activar el plan
+Stocks — el desglose que pidió el usuario explícitamente:**
+
+- ✅ **Verificado con confianza:** la arquitectura completa (stream → caso de uso → manager → cableado
+  en `main.py`), el parseo de mensajes contra el formato exacto documentado por ThetaData, el
+  mecanismo de degradación con gracia (una tarea falla, el resto sigue, el chart sigue funcionando
+  off el scheduler), la reutilización fiel del patrón de Whale Alerts, el debounce del historial de
+  precios, y que el scheduler REST/Gamma/GEX/OI quedan completamente intactos — todo esto probado con
+  pytest usando mensajes/proveedores simulados, sin depender de una conexión real.
+- ❌ **Genuinamente sin probar hasta que los planes Stocks/Index estén activos:** que ThetaData
+  realmente acepte estas suscripciones (`sec_type: "STOCK"` para EQUITY, `"INDEX"` para SPX/VIX — la
+  distinción en sí ya está resuelta y confirmada contra la documentación, ver el hallazgo arriba, pero
+  nunca ejercitada contra una conexión real) y devuelva mensajes con exactamente esta forma para una
+  cuenta con ambos planes activos (los fixtures citan la documentación pública, pero ThetaData ya ha
+  tenido incidentes reales de desconexión no documentados de antemano — ver el propio historial de
+  `ThetaTradeStream`); el comportamiento real de reconexión contra un Theta Terminal real bajo esos
+  planes; y el impacto real en latencia/frescura que el usuario observaría en la práctica.
+
 ---
 
 ## Resumen de mapeo a contratos existentes

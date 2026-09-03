@@ -18,6 +18,7 @@ from backend.domain.entities import (
     ScreenerPreset,
     ScreenerPresetSettings,
     Underlying,
+    UnderlyingTradeEvent,
     Walls,
     WhaleThreshold,
 )
@@ -32,6 +33,14 @@ class IDataProvider(Protocol):
     # calculate_lee_ready.py) — the quote-rule needs the bid/ask prevailing
     # at each trade, which stream_trades alone never carries.
     def stream_quotes(self, underlying: str) -> AsyncIterator[QuoteEvent]: ...
+    # The underlying's OWN live price (a Stock Trade Stream tick), not an
+    # option contract's — distinct from stream_trades above, which is
+    # options flow scoped by underlying. Feeds StreamUnderlyingPriceUseCase
+    # (backend/domain/use_cases/stream_underlying_price.py), additively —
+    # it persists MarketPrice more often than the REST scheduler's 30s
+    # cadence, never replacing that scheduler as the source of truth for
+    # anything else (Gamma/GEX/OI).
+    def stream_underlying_trades(self, underlying: str) -> AsyncIterator[UnderlyingTradeEvent]: ...
     # Lifecycle hooks for providers backed by a persistent connection (e.g.
     # a streaming WebSocket) that must be opened/closed with the process,
     # not per-call. A no-op for providers with nothing to start (MockData

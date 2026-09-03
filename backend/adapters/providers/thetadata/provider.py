@@ -25,6 +25,7 @@ from backend.domain.entities import (
     QuoteEvent,
     Side,
     UnderlyingKind,
+    UnderlyingTradeEvent,
     utc_now,
 )
 from backend.domain.underlyings import ACTIVE_UNDERLYINGS_BY_SYMBOL
@@ -589,6 +590,160 @@ class ThetaQuoteStream:
             )
 
 
+class ThetaUnderlyingTradeStream:
+    """Owns the persistent WebSocket connection to Theta Terminal's
+    per-underlying Trade Stream — the underlying's own price (e.g. SPY
+    the equity, or SPX the index), not an option contract's. Feeds
+    StreamUnderlyingPriceUseCase, additively: it only ever makes the
+    chart's live price fresher between REST scheduler cycles, never
+    replacing that scheduler for anything else.
+
+    NOT YET VERIFIED AGAINST A REAL THETADATA CONNECTION — ThetaData's
+    Stocks plan (required for the STOCK half of this stream; the INDEX
+    half needs a separate "Index Standard" subscription) is not active
+    yet as of this PR (confirmed with the user); it activates in the
+    coming days. Built directly from ThetaData's public v3 docs, by the
+    same close analogy to ThetaTradeStream above that PR #80 used for
+    the (now-verified) options Quote Stream — but the message shapes
+    below have never been exercised against a live Theta Terminal.
+    Re-validate the fixtures in tests/test_thetadata_provider.py against
+    real messages the moment the relevant plan goes live, before
+    trusting this in production. Sources, fetched 2026-09:
+    - https://docs.thetadata.us/Streaming/US-Stocks/Trade-Stream.html
+    - https://docs.thetadata.us/Streaming/US-Indices/Price-Stream.html
+      (confirmed: identical `trade` message shape to the stock stream,
+      only the subscribe payload's `sec_type` differs — `"INDEX"`
+      instead of `"STOCK"`, and `size` is always reported as 0)
+
+    ES (UnderlyingKind.FUTURE) is deliberately never registered — no
+    ThetaData futures trade-stream documentation was found, the same
+    "confirmed gap, not silently guessed" precedent get_daily_bars
+    already sets for futures (no working EOD REST endpoint either).
+
+    A separate connection from ThetaTradeStream/ThetaQuoteStream (same
+    reasoning already documented on those: keeps their already-hardened
+    connections untouched, at the cost of one extra lightweight
+    connection to a local Theta Terminal process, not a rate-limited
+    remote server) — same STATUS-heartbeat/exponential-backoff hardening
+    as both. Simpler than ThetaTradeStream in two ways: no reconciliation
+    (there's no established intraday stock/index OHLC REST endpoint in
+    this codebase to reconcile against — get_daily_bars only has *daily*
+    bars), and it subscribes per underlying symbol directly, not per
+    discovered option contract.
+    """
+
+    def __init__(self, ws_url: str) -> None:
+        self._ws_url = ws_url
+        self._symbols: dict[str, UnderlyingKind] = {}
+        self._subscribers: dict[str, list[asyncio.Queue[UnderlyingTradeEvent]]] = {}
+        self._task: asyncio.Task[None] | None = None
+        self._next_request_id = 1
+
+    def register_symbol(self, symbol: str, kind: UnderlyingKind) -> None:
+        self._symbols[symbol.upper()] = kind
+
+    def start(self) -> None:
+        if self._task is not None:
+            return
+        self._task = asyncio.create_task(self._run())
+
+    async def stop(self) -> None:
+        if self._task is None:
+            return
+        self._task.cancel()
+        try:
+            await self._task
+        except asyncio.CancelledError:
+            pass
+        self._task = None
+
+    def subscribe_queue(self, underlying: str) -> asyncio.Queue[UnderlyingTradeEvent]:
+        queue: asyncio.Queue[UnderlyingTradeEvent] = asyncio.Queue()
+        self._subscribers.setdefault(underlying.upper(), []).append(queue)
+        return queue
+
+    async def _run(self) -> None:
+        delay = RECONNECT_BASE_DELAY_SECONDS
+        while True:
+            try:
+                await self._connect_and_consume()
+                delay = RECONNECT_BASE_DELAY_SECONDS
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.exception(
+                    "ThetaData underlying trade stream disconnected, reconnecting in %ss", delay
+                )
+                await asyncio.sleep(delay)
+                delay = min(delay * 2, RECONNECT_MAX_DELAY_SECONDS)
+
+    async def _connect_and_consume(self) -> None:
+        async with websockets.connect(self._ws_url) as websocket:
+            for symbol, kind in self._symbols.items():
+                await self._subscribe(websocket, symbol, kind)
+            last_status_at = utc_now()
+            while True:
+                try:
+                    raw = await asyncio.wait_for(
+                        websocket.recv(), timeout=STATUS_STALE_AFTER_SECONDS
+                    )
+                except TimeoutError as exc:
+                    raise ConnectionError(
+                        "No message from Theta Terminal within heartbeat window"
+                    ) from exc
+                message = json.loads(raw)
+                header = message.get("header", {})
+                status = header.get("status")
+                if header.get("type") == "STATUS":
+                    if status != "CONNECTED":
+                        raise ConnectionError(f"Theta Terminal reported status: {status}")
+                    last_status_at = utc_now()
+                elif header.get("type") == "TRADE":
+                    self._handle_trade(message)
+
+                now = utc_now()
+                if (now - last_status_at).total_seconds() > STATUS_STALE_AFTER_SECONDS:
+                    raise ConnectionError("Heartbeat stale — no STATUS message recently")
+
+    async def _subscribe(
+        self, websocket: websockets.ClientConnection, symbol: str, kind: UnderlyingKind
+    ) -> None:
+        # Exact shape per ThetaData's docs (see class docstring) — a
+        # stock/index's "contract" is just its root symbol, unlike an
+        # option's expiration/strike/right. sec_type is the only field
+        # that differs between the stock and index variants of this
+        # stream — confirmed the trade message shape itself is identical.
+        sec_type = "INDEX" if kind == UnderlyingKind.INDEX else "STOCK"
+        payload = {
+            "msg_type": "STREAM",
+            "sec_type": sec_type,
+            "req_type": "TRADE",
+            "add": True,
+            "id": self._next_request_id,
+            "contract": {"root": symbol},
+        }
+        self._next_request_id += 1
+        await websocket.send(json.dumps(payload))
+
+    def _handle_trade(self, message: dict[str, Any]) -> None:
+        contract = message.get("contract", {})
+        trade = message.get("trade", {})
+        root = contract.get("root")
+        price = trade.get("price")
+        size = trade.get("size")
+        if root is None or price is None or size is None:
+            return
+        symbol = root.upper()
+        event = UnderlyingTradeEvent(
+            symbol=symbol,
+            as_of=utc_now(),
+            price=Decimal(str(price)),
+            size=int(size),
+        )
+        for queue in self._subscribers.get(symbol, []):
+            queue.put_nowait(event)
+
+
 class ThetaDataProvider:
     """Real IDataProvider adapter backed by a local Theta Terminal v3.
 
@@ -601,6 +756,7 @@ class ThetaDataProvider:
         self._client = httpx.Client(base_url=rest_base_url, timeout=10.0)
         self._stream = ThetaTradeStream(ws_url, self._client)
         self._quote_stream = ThetaQuoteStream(ws_url)
+        self._underlying_trade_stream = ThetaUnderlyingTradeStream(ws_url)
         self._request_semaphore = threading.Semaphore(THETADATA_MAX_CONCURRENT_REQUESTS)
         self._rate_cache: tuple[date, Decimal] | None = None
         # ATR (and therefore the near-the-money width derived from it)
@@ -617,6 +773,16 @@ class ThetaDataProvider:
         ] = {}
 
     async def start(self) -> None:
+        # Registered unconditionally for every active symbol (except
+        # futures — see ThetaUnderlyingTradeStream's own docstring for
+        # why) — unlike the options streams below, this doesn't depend
+        # on near-the-money chain discovery succeeding (a stock/index's
+        # own price stream needs nothing more than its root symbol).
+        for underlying in ACTIVE_UNDERLYINGS_BY_SYMBOL.values():
+            if underlying.kind == UnderlyingKind.FUTURE:
+                continue
+            self._underlying_trade_stream.register_symbol(underlying.symbol, underlying.kind)
+
         for symbol in ACTIVE_UNDERLYINGS_BY_SYMBOL:
             try:
                 chain = self._fetch_near_the_money(symbol, expiration=None)
@@ -639,10 +805,12 @@ class ThetaDataProvider:
                 )
         self._stream.start()
         self._quote_stream.start()
+        self._underlying_trade_stream.start()
 
     async def stop(self) -> None:
         await self._stream.stop()
         await self._quote_stream.stop()
+        await self._underlying_trade_stream.stop()
         self._client.close()
 
     def _get_json(self, path: str, **params: object) -> dict[str, Any]:
@@ -939,5 +1107,10 @@ class ThetaDataProvider:
 
     async def stream_quotes(self, underlying: str) -> AsyncIterator[QuoteEvent]:
         queue = self._quote_stream.subscribe_queue(underlying)
+        while True:
+            yield await queue.get()
+
+    async def stream_underlying_trades(self, underlying: str) -> AsyncIterator[UnderlyingTradeEvent]:
+        queue = self._underlying_trade_stream.subscribe_queue(underlying)
         while True:
             yield await queue.get()

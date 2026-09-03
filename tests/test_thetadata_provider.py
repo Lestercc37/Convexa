@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import threading
 import time
@@ -15,11 +16,12 @@ from backend.adapters.providers.thetadata.provider import (
     ThetaDataProvider,
     ThetaQuoteStream,
     ThetaTradeStream,
+    ThetaUnderlyingTradeStream,
     _build_occ_symbol,
     _parse_et_timestamp,
     _time_to_expiration_years,
 )
-from backend.domain.entities import ContractType
+from backend.domain.entities import ContractType, UnderlyingKind
 from backend.domain.use_cases.market_hours import EASTERN_TIME
 
 REST_URL = "http://thetaterminal.test"
@@ -554,6 +556,142 @@ class TestQuoteStream:
         assert stream._task is None
 
 
+class TestUnderlyingTradeStream:
+    """Fixtures below are built directly from ThetaData's public v3 docs
+    (https://docs.thetadata.us/Streaming/US-Stocks/Trade-Stream.html,
+    fetched 2026-09) — NOT verified against a real Theta Terminal
+    connection, since ThetaData's Stocks plan isn't active yet as of
+    this PR. Re-validate these against real messages the moment it goes
+    live, before trusting this stream in production."""
+
+    def test_handle_trade_publishes_an_underlying_trade_event_to_subscribers(self) -> None:
+        stream = ThetaUnderlyingTradeStream(WS_URL)
+        queue = stream.subscribe_queue("AAPL")
+        # Exact shape from ThetaData's docs' own example message.
+        message = {
+            "header": {"type": "TRADE", "status": "CONNECTED"},
+            "contract": {"security_type": "STOCK", "root": "AAPL"},
+            "trade": {
+                "ms_of_day": 38437607,
+                "sequence": 12150295,
+                "size": 500,
+                "condition": 0,
+                "price": 184.5099,
+                "exchange": 57,
+                "date": 20240503,
+            },
+        }
+
+        stream._handle_trade(message)
+        event = queue.get_nowait()
+
+        assert event.symbol == "AAPL"
+        assert event.price == Decimal("184.5099")
+        assert event.size == 500
+
+    def test_handle_trade_only_publishes_to_the_matching_symbols_subscribers(self) -> None:
+        stream = ThetaUnderlyingTradeStream(WS_URL)
+        aapl_queue = stream.subscribe_queue("AAPL")
+        spy_queue = stream.subscribe_queue("SPY")
+        message = {
+            "header": {"type": "TRADE", "status": "CONNECTED"},
+            "contract": {"security_type": "STOCK", "root": "AAPL"},
+            "trade": {"size": 1, "price": 100.0},
+        }
+
+        stream._handle_trade(message)
+
+        assert not aapl_queue.empty()
+        assert spy_queue.empty()
+
+    def test_handle_trade_ignores_incomplete_messages(self) -> None:
+        stream = ThetaUnderlyingTradeStream(WS_URL)
+        queue = stream.subscribe_queue("AAPL")
+
+        stream._handle_trade({"contract": {"root": "AAPL"}, "trade": {"size": 500}})  # no price
+
+        assert queue.empty()
+
+    def test_subscribe_sends_the_documented_stock_trade_stream_payload(self) -> None:
+        stream = ThetaUnderlyingTradeStream(WS_URL)
+        sent: list[str] = []
+
+        class _FakeWebSocket:
+            async def send(self, payload: str) -> None:
+                sent.append(payload)
+
+        asyncio.run(stream._subscribe(_FakeWebSocket(), "AAPL", UnderlyingKind.EQUITY))
+
+        payload = json.loads(sent[0])
+        # Exact shape from ThetaData's docs — a stock's "contract" is
+        # just its root symbol, no expiration/strike/right.
+        assert payload == {
+            "msg_type": "STREAM",
+            "sec_type": "STOCK",
+            "req_type": "TRADE",
+            "add": True,
+            "id": 1,
+            "contract": {"root": "AAPL"},
+        }
+
+    def test_subscribe_uses_sec_type_index_for_index_underlyings(self) -> None:
+        # Confirmed from ThetaData's docs: indices use a genuinely
+        # separate stream (US-Indices Price Stream, its own "Index
+        # Standard" subscription) — sec_type is the only field that
+        # differs from the stock variant, the trade message shape itself
+        # is identical.
+        stream = ThetaUnderlyingTradeStream(WS_URL)
+        sent: list[str] = []
+
+        class _FakeWebSocket:
+            async def send(self, payload: str) -> None:
+                sent.append(payload)
+
+        asyncio.run(stream._subscribe(_FakeWebSocket(), "SPX", UnderlyingKind.INDEX))
+
+        payload = json.loads(sent[0])
+        assert payload["sec_type"] == "INDEX"
+        assert payload["contract"] == {"root": "SPX"}
+
+    @pytest.mark.asyncio
+    async def test_run_backs_off_exponentially_between_reconnect_attempts(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        stream = ThetaUnderlyingTradeStream(WS_URL)
+        sleep_calls: list[float] = []
+
+        async def fake_sleep(seconds: float) -> None:
+            sleep_calls.append(seconds)
+            if len(sleep_calls) >= 3:
+                raise asyncio.CancelledError
+
+        async def failing_connect() -> None:
+            raise ConnectionError("simulated disconnect")
+
+        monkeypatch.setattr(asyncio, "sleep", fake_sleep)
+        monkeypatch.setattr(stream, "_connect_and_consume", failing_connect)
+
+        with pytest.raises(asyncio.CancelledError):
+            await stream._run()
+
+        assert sleep_calls[0] == 2
+        assert sleep_calls[1] == 4
+        assert sleep_calls[2] == 8
+
+    @pytest.mark.asyncio
+    async def test_start_and_stop_manage_a_single_background_task(self) -> None:
+        stream = ThetaUnderlyingTradeStream(WS_URL)
+        stream.start()
+        task = stream._task
+        assert task is not None
+
+        stream.start()  # a second start() while running is a no-op
+        assert stream._task is task
+
+        await stream.stop()
+        assert stream._task is None
+
+
 class TestProviderLifecycle:
     @pytest.mark.asyncio
     async def test_stop_closes_the_rest_client_and_stream(self) -> None:
@@ -562,6 +700,63 @@ class TestProviderLifecycle:
         assert provider._client.is_closed
         assert provider._stream._task is None
         assert provider._quote_stream._task is None
+        assert provider._underlying_trade_stream._task is None
+
+    @pytest.mark.asyncio
+    async def test_stream_underlying_trades_yields_events_from_the_queue(self) -> None:
+        provider = ThetaDataProvider(REST_URL, WS_URL)
+        events = provider.stream_underlying_trades("SPY")
+        # Advance the async generator to its subscribe_queue() + first
+        # `await queue.get()` before publishing — otherwise the event
+        # below would be put_nowait'd to a queue nothing has subscribed
+        # to yet and silently dropped.
+        pending = asyncio.ensure_future(events.__anext__())
+        await asyncio.sleep(0)
+
+        message = {
+            "header": {"type": "TRADE", "status": "CONNECTED"},
+            "contract": {"security_type": "STOCK", "root": "SPY"},
+            "trade": {"size": 100, "price": 552.25},
+        }
+        provider._underlying_trade_stream._handle_trade(message)
+        event = await asyncio.wait_for(pending, timeout=1)
+
+        assert event.symbol == "SPY"
+        assert event.price == Decimal("552.25")
+        assert event.size == 100
+
+    @pytest.mark.asyncio
+    async def test_start_registers_every_symbol_except_futures_with_the_right_kind(self) -> None:
+        # A generic success response for every symbol's discovery calls
+        # — the registration loop doesn't validate the response's own
+        # "symbol"/"root" fields match the requested one, only the outer
+        # ACTIVE_UNDERLYINGS_BY_SYMBOL loop variable is used to build
+        # each occ_symbol.
+        def handler(request: httpx.Request) -> httpx.Response:
+            url = str(request.url)
+            if "greeks/first_order" in url:
+                return httpx.Response(200, json={"response": [_first_order_entry("100.00", "CALL")]})
+            if "open_interest" in url:
+                return httpx.Response(200, json={"response": []})
+            if "interest_rate/history/eod" in url:
+                return httpx.Response(
+                    200, json={"response": [{"rate": 3.64, "created": "2026-08-31"}]}
+                )
+            if "history/eod" in url:
+                return httpx.Response(200, json=_daily_bars_response())
+            raise AssertionError(f"unexpected request: {request.url}")
+
+        provider = _provider_with_transport(handler)
+        try:
+            await provider.start()
+
+            registered = provider._underlying_trade_stream._symbols
+            assert "ES" not in registered  # FUTURE — no confirmed stream type
+            assert registered["SPY"] == UnderlyingKind.EQUITY
+            assert registered["SPX"] == UnderlyingKind.INDEX
+            assert registered["VIX"] == UnderlyingKind.INDEX
+        finally:
+            await provider.stop()
 
 
 class TestNearTheMoneyWidthFiltering:
