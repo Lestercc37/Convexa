@@ -21,6 +21,7 @@ def test_active_underlying_classification() -> None:
         "IWM": Underlying("IWM", UnderlyingKind.EQUITY, True),
         "SPX": Underlying("SPX", UnderlyingKind.INDEX, True),
         "VIX": Underlying("VIX", UnderlyingKind.INDEX, True),
+        "NDX": Underlying("NDX", UnderlyingKind.INDEX, True),
         "TSLA": Underlying("TSLA", UnderlyingKind.EQUITY, True),
         "NVDA": Underlying("NVDA", UnderlyingKind.EQUITY, True),
         "META": Underlying("META", UnderlyingKind.EQUITY, True),
@@ -85,6 +86,11 @@ def test_ensure_underlying_classifies_es_as_future() -> None:
 
 
 def test_ensure_underlying_preserves_unconfigured_symbol_metadata() -> None:
+    # AAPL, not NDX -- NDX joined ACTIVE_UNDERLYINGS (see
+    # test_active_underlying_classification above), so it's no longer a
+    # genuinely unconfigured symbol; using it here would still pass (its
+    # configured kind/is_priority happen to match what this test
+    # pre-inserts) but would no longer test what this test claims to.
     session_factory, engine = _underlying_session_factory()
     try:
         with session_factory.begin() as session:
@@ -92,11 +98,11 @@ def test_ensure_underlying_preserves_unconfigured_symbol_metadata() -> None:
                 text(
                     """
                     INSERT INTO underlyings (symbol, kind, is_priority)
-                    VALUES ('NDX', 'index', true)
+                    VALUES ('AAPL', 'equity', true)
                     """
                 )
             )
-            PostgreSQLStorage._ensure_underlying(session, "ndx")
+            PostgreSQLStorage._ensure_underlying(session, "aapl")
 
         with session_factory() as session:
             row = session.execute(
@@ -104,12 +110,12 @@ def test_ensure_underlying_preserves_unconfigured_symbol_metadata() -> None:
                     """
                     SELECT symbol, kind, is_priority
                     FROM underlyings
-                    WHERE symbol = 'NDX'
+                    WHERE symbol = 'AAPL'
                     """
                 )
             ).one()
 
-        assert row == ("NDX", "index", True)
+        assert row == ("AAPL", "equity", True)
     finally:
         engine.dispose()
 

@@ -1141,9 +1141,93 @@ este repo, no con ningún dato de mercado real. Parece contaminación de datos d
 base de datos de producción, de origen anterior a esta investigación y sin relación con el bug de
 `security_type`. No se tocó, no se investigó más — fuera de alcance de esta tarea.
 
-**No se borró ni modificó ningún dato** — solo lectura, tal como pidió el usuario. La decisión sobre
-qué hacer con las filas contaminadas (descartar el tramo, marcarlas, algo más fino) queda pendiente,
-a criterio del usuario.
+**Actualización — cierre de la misma sesión:** las 52 filas contaminadas identificadas arriba, y un
+segundo hallazgo (datos de prueba/mock mezclados en producción, mucho más extenso de lo que esta misma
+sección sugería) se resolvieron en la tarea de cierre siguiente — ver la sección inmediatamente
+posterior a esta.
+
+---
+
+#### Cierre de sesión: borrado de datos contaminados, mock data, NDX registrado, y reinicio
+
+Última tarea del día — cuatro pasos, en orden, con el reinicio al final para que quede corriendo con
+todo aplicado de una vez.
+
+**A. Las 52 filas de VIX/SPX contaminadas por el bug de `security_type` — borradas.** Antes de borrar,
+se volvió a confirmar el conteo exacto contra los mismos criterios (símbolo + rango de precio + ventana
+de tiempo) del reporte anterior. La primera reconfirmación dio 50, no 52 — pero no por un cambio real en
+los datos: fue un bug propio de la consulta de reconfirmación, no del dato. Postgres almacena `price`
+como `numeric` (decimal exacto); la consulta pasó los límites de la banda (`0.31`, `4.05`, `28.04`,
+`108.49`) como `float` de Python, y `asyncpg` los envía como `double precision` — la representación
+binaria de `108.49`/`4.05` en punto flotante no es exactamente igual al decimal, así que dos filas cuyo
+precio caía justo en el límite superior de su banda (`VIX` a `4.05`, `SPX` a `108.49`) quedaban excluidas
+del `BETWEEN` por una diferencia de punto flotante invisible al ojo. Repitiendo la consulta con los
+límites como `Decimal` exactos (en vez de `float`) confirmó **52 exactas** (40 VIX + 12 SPX), idénticas
+en cada timestamp y precio al reporte original, sin ninguna fila nueva desde entonces. Borradas dentro de
+una transacción con `RETURNING`, verificando que el conteo borrado fuera exactamente 52 antes de
+confirmar (de lo contrario, rollback automático).
+
+**B. Mock data mezclado en producción — mucho más grande de lo que la descripción original sugería, tal
+como pidió el usuario confirmar antes de asumir nada.** La firma exacta (`price=552.25` Y `volume=1250000`
+simultáneos) es literalmente el fixture hardcodeado de `MockDataProvider`
+(`backend/adapters/providers/mock/provider.py:36,44-45`) — confirmado leyendo el código fuente, no
+inferido. El hallazgo real: **15,878 filas** (51% de las 30,985 filas totales de `market_snapshots`),
+en los **11 símbolos activos de ese momento** (no solo los 4 mencionados de pasada), del **2026-08-07 al
+2026-09-01 19:59:32 UTC** — terminando justo antes de que arrancara el backend real actualmente en
+ejecución (2026-09-01 21:41:48 ET), consistente con que alguien corrió la app con
+`QLL_DATA_PROVIDER=mock` apuntando a esta misma base de datos real durante más de 3 semanas, hasta que
+se cambió a `thetadata`. Cero filas con `price=552.25` pero `volume` distinto — sin ambigüedad, sin
+coincidencia con datos reales.
+
+Dado el salto de escala respecto a lo descrito originalmente, el clasificador de permisos bloqueó el
+primer intento de borrado masivo; se confirmó explícitamente con el usuario antes de proceder. Se
+exportaron las 15,878 filas a CSV como respaldo (`symbol, underlying_id, time, price, volume`, entregado
+al usuario) antes del `DELETE`, dentro de una transacción que verifica el conteo borrado antes de
+confirmar, igual que en la Parte A.
+
+**C. NDX registrado en `ACTIVE_UNDERLYINGS`** (`backend/domain/underlyings.py`), como `UnderlyingKind.INDEX`,
+`is_priority=True` — mismo tratamiento que los otros símbolos activos (ahora 12 en total, no 14 como
+mencionó el usuario — conteo real verificado, no asumido). Se investigó exhaustivamente (agente de
+búsqueda dedicado) si algún otro lugar del código declara el conjunto de símbolos por separado:
+
+- **Backend**: cero listas independientes — `scheduler.py`, `whale_alerts_stream.py`,
+  `underlying_price_stream.py`, las rutas de la API, `InMemoryStorage`, y `ThetaDataProvider` derivan
+  todos dinámicamente de `ACTIVE_UNDERLYINGS`/`ACTIVE_UNDERLYINGS_BY_SYMBOL` — NDX se propaga solo con
+  este único cambio.
+- **Frontend**: no existe ningún dropdown ni lista de símbolos hardcodeada — `dashboard.tsx` llama
+  `getUnderlyings()` → `GET /underlyings`, que el backend sirve dinámicamente; nada que actualizar ahí.
+- **Hallazgo real que sí requería acción, no cubierto por el simple cambio a `underlyings.py`:** las
+  migraciones de Alembic (`backend/db/migrations/0010_seed_active_underlyings.py`,
+  `0012_whale_thresholds.py`) sembraron las tablas `underlyings`/`whale_thresholds` de una base de datos
+  Postgres ya migrada a partir de una foto de `ACTIVE_UNDERLYINGS` en su momento — las migraciones no se
+  vuelven a ejecutar solas. Sin una migración nueva, NDX jamás habría aparecido en esas tablas de la base
+  real, exactamente el mismo problema que la migración `0015` ya resolvió una vez para `ES` ("missing
+  from the original PR #44 seed"). Se agregó `0018_seed_ndx.py`, siguiendo el mismo patrón de `0015`
+  para `underlyings` (re-ejecuta el upsert idempotente completo contra el `ACTIVE_UNDERLYINGS` actual —
+  seguro, `kind`/`is_priority` no son personalizables vía ninguna API). Para `whale_thresholds` se fue
+  más quirúrgico que `0012`/`0015`: existe `PATCH /whale-thresholds/{symbol}`
+  (`backend/api/routes/whale_thresholds.py`) que permite personalizar umbrales por símbolo en tiempo
+  real — repetir el upsert de `0012` con los valores por defecto para *todos* los símbolos habría
+  podido pisar silenciosamente cualquier personalización real hecha desde entonces. La migración nueva
+  solo inserta la fila de NDX (`ON CONFLICT DO NOTHING`), sin tocar ninguna fila de otro símbolo.
+  Aplicada contra la base real: `alembic upgrade head` corrió limpio (`0017` → `0018`), verificado que
+  los 12 símbolos aparecen en `underlyings` y que NDX tiene su fila en `whale_thresholds` con los
+  mismos valores por defecto que el resto (`unusual_min=40000, whale_min=150000,
+  unusual_multiplier=3.0, whale_multiplier=6.0, sustained_flow_min=500000`).
+- Se corrigieron dos comentarios/pruebas que hardcodeaban el conteo "11" como si fuera una expectativa
+  actual (`test_scheduler.py::test_cycle_processes_all_11_active_symbols`, renombrada y con la
+  aserción ahora derivada de `len(ACTIVE_UNDERLYINGS)` en vez de un literal; un comentario en el mismo
+  archivo). Dos menciones más de "11 símbolos" en `scheduler.py`/`test_scheduler.py` se dejaron
+  intactas a propósito — son mediciones históricas reales ("un ciclo secuencial contra estos mismos 11
+  símbolos tomó ~30s", investigación 2026-09), no una afirmación sobre el conteo actual; cambiarlas
+  falsearía la medición.
+- `tests/test_active_underlyings.py::test_ensure_underlying_preserves_unconfigured_symbol_metadata`
+  usaba NDX como ejemplo de "símbolo sin configurar" — ya no aplica una vez que NDX se registra, así
+  que se cambió a `AAPL` (un símbolo real pero genuinamente no rastreado) para seguir probando lo que
+  la prueba dice probar, en vez de coincidir por casualidad con los valores ahora configurados.
+
+**D. Reinicio del backend, al final — ver el reporte de esta tarea para la confirmación completa de los
+4 puntos.**
 
 ---
 
