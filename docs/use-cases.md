@@ -1374,6 +1374,47 @@ de estilo en este archivo — ninguno nuevo de otro tipo, confirmado por `git st
 
 ---
 
+#### Bug 2: contratos ya vencidos tratados como "vencimiento más cercano" válido
+
+`_fetch_near_the_money`'s selección de "nearest" (`expiration=None`) nunca excluía fechas ya pasadas —
+confirmado en vivo que ThetaData sigue devolviendo un contrato vencido con datos obviamente muertos
+(`bid=0.0`, `implied_vol=6.19` = 619%, última cotización a las 16:15 del día en que venció) por un
+tiempo después de expirar, y el filtro existente solo revisaba que hubiera `"data"`, nunca que la
+expiración no hubiera pasado ya.
+
+**El arreglo — un único punto, cubre los 15 símbolos, no solo los 4 mencionados.** Se agregó el filtro
+directamente dentro de `_fetch_near_the_money` (rama `expiration is None`), el único método compartido
+por `get_option_chain`, `get_underlying_snapshot` y `ThetaDataProvider.start()` — arreglarlo ahí cubre
+automáticamente los 15 símbolos activos, no requiere tocar cada símbolo por separado. Excluye cualquier
+expiración `< hoy` (ET) antes de calcular el mínimo; usa `>=`, no `>`, así que una expiración 0DTE
+genuina (vencimiento hoy mismo) nunca se excluye por error — probado explícitamente. Si, tras excluir
+lo vencido, no queda ninguna entrada (caso degenerado), lanza un error claro en vez de devolver
+silenciosamente un vencimiento vencido.
+
+**Deliberadamente NO toca el camino de expiración explícita** (`expiration is not None`) — un caller
+que pide una fecha específica, aunque sea pasada, sigue recibiendo esa fecha sin filtrar (ej. un futuro
+drill-down histórico) — el bug reportado era específicamente sobre la selección automática de "más
+cercano", no sobre pedir una fecha concreta.
+
+**Hallazgo real, no esperado: este bug bloqueaba activamente el Bug 1 en producción.** Al desplegar el
+fix del Bug 1 (combinar roots) antes de este, el ciclo del scheduler empezó a fallar para SPX y NDX en
+cada ciclo — la selección de "nearest" (aún sin este fix) seguía escogiendo una fecha ya vencida entre
+las entradas combinadas de ambos roots, y esa fecha vencida no tenía datos de open interest reales
+(HTTP 472). Los dos bugs son código separado, en commits separados como pidió el usuario, pero en la
+práctica el Bug 1 no funciona correctamente en producción sin este arreglo también aplicado.
+
+**Tests:** `TestExpiredContractFiltering` — un contrato vencido nunca gana frente a uno futuro real; una
+expiración 0DTE genuina (hoy) no se excluye por error; si todo lo disponible está vencido, lanza un
+error claro en vez de devolver algo vencido; una petición de expiración explícita (incluso pasada) no
+se filtra — confirma que el fix es específico al camino "nearest", no un cambio de comportamiento
+general.
+
+288 tests, suite completa, en verde. `ruff check`: mismos 5 hallazgos preexistentes de siempre + 4
+nuevos, los 4 del mismo patrón `FURB157` (constructor verboso de `Decimal`) ya aceptado como convención
+de estilo en este archivo — ninguno nuevo de otro tipo, confirmado por `git stash`.
+
+---
+
 ## Resumen de mapeo a contratos existentes
 
 | Caso de uso | REST | WebSocket |

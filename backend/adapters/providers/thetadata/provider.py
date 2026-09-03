@@ -1053,10 +1053,32 @@ class ThetaDataProvider:
         if expiration is not None:
             result = _NearTheMoneyChain(expiration, self._filter_near_the_money(symbol, entries))
         else:
-            nearest = min(date.fromisoformat(entry["contract"]["expiration"]) for entry in entries)
-            nearest_entries = [
+            # ThetaData's snapshot endpoint keeps returning an already-
+            # expired contract's last-known quote for a while after it
+            # expires (confirmed live, 2026-09: SPY's 2026-09-02 —
+            # yesterday relative to that check — still came back with
+            # data: bid=0.0, implied_vol=6.19 (619%), the last quote
+            # timestamped 16:15 the day it expired). Never filtered
+            # before, so `min()` below could pick a dead contract as
+            # "nearest" — this excludes anything before today first, and
+            # keeps today itself (>=, not >) so a genuine 0DTE expiration
+            # is never wrongly excluded.
+            today = datetime.now(EASTERN_TIME).date()
+            unexpired_entries = [
                 entry
                 for entry in entries
+                if date.fromisoformat(entry["contract"]["expiration"]) >= today
+            ]
+            if not unexpired_entries:
+                raise RuntimeError(
+                    f"ThetaData returned no unexpired near-the-money contracts for {symbol}"
+                )
+            nearest = min(
+                date.fromisoformat(entry["contract"]["expiration"]) for entry in unexpired_entries
+            )
+            nearest_entries = [
+                entry
+                for entry in unexpired_entries
                 if date.fromisoformat(entry["contract"]["expiration"]) == nearest
             ]
             result = _NearTheMoneyChain(nearest, self._filter_near_the_money(symbol, nearest_entries))

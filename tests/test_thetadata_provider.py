@@ -241,6 +241,116 @@ class TestGetOptionChain:
             provider.get_option_chain("SPY")
 
 
+class TestExpiredContractFiltering:
+    """ThetaData's snapshot endpoint keeps returning an already-expired
+    contract's last-known (dead) quote for a while after it expires --
+    confirmed live (2026-09 investigation): a contract dated the
+    previous day still came back with data (bid=0.0, implied_vol=6.19 =
+    619%, last quote timestamped 16:15 the day it expired). Before this
+    fix, `_fetch_near_the_money`'s "nearest expiration" selection
+    (expiration=None) could pick that dead contract as "nearest" since
+    it never excluded already-past dates. Fixture dates below are
+    computed relative to the real clock (not a fixed literal) so these
+    tests stay correct regardless of what day they're run."""
+
+    def test_an_already_expired_contract_is_never_picked_as_nearest(self) -> None:
+        yesterday = (datetime.now(EASTERN_TIME) - timedelta(days=1)).date().isoformat()
+        future = (datetime.now(EASTERN_TIME) + timedelta(days=15)).date().isoformat()
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            if "greeks/first_order" in str(request.url):
+                return httpx.Response(
+                    200,
+                    json={
+                        "response": [
+                            # Dead contract -- expired, but ThetaData
+                            # still returns it with obviously-stale data.
+                            _first_order_entry("770.00", "CALL", expiration=yesterday),
+                            _first_order_entry("769.00", "CALL", expiration=future),
+                        ]
+                    },
+                )
+            if "open_interest" in str(request.url):
+                return httpx.Response(200, json={"response": []})
+            if "interest_rate/history/eod" in str(request.url):
+                return httpx.Response(200, json={"response": [{"rate": 3.64, "created": "2026-08-31"}]})
+            if "stock/history/eod" in str(request.url):
+                return httpx.Response(200, json=_daily_bars_response())
+            raise AssertionError(f"unexpected request: {request.url}")
+
+        provider = _provider_with_transport(handler)
+        chain = provider.get_option_chain("SPY")  # no expiration -> nearest
+
+        assert chain.contracts[0].expiration == date.fromisoformat(future)
+
+    def test_a_genuine_0dte_expiration_is_not_excluded(self) -> None:
+        """The filter must exclude anything before today, not today
+        itself -- a real same-day expiration must still win."""
+        today = datetime.now(EASTERN_TIME).date().isoformat()
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            if "greeks/first_order" in str(request.url):
+                return httpx.Response(
+                    200,
+                    json={"response": [_first_order_entry("769.00", "CALL", expiration=today)]},
+                )
+            if "open_interest" in str(request.url):
+                return httpx.Response(200, json={"response": []})
+            if "interest_rate/history/eod" in str(request.url):
+                return httpx.Response(200, json={"response": [{"rate": 3.64, "created": "2026-08-31"}]})
+            if "stock/history/eod" in str(request.url):
+                return httpx.Response(200, json=_daily_bars_response())
+            raise AssertionError(f"unexpected request: {request.url}")
+
+        provider = _provider_with_transport(handler)
+        chain = provider.get_option_chain("SPY")
+
+        assert chain.contracts[0].expiration == date.fromisoformat(today)
+
+    def test_raises_when_every_available_expiration_is_already_expired(self) -> None:
+        yesterday = (datetime.now(EASTERN_TIME) - timedelta(days=1)).date().isoformat()
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            if "greeks/first_order" in str(request.url):
+                return httpx.Response(
+                    200,
+                    json={"response": [_first_order_entry("769.00", "CALL", expiration=yesterday)]},
+                )
+            raise AssertionError(f"unexpected request: {request.url}")
+
+        provider = _provider_with_transport(handler)
+        with pytest.raises(RuntimeError, match="unexpired"):
+            provider.get_option_chain("SPY")
+
+    def test_an_explicit_expiration_request_is_not_filtered(self) -> None:
+        """Scope check -- this fix is only about the "nearest" (no
+        expiration given) discovery path. A caller that explicitly asks
+        for a specific (even past) date is untouched -- that's a
+        different, deliberately out-of-scope question (e.g. a
+        historical drill-down), not what was reported or asked here."""
+        yesterday_date = datetime.now(EASTERN_TIME).date() - timedelta(days=1)
+        yesterday = yesterday_date.isoformat()
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            if "greeks/first_order" in str(request.url):
+                return httpx.Response(
+                    200,
+                    json={"response": [_first_order_entry("769.00", "CALL", expiration=yesterday)]},
+                )
+            if "open_interest" in str(request.url):
+                return httpx.Response(200, json={"response": []})
+            if "interest_rate/history/eod" in str(request.url):
+                return httpx.Response(200, json={"response": [{"rate": 3.64, "created": "2026-08-31"}]})
+            if "stock/history/eod" in str(request.url):
+                return httpx.Response(200, json=_daily_bars_response())
+            raise AssertionError(f"unexpected request: {request.url}")
+
+        provider = _provider_with_transport(handler)
+        chain = provider.get_option_chain("SPY", expiration=yesterday_date)
+
+        assert chain.contracts[0].expiration == yesterday_date
+
+
 class TestWeeklyRootCombination:
     """SPX/NDX split their real open interest across two independently-
     traded roots (SPX/SPXW, NDX/NDXP) -- confirmed live (2026-09
