@@ -10,10 +10,13 @@ MockDataProvider — or a real stream that never connects/never receives a
 tick for a symbol), nothing here writes anything, and the chart keeps
 working exactly as it does today, off the scheduler's own writes.
 
-NOT YET VERIFIED AGAINST A REAL THETADATA CONNECTION — see
-ThetaUnderlyingTradeStream's docstring
-(backend/adapters/providers/thetadata/provider.py) for why: ThetaData's
-Stocks plan isn't active yet as of this PR.
+CONFIRMED LIVE against a real Theta Terminal, market open (2026-09-03)
+— see ThetaUnderlyingTradeStream's own docstring
+(backend/adapters/providers/thetadata/provider.py) for the confirmed
+message shapes and a real, still-open gap found in that verification
+(option trades sharing an underlying's root symbol currently aren't
+filtered out) that can corrupt the price this use case persists for an
+affected symbol until that gap is fixed.
 """
 
 from __future__ import annotations
@@ -62,18 +65,25 @@ class StreamUnderlyingPriceUseCase:
         if last_written_at is not None and now - last_written_at < self._min_write_interval_seconds:
             return
         self._last_written_at[event.symbol] = now
+        # save_market_price() replaces the whole stored row, not just a
+        # `price` field (confirmed in both InMemoryStorage — a plain dict
+        # assignment — and PostgresqlStorage — a new market_snapshots row
+        # that becomes "latest" by time — see get_latest_price() in each),
+        # and MarketPrice.volume is a required field with no None/omit
+        # option. So this carries the existing volume forward instead of
+        # writing a value of its own: the REST scheduler
+        # (get_underlying_snapshot(), see ThetaDataProvider) stays the
+        # only thing that ever sets a real volume — the stream ticks
+        # merely repeat it forward between scheduler cycles so a stream
+        # write (as frequent as once a second) can never reset it back to
+        # 0. Falls back to 0 only if nothing has been written for this
+        # symbol at all yet — same starting value this already had.
+        previous = self._storage.get_latest_price(event.symbol)
         self._storage.save_market_price(
             MarketPrice(
                 symbol=event.symbol,
                 as_of=event.as_of,
                 price=event.price,
-                # ThetaDataProvider's own MarketSnapshot.volume is already
-                # a documented 0 for every symbol today (no live Stocks/
-                # Indices share-volume subscription) — this doesn't
-                # regress anything the REST scheduler already provides,
-                # and accumulating a real cumulative volume from this
-                # stream's own per-trade `size` is a natural follow-up,
-                # deliberately out of this PR's price-only scope.
-                volume=0,
+                volume=previous.volume if previous is not None else 0,
             )
         )
