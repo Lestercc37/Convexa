@@ -14,6 +14,9 @@ ACTIVE_UNDERLYINGS: tuple[Underlying, ...] = (
     Underlying("META", UnderlyingKind.EQUITY, True),
     Underlying("AMZN", UnderlyingKind.EQUITY, True),
     Underlying("GOOGL", UnderlyingKind.EQUITY, True),
+    Underlying("AAPL", UnderlyingKind.EQUITY, True),
+    Underlying("MSFT", UnderlyingKind.EQUITY, True),
+    Underlying("DIA", UnderlyingKind.EQUITY, True),
     Underlying("ES", UnderlyingKind.FUTURE, True),
 )
 

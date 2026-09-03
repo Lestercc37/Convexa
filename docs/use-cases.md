@@ -1250,6 +1250,40 @@ de cómo funciona un arranque en frío.
 
 ---
 
+#### AAPL, MSFT y DIA registrados — misma receta de NDX
+
+Mismo patrón que NDX, ya establecido: `ACTIVE_UNDERLYINGS` (`backend/domain/underlyings.py`) suma
+`AAPL`, `MSFT`, `DIA`, los tres `UnderlyingKind.EQUITY` (`DIA` es el ETF SPDR Dow Jones, una acción/ETF,
+no un índice — a diferencia de NDX). Migración `0019_seed_aapl_msft_dia.py`, mismo diseño que `0018`:
+re-ejecuta el upsert completo de `underlyings` contra el `ACTIVE_UNDERLYINGS` actual (seguro para los 15
+símbolos, `kind`/`is_priority` no personalizables por API), pero solo inserta filas nuevas en
+`whale_thresholds` para los 3 símbolos nuevos (`ON CONFLICT DO NOTHING`, vía `WHERE symbol = ANY(:symbols)`),
+sin tocar ninguna fila existente — mismo cuidado que `0018` por el mismo motivo (`PATCH
+/whale-thresholds/{symbol}` permite personalización real en producción). Aplicada contra la base real
+(`alembic upgrade head`, `0018` → `0019`, limpio).
+
+Se repitió la misma verificación que la vez pasada de si hace falta el mismo tipo de ajuste en algún
+otro punto: grep de `AAPL`/`MSFT`/`DIA` en todo `backend/`/`frontend/` no encontró ninguna referencia
+previa que entrara en conflicto ni ninguna lista independiente que necesitara el mismo cambio — la
+investigación exhaustiva de la tarea de NDX (agente de búsqueda dedicado) ya había confirmado que el
+único punto de fricción estructural es exactamente el que las migraciones ya resuelven, no algo que
+dependa del símbolo específico.
+
+**Confirmado en vivo, sin reinicio manual esta vez:** a diferencia de la sesión anterior (donde el
+proceso viejo, corriendo desde antes de esta sesión, no daba certeza sobre si `--reload` había
+recogido el cambio), el proceso actual se inició *dentro* de esta misma sesión con `uvicorn --reload`
+rastreado — el archivo se guardó, y `GET /api/v1/underlyings` ya devolvía los 15 símbolos (incluidos
+`AAPL`, `MSFT`, `DIA`) sin necesidad de reiniciar el proceso a mano, confirmando que el watcher de
+`--reload` sí está funcionando como se esperaba en este proceso.
+
+278 tests, suite completa, en verde (sin pruebas nuevas — los conteos ya se derivan dinámicamente de
+`ACTIVE_UNDERLYINGS` desde el ajuste de la tarea de NDX). `ruff check` sin violaciones. Se actualizó
+`test_active_underlying_classification` con los 3 símbolos nuevos, y
+`test_ensure_underlying_preserves_unconfigured_symbol_metadata` cambió su símbolo de ejemplo de `AAPL`
+(ya configurado ahora) a `XOM` — mismo motivo que forzó el cambio de `NDX` a `AAPL` la vez anterior.
+
+---
+
 ## Resumen de mapeo a contratos existentes
 
 | Caso de uso | REST | WebSocket |

@@ -27,6 +27,9 @@ def test_active_underlying_classification() -> None:
         "META": Underlying("META", UnderlyingKind.EQUITY, True),
         "AMZN": Underlying("AMZN", UnderlyingKind.EQUITY, True),
         "GOOGL": Underlying("GOOGL", UnderlyingKind.EQUITY, True),
+        "AAPL": Underlying("AAPL", UnderlyingKind.EQUITY, True),
+        "MSFT": Underlying("MSFT", UnderlyingKind.EQUITY, True),
+        "DIA": Underlying("DIA", UnderlyingKind.EQUITY, True),
         "ES": Underlying("ES", UnderlyingKind.FUTURE, True),
     }
 
@@ -86,11 +89,13 @@ def test_ensure_underlying_classifies_es_as_future() -> None:
 
 
 def test_ensure_underlying_preserves_unconfigured_symbol_metadata() -> None:
-    # AAPL, not NDX -- NDX joined ACTIVE_UNDERLYINGS (see
+    # XOM, not AAPL -- AAPL joined ACTIVE_UNDERLYINGS (see
     # test_active_underlying_classification above), so it's no longer a
     # genuinely unconfigured symbol; using it here would still pass (its
     # configured kind/is_priority happen to match what this test
     # pre-inserts) but would no longer test what this test claims to.
+    # Pick a new placeholder, not one of the currently-configured
+    # symbols, the next time a real one gets added here too.
     session_factory, engine = _underlying_session_factory()
     try:
         with session_factory.begin() as session:
@@ -98,11 +103,11 @@ def test_ensure_underlying_preserves_unconfigured_symbol_metadata() -> None:
                 text(
                     """
                     INSERT INTO underlyings (symbol, kind, is_priority)
-                    VALUES ('AAPL', 'equity', true)
+                    VALUES ('XOM', 'equity', true)
                     """
                 )
             )
-            PostgreSQLStorage._ensure_underlying(session, "aapl")
+            PostgreSQLStorage._ensure_underlying(session, "xom")
 
         with session_factory() as session:
             row = session.execute(
@@ -110,12 +115,12 @@ def test_ensure_underlying_preserves_unconfigured_symbol_metadata() -> None:
                     """
                     SELECT symbol, kind, is_priority
                     FROM underlyings
-                    WHERE symbol = 'AAPL'
+                    WHERE symbol = 'XOM'
                     """
                 )
             ).one()
 
-        assert row == ("AAPL", "equity", True)
+        assert row == ("XOM", "equity", True)
     finally:
         engine.dispose()
 
