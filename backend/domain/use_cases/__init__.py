@@ -62,6 +62,7 @@ from backend.domain.use_cases.screener_presets import (
     ScreenerPresetResult,
     get_screener_preset,
 )
+from backend.domain.use_cases.stream_underlying_price import StreamUnderlyingPriceUseCase
 from backend.domain.use_cases.stream_whale_alerts import StreamWhaleAlertsUseCase
 
 __all__ = [
@@ -84,6 +85,7 @@ __all__ = [
     "RefreshUnderlyingSnapshotUseCase",
     "ScreenerPreset",
     "ScreenerPresetResult",
+    "StreamUnderlyingPriceUseCase",
     "StreamWhaleAlertsUseCase",
     "WhaleAlert",
     "WhaleAlertThresholds",
