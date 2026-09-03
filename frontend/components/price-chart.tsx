@@ -17,6 +17,7 @@ import {
 import { getGammaHistory } from "@/lib/api";
 import type { MinuteCandle, Timeframe, VwapPoint } from "@/lib/candles";
 import { useLanguage } from "@/lib/i18n/language-context";
+import { regularSessionRange } from "@/lib/market-session";
 import type { AtrRange, GammaHistoryItem, GammaResponse } from "@/lib/types";
 import { LEVEL_MERGE_THRESHOLD } from "./gravity-map";
 
@@ -93,6 +94,26 @@ function gammaLevels(gamma: GammaResponse): GammaLevel[] {
 
 function chartCandle(candle: MinuteCandle) {
   return { ...candle, time: candle.time as UTCTimestamp };
+}
+
+// Prepends a whitespace point (a bar with only a `time`, no OHLC values --
+// lightweight-charts renders nothing for it) one second before the
+// session's 09:30 ET open. Confirmed live against the real library: a
+// *leading* whitespace point correctly anchors fitContent()'s left edge
+// at the open even with very few real candles, so early in the day the
+// chart still reads "from market open," not "from whichever few minutes
+// happen to exist" -- a *trailing* anchor at 16:00 does NOT work the same
+// way (lightweight-charts trims trailing whitespace back to the last
+// real bar regardless of API used -- setVisibleRange/setVisibleLogicalRange
+// both confirmed to do this), so this can only pin the start of the
+// session, not pre-render empty space out to the close while the market
+// is still open.
+function withSessionOpenAnchor(
+  candles: MinuteCandle[],
+  sessionOpenSeconds: number,
+): (ReturnType<typeof chartCandle> | { time: UTCTimestamp })[] {
+  const anchor = { time: (sessionOpenSeconds - 1) as UTCTimestamp };
+  return [anchor, ...candles.map(chartCandle)];
 }
 
 type TimePoint = { time: UTCTimestamp; value: number };
@@ -226,6 +247,10 @@ export function PriceChart({
   const dragStartRef = useRef<TrendlinePoint | null>(null);
   const initialCandlesRef = useRef(candles);
   const recomputeBandRectsRef = useRef<() => void>(() => {});
+  // Computed once per mount (the whole component remounts on symbol
+  // change via its `key`, so a new session's open is picked up then) --
+  // see withSessionOpenAnchor for why this only anchors the left edge.
+  const sessionOpenSecondsRef = useRef(regularSessionRange(Date.now()).openSeconds);
   const [levelMode, setLevelMode] = useState<LevelMode>("static");
   const [history, setHistory] = useState<GammaHistoryItem[]>([]);
   const [showVwap, setShowVwap] = useState(true);
@@ -281,7 +306,7 @@ export function PriceChart({
       autoscaleInfoProvider: (original: () => AutoscaleInfo | null) =>
         mergePriceRange(original(), referenceLevelsRef.current),
     });
-    series.setData(initialCandlesRef.current.map(chartCandle));
+    series.setData(withSessionOpenAnchor(initialCandlesRef.current, sessionOpenSecondsRef.current));
     chart.timeScale().fitContent();
     chartRef.current = chart;
     seriesRef.current = series;
@@ -439,13 +464,14 @@ export function PriceChart({
     // library re-run `autoscaleInfoProvider` with the freshly updated ref
     // (verified the same way: staleness before, correct range after).
     const series = seriesRef.current;
-    if (series) series.setData(candles.map(chartCandle));
+    if (series) series.setData(withSessionOpenAnchor(candles, sessionOpenSecondsRef.current));
     // `candles` is deliberately omitted below: it's read here only for its
     // current value, to nudge autoscale when the reference levels change.
     // Candle *updates* are handled by the separate effect above via
     // `series.update()`, not this one.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [gamma, atrRange, showAtr]);
+
 
   useEffect(() => {
     const chart = chartRef.current;

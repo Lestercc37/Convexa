@@ -107,6 +107,7 @@ beforeAll(() => {
     applyOptions: vi.fn(),
     timeScale: () => ({
       fitContent: vi.fn(),
+      setVisibleRange: vi.fn(),
       subscribeVisibleLogicalRangeChange: vi.fn(),
       unsubscribeVisibleLogicalRangeChange: vi.fn(),
       subscribeSizeChange: vi.fn(),

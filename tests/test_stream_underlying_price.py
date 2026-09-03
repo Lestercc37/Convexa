@@ -153,3 +153,82 @@ async def test_run_completes_immediately_for_a_provider_with_nothing_to_stream()
     )
 
     assert storage.saved == []
+
+
+class TestMarketHoursGate:
+    """The real Trade Stream keeps printing outside 09:30-16:00 ET
+    (extended hours) -- confirmed live, 2026-09: a tick as late as 17:11
+    ET reached storage before this gate existed, and dashboard.tsx has
+    no filter of its own on what it polls from MarketPrice.as_of, so an
+    extended-hours tick that reached storage always reached the chart.
+    NOW (2026-01-15T14:30:00Z) is itself exactly 09:30 ET -- the open
+    boundary -- confirmed included, so every other test in this file
+    using the default `as_of` is unaffected by this gate."""
+
+    @pytest.mark.asyncio
+    async def test_a_tick_after_the_close_is_not_persisted(self) -> None:
+        storage = _FakeStorage()
+        # 17:11 ET on the same Thursday -- the real distance confirmed
+        # live past the 16:00 ET close.
+        after_close = datetime(2026, 1, 15, 22, 11, tzinfo=UTC)
+        provider = _FakeProvider(trades=[_trade("552.25", as_of=after_close)])
+
+        await StreamUnderlyingPriceUseCase(provider, storage).run("SPY")
+
+        assert storage.saved == []
+
+    @pytest.mark.asyncio
+    async def test_a_tick_before_the_open_is_not_persisted(self) -> None:
+        storage = _FakeStorage()
+        # 09:00 ET the same Thursday, before the 09:30 open.
+        before_open = datetime(2026, 1, 15, 14, 0, tzinfo=UTC)
+        provider = _FakeProvider(trades=[_trade("552.25", as_of=before_open)])
+
+        await StreamUnderlyingPriceUseCase(provider, storage).run("SPY")
+
+        assert storage.saved == []
+
+    @pytest.mark.asyncio
+    async def test_a_tick_exactly_at_the_close_boundary_is_not_persisted(self) -> None:
+        storage = _FakeStorage()
+        # 16:00:00 ET exactly -- is_market_open's interval is half-open
+        # ([9:30, 16:00)), so this must be excluded, not the last tick in.
+        at_close = datetime(2026, 1, 15, 21, 0, tzinfo=UTC)
+        provider = _FakeProvider(trades=[_trade("552.25", as_of=at_close)])
+
+        await StreamUnderlyingPriceUseCase(provider, storage).run("SPY")
+
+        assert storage.saved == []
+
+    @pytest.mark.asyncio
+    async def test_a_weekend_tick_is_not_persisted_regardless_of_time_of_day(self) -> None:
+        storage = _FakeStorage()
+        # Saturday 2026-01-17, 10:00 ET -- inside the daily clock window
+        # but on a non-trading day.
+        saturday = datetime(2026, 1, 17, 15, 0, tzinfo=UTC)
+        provider = _FakeProvider(trades=[_trade("552.25", as_of=saturday)])
+
+        await StreamUnderlyingPriceUseCase(provider, storage).run("SPY")
+
+        assert storage.saved == []
+
+    @pytest.mark.asyncio
+    async def test_ticks_during_market_hours_still_persist_around_excluded_ones(self) -> None:
+        """Scope check -- the gate drops only the out-of-hours ticks, not
+        the whole stream once one of them shows up."""
+        storage = _FakeStorage()
+        before_open = datetime(2026, 1, 15, 14, 0, tzinfo=UTC)
+        during_hours = datetime(2026, 1, 15, 14, 30, tzinfo=UTC)
+        after_close = datetime(2026, 1, 15, 22, 11, tzinfo=UTC)
+        provider = _FakeProvider(
+            trades=[
+                _trade("551.00", as_of=before_open),
+                _trade("552.25", as_of=during_hours),
+                _trade("553.50", as_of=after_close),
+            ],
+        )
+        use_case = StreamUnderlyingPriceUseCase(provider, storage, min_write_interval_seconds=0.0)
+
+        await use_case.run("SPY")
+
+        assert [p.price for p in storage.saved] == [Decimal("552.25")]
