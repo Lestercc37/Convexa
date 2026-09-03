@@ -14,11 +14,16 @@ NOW = datetime(2026, 1, 15, 14, 30, tzinfo=UTC)
 
 
 class _FakeStorage:
-    def __init__(self) -> None:
+    def __init__(self, seed: MarketPrice | None = None) -> None:
         self.saved: list[MarketPrice] = []
+        self._latest: dict[str, MarketPrice] = {seed.symbol: seed} if seed is not None else {}
 
     def save_market_price(self, price: MarketPrice) -> None:
         self.saved.append(price)
+        self._latest[price.symbol] = price
+
+    def get_latest_price(self, underlying: str) -> MarketPrice | None:
+        return self._latest.get(underlying.upper())
 
 
 class _FakeProvider:
@@ -51,9 +56,49 @@ async def test_a_trade_persists_a_market_price() -> None:
     assert saved.symbol == "SPY"
     assert saved.price == Decimal("552.25")
     assert saved.as_of == NOW
-    # Matches ThetaDataProvider's own documented volume=0 gap (no live
-    # Stocks/Indices share-volume subscription) -- not a regression.
+    # No prior snapshot exists in storage for this symbol yet -- same
+    # starting value this field already had, not a regression.
     assert saved.volume == 0
+
+
+@pytest.mark.asyncio
+async def test_a_trade_carries_forward_the_volume_already_in_storage() -> None:
+    """The REST scheduler (RefreshUnderlyingSnapshotUseCase ->
+    ThetaDataProvider.get_underlying_snapshot) is the only thing that
+    ever computes a real volume -- this stream must never overwrite it
+    with its own guess, since save_market_price() replaces the whole
+    stored MarketPrice row, not just the price field, and MarketPrice
+    requires a volume (no way to just not send one)."""
+    seeded = MarketPrice(symbol="SPY", as_of=NOW, price=Decimal("551.00"), volume=16_396_508)
+    storage = _FakeStorage(seed=seeded)
+    provider = _FakeProvider(trades=[_trade("552.25")])
+    use_case = StreamUnderlyingPriceUseCase(provider, storage)
+
+    await use_case.run("SPY")
+
+    assert len(storage.saved) == 1
+    saved = storage.saved[0]
+    assert saved.price == Decimal("552.25")  # price still updates
+    assert saved.volume == 16_396_508  # volume from the scheduler survives intact
+
+
+@pytest.mark.asyncio
+async def test_volume_survives_several_stream_ticks_in_a_row() -> None:
+    """Not just one tick -- the scheduler's volume must keep surviving
+    across an unbroken run of stream writes between scheduler cycles,
+    since each tick's write is itself what the next tick reads back."""
+    seeded = MarketPrice(symbol="SPY", as_of=NOW, price=Decimal("551.00"), volume=16_396_508)
+    storage = _FakeStorage(seed=seeded)
+    provider = _FakeProvider(trades=[_trade("552.25"), _trade("552.30"), _trade("552.35")])
+    # A window of 0 so every one of the 3 fixture trades is persisted,
+    # not debounced away -- isolates this test to the carry-forward
+    # behavior itself.
+    use_case = StreamUnderlyingPriceUseCase(provider, storage, min_write_interval_seconds=0.0)
+
+    await use_case.run("SPY")
+
+    assert [p.price for p in storage.saved] == [Decimal("552.25"), Decimal("552.30"), Decimal("552.35")]
+    assert all(p.volume == 16_396_508 for p in storage.saved)
 
 
 @pytest.mark.asyncio

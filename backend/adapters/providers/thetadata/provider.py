@@ -640,22 +640,34 @@ class ThetaUnderlyingTradeStream:
     chart's live price fresher between REST scheduler cycles, never
     replacing that scheduler for anything else.
 
-    NOT YET VERIFIED AGAINST A REAL THETADATA CONNECTION — ThetaData's
-    Stocks plan (required for the STOCK half of this stream; the INDEX
-    half needs a separate "Index Standard" subscription) is not active
-    yet as of this PR (confirmed with the user); it activates in the
-    coming days. Built directly from ThetaData's public v3 docs, by the
-    same close analogy to ThetaTradeStream above that PR #80 used for
-    the (now-verified) options Quote Stream — but the message shapes
-    below have never been exercised against a live Theta Terminal.
-    Re-validate the fixtures in tests/test_thetadata_provider.py against
-    real messages the moment the relevant plan goes live, before
-    trusting this in production. Sources, fetched 2026-09:
+    CONFIRMED LIVE against a real Theta Terminal, market open
+    (2026-09-03, Stocks+Index plans active): SPY/TSLA (STOCK) and
+    SPX/VIX/NDX (INDEX) all delivered genuine TRADE messages in exactly
+    the shape assumed below, `size` confirmed always 0 for INDEX
+    messages. Sources, fetched 2026-09:
     - https://docs.thetadata.us/Streaming/US-Stocks/Trade-Stream.html
     - https://docs.thetadata.us/Streaming/US-Indices/Price-Stream.html
       (confirmed: identical `trade` message shape to the stock stream,
       only the subscribe payload's `sec_type` differs — `"INDEX"`
       instead of `"STOCK"`, and `size` is always reported as 0)
+
+    KNOWN GAP, confirmed live, not yet fixed: `_handle_trade` filters
+    incoming messages only by `contract.root`, but the local Theta
+    Terminal broadcasts every symbol/contract with an active
+    subscription ANYWHERE on that Terminal to every connected WebSocket
+    client — not scoped to what this specific connection subscribed to.
+    A connection that only asked for `sec_type: "INDEX"` on `"VIX"`
+    still received `security_type: "OPTION"` trade messages for the
+    same root (leaking in from this same backend's own `ThetaTradeStream`,
+    separately subscribed to VIX's near-the-money option chain), and
+    `_handle_trade` currently accepts them since it never checks
+    `contract.security_type`. Quantified live: 60% of root="VIX"
+    messages over 60s were OPTION contamination (9 of 15, option
+    premiums ~$0.40-$1.57 published as if they were VIX's own price,
+    real VIX level ~14.87-14.89 at the same moment); ~9% for root="SPX"
+    (13 of 139). See TestUnderlyingTradeStream's own docstring and
+    test_option_trades_sharing_the_same_root_are_not_filtered_out in
+    tests/test_thetadata_provider.py.
 
     ES (UnderlyingKind.FUTURE) is deliberately never registered — no
     ThetaData futures trade-stream documentation was found, the same

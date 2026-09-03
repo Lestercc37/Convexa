@@ -970,6 +970,86 @@ completo se actualizaron para reflejar el volumen real en vez del `0` documentad
   `_connect_and_consume` recibiendo un `REQ_RESPONSE` real de rechazo en producción sigue sin
   ejercitarse end-to-end.
 
+#### Re-prueba de TRADE en horario de mercado real, y fin del `volume=0` que el stream escribía sobre el del scheduler
+
+Dos tareas que dependían de que el mercado estuviera abierto para probarse de verdad — ambas
+confirmadas hoy en vivo (2026-09-03, jueves, mercado abierto, ~11:40am ET), a diferencia del intento
+anterior que corrió después del cierre (9:59pm ET, cero mensajes en 45s, sin poder distinguir "no
+opera" de "no funciona").
+
+**A. Re-prueba de `ThetaUnderlyingTradeStream` — confirmada en vivo para los 5 símbolos pedidos, con
+un hallazgo real no esperado.** Se corrió la clase real (no una reimplementación) contra el Terminal
+real, registrando SPY/TSLA (`STOCK`) y SPX/VIX/NDX (`INDEX`), escuchando 45-75s por corrida:
+
+- ✅ Los 5 símbolos recibieron mensajes `TRADE` genuinos: SPY (3264 en 60s), TSLA (10961 en 60s), SPX
+  (211 en 60s / 126 índice + 13 opción en otra corrida de 45s), VIX (24 en 60s), NDX (60 en 60s). El
+  formato coincide exactamente con lo que el código ya asumía — mismos campos (`ms_of_day`,
+  `sequence`, `size`, `condition`, `price`, `exchange`, `date`), y `size` confirmado siempre `0` para
+  mensajes `INDEX`, tal como documenta ya `ThetaUnderlyingTradeStream`.
+- ✅ **Bono no pedido pero relevante:** `REQ_RESPONSE` también se confirmó en vivo — las 5
+  suscripciones devolvieron `"SUBSCRIBED"`, logueado correctamente a `debug` vía
+  `_log_req_response` (el fix del PR anterior), confirmando que ese arreglo funciona en producción,
+  no solo con mensajes simulados.
+- ⚠️ **NDX no está en `ACTIVE_UNDERLYINGS`** (`backend/domain/underlyings.py`) — el código de la
+  aplicación no lo registra en ningún lado hoy. Se pudo probar igual suscribiéndolo directamente al
+  stream (fuera del flujo normal de `ThetaDataProvider.start()`), y funcionó, pero si el usuario
+  espera que NDX aparezca en el dashboard como los demás, hace falta agregarlo a esa lista — fuera de
+  alcance de esta tarea, solo reportado.
+- ❌ **Hallazgo real, no esperado, confirmado en vivo — no simulado:** `_handle_trade` en
+  `ThetaUnderlyingTradeStream` (y estructuralmente lo mismo en `ThetaTradeStream`) filtra los mensajes
+  entrantes solo por `contract.root`, nunca por `contract.security_type`. El Theta Terminal local
+  **no** aísla la entrega por conexión — retransmite **todo** símbolo/contrato con alguna suscripción
+  activa en *cualquier* cliente conectado a ese mismo Terminal, a *todos* los clientes conectados. Una
+  conexión que solo pidió `sec_type: "INDEX"` para `"VIX"` igual recibió mensajes
+  `security_type: "OPTION"` con el mismo root — filtrados desde el backend real que ya está corriendo
+  en este entorno (puerto 8000, con `ThetaTradeStream` suscrito al chain near-the-money de VIX para
+  Gamma Exposure). Como `_handle_trade` no distingue `security_type`, trata la prima de una opción
+  (~$0.40–$1.57) como si fuera el propio precio del índice VIX (~$14.87–$14.89 real, confirmado
+  simultáneamente vía `GET /v3/index/snapshot/price`). Cuantificado en vivo: 60% de los mensajes
+  `root="VIX"` en 60s eran contaminación de opciones (9 de 15); ~9% para `root="SPX"` (13 de 139);
+  `root="SPY"`/`"TSLA"`/`"NDX"` no mostraron ninguna en las ventanas muestreadas, pero el mismo riesgo
+  latente aplica a cualquier símbolo cuyas opciones también estén suscritas en otro lado del mismo
+  Terminal — es más severo en VIX precisamente porque las operaciones genuinas del índice son
+  relativamente raras comparadas con sus opciones. **No corregido en esta tarea** — verificación, no
+  arreglo, es lo que se pidió; documentado como gap conocido en el docstring de
+  `ThetaUnderlyingTradeStream`, con una prueba (`test_option_trades_sharing_the_same_root_are_not_filtered_out`)
+  que fija el comportamiento actual (buggy) con el mensaje real capturado en vivo, para quien retome el
+  arreglo — el fix natural es que `_handle_trade` también verifique `contract.security_type` contra el
+  `UnderlyingKind` registrado antes de aceptar un mensaje como genuino.
+- **Sobre distinguir "no opera ahora" de "el stream no funciona":** los 5 símbolos pedidos sí
+  operaron durante la ventana de prueba, así que no hubo un caso real de "cero mensajes" que probar
+  directamente. La distinción ya existe arquitectónicamente sin necesidad de cambios: el heartbeat
+  `STATUS` (ya implementado, independiente de si algún símbolo específico tuvo operaciones) sigue
+  llegando mientras la conexión esté sana — silencio de un símbolo mientras `STATUS` sigue fluyendo =
+  "no opera en este momento"; que el propio `STATUS` se vuelva stale (`STATUS_STALE_AFTER_SECONDS`) es
+  lo que ya distingue "el stream no funciona".
+
+**B. `StreamUnderlyingPriceUseCase` ya no pisa el volumen real del scheduler con `0`.** Antes de
+tocar el código, se confirmó cómo escribe hoy `save_market_price()`: en `InMemoryStorage` es una
+asignación de diccionario completa (`self._prices[symbol] = price`, reemplaza el objeto entero, no
+actualiza campos); en `PostgresqlStorage` es un `INSERT` de una fila nueva en `market_snapshots` que
+se vuelve "la más reciente" por tiempo (confirmado leyendo `get_latest_price()` de ambos backends). Y
+`MarketPrice.volume` es un campo `int` requerido, sin default y sin `None` — **no existe la opción de
+"no incluirlo en el payload"** que planteaba el usuario como posible arreglo; hay que enviar algún
+valor sí o sí. El arreglo real: en vez de escribir `volume=0` a mano, `_maybe_persist` ahora llama a
+`self._storage.get_latest_price(event.symbol)` y **reenvía el volumen que ya estaba ahí** (el que puso
+el scheduler REST la última vez, o el que un tick de stream anterior ya reenvió) — el stream nunca
+calcula ni decide un volumen propio, solo lo repite hacia adelante entre ciclos del scheduler. Si
+nunca se ha escrito nada para ese símbolo (arranque en frío), cae a `0` — el mismo valor que ya tenía
+este campo antes, no una regresión.
+
+**Tests:** `test_a_trade_carries_forward_the_volume_already_in_storage` (siembra un `MarketPrice` con
+volumen real, confirma que un tick de precio del stream lo preserva intacto) y
+`test_volume_survives_several_stream_ticks_in_a_row` (el mismo volumen sobrevive 3 ticks seguidos del
+stream sin que el scheduler vuelva a escribir) — ambos en `tests/test_stream_underlying_price.py`.
+`_FakeStorage` (ese archivo) y `_StubStorage` (`tests/test_underlying_price_stream.py`) se actualizaron
+para implementar `get_latest_price`, ya requerido por `IStorage` y ahora también llamado por el caso de
+uso. 275 tests, suite completa, en verde. `ruff check`: mismos 5 `FURB157` preexistentes antes y
+después (confirmado por `git stash`), ninguno nuevo.
+
+**Fuera de alcance de esta tarea, a propósito:** el arreglo del filtrado por `security_type` que reveló
+la Parte A — solo se pidió verificar y reportar, no corregir; agregar NDX a `ACTIVE_UNDERLYINGS`.
+
 ---
 
 ## Resumen de mapeo a contratos existentes

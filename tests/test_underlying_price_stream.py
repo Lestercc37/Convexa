@@ -17,6 +17,9 @@ class _StubStorage:
     def save_market_price(self, price: MarketPrice) -> None:
         pass
 
+    def get_latest_price(self, underlying: str) -> MarketPrice | None:
+        return None
+
 
 class _StubProvider:
     """Immediately-exhausted stream, same shape as MockDataProvider's own

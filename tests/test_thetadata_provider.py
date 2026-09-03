@@ -704,12 +704,32 @@ class TestQuoteStream:
 
 
 class TestUnderlyingTradeStream:
-    """Fixtures below are built directly from ThetaData's public v3 docs
-    (https://docs.thetadata.us/Streaming/US-Stocks/Trade-Stream.html,
-    fetched 2026-09) — NOT verified against a real Theta Terminal
-    connection, since ThetaData's Stocks plan isn't active yet as of
-    this PR. Re-validate these against real messages the moment it goes
-    live, before trusting this stream in production."""
+    """Fixtures below were built from ThetaData's public v3 docs
+    (https://docs.thetadata.us/Streaming/US-Stocks/Trade-Stream.html)
+    and confirmed live against a real Theta Terminal, market open
+    (2026-09-03, Stocks+Index plans active): SPY/TSLA (STOCK) and
+    SPX/VIX/NDX (INDEX) all delivered genuine TRADE messages in exactly
+    this shape, size=0 confirmed for every INDEX message. REQ_RESPONSE
+    handling was confirmed live too — all 5 subscriptions logged
+    "SUBSCRIBED" at debug via the shared _log_req_response helper.
+
+    One real, confirmed-live gap this class of tests does NOT cover
+    (see test_option_trades_sharing_the_same_root_are_not_filtered_out
+    below): the local Theta Terminal broadcasts every symbol/contract
+    with an active subscription ANYWHERE on that Terminal to EVERY
+    connected WebSocket client, not just what a given connection itself
+    subscribed to. A connection that only asked for `sec_type: "INDEX"`
+    on "VIX" still received `security_type: "OPTION"` trade messages
+    for the same root (leaking in from this same backend's own
+    ThetaTradeStream, which was separately subscribed to VIX's
+    near-the-money option chain) — and _handle_trade currently accepts
+    them, since it only checks `contract.root`, never
+    `contract.security_type`. Quantified live: 60% of root="VIX"
+    messages over 60s were OPTION contamination (9 of 15), ~9% for
+    root="SPX" (13 of 139); root="SPY"/"TSLA"/"NDX" showed none in the
+    sampled windows, but the same latent risk applies to any symbol
+    whose options are also subscribed elsewhere on the same Terminal.
+    Not fixed here — flagged for a follow-up task."""
 
     def test_handle_trade_publishes_an_underlying_trade_event_to_subscribers(self) -> None:
         stream = ThetaUnderlyingTradeStream(WS_URL)
@@ -750,6 +770,48 @@ class TestUnderlyingTradeStream:
 
         assert not aapl_queue.empty()
         assert spy_queue.empty()
+
+    def test_option_trades_sharing_the_same_root_are_not_filtered_out(self) -> None:
+        """Documents a real, confirmed-live gap (2026-09-03 market-open
+        investigation), not a fix -- see this class's own docstring for
+        the live-quantified numbers. _handle_trade only checks
+        contract.root, so an OPTION trade for the same root as a
+        registered underlying is currently accepted and published as if
+        it were the underlying's own price -- exactly what happened live
+        with VIX call/put premiums (~$0.40-$1.57) being delivered on a
+        connection that only asked for sec_type "INDEX"."""
+        stream = ThetaUnderlyingTradeStream(WS_URL)
+        queue = stream.subscribe_queue("VIX")
+        # Exact shape captured live -- a VIX call option trade, not the
+        # VIX index itself, sharing contract.root == "VIX".
+        message = {
+            "header": {"type": "TRADE", "status": "CONNECTED"},
+            "contract": {
+                "security_type": "OPTION",
+                "root": "VIX",
+                "expiration": 20260916,
+                "strike": 15000,
+                "right": "C",
+            },
+            "trade": {
+                "ms_of_day": 42308474,
+                "sequence": 697107163,
+                "size": 10,
+                "condition": 18,
+                "price": 1.57,
+                "exchange": 5,
+                "date": 20260903,
+            },
+        }
+
+        stream._handle_trade(message)
+        event = queue.get_nowait()
+
+        # Today's (buggy) behavior: the $1.57 option premium is
+        # published as if it were VIX's own price -- confirmed live,
+        # the real VIX index level was ~14.87-14.89 at the same moment.
+        assert event.symbol == "VIX"
+        assert event.price == Decimal("1.57")
 
     def test_handle_trade_ignores_incomplete_messages(self) -> None:
         stream = ThetaUnderlyingTradeStream(WS_URL)
