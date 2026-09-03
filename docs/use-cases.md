@@ -1050,6 +1050,101 @@ después (confirmado por `git stash`), ninguno nuevo.
 **Fuera de alcance de esta tarea, a propósito:** el arreglo del filtrado por `security_type` que reveló
 la Parte A — solo se pidió verificar y reportar, no corregir; agregar NDX a `ACTIVE_UNDERLYINGS`.
 
+#### Arreglo urgente: filtro por `security_type` en `ThetaUnderlyingTradeStream`, y evaluación del daño ya hecho
+
+Bug de producción activo, confirmado en la tarea anterior con mensajes reales: el Theta Terminal local
+no aísla la entrega por conexión — retransmite todo símbolo/contrato con alguna suscripción activa (de
+cualquier cliente conectado a ese Terminal, incluido el backend real que ya corre en este entorno) a
+todos los clientes. `_handle_trade` en `ThetaUnderlyingTradeStream` solo filtraba por `contract.root`,
+nunca por `contract.security_type` — consecuencia confirmada: primas de opciones de VIX (~$0.40–$1.57)
+se guardaban en `MarketPrice` como si fueran el precio del índice VIX (~$14.87 real).
+
+**A. El arreglo — ya aplicado.** `_handle_trade` ahora también verifica `contract.security_type` contra
+el `UnderlyingKind` registrado (`"INDEX"` para índices, `"STOCK"` para acciones) antes de aceptar un
+mensaje; si no coincide, se descarta. Un símbolo sin registrar (`self._symbols.get(symbol)` es `None`)
+también se descarta — sin un `UnderlyingKind` registrado no hay `security_type` esperado contra el cual
+validar, así que no se adivina.
+
+- La prueba que ya dejamos documentando el bug (`test_option_trades_sharing_the_same_root_are_not_filtered_out`)
+  se convirtió, no se borró: ahora es `test_option_trades_sharing_the_same_root_are_filtered_out`, usa el
+  mismo mensaje real de opción de VIX capturado en vivo, y confirma que la cola queda vacía. Se agregaron
+  además `test_genuine_index_trade_for_a_registered_symbol_still_publishes` (el arreglo no debe ser
+  excesivo — un trade genuino del índice sigue publicándose normal), `test_option_trade_for_an_equity_root_is_also_filtered_out`
+  (mismo arreglo, lado STOCK) y `test_trade_for_an_unregistered_symbol_is_dropped_not_guessed`.
+- **Confirmado en vivo, no solo con pruebas simuladas:** se corrió `ThetaUnderlyingTradeStream` (la
+  clase real, ya arreglada) contra el Terminal real durante 60s, suscrita solo a VIX. Llegaron 30
+  mensajes `OPTION` + 6 `INDEX` con `root="VIX"` en el cable (mismo patrón de contaminación que antes),
+  pero los eventos publicados a la cola fueron exactamente los 6 genuinos (`14.68, 14.68, 14.68, 14.67,
+  14.67, 14.67`) — cero contaminación llegó al consumidor.
+- `ThetaTradeStream`/`ThetaQuoteStream` (las clases hermanas) se revisaron y **no necesitan el mismo
+  arreglo** — ya son inmunes estructuralmente: ambas requieren `expiration`/`strike` (u otros campos que
+  solo existen en mensajes de `OPTION`) antes de procesar nada, así que un mensaje `STOCK`/`INDEX` que
+  se filtre por la misma vía ya cae en su chequeo de "campos incompletos" existente, sin necesidad de un
+  chequeo nuevo de `security_type`.
+
+**B. Evaluación del daño — sin borrar ni limpiar nada, solo reportado.** El proceso real corriendo en
+este entorno (puerto 8000, PID 13460, `uvicorn backend.main:app --reload`) arrancó el 2026-09-01
+21:41:48 ET — desde entonces usa Postgres real (`DATABASE_URL` en `.env`), no memoria. Se consultó
+`market_snapshots` de forma **solo lectura**, acotado a esa ventana de uptime:
+
+- **VIX:** 40 de 992 filas (4.03%) con precio fuera del rango plausible del índice (banda de control:
+  $5–$100), todas con precios entre $0.31 y $4.05 — consistente con primas de opciones, no con el nivel
+  real del índice (~$14.6–15.0 confirmado en paralelo vía REST). Todas concentradas en una sola ventana
+  de ~20 minutos hoy: 2026-09-03 15:39:06–15:58:58 UTC (~11:39am–11:58am ET).
+- **SPX:** 12 de 1312 filas (0.91%) fuera de banda ($3,000–$12,000), precios entre $28.04 y $108.49,
+  misma ventana de ~20 minutos que VIX.
+- **SPY, TSLA:** 0 filas fuera de banda en toda la ventana de uptime (814 y 1483 filas respectivamente)
+  — consistente con lo observado en vivo en la tarea anterior (ninguna contaminación de opciones
+  capturada en las muestras para estos dos símbolos).
+- **NDX:** 0 filas en `market_snapshots` — no está en `ACTIVE_UNDERLYINGS`, nunca se persistió nada para
+  él (ya reportado en la tarea anterior).
+- **Caveat honesto, no ocultado:** esa ventana de ~20 minutos coincide fuertemente con la propia sesión
+  de pruebas en vivo de la tarea anterior (varios scripts abriendo conexiones WebSocket adicionales al
+  mismo Terminal compartido, en el mismo rango horario). No se puede descartar con certeza que esa
+  actividad de investigación haya contribuido a la tasa/momento exacto de la contaminación observada —
+  el mecanismo de fondo (Terminal compartido + filtro ciego a `security_type`) es estructural e
+  independiente de esas pruebas, pero la correlación temporal es demasiado fuerte para no mencionarla.
+- **¿Sigue pasando ahora mismo?** No se detectó ninguna fila contaminada nueva desde las 15:58:58 UTC —
+  las filas más recientes revisadas (hasta 16:07:47 UTC, varios minutos después de aplicar el arreglo)
+  están todas limpias. El proceso corre con `--reload`, que reinicia automáticamente al detectar cambios
+  en los archivos fuente — muy probablemente ya recogió el arreglo sin intervención manual, pero esto
+  **no se pudo confirmar con certeza total desde fuera del proceso** (no hay acceso a su consola). Se
+  recomienda confirmar en la consola del servidor o reiniciarlo manualmente para tener certeza absoluta.
+
+**Impacto en cálculos derivados — rastreado explícitamente, no asumido:**
+- **Gamma/GEX/OI/`DailyGammaReference`: sin impacto.** `capture_daily_gamma_reference` y todo el
+  pipeline de Gamma usan `MarketSnapshot` del scheduler REST (`get_underlying_snapshot()`, con
+  `underlying_price` que viene del propio endpoint de opciones), nunca `MarketPrice`/el stream — rutas
+  de datos completamente separadas, confirmado leyendo el código, no solo por la arquitectura documentada.
+- **Anchored VWAP (VIX/SPX): sin impacto en el valor.** Todas las filas de `market_snapshots` para VIX y
+  SPX tienen `volume=0` (100% — es lo esperado para índices, `/v3/index/snapshot/ohlc` siempre reporta 0
+  ahí, no es parte de este bug). `calculate_anchored_vwap` pondera cada intervalo por su volumen
+  (`interval_volume = max(reading.volume - previous_volume, 0)`) — con volumen siempre 0, el VWAP se
+  queda permanentemente `provisional=True, value=None` para VIX/SPX sin importar qué precio tuviera cada
+  fila; los precios contaminados nunca llegaron a ponderarse en ningún cálculo real.
+- **Bandas de ATR (`today_open`): sin impacto.** Se ancla a la lectura *más temprana* de la sesión
+  (`min(session_readings, key=as_of)`) — confirmado que la primera lectura de hoy para VIX ($15.02,
+  13:30:08 UTC) y SPX ($7701.70, 13:30:11 UTC) son genuinas, muy anteriores a la ventana de
+  contaminación de las 15:39–15:58 UTC.
+- **`snapshot.price` / `closing_dynamics` mostrados en vivo: posible impacto transitorio, no
+  cuantificable con certeza.** `build_market_snapshot()` usa `storage.get_latest_price()` — la fila más
+  reciente en el momento exacto de cada request — para `snapshot.price` y como entrada de
+  `calculate_closing_dynamics()`. No se persiste nada derivado de esto; solo se calcula al vuelo por
+  request. Si el dashboard consultó `GET /market/VIX` (o SPX) exactamente durante esos ~20 minutos,
+  pudo haber mostrado un precio equivocado y un `closing_dynamics` calculado sobre él — no hay logs de
+  acceso HTTP disponibles para confirmar si esto realmente ocurrió.
+
+**Hallazgo aparte, no relacionado con este bug, no investigado a fondo — solo reportado:** filas mucho
+más antiguas en `market_snapshots` (2026-08-03 y 2026-08-11) muestran el mismo precio exacto ($552.25)
+simultáneamente para VIX, SPX, SPY y TSLA — un valor que coincide con un fixture usado en las pruebas de
+este repo, no con ningún dato de mercado real. Parece contaminación de datos de prueba/mock en la misma
+base de datos de producción, de origen anterior a esta investigación y sin relación con el bug de
+`security_type`. No se tocó, no se investigó más — fuera de alcance de esta tarea.
+
+**No se borró ni modificó ningún dato** — solo lectura, tal como pidió el usuario. La decisión sobre
+qué hacer con las filas contaminadas (descartar el tramo, marcarlas, algo más fino) queda pendiente,
+a criterio del usuario.
+
 ---
 
 ## Resumen de mapeo a contratos existentes

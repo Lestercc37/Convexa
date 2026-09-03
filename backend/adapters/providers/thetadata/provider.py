@@ -651,22 +651,25 @@ class ThetaUnderlyingTradeStream:
       only the subscribe payload's `sec_type` differs — `"INDEX"`
       instead of `"STOCK"`, and `size` is always reported as 0)
 
-    KNOWN GAP, confirmed live, not yet fixed: `_handle_trade` filters
-    incoming messages only by `contract.root`, but the local Theta
+    FIXED (was a live production bug, 2026-09-03): the local Theta
     Terminal broadcasts every symbol/contract with an active
     subscription ANYWHERE on that Terminal to every connected WebSocket
     client — not scoped to what this specific connection subscribed to.
     A connection that only asked for `sec_type: "INDEX"` on `"VIX"`
     still received `security_type: "OPTION"` trade messages for the
     same root (leaking in from this same backend's own `ThetaTradeStream`,
-    separately subscribed to VIX's near-the-money option chain), and
-    `_handle_trade` currently accepts them since it never checks
-    `contract.security_type`. Quantified live: 60% of root="VIX"
-    messages over 60s were OPTION contamination (9 of 15, option
-    premiums ~$0.40-$1.57 published as if they were VIX's own price,
-    real VIX level ~14.87-14.89 at the same moment); ~9% for root="SPX"
-    (13 of 139). See TestUnderlyingTradeStream's own docstring and
-    test_option_trades_sharing_the_same_root_are_not_filtered_out in
+    separately subscribed to VIX's near-the-money option chain).
+    `_handle_trade` used to filter only by `contract.root`, so those
+    option trades were accepted and published as if they were the
+    underlying's own price. Quantified live before the fix: 60% of
+    root="VIX" messages over 60s were OPTION contamination (9 of 15,
+    option premiums ~$0.40-$1.57 published as if they were VIX's own
+    price, real VIX level ~14.87-14.89 at the same moment); ~9% for
+    root="SPX" (13 of 139). `_handle_trade` now also checks
+    `contract.security_type` against the registered `UnderlyingKind`
+    before accepting a message. See
+    test_option_trades_sharing_the_same_root_is_filtered_out and
+    TestUnderlyingTradeStream's own docstring in
     tests/test_thetadata_provider.py.
 
     ES (UnderlyingKind.FUTURE) is deliberately never registered — no
@@ -790,6 +793,25 @@ class ThetaUnderlyingTradeStream:
         if root is None or price is None or size is None:
             return
         symbol = root.upper()
+        # The local Theta Terminal broadcasts every symbol/contract with
+        # an active subscription ANYWHERE on it to every connected
+        # client, not scoped to what this connection itself subscribed
+        # to (confirmed live, 2026-09-03 — see this class's own
+        # docstring). An OPTION trade sharing this root (e.g. a VIX
+        # call/put, leaking in from ThetaTradeStream's own separate
+        # near-the-money subscription on the same Terminal) carries the
+        # same contract.root, so root alone can't tell it apart from a
+        # genuine underlying trade — contract.security_type is what
+        # actually distinguishes them. Without this check, an option's
+        # premium (confirmed live: VIX ~$0.40-$1.57) gets published as
+        # if it were the underlying's own price (VIX ~$14.87-$14.89 at
+        # the same moment).
+        kind = self._symbols.get(symbol)
+        if kind is None:
+            return
+        expected_security_type = "INDEX" if kind == UnderlyingKind.INDEX else "STOCK"
+        if contract.get("security_type") != expected_security_type:
+            return
         event = UnderlyingTradeEvent(
             symbol=symbol,
             as_of=utc_now(),

@@ -713,26 +713,29 @@ class TestUnderlyingTradeStream:
     handling was confirmed live too — all 5 subscriptions logged
     "SUBSCRIBED" at debug via the shared _log_req_response helper.
 
-    One real, confirmed-live gap this class of tests does NOT cover
-    (see test_option_trades_sharing_the_same_root_are_not_filtered_out
-    below): the local Theta Terminal broadcasts every symbol/contract
-    with an active subscription ANYWHERE on that Terminal to EVERY
-    connected WebSocket client, not just what a given connection itself
-    subscribed to. A connection that only asked for `sec_type: "INDEX"`
-    on "VIX" still received `security_type: "OPTION"` trade messages
-    for the same root (leaking in from this same backend's own
-    ThetaTradeStream, which was separately subscribed to VIX's
-    near-the-money option chain) — and _handle_trade currently accepts
-    them, since it only checks `contract.root`, never
-    `contract.security_type`. Quantified live: 60% of root="VIX"
-    messages over 60s were OPTION contamination (9 of 15), ~9% for
-    root="SPX" (13 of 139); root="SPY"/"TSLA"/"NDX" showed none in the
-    sampled windows, but the same latent risk applies to any symbol
-    whose options are also subscribed elsewhere on the same Terminal.
-    Not fixed here — flagged for a follow-up task."""
+    A real production bug was found and fixed here (2026-09-03): the
+    local Theta Terminal broadcasts every symbol/contract with an active
+    subscription ANYWHERE on that Terminal to EVERY connected WebSocket
+    client, not just what a given connection itself subscribed to. A
+    connection that only asked for `sec_type: "INDEX"` on "VIX" still
+    received `security_type: "OPTION"` trade messages for the same root
+    (leaking in from this same backend's own ThetaTradeStream, which was
+    separately subscribed to VIX's near-the-money option chain) —
+    `_handle_trade` used to only check `contract.root`, so those got
+    published as if they were VIX's own price. Quantified live before
+    the fix: 60% of root="VIX" messages over 60s were OPTION
+    contamination (9 of 15), ~9% for root="SPX" (13 of 139).
+    `_handle_trade` now also checks `contract.security_type` against the
+    registered `UnderlyingKind` — see
+    test_option_trades_sharing_the_same_root_are_filtered_out and its
+    neighbors below, which also register a symbol/kind before calling
+    `_handle_trade` for exactly this reason (an unregistered symbol has
+    no expected `security_type` to validate against, so it's dropped —
+    see test_trade_for_an_unregistered_symbol_is_dropped_not_guessed)."""
 
     def test_handle_trade_publishes_an_underlying_trade_event_to_subscribers(self) -> None:
         stream = ThetaUnderlyingTradeStream(WS_URL)
+        stream.register_symbol("AAPL", UnderlyingKind.EQUITY)
         queue = stream.subscribe_queue("AAPL")
         # Exact shape from ThetaData's docs' own example message.
         message = {
@@ -758,6 +761,7 @@ class TestUnderlyingTradeStream:
 
     def test_handle_trade_only_publishes_to_the_matching_symbols_subscribers(self) -> None:
         stream = ThetaUnderlyingTradeStream(WS_URL)
+        stream.register_symbol("AAPL", UnderlyingKind.EQUITY)
         aapl_queue = stream.subscribe_queue("AAPL")
         spy_queue = stream.subscribe_queue("SPY")
         message = {
@@ -771,16 +775,18 @@ class TestUnderlyingTradeStream:
         assert not aapl_queue.empty()
         assert spy_queue.empty()
 
-    def test_option_trades_sharing_the_same_root_are_not_filtered_out(self) -> None:
-        """Documents a real, confirmed-live gap (2026-09-03 market-open
-        investigation), not a fix -- see this class's own docstring for
-        the live-quantified numbers. _handle_trade only checks
-        contract.root, so an OPTION trade for the same root as a
-        registered underlying is currently accepted and published as if
-        it were the underlying's own price -- exactly what happened live
-        with VIX call/put premiums (~$0.40-$1.57) being delivered on a
-        connection that only asked for sec_type "INDEX"."""
+    def test_option_trades_sharing_the_same_root_are_filtered_out(self) -> None:
+        """Regression test for a real production bug (confirmed live,
+        2026-09-03 market open, see this class's own docstring): before
+        the fix, _handle_trade only checked contract.root, so this exact
+        VIX call option trade (captured live) was accepted and published
+        as if it were VIX's own price ($1.57 published as "VIX price",
+        real VIX index level ~14.87-14.89 at the same moment). Now
+        _handle_trade also checks contract.security_type against the
+        registered UnderlyingKind, so an OPTION trade sharing the root
+        must be dropped instead."""
         stream = ThetaUnderlyingTradeStream(WS_URL)
+        stream.register_symbol("VIX", UnderlyingKind.INDEX)
         queue = stream.subscribe_queue("VIX")
         # Exact shape captured live -- a VIX call option trade, not the
         # VIX index itself, sharing contract.root == "VIX".
@@ -805,13 +811,79 @@ class TestUnderlyingTradeStream:
         }
 
         stream._handle_trade(message)
+
+        assert queue.empty()
+
+    def test_genuine_index_trade_for_a_registered_symbol_still_publishes(self) -> None:
+        """The fix must not be overly broad -- a genuine INDEX trade for
+        VIX (security_type matching the registered UnderlyingKind.INDEX)
+        must still publish normally. Exact shape captured live alongside
+        the option-contamination messages above."""
+        stream = ThetaUnderlyingTradeStream(WS_URL)
+        stream.register_symbol("VIX", UnderlyingKind.INDEX)
+        queue = stream.subscribe_queue("VIX")
+        message = {
+            "header": {"type": "TRADE", "status": "CONNECTED"},
+            "contract": {"security_type": "INDEX", "root": "VIX"},
+            "trade": {
+                "ms_of_day": 42331000,
+                "sequence": 0,
+                "size": 0,
+                "condition": 0,
+                "price": 14.88,
+                "exchange": 5,
+                "date": 20260903,
+            },
+        }
+
+        stream._handle_trade(message)
         event = queue.get_nowait()
 
-        # Today's (buggy) behavior: the $1.57 option premium is
-        # published as if it were VIX's own price -- confirmed live,
-        # the real VIX index level was ~14.87-14.89 at the same moment.
         assert event.symbol == "VIX"
-        assert event.price == Decimal("1.57")
+        assert event.price == Decimal("14.88")
+
+    def test_option_trade_for_an_equity_root_is_also_filtered_out(self) -> None:
+        """Same fix, STOCK side -- confirmed live that root="SPX" (an
+        INDEX) also saw OPTION contamination (13 of 139 messages over
+        60s), and the same leak mechanism applies to any registered
+        EQUITY symbol whose options are subscribed elsewhere on the
+        same Terminal."""
+        stream = ThetaUnderlyingTradeStream(WS_URL)
+        stream.register_symbol("SPY", UnderlyingKind.EQUITY)
+        queue = stream.subscribe_queue("SPY")
+        message = {
+            "header": {"type": "TRADE", "status": "CONNECTED"},
+            "contract": {
+                "security_type": "OPTION",
+                "root": "SPY",
+                "expiration": 20260918,
+                "strike": 770000,
+                "right": "C",
+            },
+            "trade": {"size": 10, "price": 1.09},
+        }
+
+        stream._handle_trade(message)
+
+        assert queue.empty()
+
+    def test_trade_for_an_unregistered_symbol_is_dropped_not_guessed(self) -> None:
+        """No registered UnderlyingKind means no expected security_type
+        to validate against -- dropping is the safe default, not a
+        guess. Harmless either way (no subscriber would exist for an
+        unregistered symbol), but explicit is better than relying on
+        that coincidence."""
+        stream = ThetaUnderlyingTradeStream(WS_URL)
+        queue = stream.subscribe_queue("QQQ")
+        message = {
+            "header": {"type": "TRADE", "status": "CONNECTED"},
+            "contract": {"security_type": "STOCK", "root": "QQQ"},
+            "trade": {"size": 10, "price": 500.0},
+        }
+
+        stream._handle_trade(message)
+
+        assert queue.empty()
 
     def test_handle_trade_ignores_incomplete_messages(self) -> None:
         stream = ThetaUnderlyingTradeStream(WS_URL)
@@ -914,6 +986,7 @@ class TestProviderLifecycle:
     @pytest.mark.asyncio
     async def test_stream_underlying_trades_yields_events_from_the_queue(self) -> None:
         provider = ThetaDataProvider(REST_URL, WS_URL)
+        provider._underlying_trade_stream.register_symbol("SPY", UnderlyingKind.EQUITY)
         events = provider.stream_underlying_trades("SPY")
         # Advance the async generator to its subscribe_queue() + first
         # `await queue.get()` before publishing — otherwise the event
