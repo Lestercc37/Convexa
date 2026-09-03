@@ -20,6 +20,7 @@ from backend.adapters.providers.thetadata.provider import (
     ThetaUnderlyingTradeStream,
     _build_occ_symbol,
     _log_req_response,
+    _nearest_expiration_cutoff,
     _parse_et_timestamp,
     _time_to_expiration_years,
 )
@@ -128,6 +129,28 @@ class TestHelpers:
     def test_time_to_expiration_is_zero_after_close(self) -> None:
         now_et = datetime(2026, 8, 31, 16, 30, 0, tzinfo=EASTERN_TIME)
         assert _time_to_expiration_years(date(2026, 8, 31), now_et) == Decimal(0)
+
+
+class TestNearestExpirationCutoff:
+    """Before MARKET_CLOSE_ET, today's own date must still be eligible as
+    "nearest" (a genuine 0DTE). At/after MARKET_CLOSE_ET, today's 0DTE
+    already has time_to_expiration<=0 (see
+    test_time_to_expiration_is_zero_after_close) -- calculate_bsm_greeks
+    zeroes gamma on every contract for it, so it can no longer stand in
+    as "nearest" once the market's actually closed for the day (confirmed
+    live, 2026-09 investigation)."""
+
+    def test_before_close_todays_date_is_the_cutoff(self) -> None:
+        now_et = datetime(2026, 9, 3, 15, 59, 59, tzinfo=EASTERN_TIME)
+        assert _nearest_expiration_cutoff(now_et) == date(2026, 9, 3)
+
+    def test_at_close_todays_date_is_already_excluded(self) -> None:
+        now_et = datetime(2026, 9, 3, 16, 0, 0, tzinfo=EASTERN_TIME)
+        assert _nearest_expiration_cutoff(now_et) == date(2026, 9, 4)
+
+    def test_after_close_todays_date_is_excluded(self) -> None:
+        now_et = datetime(2026, 9, 3, 16, 30, 0, tzinfo=EASTERN_TIME)
+        assert _nearest_expiration_cutoff(now_et) == date(2026, 9, 4)
 
 
 class TestGetOptionChain:
@@ -284,15 +307,20 @@ class TestExpiredContractFiltering:
         assert chain.contracts[0].expiration == date.fromisoformat(future)
 
     def test_a_genuine_0dte_expiration_is_not_excluded(self) -> None:
-        """The filter must exclude anything before today, not today
-        itself -- a real same-day expiration must still win."""
-        today = datetime.now(EASTERN_TIME).date().isoformat()
+        """The filter must exclude anything before the current cutoff
+        (see TestNearestExpirationCutoff), not the cutoff date itself --
+        a real 0DTE still inside the cutoff must still win. Uses the real
+        cutoff (not a hardcoded "today") so this integration test stays
+        correct no matter what time of day the suite runs -- including
+        after MARKET_CLOSE_ET, when the cutoff has already rolled to
+        tomorrow."""
+        cutoff = _nearest_expiration_cutoff(datetime.now(EASTERN_TIME)).isoformat()
 
         def handler(request: httpx.Request) -> httpx.Response:
             if "greeks/first_order" in str(request.url):
                 return httpx.Response(
                     200,
-                    json={"response": [_first_order_entry("769.00", "CALL", expiration=today)]},
+                    json={"response": [_first_order_entry("769.00", "CALL", expiration=cutoff)]},
                 )
             if "open_interest" in str(request.url):
                 return httpx.Response(200, json={"response": []})
@@ -305,7 +333,7 @@ class TestExpiredContractFiltering:
         provider = _provider_with_transport(handler)
         chain = provider.get_option_chain("SPY")
 
-        assert chain.contracts[0].expiration == date.fromisoformat(today)
+        assert chain.contracts[0].expiration == date.fromisoformat(cutoff)
 
     def test_raises_when_every_available_expiration_is_already_expired(self) -> None:
         yesterday = (datetime.now(EASTERN_TIME) - timedelta(days=1)).date().isoformat()
@@ -461,13 +489,56 @@ class TestWeeklyRootCombination:
 
     def test_nearest_expiration_considers_both_roots_not_just_the_bare_root(self) -> None:
         # SPX's own root here only has the 09-18 monthly; SPXW has a
-        # genuinely nearer 09-03 expiration -- the combined "nearest"
-        # must be 09-03, not 09-18, exactly the live-confirmed bug.
-        provider = _provider_with_transport(self._spx_handler)
+        # genuinely nearer expiration -- the combined "nearest" must be
+        # that nearer date, not 09-18, exactly the live-confirmed bug.
+        # Uses the real cutoff (see TestNearestExpirationCutoff) instead
+        # of a hardcoded near date, in a handler local to this test, so
+        # it stays correct at any time of day, including after
+        # MARKET_CLOSE_ET when the shared class fixture's own hardcoded
+        # "2026-09-03" would otherwise be wrongly excluded.
+        nearer = _nearest_expiration_cutoff(datetime.now(EASTERN_TIME)).isoformat()
+        greeks_by_root_expiration = {
+            ("SPX", "2026-09-18"): [_first_order_entry("7700", "CALL", expiration="2026-09-18", root="SPX")],
+            (
+                "SPXW",
+                nearer,
+            ): [_first_order_entry("7710", "PUT", expiration=nearer, underlying_price="7700.0", root="SPXW")],
+        }
+        oi_by_root_expiration = {
+            ("SPX", "2026-09-18"): [_open_interest_entry("7700", "CALL", 700, root="SPX")],
+            ("SPXW", nearer): [_open_interest_entry("7710", "PUT", 90, expiration=nearer, root="SPXW")],
+        }
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            params = request.url.params
+            symbol = params.get("symbol")
+            expiration_param = params.get("expiration")
+            path = request.url.path
+            if path == "/v3/option/snapshot/greeks/first_order":
+                if expiration_param == "*":
+                    entries = [
+                        entry
+                        for (root, _exp), rows in greeks_by_root_expiration.items()
+                        if root == symbol
+                        for entry in rows
+                    ]
+                else:
+                    entries = greeks_by_root_expiration.get((symbol, expiration_param), [])
+                return httpx.Response(200, json={"response": entries})
+            if path == "/v3/option/snapshot/open_interest":
+                entries = oi_by_root_expiration.get((symbol, expiration_param), [])
+                return httpx.Response(200, json={"response": entries})
+            if path == "/v3/interest_rate/history/eod":
+                return httpx.Response(200, json={"response": [{"rate": 3.64, "created": "2026-08-31"}]})
+            if path == "/v3/index/history/eod":
+                return httpx.Response(200, json=_daily_bars_response(base_close=7700.0, daily_range=50.0))
+            raise AssertionError(f"unexpected request: {request.url}")
+
+        provider = _provider_with_transport(handler)
 
         chain = provider.get_option_chain("SPX")  # no expiration -> nearest
 
-        assert chain.contracts[0].expiration == date(2026, 9, 3)
+        assert chain.contracts[0].expiration == date.fromisoformat(nearer)
         assert chain.contracts[0].occ_symbol.startswith("SPXW")
 
     def test_one_roots_472_for_a_date_it_lacks_does_not_abort_the_combined_fetch(self) -> None:

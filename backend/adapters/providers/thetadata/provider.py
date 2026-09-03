@@ -230,6 +230,20 @@ def _time_to_expiration_years(expiration_date: date, now_et: datetime) -> Decima
     return Decimal(seconds_remaining) / Decimal(86400) / Decimal(365)
 
 
+def _nearest_expiration_cutoff(now_et: datetime) -> date:
+    """The earliest expiration date still eligible to be picked as the
+    "nearest" one -- before MARKET_CLOSE_ET today's own date counts (a
+    genuine 0DTE must not be wrongly excluded); at/after MARKET_CLOSE_ET
+    today is excluded too, same cutoff the scheduler's own is_market_open
+    gate uses. Confirmed live, 2026-09: past 16:00 ET today's 0DTE
+    already has time_to_expiration<=0 in calculate_bsm_greeks, which
+    zeroes gamma on every contract, so it can no longer stand in as
+    "nearest" once the market's actually closed for the day.
+    """
+    today = now_et.date()
+    return today if now_et.time() < MARKET_CLOSE_ET else today + timedelta(days=1)
+
+
 def _log_req_response(stream_name: str, message: dict[str, Any]) -> None:
     """Logs ThetaData's per-subscription acknowledgment — confirmed live
     (2026-09 investigation against the real Theta Terminal, Stocks/Index
@@ -1063,11 +1077,14 @@ class ThetaDataProvider:
             # "nearest" — this excludes anything before today first, and
             # keeps today itself (>=, not >) so a genuine 0DTE expiration
             # is never wrongly excluded.
-            today = datetime.now(EASTERN_TIME).date()
+            #
+            # But "today" alone isn't enough once the market has actually
+            # closed -- see _nearest_expiration_cutoff.
+            cutoff = _nearest_expiration_cutoff(datetime.now(EASTERN_TIME))
             unexpired_entries = [
                 entry
                 for entry in entries
-                if date.fromisoformat(entry["contract"]["expiration"]) >= today
+                if date.fromisoformat(entry["contract"]["expiration"]) >= cutoff
             ]
             if not unexpired_entries:
                 raise RuntimeError(
