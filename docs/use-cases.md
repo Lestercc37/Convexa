@@ -864,6 +864,112 @@ Stocks — el desglose que pidió el usuario explícitamente:**
   `ThetaTradeStream`); el comportamiento real de reconexión contra un Theta Terminal real bajo esos
   planes; y el impacto real en latencia/frescura que el usuario observaría en la práctica.
 
+#### Manejo explícito de REQ_RESPONSE en los 3 streams de ThetaData, y cierre del gap de `MarketSnapshot.volume = 0`
+
+Dos hallazgos independientes de horario de mercado, confirmados en una investigación en vivo contra el
+Theta Terminal real (planes Stocks+Index ya activos, a diferencia del PR anterior que se entregó en
+borrador exactamente por no tener esos planes activos aún) — ninguno de los dos requirió tocar la
+re-prueba de entrega de TRADE en horario de mercado, deliberadamente fuera de este PR.
+
+**A. `REQ_RESPONSE` se descartaba en silencio — un mensaje real, no hipotético.** ThetaData manda un
+mensaje `REQ_RESPONSE` inmediatamente después de cada suscripción, confirmando si fue aceptada o
+rechazada:
+```json
+{"header": {"type": "REQ_RESPONSE", "status": "CONNECTED", "response": "SUBSCRIBED", "req_id": 7}}
+```
+Confirmado en vivo que `ThetaTradeStream`, `ThetaQuoteStream` y `ThetaUnderlyingTradeStream` —
+mismo bucle `_connect_and_consume`, ya documentado como idéntico entre las 3 — solo distinguían
+`header.get("type") == "STATUS"` y `"TRADE"`/`"QUOTE"`; cualquier otro tipo, incluido `REQ_RESPONSE`,
+caía por la rama sin clasificar sin dejar rastro. Si una suscripción fuera rechazada alguna vez, se
+vería idéntico a "todavía no hay operaciones" — indistinguible sin este cambio.
+
+Nueva función compartida `_log_req_response(stream_name, message)` (un solo punto, no una clase base
+nueva — las 3 clases ya comparten el bucle de parseo, no justificaba un refactor mayor) llamada desde
+una nueva rama `elif header.get("type") == "REQ_RESPONSE":` en las 3 clases. Loggea a nivel `debug` si
+`response == "SUBSCRIBED"`, y a nivel `error` (visible, con el mensaje completo) para cualquier otro
+valor — incluyendo un mensaje malformado sin el campo `response` en absoluto, no solo motivos de
+rechazo conocidos. Deliberadamente loggea en vez de lanzar una excepción: que un símbolo entre muchos
+sea rechazado no debería tumbar una conexión que sigue sirviendo correctamente todo lo demás a lo que
+sí se suscribió.
+
+**B. `MarketSnapshot.volume` dejaba de estar bloqueado — la razón original ya no aplica.** El gap
+documentado (`volume=0` fijo, sin fuente por falta de suscripción viva a Stocks/Indices) se cerró:
+`GET /v3/stock/snapshot/ohlc` (equities/ETFs) y `/v3/index/snapshot/ohlc` (índices) devuelven volumen
+real de sesión sin necesitar ninguna suscripción de streaming — confirmado en vivo justo antes de
+implementar:
+```json
+// GET /v3/stock/snapshot/ohlc?symbol=SPY
+{"response": [{"volume": 16396508, "symbol": "SPY", "high": 766.430, "low": 761.730, "count": 262994,
+  "close": 765.200, "open": 762.450, "timestamp": "2026-09-02T19:59:54.391"}]}
+// GET /v3/index/snapshot/ohlc?symbol=SPX — un índice no tiene volumen de acciones propio
+{"response": [{"volume": 0, "symbol": "SPX", "high": 7681.19, "low": 7633.62, "count": 0,
+  "close": 7666.60, "open": 7634.58, "timestamp": "2026-09-02T16:05:35.000"}]}
+```
+Nuevo método `_fetch_underlying_volume(symbol, kind)` en `ThetaDataProvider`, cableado en
+`get_underlying_snapshot()` junto al resto de valores que ya arma esa función. Deliberadamente **sin
+caché** — a diferencia de `_fetch_near_the_money`/`_fetch_open_interest`, el volumen cambia
+continuamente durante la sesión (no es estático intradía como el open interest) y esta llamada ya
+ocurre a lo sumo una vez por invocación de `get_underlying_snapshot()`, sin la duplicación
+back-to-back que sí justifica el caché de la cadena near-the-money. Para futuros (`ES`,
+`UnderlyingKind.FUTURE`) devuelve `0` sin hacer ninguna petición — mismo precedente documentado ya en
+`get_daily_bars` (no se encontró endpoint de futuros que funcione). Si la petición falla por
+cualquier motivo, cae a `0` (el mismo valor que ya tenía este campo hasta hoy) en vez de propagar la
+excepción — para que un problema transitorio con este único campo no tumbe todo el ciclo de refresh
+del snapshot.
+
+**Auditoría de dependencias antes de tocar el valor, tal como pidió el usuario — no se encontró
+ninguna ruptura.** Se rastreó cada lugar donde `MarketSnapshot.volume` fluye:
+`ThetaDataProvider.get_underlying_snapshot()` → `RefreshUnderlyingSnapshotUseCase.execute()`
+(`backend/domain/use_cases/refresh_snapshot.py:44`, lo copia tal cual a un `MarketPrice.volume`) →
+persistido vía `IStorage.save_market_price()` → leído de vuelta por `calculate_anchored_vwap()`
+(`backend/domain/use_cases/calculate_anchored_vwap.py`) como el volumen acumulado de sesión, restando
+contra la lectura anterior para obtener el volumen del intervalo. El propio docstring de esa función
+ya documentaba exactamente esta forma esperada ("`volume` en cada lectura es el total acumulado de la
+sesión... el contador de volumen de sesión se resetea a cero a las 9:30 ET") — el valor real de
+`/v3/*/snapshot/ohlc` es semánticamente compatible sin cambiar el contrato de esa función, solo deja
+de estar permanentemente `provisional=True`. `capture_daily_gamma_reference` (la otra función que
+recibe el `MarketSnapshot` completo) solo lee `pc_oi_ratio`/`skew_25d`/`atm_iv` de él, nunca `volume`
+— sin impacto. No se encontró ningún `if volume == 0` ni condición equivalente en ningún punto del
+código que tratara el `0` como un valor centinela con significado propio, más allá de los tests que
+ya lo asumían como el gap documentado (actualizados en este PR).
+
+**Fuera de alcance de este PR, a propósito:** ninguna re-prueba de entrega de TRADE en horario de
+mercado (tarea separada, explícitamente pospuesta por el usuario); acumular el volumen de la acción a
+partir del `size` de cada operación del `ThetaUnderlyingTradeStream` en vez de este REST — el gap que
+`StreamUnderlyingPriceUseCase` ya documentaba como "un seguimiento natural, deliberadamente fuera de
+[ese] PR" sigue sin cerrarse ahí (ese caso de uso sigue escribiendo `volume=0` en cada tick del
+stream), solo se cerró el gap del lado del scheduler REST.
+
+**Tests — ambos casos de REQ_RESPONSE probados con mensajes simulados, tal como pidió el usuario,
+ya que forzar un rechazo real arriesgaría el Terminal compartido:** `TestReqResponseHandling` en
+`tests/test_thetadata_provider.py` — aceptado (`"SUBSCRIBED"`) loggea a `debug` sin ningún `error`;
+rechazado (`"SYMBOL_NOT_FOUND"`) loggea un único `error` visible con el `stream_name`, el motivo y el
+`req_id`; un mensaje sin el campo `response` en absoluto también se trata como rechazo, no se ignora;
+y una prueba que lee el código fuente compilado de las 3 clases confirma que la rama
+`REQ_RESPONSE` existe en las 3, no solo que la función compartida funciona de forma aislada.
+`TestFetchUnderlyingVolume` — equities enrutan a `/v3/stock/snapshot/ohlc`, índices a
+`/v3/index/snapshot/ohlc`, futuros devuelven `0` sin ninguna petición, una respuesta HTTP 472 (el
+código propio de ThetaData para "sin datos", ya confirmado en la investigación previa) cae a `0` sin
+propagar la excepción, y una respuesta 200 sin filas también cae a `0`. Los 3 tests existentes de
+`TestGetUnderlyingSnapshot`/`TestNearTheMoneyCaching` que ejercitan `get_underlying_snapshot("SPY")`
+completo se actualizaron para reflejar el volumen real en vez del `0` documentado como gap.
+272 tests, suite completa, en verde.
+
+**Qué quedó verificado con confianza vs. qué siguió simulado:**
+
+- ✅ **Verificado con confianza, en vivo:** que ambos endpoints REST
+  (`/v3/stock/snapshot/ohlc`, `/v3/index/snapshot/ohlc`) existen, responden 200 con la forma exacta
+  usada en el código, y devuelven volumen real de sesión para un símbolo activo (SPY:
+  `16,396,508`) sin necesitar ninguna suscripción de streaming — confirmado justo antes de escribir el
+  código de este PR. Que ningún otro cálculo del código dependía de `MarketSnapshot.volume == 0` como
+  centinela — confirmado leyendo cada punto de consumo, no solo grep superficial.
+- ❌ **Genuinamente simulado, no probado contra el Terminal real:** el caso de rechazo de
+  `REQ_RESPONSE` — nunca observado en la práctica, y forzarlo arriesgaría el Terminal compartido de
+  producción, tal como pidió el usuario evitar. Los fixtures del caso de aceptación sí replican el
+  formato exacto confirmado en vivo (`"response": "SUBSCRIBED"`), pero el propio bucle
+  `_connect_and_consume` recibiendo un `REQ_RESPONSE` real de rechazo en producción sigue sin
+  ejercitarse end-to-end.
+
 ---
 
 ## Resumen de mapeo a contratos existentes
