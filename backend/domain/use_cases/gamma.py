@@ -93,7 +93,16 @@ class CalculateGammaExposureOrchestrator:
 
         result = replace(
             aggregate,
-            gamma_flip=gamma_flip.gamma_flip_price or aggregate.gamma_flip,
+            # Not `gamma_flip.gamma_flip_price or aggregate.gamma_flip` --
+            # that `or` collapsed a legitimate "no sign crossing found"
+            # (gamma_flip_price is None, flip_found=False) into whatever
+            # aggregate.gamma_flip already was (its own dataclass default,
+            # None too) as if it meant something -- but more importantly,
+            # `or` also treats a real crossing found exactly at 0 as falsy
+            # and would have discarded that too. gamma_flip_price is
+            # already the right value (None or a real Decimal) -- just use
+            # it directly, no fallback needed.
+            gamma_flip=gamma_flip.gamma_flip_price,
             call_wall=(
                 walls.call_wall.strike if walls.call_wall is not None else aggregate.call_wall
             ),

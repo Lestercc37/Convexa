@@ -117,7 +117,11 @@ def test_gamma_profile_returns_frozen_snapshot_with_per_strike_items() -> None:
     assert payload["schema_version"] == 1
     assert payload["symbol"] == "SPY"
     assert stored is not None
-    assert payload["gamma_flip"] == float(stored.gamma_flip)
+    # None (no sign crossing found -- see GammaAggregate.gamma_flip's
+    # own comment) is a real, valid outcome here, not something to
+    # coerce into a float.
+    expected_gamma_flip = float(stored.gamma_flip) if stored.gamma_flip is not None else None
+    assert payload["gamma_flip"] == expected_gamma_flip
     assert payload["max_pain"] == float(stored.max_pain)
     assert len(payload["items"]) == len(stored.items)
     assert len(payload["items"]) > 0

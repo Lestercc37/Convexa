@@ -806,7 +806,12 @@ class PostgreSQLStorage:
         return GammaAggregate(
             symbol=str(mapping["symbol"]),
             as_of=mapping["time"],
-            gamma_flip=Decimal(mapping["gamma_flip"]),
+            # NULL means "no sign crossing found" -- a real, distinct
+            # outcome from a flip found at strike 0 (see GammaAggregate's
+            # own field comment). Every other field here stays required.
+            gamma_flip=(
+                Decimal(mapping["gamma_flip"]) if mapping["gamma_flip"] is not None else None
+            ),
             call_wall=Decimal(mapping["call_wall"]),
             put_wall=Decimal(mapping["put_wall"]),
             max_pain=Decimal(mapping["max_pain"]),

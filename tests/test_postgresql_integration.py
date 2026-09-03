@@ -142,6 +142,29 @@ def test_gamma_aggregate_round_trip_against_postgresql(
     assert history == [replace(aggregate, items=())]
 
 
+def test_gamma_flip_none_round_trips_against_postgresql_as_null_not_zero(
+    postgresql_storage: tuple[PostgreSQLStorage, Engine, str],
+) -> None:
+    """gamma_flip=None (no sign crossing found -- see GammaAggregate's own
+    field comment) must come back as None, not silently become 0 --
+    confirmed against the real database, not memory. gamma_aggregates.
+    gamma_flip used to be NOT NULL; this is the real column the migration
+    changed."""
+    storage, _, symbol = postgresql_storage
+    aggregate = GammaAggregate(
+        symbol=symbol,
+        as_of=datetime.now(timezone.utc),
+        gamma_flip=None,
+        net_gamma=Decimal("100"),
+    )
+
+    storage.save_gamma_aggregate(aggregate)
+    loaded = storage.get_latest_gamma_aggregate(symbol)
+
+    assert loaded is not None
+    assert loaded.gamma_flip is None
+
+
 def test_flow_event_round_trip_against_postgresql(
     postgresql_storage: tuple[PostgreSQLStorage, Engine, str],
 ) -> None:
