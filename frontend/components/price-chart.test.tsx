@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { MinuteCandle } from "@/lib/candles";
 import { renderWithLanguage } from "@/lib/i18n/test-utils";
+import { regularSessionRange } from "@/lib/market-session";
 import type { AtrRange, GammaResponse } from "@/lib/types";
 import { derivedMetricsFixture } from "@/test/fixtures";
 import { PriceChart } from "./price-chart";
@@ -25,6 +26,8 @@ const chartMocks = vi.hoisted(() => ({
   unsubscribeVisibleLogicalRangeChange: vi.fn(),
   subscribeSizeChange: vi.fn(),
   unsubscribeSizeChange: vi.fn(),
+  fitContent: vi.fn(),
+  setVisibleRange: vi.fn(),
   getGammaHistory: vi.fn(),
 }));
 
@@ -59,7 +62,8 @@ beforeAll(() => {
     removeSeries: chartMocks.removeSeries,
     applyOptions: chartMocks.applyOptions,
     timeScale: () => ({
-      fitContent: vi.fn(),
+      fitContent: chartMocks.fitContent,
+      setVisibleRange: chartMocks.setVisibleRange,
       coordinateToTime: chartMocks.coordinateToTime,
       subscribeVisibleLogicalRangeChange: chartMocks.subscribeVisibleLogicalRangeChange,
       unsubscribeVisibleLogicalRangeChange: chartMocks.unsubscribeVisibleLogicalRangeChange,
@@ -127,6 +131,9 @@ const gamma: GammaResponse = {
 
 describe("PriceChart", () => {
   it("mounts Lightweight Charts with candles and Gamma overlays", () => {
+    vi.setSystemTime(new Date("2026-08-06T15:00:00Z")); // 11:00 ET, same day as the fixture candle
+    const sessionOpenAnchor = regularSessionRange(Date.now()).openSeconds - 1;
+
     const { container } = renderWithLanguage(
       <PriceChart
         symbol="SPY"
@@ -147,7 +154,10 @@ describe("PriceChart", () => {
         layout: expect.objectContaining({ attributionLogo: false }),
       }),
     );
+    // A leading whitespace point (time only, no OHLC) anchors the session
+    // open ahead of the real candle -- see withSessionOpenAnchor.
     expect(chartMocks.setData).toHaveBeenCalledWith([
+      { time: sessionOpenAnchor },
       { time: 1_786_026_600, open: 548, high: 552, low: 548, close: 550 },
     ]);
     expect(chartMocks.update).toHaveBeenCalledWith({
@@ -158,6 +168,44 @@ describe("PriceChart", () => {
       close: 550,
     });
     expect(chartMocks.createPriceLine).toHaveBeenCalledTimes(4);
+
+    vi.useRealTimers();
+  });
+
+  it("anchors the x-axis at the session open even with only a handful of candles (regression)", () => {
+    // Plain fitContent() zooms into just the sliver of real data -- right
+    // after the open there's almost none, so the chart would read as if
+    // the session started at whatever the first real candle happens to
+    // be, not 09:30 ET. A leading whitespace point one second before the
+    // open (see withSessionOpenAnchor) fixes fitContent()'s left edge at
+    // the real session start regardless of how few candles exist.
+    //
+    // A *trailing* anchor at 16:00 was tried first and confirmed live
+    // (against the real library, not this mock) to NOT hold: lightweight-
+    // charts trims trailing whitespace back to the last real bar via
+    // every range API tried (fitContent, setVisibleRange,
+    // setVisibleLogicalRange) -- so this can only pin the start of the
+    // session, not pre-render empty space out to the close while the
+    // market is still open. That's a real library constraint, not an
+    // oversight here.
+    vi.setSystemTime(new Date("2026-09-03T14:00:00Z")); // 10:00 ET
+    const sessionOpenAnchor = regularSessionRange(Date.now()).openSeconds - 1;
+
+    renderWithLanguage(
+      <PriceChart
+        symbol="SPY"
+        gamma={gamma}
+        candles={[{ time: 1_788_527_400, open: 548, high: 549, low: 548, close: 548.5 }]}
+      />,
+    );
+
+    expect(chartMocks.setData).toHaveBeenCalledWith([
+      { time: sessionOpenAnchor },
+      { time: 1_788_527_400, open: 548, high: 549, low: 548, close: 548.5 },
+    ]);
+    expect(chartMocks.fitContent).toHaveBeenCalled();
+
+    vi.useRealTimers();
   });
 
   it("labels the chart title with the selected timeframe", () => {
@@ -608,6 +656,9 @@ describe("PriceChart", () => {
   });
 
   it("nudges the price scale to recompute autoscale whenever Gamma or ATR reference levels change", () => {
+    vi.setSystemTime(new Date("2026-08-03T15:00:00Z")); // 11:00 ET -- matches candlesWithRange's own day
+    const sessionOpenAnchor = regularSessionRange(Date.now()).openSeconds - 1;
+
     const { rerender } = renderWithLanguage(
       <PriceChart symbol="SPY" gamma={gamma} candles={candlesWithRange} />,
     );
@@ -622,10 +673,14 @@ describe("PriceChart", () => {
     // confirmed live (against the real library, not this mock) to NOT
     // force a recompute — the visible range stayed stale through it.
     // Re-feeding the series its own unchanged candle data does force it,
-    // which is what's asserted here.
-    expect(chartMocks.setData).toHaveBeenCalledWith(
-      candlesWithRange.map((candle) => ({ ...candle, time: candle.time })),
-    );
+    // which is what's asserted here -- still carrying the session-open
+    // anchor, since this setData() call replaces the whole series.
+    expect(chartMocks.setData).toHaveBeenCalledWith([
+      { time: sessionOpenAnchor },
+      ...candlesWithRange.map((candle) => ({ ...candle, time: candle.time })),
+    ]);
+
+    vi.useRealTimers();
   });
 });
 

@@ -13,6 +13,7 @@ import {
 } from "@/lib/candles";
 import { describeError } from "@/lib/i18n/describe-error";
 import { useLanguage, type Language } from "@/lib/i18n/language-context";
+import { isWithinRegularSession } from "@/lib/market-session";
 import { POLLING_INTERVAL_MS } from "@/lib/polling";
 import type { GammaResponse, MarketResponse, Underlying } from "@/lib/types";
 import { AlertsPanel } from "./alerts-panel";
@@ -161,12 +162,30 @@ export function Dashboard() {
       ]);
       setGamma(gammaData);
       setMarket(marketData);
-      setPricePoints((current) => [
-        ...current,
-        { timestamp: marketData.as_of, price: marketData.price },
-      ]);
+      // The chart is meant to show only the regular 09:30-16:00 ET
+      // session -- confirmed live, 2026-09: the backend stream gate
+      // (StreamUnderlyingPriceUseCase) stops *new* extended-hours ticks
+      // from being stored, but a tick written before that gate existed
+      // can still be the "latest" MarketPrice this polls until the next
+      // in-session write, so this stays defensive here too rather than
+      // trusting the API response's as_of unconditionally.
+      if (isWithinRegularSession(Date.parse(marketData.as_of))) {
+        setPricePoints((current) => [
+          ...current,
+          { timestamp: marketData.as_of, price: marketData.price },
+        ]);
+      }
       const anchoredVwap = marketData.anchored_vwap;
-      if (anchoredVwap && !anchoredVwap.provisional && anchoredVwap.value !== null) {
+      // Same session gate as pricePoints above -- VWAP renders on a Line
+      // series on the *same* chart/timeScale as the candlesticks, so an
+      // out-of-session point here would drag the shared x-axis just as
+      // badly as an out-of-session candle would.
+      if (
+        anchoredVwap &&
+        !anchoredVwap.provisional &&
+        anchoredVwap.value !== null &&
+        isWithinRegularSession(Date.parse(marketData.as_of))
+      ) {
         const value = anchoredVwap.value;
         setVwapPoints((current) =>
           // No live backend scheduler writes market_snapshots yet (see
