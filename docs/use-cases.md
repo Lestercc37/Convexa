@@ -1226,8 +1226,27 @@ búsqueda dedicado) si algún otro lugar del código declara el conjunto de sím
   que se cambió a `AAPL` (un símbolo real pero genuinamente no rastreado) para seguir probando lo que
   la prueba dice probar, en vez de coincidir por casualidad con los valores ahora configurados.
 
-**D. Reinicio del backend, al final — ver el reporte de esta tarea para la confirmación completa de los
-4 puntos.**
+**D. Reinicio del backend, al final — confirmado, con certeza real, no "probablemente".** El proceso
+anterior (PID 13460 + su worker 50212, `uvicorn --reload` desde 2026-09-01 21:41:48 ET) se detuvo por
+completo, y se arrancó uno nuevo (`.claude/launch.json`, entrada `backend-dev`, mismo comando) — un
+proceso Python recién iniciado importa el contenido actual de los archivos en disco, sin ambigüedad
+posible sobre si "recogió" un cambio: no es una pregunta de probabilidad, es una garantía estructural
+de cómo funciona un arranque en frío.
+
+- **Fix de `contract.security_type`: activo, confirmado dos veces.** (1) El nuevo proceso arrancó
+  después de que el archivo con el fix ya estaba en disco — garantía de código, no inferencia. (2)
+  Empíricamente: cero filas nuevas de VIX/SPX fuera de rango desde el reinicio (12:31:46 ET en
+  adelante), verificado contra la base real.
+- **NDX activo tras el reinicio, confirmado vía la API real:** `GET /api/v1/underlyings` devuelve los
+  12 símbolos, incluido `{"symbol":"NDX","kind":"index","is_priority":true}`. El log de arranque
+  también lo confirma: descubrió el chain near-the-money de NDX (`Near-the-money width for NDX:
+  $491.42 (spot $29440.95)`, datos reales) y "Scheduler cycle starting for **12** symbols" (no 11).
+- **Tablas limpias, confirmado por consulta directa tras el reinicio:** 0 filas con
+  `price=552.25 AND volume=1250000` (mock data), 0 filas de VIX/SPX en la ventana original
+  15:39-15:59 UTC dentro de sus respectivas bandas contaminadas. `market_snapshots` pasó de 30,985 a
+  16,619 filas tras ambos borrados (la diferencia frente a 30,985-52-15,878=15,055 son escrituras
+  nuevas y legítimas del scheduler/stream entre los borrados y el reinicio, no un error de conteo).
+- Arranque limpio, sin errores en los logs del nuevo proceso.
 
 ---
 
