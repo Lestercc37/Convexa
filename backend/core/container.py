@@ -21,6 +21,7 @@ from backend.adapters.storage.memory import InMemoryStorage
 from backend.adapters.storage.postgresql import PostgreSQLStorage
 from backend.adapters.storage.postgresql_async import AsyncPostgreSQLStorage
 from backend.adapters.storage.sync_read_adapter import SyncStorageAsyncReadAdapter
+from backend.core.price_notifications import PriceNotificationHub, PriceNotificationListener
 from backend.core.settings import Settings, get_settings
 from backend.domain.ports import (
     IAsyncMarketReadStorage,
@@ -82,6 +83,12 @@ class Container:
     calculate_derived_metrics_use_case: CalculateDerivedMetricsUseCase
     whale_alerts_engine: WhaleAlertsEngine
     refresh_underlying_snapshot_use_case: RefreshUnderlyingSnapshotUseCase
+    price_notification_hub: PriceNotificationHub
+    # None without a real Postgres behind DATABASE_URL (tests, sqlite) --
+    # asyncpg.connect() has nothing to LISTEN on there. The hub above is
+    # still always present so the WebSocket route never needs to branch
+    # on which environment it's running in, only this.
+    price_notification_listener: PriceNotificationListener | None
 
 
 def build_whale_alerts_engine(storage: IStorage) -> WhaleAlertsEngine:
@@ -120,6 +127,12 @@ def build_container() -> Container:
         sync_session_factory,
         holder=f"{socket.gethostname()}:{os.getpid()}",
         limit=THETADATA_MAX_CONCURRENT_REQUESTS,
+    )
+    price_notification_hub = PriceNotificationHub()
+    price_notification_listener = (
+        PriceNotificationListener(settings.database_url, price_notification_hub)
+        if settings.database_url.startswith("postgresql")
+        else None
     )
     market_data_provider: IDataProvider = (
         ThetaDataProvider(
@@ -187,4 +200,6 @@ def build_container() -> Container:
         calculate_derived_metrics_use_case=calculate_derived_metrics_use_case,
         whale_alerts_engine=whale_alerts_engine,
         refresh_underlying_snapshot_use_case=refresh_underlying_snapshot_use_case,
+        price_notification_hub=price_notification_hub,
+        price_notification_listener=price_notification_listener,
     )

@@ -61,9 +61,18 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     configure_logging(container.settings)
     app.state.container = container
     logger.info("Starting %s", container.settings.app_name)
+    # Real-time chart price push: the Worker NOTIFYs on every MarketPrice
+    # it persists (see AsyncPostgreSQLStorage.save_market_price); this
+    # process listens and forwards to /ws/market/{symbol} clients. None
+    # without a real Postgres behind DATABASE_URL (tests, sqlite) -- see
+    # container.py's own comment on price_notification_listener.
+    if container.price_notification_listener is not None:
+        container.price_notification_listener.start()
     try:
         yield
     finally:
+        if container.price_notification_listener is not None:
+            await container.price_notification_listener.stop()
         await container.market_data_provider.stop()
         if container.storage_engine is not None:
             container.storage_engine.dispose()

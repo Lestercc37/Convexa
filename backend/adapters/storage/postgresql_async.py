@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from datetime import date, datetime
 from decimal import Decimal
 
@@ -22,6 +23,15 @@ from backend.domain.entities import (
 )
 from backend.domain.underlyings import ACTIVE_UNDERLYINGS_BY_SYMBOL
 from backend.domain.use_cases.flow import WhaleAlert, WhaleAlertType
+
+# One shared channel for every symbol's live price ticks, not one
+# channel per symbol -- a single LISTEN on the API side covers every
+# symbol today and any added later with no code change. The listener
+# (backend/core/price_notifications.py) filters by the `symbol` field
+# in the JSON payload, not by channel name. Kept as a plain module
+# constant, imported by that listener, so the sender and receiver can
+# never drift out of sync on the channel name.
+MARKET_PRICE_CHANNEL = "market_price_updates"
 
 
 class AsyncPostgreSQLStorage:
@@ -332,6 +342,21 @@ class AsyncPostgreSQLStorage:
         ]
 
     async def save_market_price(self, price: MarketPrice) -> None:
+        # pg_notify() inside the same transaction as the INSERT --
+        # Postgres only actually delivers a NOTIFY after its
+        # transaction commits, never on rollback, so a listener can
+        # never see a tick that didn't really land. Real-time push for
+        # the chart (backend/core/price_notifications.py listens on
+        # MARKET_PRICE_CHANNEL); the 30s poll this same write already
+        # served stays the fallback if no one's listening or a
+        # WebSocket client's connection drops.
+        payload = json.dumps(
+            {
+                "symbol": price.symbol,
+                "price": str(price.price),
+                "as_of": price.as_of.isoformat(),
+            }
+        )
         async with self.session_factory.begin() as session:
             underlying_id = await self._ensure_underlying(session, price.symbol)
             await session.execute(
@@ -347,6 +372,10 @@ class AsyncPostgreSQLStorage:
                     "price": price.price,
                     "volume": price.volume,
                 },
+            )
+            await session.execute(
+                text("SELECT pg_notify(:channel, :payload)"),
+                {"channel": MARKET_PRICE_CHANNEL, "payload": payload},
             )
 
     @staticmethod

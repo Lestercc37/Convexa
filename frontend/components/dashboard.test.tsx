@@ -23,6 +23,20 @@ const chartMocks = vi.hoisted(() => ({
   createChart: vi.fn(),
 }));
 
+// Real-time price push -- jsdom's WebSocket polyfill (via undici) throws
+// on a real connection attempt to a URL nothing is actually serving in
+// this test environment (confirmed live: "The 'event' argument must be
+// an instance of Event", an uncaught exception from undici's own
+// dispatch internals, not a Dashboard bug). Mocked the same way
+// lightweight-charts is above, for the same reason: a real
+// browser-only API this environment can't faithfully emulate.
+const marketPriceStreamMocks = vi.hoisted(() => ({
+  connectMarketPriceStream: vi.fn(
+    (_symbol: string, _onTick: (tick: { symbol: string; price: string; as_of: string }) => void) =>
+      () => {},
+  ),
+}));
+
 // react-resizable-panels needs a real browser layout engine to turn pixel
 // defaultSize/minSize/maxSize into flex percentages — confirmed live
 // (a throwaway probe render) that in jsdom, which has no layout engine at
@@ -61,6 +75,7 @@ vi.mock("@/lib/api", async () => {
   const actual = await vi.importActual<typeof import("@/lib/api")>("@/lib/api");
   return { ...actual, ...apiMocks };
 });
+vi.mock("@/lib/market-price-stream", () => marketPriceStreamMocks);
 vi.mock("lightweight-charts", () => ({
   CandlestickSeries: "CandlestickSeries",
   LineSeries: "LineSeries",
@@ -369,6 +384,42 @@ describe("Dashboard", () => {
         expect.any(AbortSignal),
       ),
     );
+  });
+
+  it("connects the real-time price stream for the active symbol, and reconnects it on switch (regression)", async () => {
+    // Real-time push is additive to the 30s poll (see market-price-
+    // stream.ts's own comment) -- this only proves the connection is
+    // opened for the right, current symbol each time, and that a tick
+    // doesn't crash the dashboard. Whether it actually updates the
+    // live candle is verified against a real WebSocket + a synthetic
+    // MarketPrice insert (same methodology as whale_alerts), not here
+    // -- lightweight-charts itself is mocked in this file.
+    const user = userEvent.setup();
+    renderWithLanguage(<Dashboard />);
+    await screen.findByLabelText("Chart de velas para SPY");
+
+    await waitFor(() =>
+      expect(marketPriceStreamMocks.connectMarketPriceStream).toHaveBeenCalledWith(
+        "SPY",
+        expect.any(Function),
+      ),
+    );
+
+    await user.selectOptions(screen.getByRole("combobox", { name: "Subyacente" }), "GOOGL");
+    await screen.findByLabelText("Chart de velas para GOOGL");
+
+    await waitFor(() =>
+      expect(marketPriceStreamMocks.connectMarketPriceStream).toHaveBeenCalledWith(
+        "GOOGL",
+        expect.any(Function),
+      ),
+    );
+
+    const lastCall = marketPriceStreamMocks.connectMarketPriceStream.mock.calls.at(-1);
+    const onTick = lastCall?.[1];
+    expect(() =>
+      onTick?.({ symbol: "GOOGL", price: "338.61", as_of: "2026-08-06T14:30:00Z" }),
+    ).not.toThrow();
   });
 
   it("switches to the Pre-Sesión view without polling the live chart, and back", async () => {
