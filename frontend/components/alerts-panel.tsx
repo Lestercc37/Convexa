@@ -47,8 +47,18 @@ const CURRENCY_FORMAT = new Intl.NumberFormat("en-US", {
 
 const PERCENT_FORMAT = new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 });
 
+// contract, as_of (`timestamp`), and type -- same collision confirmed
+// live today in quick-screener.tsx's equivalent key: a single reading
+// can independently trip a magnitude threshold (WHALE/UNUSUAL) *and*
+// the separate sustained-flow window, so the same symbol+contract+
+// timestamp can legitimately carry two distinct alerts with a different
+// `type`. Without `type` here, React saw a duplicate key on this panel's
+// list (`Encountered two children with the same key`); the identical
+// key shape in chart-secondary-panel.tsx's own alertKey() was worse --
+// used as a Map key there, so the second alert silently overwrote the
+// first instead of just warning.
 function alertKey(alert: WhaleAlert) {
-  return `${alert.symbol}-${alert.contract}-${alert.timestamp}`;
+  return `${alert.symbol}-${alert.contract}-${alert.timestamp}-${alert.type}`;
 }
 
 // Neutral 50/50 fallback when both estimates are zero (e.g. the very
