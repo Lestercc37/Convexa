@@ -153,6 +153,68 @@ describe("QuickScreener", () => {
     consoleError.mockRestore();
   });
 
+  it("keys two UNUSUAL alerts on the same contract by as_of too, not just symbol+contract (regression)", async () => {
+    // Confirmed live against the real running backend, 2026-09: the same
+    // contract legitimately racks up more than one UNUSUAL alert across
+    // the session as volume keeps flowing -- each a real, separate
+    // WhaleAlert with its own as_of. Before this fix, the row key dropped
+    // `as_of` entirely whenever `contract` was present (`item.contract ??
+    // item.as_of`), so two alerts on the same contract collided
+    // regardless of when they actually happened -- caught live as a
+    // React "duplicate key" console error for QQQ260904C00721000 with two
+    // different UNUSUAL rows.
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    apiMocks.getScreenerPreset.mockImplementation((preset: string) =>
+      Promise.resolve({
+        schema_version: 1,
+        preset,
+        results:
+          preset === "unusual-options-activity"
+            ? [
+                {
+                  symbol: "QQQ",
+                  as_of: "2026-09-04T13:40:00.000000Z",
+                  contract: "QQQ260904C00721000",
+                  alert_type: "UNUSUAL",
+                  amount: 92173.0,
+                  net_gamma: null,
+                  gamma_flip: null,
+                  call_wall: null,
+                  put_wall: null,
+                  max_pain: null,
+                  vanna_exposure: null,
+                  charm_exposure: null,
+                },
+                {
+                  symbol: "QQQ",
+                  as_of: "2026-09-04T13:55:00.000000Z",
+                  contract: "QQQ260904C00721000",
+                  alert_type: "UNUSUAL",
+                  amount: 118420.0,
+                  net_gamma: null,
+                  gamma_flip: null,
+                  call_wall: null,
+                  put_wall: null,
+                  max_pain: null,
+                  vanna_exposure: null,
+                  charm_exposure: null,
+                },
+              ]
+            : [],
+      }),
+    );
+
+    renderWithLanguage(<QuickScreener />);
+
+    expect(await screen.findByText("$92,173")).toBeInTheDocument();
+    expect(screen.getByText("$118,420")).toBeInTheDocument();
+    expect(
+      consoleError.mock.calls.some((call) => String(call[0]).includes("same key")),
+    ).toBe(false);
+
+    consoleError.mockRestore();
+  });
+
   it("refreshes the active preset automatically every 30s, not only when the dropdown changes (regression)", async () => {
     // Before this fix, QuickScreener only fetched on mount and on preset
     // change -- unlike every other polling panel in the dashboard

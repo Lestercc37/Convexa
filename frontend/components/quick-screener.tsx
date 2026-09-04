@@ -66,17 +66,26 @@ function ResultsTable({
         </thead>
         <tbody>
           {results.map((item) => (
-            // alert_type, not just contract -- confirmed live, 2026-09: a
-            // single reading can independently trip a magnitude threshold
-            // (WHALE/UNUSUAL) *and* the separate sustained-flow window, so
-            // the same symbol+contract+as_of legitimately appears twice in
-            // one response (e.g. QQQ260904C00722000 as both SUSTAINED_FLOW
-            // and UNUSUAL, same microsecond as_of) -- these are two real,
-            // distinct alerts, not a duplicate to dedupe away. Same
-            // WHALE+SUSTAINED_FLOW collision shape as alertKey() in
-            // alerts-panel.tsx/chart-secondary-panel.tsx, deliberately not
-            // touched here.
-            <tr key={`${item.symbol}-${item.contract ?? item.as_of}-${item.alert_type ?? ""}`}>
+            // contract *and* as_of *and* alert_type -- confirmed live
+            // against the real running backend, 2026-09, in two distinct
+            // ways this needs all three:
+            // 1. The same contract legitimately racks up multiple UNUSUAL
+            //    alerts across the session as volume keeps flowing (e.g.
+            //    QQQ260904C00721000 more than once, each a real, separate
+            //    WhaleAlert with its own as_of) -- dropping `as_of`
+            //    whenever `contract` was present (the original `??`
+            //    fallback) collided those together.
+            // 2. A single reading can independently trip a magnitude
+            //    threshold (WHALE/UNUSUAL) *and* the separate sustained-
+            //    flow window, so the same symbol+contract+as_of can also
+            //    appear twice with a different alert_type (e.g.
+            //    QQQ260904C00722000 as both SUSTAINED_FLOW and UNUSUAL,
+            //    same microsecond as_of).
+            // None of these are duplicates to dedupe away -- every row is
+            // a real, distinct alert. Same WHALE+SUSTAINED_FLOW collision
+            // shape as alertKey() in alerts-panel.tsx/chart-secondary-panel.tsx,
+            // deliberately not touched here.
+            <tr key={`${item.symbol}-${item.contract ?? "agg"}-${item.as_of}-${item.alert_type ?? ""}`}>
               <td className="screener-symbol">{item.symbol}</td>
               {preset === "unusual-options-activity" ? (
                 <>
