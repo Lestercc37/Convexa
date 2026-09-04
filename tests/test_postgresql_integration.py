@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import asyncio
+import threading
+import time
 from collections.abc import Iterator
 from dataclasses import replace
 from datetime import date, datetime, timedelta, timezone
@@ -11,6 +14,11 @@ from sqlalchemy import Engine, text
 from sqlalchemy.exc import SQLAlchemyError
 
 from backend.adapters.providers.mock.provider import MockDataProvider
+from backend.adapters.providers.thetadata.request_slots import (
+    AsyncPostgresThetaRequestSlots,
+    PostgresThetaRequestSlots,
+    ThetaSlotsExhaustedError,
+)
 from backend.adapters.storage.postgresql import PostgreSQLStorage
 from backend.adapters.storage.postgresql_async import AsyncPostgreSQLStorage
 from backend.core.settings import Settings
@@ -483,6 +491,210 @@ async def test_async_postgresql_storage_get_recent_whale_alerts_reads_what_the_s
         async_storage = AsyncPostgreSQLStorage(create_session_factory(async_engine))
         assert await async_storage.get_recent_whale_alerts(symbol) == [alert]
     finally:
+        await async_engine.dispose()
+
+
+def _theta_slots_engine() -> Engine:
+    settings = Settings(_env_file=".env")
+    if not settings.database_url.startswith("postgresql"):
+        pytest.skip("DATABASE_URL does not point to PostgreSQL")
+    return create_sync_engine(settings.database_url)
+
+
+def _release_any_slots_held_by(engine: Engine, holder_prefix: str) -> None:
+    """Best-effort cleanup so a failed assertion (or a thread this test
+    started that's still winding down) never leaves a real slot stuck
+    held past this test's own lifetime -- this table is shared with
+    whatever the live backend process is doing against the same
+    database, not test-isolated data under a throwaway symbol like the
+    other tests in this file."""
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                "UPDATE theta_request_slots SET acquired_at = NULL, holder = NULL "
+                "WHERE holder LIKE :prefix"
+            ),
+            {"prefix": f"{holder_prefix}%"},
+        )
+
+
+def test_postgres_theta_request_slots_never_double_acquires_under_real_concurrency() -> None:
+    """Real concurrency against a real Postgres, not a mock -- fires 20
+    threads at the actual theta_request_slots table simultaneously and
+    confirms FOR UPDATE SKIP LOCKED actually prevents two of them from
+    ever holding the same slot at the same time. A naive
+    SELECT-then-UPDATE (no FOR UPDATE) would have a real race window
+    here; this proves the atomic UPDATE...WHERE slot = (SELECT ...
+    FOR UPDATE SKIP LOCKED) form doesn't.
+
+    Runs against the same live database the dev server uses (same
+    pattern as every other test in this file) -- doesn't assume
+    exclusive ownership of the table, only that none of THIS test's
+    own concurrent holders ever collide, which holds regardless of
+    whatever else might be acquiring slots at the same time."""
+    engine = _theta_slots_engine()
+    holder_prefix = f"race-test-{uuid4().hex[:8]}"
+    try:
+        session_factory = create_sync_session_factory(engine)
+        slots = PostgresThetaRequestSlots(
+            session_factory,
+            holder=holder_prefix,
+            retry_interval_seconds=0.02,
+            acquire_timeout_seconds=25.0,
+        )
+
+        thread_count = 20
+        hold_seconds = 0.3
+        lock = threading.Lock()
+        active: dict[int, str] = {}
+        violations: list[str] = []
+
+        def worker(name: str) -> None:
+            with slots.hold() as slot:
+                with lock:
+                    if slot in active:
+                        violations.append(
+                            f"{name} acquired slot {slot} already held by {active[slot]}"
+                        )
+                    active[slot] = name
+                time.sleep(hold_seconds)
+                with lock:
+                    del active[slot]
+
+        threads = [threading.Thread(target=worker, args=(f"t{i}",)) for i in range(thread_count)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=30)
+
+        assert all(not thread.is_alive() for thread in threads), "a thread never finished"
+        assert violations == []
+    finally:
+        _release_any_slots_held_by(engine, holder_prefix)
+        engine.dispose()
+
+
+def test_postgres_theta_request_slots_raises_when_truly_exhausted() -> None:
+    """All slots pinned by the test's own long-held acquisitions (a
+    generous stale_after_seconds rules out the TTL reclaiming one
+    mid-test) -- one more acquire must not hang forever; it raises
+    ThetaSlotsExhaustedError once its own short timeout elapses."""
+    engine = _theta_slots_engine()
+    holder_prefix = f"exhaust-test-{uuid4().hex[:8]}"
+    try:
+        session_factory = create_sync_session_factory(engine)
+        with engine.begin() as connection:
+            slot_count = connection.execute(text("SELECT count(*) FROM theta_request_slots")).scalar_one()
+
+        blockers = PostgresThetaRequestSlots(
+            session_factory,
+            holder=holder_prefix,
+            retry_interval_seconds=0.02,
+            acquire_timeout_seconds=25.0,
+        )
+        held_slots = [blockers.acquire() for _ in range(slot_count)]
+        try:
+            waiter = PostgresThetaRequestSlots(
+                session_factory,
+                holder=f"{holder_prefix}-waiter",
+                stale_after_seconds=60.0,
+                retry_interval_seconds=0.05,
+                acquire_timeout_seconds=0.5,
+            )
+            with pytest.raises(ThetaSlotsExhaustedError):
+                waiter.acquire()
+        finally:
+            for slot in held_slots:
+                blockers.release(slot)
+    finally:
+        _release_any_slots_held_by(engine, holder_prefix)
+        engine.dispose()
+
+
+def test_postgres_theta_request_slots_reclaims_a_slot_stale_past_the_ttl() -> None:
+    """Simulates a process that crashed while holding a slot (acquired
+    it, never released) -- a slot whose acquired_at predates
+    stale_after_seconds must be treated as free by the next acquirer,
+    not stuck forever."""
+    engine = _theta_slots_engine()
+    holder_prefix = f"stale-test-{uuid4().hex[:8]}"
+    try:
+        session_factory = create_sync_session_factory(engine)
+        crashed = PostgresThetaRequestSlots(session_factory, holder=f"{holder_prefix}-crashed")
+        slot = crashed.acquire()  # never released -- simulates the crash
+        with engine.begin() as connection:
+            connection.execute(
+                text(
+                    "UPDATE theta_request_slots SET acquired_at = now() - INTERVAL '31 seconds' "
+                    "WHERE slot = :slot"
+                ),
+                {"slot": slot},
+            )
+
+        recovering = PostgresThetaRequestSlots(
+            session_factory,
+            holder=f"{holder_prefix}-recovered",
+            stale_after_seconds=30.0,
+            retry_interval_seconds=0.05,
+            acquire_timeout_seconds=5.0,
+        )
+        reclaimed_slot = recovering.acquire()
+        try:
+            assert reclaimed_slot == slot
+        finally:
+            recovering.release(reclaimed_slot)
+    finally:
+        _release_any_slots_held_by(engine, holder_prefix)
+        engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_async_postgres_theta_request_slots_never_double_acquires_under_real_concurrency() -> None:
+    """Same race-condition proof as the sync version, for
+    AsyncPostgresThetaRequestSlots -- not wired to any caller yet (see
+    its own docstring), but its correctness shouldn't wait for Phase 2
+    to find out."""
+    settings = Settings(_env_file=".env")
+    if not settings.database_url.startswith("postgresql"):
+        pytest.skip("DATABASE_URL does not point to PostgreSQL")
+    sync_engine = create_sync_engine(settings.database_url)
+    async_engine = create_engine(settings.database_url)
+    holder_prefix = f"async-race-test-{uuid4().hex[:8]}"
+    try:
+        session_factory = create_session_factory(async_engine)
+        slots = AsyncPostgresThetaRequestSlots(
+            session_factory,
+            holder=holder_prefix,
+            retry_interval_seconds=0.02,
+            acquire_timeout_seconds=25.0,
+        )
+
+        task_count = 20
+        hold_seconds = 0.2
+        active: dict[int, str] = {}
+        violations: list[str] = []
+        lock = asyncio.Lock()
+
+        async def worker(name: str) -> None:
+            async with slots.hold() as slot:
+                async with lock:
+                    if slot in active:
+                        violations.append(
+                            f"{name} acquired slot {slot} already held by {active[slot]}"
+                        )
+                    active[slot] = name
+                await asyncio.sleep(hold_seconds)
+                async with lock:
+                    del active[slot]
+
+        await asyncio.wait_for(
+            asyncio.gather(*(worker(f"t{i}") for i in range(task_count))), timeout=30
+        )
+
+        assert violations == []
+    finally:
+        _release_any_slots_held_by(sync_engine, holder_prefix)
+        sync_engine.dispose()
         await async_engine.dispose()
 
 

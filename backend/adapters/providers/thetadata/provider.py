@@ -3,7 +3,6 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import threading
 import time
 from collections.abc import AsyncIterator
 from datetime import date, datetime, timedelta
@@ -28,6 +27,10 @@ from backend.domain.entities import (
     UnderlyingKind,
     UnderlyingTradeEvent,
     utc_now,
+)
+from backend.adapters.providers.thetadata.request_slots import (
+    InProcessThetaRequestSlots,
+    PostgresThetaRequestSlots,
 )
 from backend.domain.underlyings import ACTIVE_UNDERLYINGS_BY_SYMBOL
 from backend.domain.use_cases.calculate_bsm_greeks import calculate_bsm_greeks
@@ -140,12 +143,16 @@ RECONNECT_MAX_DELAY_SECONDS = 60
 # of the scheduler's sequential per-symbol loop (backend/core/
 # scheduler.py), not a designed safeguard, so this stays preventive:
 # if that loop is ever parallelized further for performance, this still
-# holds the real limit. `threading.Semaphore`, not `asyncio.Semaphore`
-# — every REST call here runs synchronously inside a worker thread (via
-# `asyncio.to_thread` from the scheduler, or Starlette's threadpool for
-# the sync route handlers still on it), never on the event loop itself,
-# so an asyncio primitive wouldn't coordinate anything real across
-# those threads.
+# holds the real limit.
+#
+# Enforced today via request_slots.py, not a bare `threading.Semaphore`
+# — see that module's own docstring. In-process only for now
+# (InProcessThetaRequestSlots, still just a threading.Semaphore under
+# the hood) since everything still runs in one process; the
+# Postgres-backed PostgresThetaRequestSlots exists ahead of the process
+# split (Phase 2) that will actually need cross-process coordination of
+# this same limit, and container.py already wires it in whenever a real
+# Postgres is configured.
 THETADATA_MAX_CONCURRENT_REQUESTS = 8
 
 # Short-lived, in-process cache for the near-the-money chain, keyed by
@@ -906,12 +913,26 @@ class ThetaDataProvider:
     active, futures daily bars, skew_25d approximation).
     """
 
-    def __init__(self, rest_base_url: str, ws_url: str) -> None:
+    def __init__(
+        self,
+        rest_base_url: str,
+        ws_url: str,
+        request_slots: PostgresThetaRequestSlots | InProcessThetaRequestSlots | None = None,
+    ) -> None:
         self._client = httpx.Client(base_url=rest_base_url, timeout=10.0)
         self._stream = ThetaTradeStream(ws_url, self._client)
         self._quote_stream = ThetaQuoteStream(ws_url)
         self._underlying_trade_stream = ThetaUnderlyingTradeStream(ws_url)
-        self._request_semaphore = threading.Semaphore(THETADATA_MAX_CONCURRENT_REQUESTS)
+        # Defaults to the pre-existing in-process behavior (correct on
+        # its own whenever nothing in a separate OS process could also
+        # be calling ThetaData -- every caller that doesn't pass a real
+        # PostgresThetaRequestSlots explicitly, today including every
+        # test) -- see request_slots.py's own module docstring for why
+        # a plain threading.Semaphore stopped being enough once a
+        # second process might exist.
+        self._request_slots = request_slots or InProcessThetaRequestSlots(
+            THETADATA_MAX_CONCURRENT_REQUESTS
+        )
         self._rate_cache: tuple[date, Decimal] | None = None
         # ATR (and therefore the near-the-money width derived from it)
         # only changes once a *closed* trading day is added to the
@@ -981,7 +1002,7 @@ class ThetaDataProvider:
         # it here covers get_option_chain, get_underlying_snapshot,
         # get_daily_bars, and the open-interest/rate lookups uniformly,
         # without touching each of them individually.
-        with self._request_semaphore:
+        with self._request_slots.hold():
             response = self._client.get(path, params=params)
         if response.status_code != 200:
             raise RuntimeError(
@@ -1004,7 +1025,7 @@ class ThetaDataProvider:
         real failure — so it must not abort the whole combined fetch the
         way `_get_json` correctly does for a genuine error (auth failure,
         5xx, etc., which still raise here exactly as before)."""
-        with self._request_semaphore:
+        with self._request_slots.hold():
             response = self._client.get(path, params=params)
         if response.status_code == 472:
             return {"response": []}

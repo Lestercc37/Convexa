@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+import socket
 from dataclasses import dataclass
 
 from sqlalchemy import Engine
@@ -13,6 +15,8 @@ from backend.adapters.providers.mock.gamma_flip import FakeGammaFlipCalculator
 from backend.adapters.providers.mock.max_pain import FakeMaxPainCalculator
 from backend.adapters.providers.mock.walls import FakeWallCalculator
 from backend.adapters.providers.thetadata import ThetaDataProvider
+from backend.adapters.providers.thetadata.provider import THETADATA_MAX_CONCURRENT_REQUESTS
+from backend.adapters.providers.thetadata.request_slots import build_theta_request_slots
 from backend.adapters.storage.memory import InMemoryStorage
 from backend.adapters.storage.postgresql import PostgreSQLStorage
 from backend.adapters.storage.postgresql_async import AsyncPostgreSQLStorage
@@ -97,7 +101,8 @@ def build_container() -> Container:
     session_factory = create_session_factory(database_engine)
     if settings.database_url.startswith("postgresql"):
         storage_engine = create_sync_engine(settings.database_url, echo=settings.database_echo)
-        storage: IStorage = PostgreSQLStorage(create_sync_session_factory(storage_engine))
+        sync_session_factory = create_sync_session_factory(storage_engine)
+        storage: IStorage = PostgreSQLStorage(sync_session_factory)
         # Real async Postgres reads for /gamma/{symbol} and /market/{symbol}
         # only when there's a real Postgres behind `session_factory` --
         # otherwise (InMemoryStorage, e.g. tests' sqlite DATABASE_URL, which
@@ -107,10 +112,19 @@ def build_container() -> Container:
         async_market_storage: IAsyncMarketReadStorage = AsyncPostgreSQLStorage(session_factory)
     else:
         storage_engine = None
+        sync_session_factory = None
         storage = InMemoryStorage()
         async_market_storage = SyncStorageAsyncReadAdapter(storage)
+    theta_request_slots = build_theta_request_slots(
+        storage_engine,
+        sync_session_factory,
+        holder=f"{socket.gethostname()}:{os.getpid()}",
+        limit=THETADATA_MAX_CONCURRENT_REQUESTS,
+    )
     market_data_provider: IDataProvider = (
-        ThetaDataProvider(settings.thetadata_rest_url, settings.thetadata_ws_url)
+        ThetaDataProvider(
+            settings.thetadata_rest_url, settings.thetadata_ws_url, theta_request_slots
+        )
         if settings.data_provider == "thetadata"
         else MockDataProvider()
     )
