@@ -87,6 +87,31 @@ describe("QuickScreener", () => {
     expect(screen.queryByText("WHALE")).not.toBeInTheDocument();
   });
 
+  it("refreshes the active preset automatically every 30s, not only when the dropdown changes (regression)", async () => {
+    // Before this fix, QuickScreener only fetched on mount and on preset
+    // change -- unlike every other polling panel in the dashboard
+    // (AlertsPanel, ChartSecondaryPanel), it never refreshed on its own,
+    // so "Unusual Options Activity" (and every other preset) could go
+    // stale indefinitely while left open.
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    renderWithLanguage(<QuickScreener />);
+
+    await vi.waitFor(() => expect(apiMocks.getScreenerPreset).toHaveBeenCalledTimes(1));
+
+    await vi.advanceTimersByTimeAsync(30_000);
+    await vi.waitFor(() => expect(apiMocks.getScreenerPreset).toHaveBeenCalledTimes(2));
+
+    await vi.advanceTimersByTimeAsync(30_000);
+    await vi.waitFor(() => expect(apiMocks.getScreenerPreset).toHaveBeenCalledTimes(3));
+
+    expect(apiMocks.getScreenerPreset).toHaveBeenLastCalledWith(
+      "unusual-options-activity",
+      expect.any(AbortSignal),
+    );
+
+    vi.useRealTimers();
+  });
+
   it("opens the preset filter settings panel from its trigger button", async () => {
     apiMocks.getScreenerPresetSettings.mockResolvedValue({
       schema_version: 1,
