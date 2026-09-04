@@ -54,6 +54,51 @@ describe("AlertsPanel", () => {
     expect(cards[0]).toHaveTextContent("$45,000");
   });
 
+  it("renders two distinct cards when the same contract+timestamp trips two alert types (regression)", async () => {
+    // Same collision already fixed in quick-screener.tsx's key: a single
+    // reading can independently trip a magnitude threshold (WHALE/
+    // UNUSUAL) *and* the separate sustained-flow window, so the same
+    // symbol+contract+timestamp legitimately carries two distinct alerts
+    // with a different `type`. Before this fix, alertKey() (symbol+
+    // contract+timestamp only) collided for both, and React logged
+    // "Encountered two children with the same key" for this list.
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    apiMocks.getAlerts.mockResolvedValue(
+      alertsResponse("SPY", [
+        {
+          symbol: "SPY",
+          contract: "SPY260904P00772000",
+          type: "SUSTAINED_FLOW",
+          amount: 596745,
+          timestamp: "2026-09-04T13:59:11.879640Z",
+          estimated_buy_volume: 300000,
+          estimated_sell_volume: 296745,
+        },
+        {
+          symbol: "SPY",
+          contract: "SPY260904P00772000",
+          type: "WHALE",
+          amount: 493889,
+          timestamp: "2026-09-04T13:59:11.879640Z",
+          estimated_buy_volume: 250000,
+          estimated_sell_volume: 243889,
+        },
+      ]),
+    );
+
+    renderWithLanguage(<AlertsPanel symbol="SPY" />);
+
+    const cards = await screen.findAllByRole("article");
+    expect(cards).toHaveLength(2);
+    expect(screen.getByText("Sustained Flow")).toBeInTheDocument();
+    expect(screen.getByText("Whale")).toBeInTheDocument();
+    expect(
+      consoleError.mock.calls.some((call) => String(call[0]).includes("same key")),
+    ).toBe(false);
+
+    consoleError.mockRestore();
+  });
+
   it("re-fetches for the new symbol when the active chart symbol changes, not just on its own 30s interval", async () => {
     apiMocks.getAlerts.mockImplementation((symbol: string) =>
       Promise.resolve(

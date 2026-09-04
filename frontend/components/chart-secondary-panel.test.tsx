@@ -263,6 +263,41 @@ describe("ChartSecondaryPanel", () => {
     vi.useRealTimers();
   });
 
+  it("keeps both alerts when the same contract+timestamp trips two alert types, instead of the Map silently dropping one (regression)", async () => {
+    // Confirmed live, 2026-09: a single reading can independently trip a
+    // magnitude threshold (WHALE/UNUSUAL) *and* the separate sustained-
+    // flow window, so the same symbol+contract+timestamp legitimately
+    // carries two distinct alerts with a different `type`. Before this
+    // fix, alertKey() (symbol+contract+timestamp only) collided for both,
+    // and since it's used as this component's Map key
+    // (`alertsByKey.set(alertKey(alert), alert)`), the second alert
+    // silently overwrote the first -- no warning, no error, just one
+    // fewer point on the flow line than alerts actually received.
+    const whaleAlert = alert({ type: "WHALE", estimated_buy_volume: 1500, estimated_sell_volume: 500 });
+    const sustainedAlert = alert({
+      type: "SUSTAINED_FLOW",
+      estimated_buy_volume: 300,
+      estimated_sell_volume: 900,
+    });
+    apiMocks.getAlerts.mockResolvedValue(alertsResponse([whaleAlert, sustainedAlert]));
+
+    const user = userEvent.setup();
+    renderWithLanguage(<ChartSecondaryPanel symbol="SPY" spotPrice={SPOT_PRICE} />);
+    await user.click(screen.getByRole("button", { name: "Flujo Whale Alerts" }));
+
+    await waitFor(() => expect(apiMocks.getAlerts).toHaveBeenCalledTimes(1));
+    await waitFor(() => {
+      const points = document
+        .querySelector(".secondary-flow-line")
+        ?.getAttribute("points")
+        ?.trim()
+        .split(/\s+/);
+      // Both alerts received (2), both must survive into the Map -- 1
+      // would mean the second silently overwrote the first.
+      expect(points).toHaveLength(2);
+    });
+  });
+
   it("shows the loading state before the first alerts poll resolves", async () => {
     let resolveAlerts: (value: WhaleAlertsResponse) => void = () => {};
     apiMocks.getAlerts.mockImplementation(

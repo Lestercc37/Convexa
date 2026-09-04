@@ -31,8 +31,14 @@ const FLOW_PLOT = { top: 10, bottom: 80, left: 20, right: 740 };
 
 const level = new Intl.NumberFormat("en-US", { maximumFractionDigits: 2 });
 
+// Same fix as alerts-panel.tsx's own alertKey() -- contract+timestamp
+// alone collides whenever a single reading trips both a magnitude
+// threshold (WHALE/UNUSUAL) and the separate sustained-flow window at
+// the same as_of. Used as a Map key below (`alertsByKey`), so this
+// wasn't just a React warning here -- the second alert silently
+// overwrote the first in the Map with no error at all.
 function alertKey(alert: WhaleAlert) {
-  return `${alert.symbol}-${alert.contract}-${alert.timestamp}`;
+  return `${alert.symbol}-${alert.contract}-${alert.timestamp}-${alert.type}`;
 }
 
 function scale(value: number, minimum: number, maximum: number, start: number, end: number) {
