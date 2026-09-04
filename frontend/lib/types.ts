@@ -206,6 +206,12 @@ export type MarketResponse = {
   closing_dynamics?: ClosingDynamics;
 };
 
+export type MarketPriceHistoryResponse = {
+  schema_version: number;
+  symbol: string;
+  points: { timestamp: string; price: number }[];
+};
+
 export type ExpectedMove = {
   implied_1sd_dollars: number;
   implied_1sd_pct: number;

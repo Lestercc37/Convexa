@@ -77,6 +77,17 @@ class MarketSnapshotResponse(BaseModel):
     closing_dynamics: ClosingDynamicsResponse
 
 
+class PricePointResponse(BaseModel):
+    timestamp: str = Field(examples=["2026-01-15T14:30:00Z"])
+    price: Number = Field(examples=[552.25])
+
+
+class PriceHistoryResponse(BaseModel):
+    schema_version: int = Field(examples=[1])
+    symbol: str = Field(examples=["SPY"])
+    points: list[PricePointResponse]
+
+
 class OptionContractResponse(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 

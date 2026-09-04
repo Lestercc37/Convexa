@@ -13,6 +13,7 @@ from backend.domain.entities import (
     GammaExposure,
     GammaFlip,
     Greeks,
+    MarketPrice,
     MarketSnapshot,
     MaxPain,
     OptionChain,
@@ -298,6 +299,14 @@ def market_response(snapshot: MarketSnapshot) -> dict[str, Any]:
             "vanna_interpretation": closing_dynamics.vanna_interpretation,
             "max_pain": _num(closing_dynamics.max_pain),
         },
+    }
+
+
+def price_history_response(symbol: str, points: list[MarketPrice]) -> dict[str, Any]:
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "symbol": symbol.upper(),
+        "points": [{"timestamp": _dt(point.as_of), "price": _num(point.price)} for point in points],
     }
 
 

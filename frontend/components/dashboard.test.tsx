@@ -11,6 +11,7 @@ const apiMocks = vi.hoisted(() => ({
   getGamma: vi.fn(),
   getGammaProfile: vi.fn(),
   getMarket: vi.fn(),
+  getMarketPriceHistory: vi.fn(),
   getOptionChain: vi.fn(),
   getScreenerPreset: vi.fn(),
   getUnderlyings: vi.fn(),
@@ -201,6 +202,9 @@ beforeEach(() => {
   });
   apiMocks.getGamma.mockImplementation((symbol: string) => Promise.resolve(gammaFor(symbol)));
   apiMocks.getMarket.mockImplementation((symbol: string) => Promise.resolve(marketFor(symbol)));
+  apiMocks.getMarketPriceHistory.mockImplementation((symbol: string) =>
+    Promise.resolve({ schema_version: 1, symbol, points: [] }),
+  );
   apiMocks.getOptionChain.mockResolvedValue({
     schema_version: 1,
     symbol: "SPY",
@@ -323,6 +327,48 @@ describe("Dashboard", () => {
     expect(consoleError).not.toHaveBeenCalled();
 
     consoleError.mockRestore();
+  });
+
+  it("seeds today's session history before polling starts, per symbol (regression)", async () => {
+    // Confirmed live, 2026-09: pricePoints started empty and only ever
+    // accumulated from live 30s polls, so every symbol switch reset the
+    // chart to a flat opening candle even though the backend already had
+    // the whole session's prices in market_snapshots -- GET /market/
+    // {symbol}/history exposes that, and this seeds pricePoints with it
+    // before the first live poll runs.
+    apiMocks.getMarketPriceHistory.mockImplementation((symbol: string) =>
+      Promise.resolve({
+        schema_version: 1,
+        symbol,
+        points: [
+          { timestamp: "2026-08-03T13:30:00Z", price: 548 },
+          { timestamp: "2026-08-03T13:31:00Z", price: 549 },
+        ],
+      }),
+    );
+
+    const user = userEvent.setup();
+    renderWithLanguage(<Dashboard />);
+    await screen.findByLabelText("Chart de velas para SPY");
+
+    await waitFor(() =>
+      expect(apiMocks.getMarketPriceHistory).toHaveBeenCalledWith("SPY", expect.any(AbortSignal)),
+    );
+    // The live poll still runs after seeding -- the seed doesn't replace
+    // or block the normal polling this component already relies on.
+    await waitFor(() =>
+      expect(apiMocks.getMarket).toHaveBeenCalledWith("SPY", expect.any(AbortSignal)),
+    );
+
+    await user.selectOptions(screen.getByRole("combobox", { name: "Subyacente" }), "GOOGL");
+    await screen.findByLabelText("Chart de velas para GOOGL");
+
+    await waitFor(() =>
+      expect(apiMocks.getMarketPriceHistory).toHaveBeenCalledWith(
+        "GOOGL",
+        expect.any(AbortSignal),
+      ),
+    );
   });
 
   it("switches to the Pre-Sesión view without polling the live chart, and back", async () => {

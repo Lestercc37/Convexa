@@ -3,7 +3,7 @@
 import Image from "next/image";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Group, Panel, Separator, useDefaultLayout } from "react-resizable-panels";
-import { getGamma, getMarket, getUnderlyings } from "@/lib/api";
+import { getGamma, getMarket, getMarketPriceHistory, getUnderlyings } from "@/lib/api";
 import {
   aggregateCandles,
   aggregateMinuteCandles,
@@ -210,15 +210,36 @@ export function Dashboard() {
   useEffect(() => {
     if (!symbol) return;
     const controller = new AbortController();
-    const initialRefresh = window.setTimeout(
-      () => void refresh(symbol, controller.signal),
-      0,
-    );
-    const interval = window.setInterval(() => void refresh(symbol), POLLING_INTERVAL_MS);
+    let interval: number | undefined;
+
+    // Seeds pricePoints with today's session-so-far before the first live
+    // poll runs, instead of starting every symbol from an empty chart that
+    // has to wait for new ticks to rebuild candles already formed since
+    // the open (confirmed live, 2026-09: the backend already had this
+    // data via market_snapshots -- GET /market/{symbol}/history exposes
+    // it, this just seeds with it). A failed seed isn't fatal -- it just
+    // falls back to the old empty-then-accumulate behavior below.
+    const seedThenPoll = async () => {
+      try {
+        const history = await getMarketPriceHistory(symbol, controller.signal);
+        if (controller.signal.aborted) return;
+        setPricePoints(
+          history.points.map((point) => ({ timestamp: point.timestamp, price: point.price })),
+        );
+      } catch (reason: unknown) {
+        if (!controller.signal.aborted) {
+          setError(reason);
+        }
+      }
+      if (controller.signal.aborted) return;
+      void refresh(symbol, controller.signal);
+      interval = window.setInterval(() => void refresh(symbol), POLLING_INTERVAL_MS);
+    };
+    void seedThenPoll();
+
     return () => {
       controller.abort();
-      window.clearTimeout(initialRefresh);
-      window.clearInterval(interval);
+      if (interval !== undefined) window.clearInterval(interval);
     };
   }, [refresh, symbol]);
 

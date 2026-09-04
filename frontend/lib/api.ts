@@ -2,6 +2,7 @@ import type {
   GammaAggregateResponse,
   GammaHistoryResponse,
   GammaResponse,
+  MarketPriceHistoryResponse,
   MarketResponse,
   OptionChainResponse,
   ScreenerPresetName,
@@ -74,6 +75,13 @@ export function getGammaProfile(symbol: string, signal?: AbortSignal) {
 
 export function getMarket(symbol: string, signal?: AbortSignal) {
   return getJson<MarketResponse>(`/market/${encodeURIComponent(symbol)}`, signal);
+}
+
+export function getMarketPriceHistory(symbol: string, signal?: AbortSignal) {
+  return getJson<MarketPriceHistoryResponse>(
+    `/market/${encodeURIComponent(symbol)}/history`,
+    signal,
+  );
 }
 
 export function getAlerts(symbol: string, signal?: AbortSignal, limit?: number) {
