@@ -15,8 +15,11 @@ from backend.adapters.providers.mock.walls import FakeWallCalculator
 from backend.adapters.providers.thetadata import ThetaDataProvider
 from backend.adapters.storage.memory import InMemoryStorage
 from backend.adapters.storage.postgresql import PostgreSQLStorage
+from backend.adapters.storage.postgresql_async import AsyncPostgreSQLStorage
+from backend.adapters.storage.sync_read_adapter import SyncStorageAsyncReadAdapter
 from backend.core.settings import Settings, get_settings
 from backend.domain.ports import (
+    IAsyncMarketReadStorage,
     IDataProvider,
     IGammaAggregateCalculator,
     IGammaExposureCalculator,
@@ -55,6 +58,7 @@ class Container:
     session_factory: async_sessionmaker[AsyncSession]
     storage_engine: Engine | None
     storage: IStorage
+    async_market_storage: IAsyncMarketReadStorage
     market_data_provider: IDataProvider
     greeks_calculator: IGreeksCalculator
     gamma_exposure_calculator: IGammaExposureCalculator
@@ -94,9 +98,17 @@ def build_container() -> Container:
     if settings.database_url.startswith("postgresql"):
         storage_engine = create_sync_engine(settings.database_url, echo=settings.database_echo)
         storage: IStorage = PostgreSQLStorage(create_sync_session_factory(storage_engine))
+        # Real async Postgres reads for /gamma/{symbol} and /market/{symbol}
+        # only when there's a real Postgres behind `session_factory` --
+        # otherwise (InMemoryStorage, e.g. tests' sqlite DATABASE_URL, which
+        # the async engine above can't share data with) fall back to
+        # wrapping the same sync `storage` those routes already work
+        # against, so both backends serve identical data either way.
+        async_market_storage: IAsyncMarketReadStorage = AsyncPostgreSQLStorage(session_factory)
     else:
         storage_engine = None
         storage = InMemoryStorage()
+        async_market_storage = SyncStorageAsyncReadAdapter(storage)
     market_data_provider: IDataProvider = (
         ThetaDataProvider(settings.thetadata_rest_url, settings.thetadata_ws_url)
         if settings.data_provider == "thetadata"
@@ -141,6 +153,7 @@ def build_container() -> Container:
         session_factory=session_factory,
         storage_engine=storage_engine,
         storage=storage,
+        async_market_storage=async_market_storage,
         market_data_provider=market_data_provider,
         greeks_calculator=greeks_calculator,
         gamma_exposure_calculator=gamma_exposure_calculator,

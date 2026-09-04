@@ -25,8 +25,10 @@ from backend.api.serializers import (
 from backend.core.container import Container
 from backend.domain.entities import GammaFlip
 from backend.domain.use_cases import (
+    calculate_derived_metrics_async,
     get_flow,
     get_gamma_exposure,
+    get_gamma_exposure_async,
     get_gamma_history,
     get_option_chain,
 )
@@ -59,10 +61,18 @@ def get_chain(
 
 
 @router.get("/gamma/{symbol}", response_model=GammaResponse)
-def get_gamma(symbol: str, request: Request) -> GammaResponse:
+async def get_gamma(symbol: str, request: Request) -> GammaResponse:
+    # async def, not def: dispatched on the event loop instead of
+    # Starlette's shared threadpool, which the scheduler's own 15
+    # concurrent asyncio.to_thread symbol refreshes (each with 3
+    # sequential blocking ThetaData calls) can otherwise monopolize for
+    # seconds -- confirmed live, 2026-09: this pure-storage-read route
+    # measured 3.5-23s end to end while a scheduler cycle was in flight,
+    # even though it never itself calls the data provider. See
+    # AsyncPostgreSQLStorage's own docstring.
     container: Container = request.app.state.container
-    gamma = get_gamma_exposure(container.storage, symbol)
-    derived_metrics = container.calculate_derived_metrics_use_case.execute(symbol)
+    gamma = await get_gamma_exposure_async(container.async_market_storage, symbol)
+    derived_metrics = await calculate_derived_metrics_async(container.async_market_storage, symbol)
     return GammaResponse.model_validate(gamma_response(gamma, derived_metrics))
 
 

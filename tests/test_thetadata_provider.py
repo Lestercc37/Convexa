@@ -13,6 +13,7 @@ import httpx
 import pytest
 
 from backend.adapters.providers.thetadata.provider import (
+    DAILY_BARS_CACHE_TTL_SECONDS,
     THETADATA_MAX_CONCURRENT_REQUESTS,
     ThetaDataProvider,
     ThetaQuoteStream,
@@ -859,6 +860,67 @@ class TestGetDailyBars:
 
         provider = _provider_with_transport(handler)
         assert provider.get_daily_bars("ES", days=5) == []
+
+
+class TestDailyBarsCaching:
+    """get_daily_bars() had no cache at all before this -- confirmed live,
+    2026-09: every 30s scheduler cycle re-fetched it from ThetaData for
+    all 15 active symbols even though an EOD bar can't change again
+    until the next session closes, a real contributor to the threadpool
+    contention that made /gamma and /market queue behind the scheduler."""
+
+    def test_second_call_within_ttl_reuses_the_cached_bars(self) -> None:
+        request_count = 0
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            nonlocal request_count
+            if "stock/history/eod" in str(request.url):
+                request_count += 1
+                return httpx.Response(200, json=_daily_bars_response())
+            raise AssertionError(f"unexpected request: {request.url}")
+
+        provider = _provider_with_transport(handler)
+        first = provider.get_daily_bars("SPY", days=5)
+        second = provider.get_daily_bars("SPY", days=5)
+
+        assert request_count == 1
+        assert second == first
+
+    def test_different_days_argument_is_not_served_from_the_others_cache(self) -> None:
+        request_count = 0
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            nonlocal request_count
+            if "stock/history/eod" in str(request.url):
+                request_count += 1
+                return httpx.Response(200, json=_daily_bars_response())
+            raise AssertionError(f"unexpected request: {request.url}")
+
+        provider = _provider_with_transport(handler)
+        provider.get_daily_bars("SPY", days=5)
+        provider.get_daily_bars("SPY", days=20)
+
+        assert request_count == 2
+
+    def test_expired_cache_re_fetches(self) -> None:
+        request_count = 0
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            nonlocal request_count
+            if "stock/history/eod" in str(request.url):
+                request_count += 1
+                return httpx.Response(200, json=_daily_bars_response())
+            raise AssertionError(f"unexpected request: {request.url}")
+
+        provider = _provider_with_transport(handler)
+        provider.get_daily_bars("SPY", days=5)
+        provider._daily_bars_cache[("SPY", 5)] = (
+            provider._daily_bars_cache[("SPY", 5)][0] - DAILY_BARS_CACHE_TTL_SECONDS - 1,
+            provider._daily_bars_cache[("SPY", 5)][1],
+        )
+        provider.get_daily_bars("SPY", days=5)
+
+        assert request_count == 2
 
 
 class TestGetMinuteBars:

@@ -22,6 +22,7 @@ from backend.domain.use_cases.calculate_closing_dynamics import (
 )
 from backend.domain.use_cases.calculate_derived_metrics import (
     CalculateDerivedMetricsUseCase,
+    calculate_derived_metrics_async,
     capture_daily_gamma_reference,
 )
 from backend.domain.use_cases.calculate_expected_move import (
@@ -50,12 +51,18 @@ from backend.domain.use_cases.gamma import (
     CalculateGammaExposureOrchestrator,
     calculate_gamma_exposure,
     get_gamma_exposure,
+    get_gamma_exposure_async,
     get_gamma_history,
 )
 from backend.domain.use_cases.load_option_chain import LoadOptionChainUseCase
 from backend.domain.use_cases.market_hours import is_market_open
 from backend.domain.use_cases.market_snapshot import GetMarketSnapshotUseCase
-from backend.domain.use_cases.read_models import build_market_snapshot, get_flow, get_option_chain
+from backend.domain.use_cases.read_models import (
+    build_market_snapshot,
+    build_market_snapshot_async,
+    get_flow,
+    get_option_chain,
+)
 from backend.domain.use_cases.refresh_snapshot import RefreshUnderlyingSnapshotUseCase
 from backend.domain.use_cases.screener_presets import (
     ScreenerPreset,
@@ -92,12 +99,14 @@ __all__ = [
     "WhaleAlertType",
     "WhaleAlertsEngine",
     "build_market_snapshot",
+    "build_market_snapshot_async",
     "calculate_anchored_vwap",
     "calculate_atr_range",
     "calculate_bsm_greeks",
     "calculate_bvc_split",
     "calculate_charm_regime",
     "calculate_closing_dynamics",
+    "calculate_derived_metrics_async",
     "calculate_expected_move",
     "calculate_gamma_exposure",
     "calculate_near_the_money_width",
@@ -110,6 +119,7 @@ __all__ = [
     "classify_trade_side",
     "get_flow",
     "get_gamma_exposure",
+    "get_gamma_exposure_async",
     "get_gamma_history",
     "get_option_chain",
     "get_screener_preset",

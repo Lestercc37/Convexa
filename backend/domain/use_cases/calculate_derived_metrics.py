@@ -10,10 +10,11 @@ from backend.domain.entities import (
     DerivedMetricValue,
     GammaAggregate,
     MarketBiasMetric,
+    MarketPrice,
     MarketSnapshot,
     VolatilityRegimeMetric,
 )
-from backend.domain.ports import IStorage
+from backend.domain.ports import IAsyncMarketReadStorage, IStorage
 from backend.domain.use_cases.errors import NotFoundError
 
 DEFAULT_HISTORY_DAYS = 60
@@ -45,75 +46,103 @@ class CalculateDerivedMetricsUseCase:
             raise NotFoundError(f"No market price found for {underlying.upper()}")
 
         references = self._storage.get_daily_gamma_references(underlying, self._history_days)
-        days = len(references)
-        has_history = days >= MINIMUM_HISTORY_DAYS
+        return _compute_derived_metrics(gamma, price, references)
 
-        dealer_impact = (
-            percentile_rank(
-                abs(references[0].net_gamma),
-                [abs(reference.net_gamma) for reference in references],
-            )
-            if has_history
-            else None
+
+async def calculate_derived_metrics_async(
+    storage: IAsyncMarketReadStorage,
+    underlying: str,
+    history_days: int = DEFAULT_HISTORY_DAYS,
+) -> DerivedMetrics:
+    """Async twin of `CalculateDerivedMetricsUseCase.execute` -- same
+    reads and the same pure `_compute_derived_metrics`, just awaited so
+    `/gamma/{symbol}` can run on the event loop instead of the
+    scheduler's shared threadpool (see AsyncPostgreSQLStorage's own
+    docstring)."""
+    gamma = await storage.get_latest_gamma_aggregate(underlying)
+    if gamma is None:
+        raise NotFoundError(f"No gamma aggregate found for {underlying.upper()}")
+    price = await storage.get_latest_price(underlying)
+    if price is None:
+        raise NotFoundError(f"No market price found for {underlying.upper()}")
+    references = await storage.get_daily_gamma_references(underlying, history_days)
+    return _compute_derived_metrics(gamma, price, references)
+
+
+def _compute_derived_metrics(
+    gamma: GammaAggregate,
+    price: MarketPrice,
+    references: list[DailyGammaReference],
+) -> DerivedMetrics:
+    days = len(references)
+    has_history = days >= MINIMUM_HISTORY_DAYS
+
+    dealer_impact = (
+        percentile_rank(
+            abs(references[0].net_gamma),
+            [abs(reference.net_gamma) for reference in references],
         )
-        agreement = agreement_component(gamma, price.price)
-        freshness = freshness_component(price.as_of, gamma.as_of)
+        if has_history
+        else None
+    )
+    agreement = agreement_component(gamma, price.price)
+    freshness = freshness_component(price.as_of, gamma.as_of)
 
-        if dealer_impact is None:
-            alignment = Decimal("0.60") * agreement + Decimal("0.40") * freshness
-        else:
-            extremity = abs(dealer_impact - Decimal("50")) * Decimal("2")
-            alignment = (
-                Decimal("0.40") * agreement
-                + Decimal("0.30") * freshness
-                + Decimal("0.30") * extremity
-            )
-
-        market_score: Decimal | None = None
-        market_label: str | None = None
-        iv_rank: Decimal | None = None
-        volatility_label: str | None = None
-        if has_history:
-            pc_percentile = percentile_rank(
-                references[0].pc_oi_ratio,
-                [reference.pc_oi_ratio for reference in references],
-            )
-            skew_percentile = percentile_rank(
-                references[0].skew_25d,
-                [reference.skew_25d for reference in references],
-            )
-            market_score = Decimal("0.5") * (Decimal("100") - pc_percentile) + Decimal("0.5") * (
-                Decimal("100") - skew_percentile
-            )
-            market_label = market_bias_label(market_score)
-            iv_values = [reference.atm_iv for reference in references]
-            iv_rank = calculate_iv_rank(references[0].atm_iv, iv_values)
-            volatility_label = volatility_regime_label(iv_rank)
-
-        return DerivedMetrics(
-            dealer_impact_score=DerivedMetricValue(
-                value=dealer_impact,
-                provisional=not has_history,
-                days_accumulated=days,
-            ),
-            signal_alignment_score=DerivedMetricValue(
-                value=alignment,
-                provisional=not has_history,
-                days_accumulated=days,
-            ),
-            market_bias=MarketBiasMetric(
-                score=market_score,
-                label=market_label,
-                provisional=not has_history,
-                days_accumulated=days,
-            ),
-            volatility_regime=VolatilityRegimeMetric(
-                iv_rank=iv_rank,
-                label=volatility_label,
-                provisional=not has_history,
-                days_accumulated=days,
-            ),
+    if dealer_impact is None:
+        alignment = Decimal("0.60") * agreement + Decimal("0.40") * freshness
+    else:
+        extremity = abs(dealer_impact - Decimal("50")) * Decimal("2")
+        alignment = (
+            Decimal("0.40") * agreement
+            + Decimal("0.30") * freshness
+            + Decimal("0.30") * extremity
         )
+
+    market_score: Decimal | None = None
+    market_label: str | None = None
+    iv_rank: Decimal | None = None
+    volatility_label: str | None = None
+    if has_history:
+        pc_percentile = percentile_rank(
+            references[0].pc_oi_ratio,
+            [reference.pc_oi_ratio for reference in references],
+        )
+        skew_percentile = percentile_rank(
+            references[0].skew_25d,
+            [reference.skew_25d for reference in references],
+        )
+        market_score = Decimal("0.5") * (Decimal("100") - pc_percentile) + Decimal("0.5") * (
+            Decimal("100") - skew_percentile
+        )
+        market_label = market_bias_label(market_score)
+        iv_values = [reference.atm_iv for reference in references]
+        iv_rank = calculate_iv_rank(references[0].atm_iv, iv_values)
+        volatility_label = volatility_regime_label(iv_rank)
+
+    return DerivedMetrics(
+        dealer_impact_score=DerivedMetricValue(
+            value=dealer_impact,
+            provisional=not has_history,
+            days_accumulated=days,
+        ),
+        signal_alignment_score=DerivedMetricValue(
+            value=alignment,
+            provisional=not has_history,
+            days_accumulated=days,
+        ),
+        market_bias=MarketBiasMetric(
+            score=market_score,
+            label=market_label,
+            provisional=not has_history,
+            days_accumulated=days,
+        ),
+        volatility_regime=VolatilityRegimeMetric(
+            iv_rank=iv_rank,
+            label=volatility_label,
+            provisional=not has_history,
+            days_accumulated=days,
+        ),
+    )
 
 
 def percentile_rank(current: Decimal, values: list[Decimal]) -> Decimal:

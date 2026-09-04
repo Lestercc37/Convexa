@@ -168,6 +168,18 @@ NEAR_THE_MONEY_CACHE_TTL_SECONDS = 10.0
 # tight bound chosen to just barely avoid staleness.
 OPEN_INTEREST_CACHE_TTL_SECONDS = 20 * 60.0
 
+# Daily bars close once a day (an EOD bar can't change again until the
+# next session closes), yet get_daily_bars() was being re-fetched from
+# ThetaData on every single scheduler cycle for all 15 active symbols --
+# confirmed live, 2026-09: this was the one call in
+# RefreshUnderlyingSnapshotUseCase's 3-call-per-symbol sequence with no
+# cache at all, unlike near-the-money/open interest above, and a real
+# contributor to the threadpool contention that made /gamma and /market
+# queue behind the scheduler (see the /gamma/{symbol} route's own
+# docstring). Same 20-minute TTL as open interest, same reasoning:
+# conservative relative to "changes once a day," not a tight bound.
+DAILY_BARS_CACHE_TTL_SECONDS = 20 * 60.0
+
 # ThetaData splits certain broad-based, cash-settled index options into
 # two independently-quoted root symbols: the legacy AM-settled root
 # (e.g. "SPX") and the PM-settled weekly/0DTE root (e.g. "SPXW") — both
@@ -902,6 +914,7 @@ class ThetaDataProvider:
         self._open_interest_cache: dict[
             tuple[str, date], tuple[float, dict[tuple[Decimal, str], int]]
         ] = {}
+        self._daily_bars_cache: dict[tuple[str, int], tuple[float, list[DailyBar]]] = {}
 
     async def start(self) -> None:
         # Registered unconditionally for every active symbol (except
@@ -1347,6 +1360,10 @@ class ThetaDataProvider:
             # against /v3/future/history/eod) — documented gap, same
             # pattern as the other known limitations above.
             return []
+        cache_key = (symbol, days)
+        cached = self._daily_bars_cache.get(cache_key)
+        if cached is not None and time.monotonic() - cached[0] < DAILY_BARS_CACHE_TTL_SECONDS:
+            return cached[1]
         endpoint = (
             "/v3/index/history/eod"
             if active is not None and active.kind == UnderlyingKind.INDEX
@@ -1374,6 +1391,7 @@ class ThetaDataProvider:
                     close=Decimal(str(row["close"])),
                 )
             )
+        self._daily_bars_cache[cache_key] = (time.monotonic(), bars)
         return bars
 
     def get_minute_bars(self, underlying: str, start: date, end: date) -> list[MinuteBar]:

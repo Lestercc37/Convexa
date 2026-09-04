@@ -5,7 +5,7 @@ from datetime import datetime
 from decimal import Decimal
 
 from backend.domain.entities import GammaAggregate
-from backend.domain.ports import IStorage
+from backend.domain.ports import IAsyncMarketReadStorage, IStorage
 from backend.domain.use_cases.calculate_gamma_aggregate import (
     CalculateGammaAggregateUseCase,
 )
@@ -18,6 +18,15 @@ from backend.domain.use_cases.errors import NotFoundError
 
 def get_gamma_exposure(storage: IStorage, underlying: str) -> GammaAggregate:
     gamma = storage.get_latest_gamma_aggregate(underlying)
+    if gamma is None:
+        raise NotFoundError(f"No gamma aggregate found for {underlying.upper()}")
+    return gamma
+
+
+async def get_gamma_exposure_async(
+    storage: IAsyncMarketReadStorage, underlying: str
+) -> GammaAggregate:
+    gamma = await storage.get_latest_gamma_aggregate(underlying)
     if gamma is None:
         raise NotFoundError(f"No gamma aggregate found for {underlying.upper()}")
     return gamma
