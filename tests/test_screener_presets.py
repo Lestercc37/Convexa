@@ -252,3 +252,50 @@ def test_screener_endpoint_is_read_only() -> None:
     assert response.json()["results"][0]["symbol"] == "SPX"
     assert alias_response.json() == response.json()
     assert missing.status_code == 404
+
+
+def test_unusual_options_activity_endpoint_returns_persisted_whale_alerts_across_symbols() -> None:
+    """Regression test: no existing test exercised
+    /screener-presets/unusual-options-activity over real HTTP with real
+    alert data -- confirmed live, 2026-09, that this route 500'd with
+    `TypeError: 'async_generator' object is not iterable` (an `await`
+    driving a `for` clause's iterable inside a tuple() generator
+    expression makes the whole expression an async generator, which
+    tuple() can't consume). Every existing test either called
+    get_screener_preset() directly (skipping the route) or hit this
+    same route for a different preset (negative-gamma-board, which
+    never awaits anything) -- neither would have caught this."""
+    app = create_app()
+
+    with TestClient(app) as client:
+        storage = app.state.container.storage
+        storage.save_whale_alert(
+            WhaleAlert(
+                symbol="SPY",
+                occ_symbol="SPY260220C00540000",
+                alert_type=WhaleAlertType.WHALE,
+                amount=Decimal("210000"),
+                as_of=AS_OF,
+                estimated_buy_volume=Decimal("150000"),
+                estimated_sell_volume=Decimal("60000"),
+            )
+        )
+        storage.save_whale_alert(
+            WhaleAlert(
+                symbol="QQQ",
+                occ_symbol="QQQ260220P00480000",
+                alert_type=WhaleAlertType.UNUSUAL,
+                amount=Decimal("45000"),
+                as_of=AS_OF + timedelta(minutes=1),
+                estimated_buy_volume=Decimal("22500"),
+                estimated_sell_volume=Decimal("22500"),
+            )
+        )
+
+        response = client.get("/api/v1/screener-presets/unusual-options-activity")
+
+    assert response.status_code == 200
+    results = response.json()["results"]
+    assert [item["symbol"] for item in results] == ["QQQ", "SPY"]
+    assert results[0]["alert_type"] == "UNUSUAL"
+    assert results[1]["alert_type"] == "WHALE"
