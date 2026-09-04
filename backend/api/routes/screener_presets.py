@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+
 from fastapi import APIRouter, HTTPException, Request, status
 
 from backend.api.schemas import (
@@ -33,7 +35,18 @@ CONFIGURABLE_PRESETS = (
     "/screener-presets/{preset_name}",
     response_model=ScreenerPresetResponse,
 )
-def screener_preset(preset_name: str, request: Request) -> ScreenerPresetResponse:
+async def screener_preset(preset_name: str, request: Request) -> ScreenerPresetResponse:
+    # async def, not def: only the UNUSUAL_OPTIONS_ACTIVITY branch below
+    # actually awaits anything (container.async_market_storage.
+    # get_recent_whale_alerts, same Postgres-backed read /alerts/{symbol}
+    # now uses instead of whale_alerts_engine.recent_alerts's in-memory,
+    # capped deque). The other 4 presets still go through the existing
+    # sync get_screener_preset(container.storage, ...) below, unchanged
+    # -- those are fast, low-volume reads (a handful of gamma aggregates
+    # across ~15 symbols), not converted to async here since that wasn't
+    # asked for; worth revisiting only if they're ever shown to
+    # contribute real contention, the same way whale_alerts/gamma/market
+    # were confirmed to before converting those.
     try:
         preset = ScreenerPreset.parse(preset_name)
     except ValueError as error:
@@ -45,11 +58,24 @@ def screener_preset(preset_name: str, request: Request) -> ScreenerPresetRespons
     container: Container = request.app.state.container
     alerts = ()
     if preset is ScreenerPreset.UNUSUAL_OPTIONS_ACTIVITY:
-        alerts = tuple(
-            alert
-            for underlying in container.storage.list_underlyings()
-            for alert in container.whale_alerts_engine.recent_alerts(underlying.symbol)
+        # NOT `for alert in await get_recent_whale_alerts(...)` inside the
+        # tuple() generator expression below -- confirmed live, 2026-09:
+        # `await` used to drive a `for` clause's iterable inside a
+        # generator expression makes Python treat the whole expression as
+        # an async generator, which tuple() then can't consume
+        # (`TypeError: 'async_generator' object is not iterable`). No
+        # existing test caught this -- none of them exercised this route
+        # over real HTTP with real alert data; a live request finally
+        # did. asyncio.gather also fetches every symbol concurrently
+        # instead of one at a time, which a plain awaited loop wouldn't.
+        underlyings = container.storage.list_underlyings()
+        alerts_per_symbol = await asyncio.gather(
+            *(
+                container.async_market_storage.get_recent_whale_alerts(underlying.symbol)
+                for underlying in underlyings
+            )
         )
+        alerts = tuple(alert for symbol_alerts in alerts_per_symbol for alert in symbol_alerts)
     results = get_screener_preset(container.storage, preset, alerts)
     return ScreenerPresetResponse.model_validate(
         {
