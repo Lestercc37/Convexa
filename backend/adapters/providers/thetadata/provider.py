@@ -122,20 +122,31 @@ RECONNECT_MAX_DELAY_SECONDS = 60
 
 # ThetaData's real concurrency limit is per ACCOUNT, not per endpoint or
 # symbol, and doesn't add up across subscriptions — the highest tier
-# among them governs (confirmed against ThetaData's own docs, 2026-09
-# investigation): Options Standard, our highest tier, caps concurrent
-# REST requests at 4 for the whole backend. Nothing enforced this
-# before — the near-zero real concurrency observed today was an
-# accidental side effect of the scheduler's sequential per-symbol loop
-# (backend/core/scheduler.py), not a designed safeguard, so this is
-# preventive: if that loop is ever parallelized for performance, this
-# still holds the real limit. `threading.Semaphore`, not
-# `asyncio.Semaphore` — every REST call here runs synchronously inside
-# a worker thread (via `asyncio.to_thread` from the scheduler, or
-# Starlette's threadpool for the sync route handlers), never on the
-# event loop itself, so an asyncio primitive wouldn't coordinate
-# anything real across those threads.
-THETADATA_MAX_CONCURRENT_REQUESTS = 4
+# among them governs. Was 4 (Options/Stock Standard, the account's
+# highest tier at the time). Confirmed live, 2026-09, straight from the
+# running Theta Terminal's own log (C:\tmp\terminal-latest.log) after
+# today's Indices Pro upgrade -- not the docs, not a guess:
+#   Subscriptions: Stock: STANDARD Options: STANDARD Index: PROFESSIONAL
+#   Max concurrent requests: 8
+# Index is now the account's highest tier, so 8 governs. If a future
+# plan change lowers this again, re-check that log line rather than
+# assuming -- ThetaData's public docs table (docs.thetadata.us,
+# Subscriptions page) agrees PRO = 8 per data category, but the
+# account-wide max the terminal actually enforces is the one number
+# that matters here.
+#
+# Nothing enforced this before this constant existed — the near-zero
+# real concurrency observed at the time was an accidental side effect
+# of the scheduler's sequential per-symbol loop (backend/core/
+# scheduler.py), not a designed safeguard, so this stays preventive:
+# if that loop is ever parallelized further for performance, this still
+# holds the real limit. `threading.Semaphore`, not `asyncio.Semaphore`
+# — every REST call here runs synchronously inside a worker thread (via
+# `asyncio.to_thread` from the scheduler, or Starlette's threadpool for
+# the sync route handlers still on it), never on the event loop itself,
+# so an asyncio primitive wouldn't coordinate anything real across
+# those threads.
+THETADATA_MAX_CONCURRENT_REQUESTS = 8
 
 # Short-lived, in-process cache for the near-the-money chain, keyed by
 # (symbol, expiration) — get_option_chain() and get_underlying_snapshot()
