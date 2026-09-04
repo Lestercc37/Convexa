@@ -395,6 +395,32 @@ async def test_async_postgresql_storage_reads_what_the_sync_storage_wrote(
         await async_engine.dispose()
 
 
+@pytest.mark.asyncio
+async def test_async_postgresql_storage_save_market_price_round_trips(
+    postgresql_storage: tuple[PostgreSQLStorage, Engine, str],
+) -> None:
+    """AsyncPostgreSQLStorage.save_market_price -- the write
+    StreamUnderlyingPriceUseCase now uses instead of blocking the event
+    loop with the old synchronous IStorage.save_market_price call
+    (confirmed live, 2026-09; see that use case's own docstring). Writes
+    via the async storage, reads back via the sync one, to prove the two
+    are talking to the same table with the same schema, not just that
+    each independently parses its own writes correctly."""
+    sync_storage, _, symbol = postgresql_storage
+    now = datetime.now(timezone.utc)
+    price = MarketPrice(symbol=symbol, as_of=now, price=Decimal("328.50"), volume=2_000_000)
+
+    async_engine = create_engine(Settings(_env_file=".env").database_url)
+    try:
+        async_storage = AsyncPostgreSQLStorage(create_session_factory(async_engine))
+        await async_storage.save_market_price(price)
+
+        assert sync_storage.get_latest_price(symbol) == price
+        assert await async_storage.get_latest_price(symbol) == price
+    finally:
+        await async_engine.dispose()
+
+
 def _delete_test_data(engine: Engine, symbol: str) -> None:
     with engine.begin() as connection:
         underlying_id = connection.execute(

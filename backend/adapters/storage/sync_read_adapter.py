@@ -39,6 +39,9 @@ class SyncStorageAsyncReadAdapter:
     async def get_latest_price(self, underlying: str) -> MarketPrice | None:
         return self._storage.get_latest_price(underlying)
 
+    async def save_market_price(self, price: MarketPrice) -> None:
+        self._storage.save_market_price(price)
+
     async def get_price_history(
         self, underlying: str, start: datetime, end: datetime
     ) -> list[MarketPrice]:

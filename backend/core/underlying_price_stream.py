@@ -41,7 +41,7 @@ class UnderlyingPriceStreamManager:
             return
         use_case = StreamUnderlyingPriceUseCase(
             provider=self._container.market_data_provider,
-            storage=self._container.storage,
+            storage=self._container.async_market_storage,
         )
         self._tasks = [
             asyncio.create_task(self._run_symbol(use_case, underlying.symbol))

@@ -18,23 +18,30 @@ from backend.domain.entities import (
     MarketPrice,
     OptionChain,
     OptionContract,
+    UnderlyingKind,
 )
+from backend.domain.underlyings import ACTIVE_UNDERLYINGS_BY_SYMBOL
 
 
 class AsyncPostgreSQLStorage:
-    """Async, read-only counterpart to `PostgreSQLStorage`, covering only
-    the handful of reads `/gamma/{symbol}` and `/market/{symbol}` need.
+    """Async counterpart to `PostgreSQLStorage`, covering the handful of
+    reads `/gamma/{symbol}` and `/market/{symbol}` need, plus one write
+    (`save_market_price`) for `StreamUnderlyingPriceUseCase` -- confirmed
+    live, 2026-09: that use case used to call the plain synchronous
+    `IStorage.save_market_price` directly (unawaited, no thread) from
+    inside its `async def run()` loop, blocking the event loop on every
+    persisted tick.
 
-    Deliberately not a full `IStorage` implementation (no writes, no
+    Deliberately not a full `IStorage` implementation otherwise (no
     `get_latest_chain_snapshot(expiration=...)` filter, no
-    `_gamma_aggregate_items` join) -- those routes' own serializers
-    (`gamma_response`, `market_response`) never read them, and every
-    write in this codebase still goes through the scheduler's existing
-    sync `PostgreSQLStorage`. Same SQL as the sync methods this mirrors
-    in `postgresql.py` -- kept in sync with those queries by hand, since
-    duplicating a handful of read-only SELECTs was simpler than
-    threading a shared query builder through two different SQLAlchemy
-    execution styles (sync `Session` vs `AsyncSession`).
+    `_gamma_aggregate_items` join) -- `/gamma`/`/market`'s own
+    serializers never read them, and every other write in this codebase
+    still goes through the scheduler's existing sync `PostgreSQLStorage`.
+    Same SQL as the sync methods this mirrors in `postgresql.py` -- kept
+    in sync with those queries by hand, since duplicating a handful of
+    read-only SELECTs was simpler than threading a shared query builder
+    through two different SQLAlchemy execution styles (sync `Session` vs
+    `AsyncSession`).
     """
 
     def __init__(self, session_factory: async_sessionmaker[AsyncSession]) -> None:
@@ -288,3 +295,49 @@ class AsyncPostgreSQLStorage:
             )
             for row in rows
         ]
+
+    async def save_market_price(self, price: MarketPrice) -> None:
+        async with self.session_factory.begin() as session:
+            underlying_id = await self._ensure_underlying(session, price.symbol)
+            await session.execute(
+                text(
+                    """
+                    INSERT INTO market_snapshots (time, underlying_id, price, volume)
+                    VALUES (:time, :underlying_id, :price, :volume)
+                    """
+                ),
+                {
+                    "time": price.as_of,
+                    "underlying_id": underlying_id,
+                    "price": price.price,
+                    "volume": price.volume,
+                },
+            )
+
+    @staticmethod
+    async def _ensure_underlying(session: AsyncSession, symbol: str) -> int:
+        normalized_symbol = symbol.upper()
+        configured = ACTIVE_UNDERLYINGS_BY_SYMBOL.get(normalized_symbol)
+        kind = configured.kind.value if configured is not None else UnderlyingKind.EQUITY.value
+        is_priority = configured.is_priority if configured is not None else False
+        conflict_action = (
+            "kind = EXCLUDED.kind, is_priority = EXCLUDED.is_priority"
+            if configured is not None
+            else "symbol = EXCLUDED.symbol"
+        )
+        result = await session.execute(
+            text(
+                f"""
+                INSERT INTO underlyings (symbol, kind, is_priority)
+                VALUES (:symbol, :kind, :is_priority)
+                ON CONFLICT (symbol) DO UPDATE SET {conflict_action}
+                RETURNING id
+                """
+            ),
+            {
+                "symbol": normalized_symbol,
+                "kind": kind,
+                "is_priority": is_priority,
+            },
+        )
+        return result.scalar_one()
