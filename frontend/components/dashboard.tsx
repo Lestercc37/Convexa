@@ -337,7 +337,7 @@ export function Dashboard() {
         (() => {
           const alertsContent = (
             <aside className="tv-alerts-sidebar">
-              <AlertsPanel underlyings={underlyings} orientation="vertical" />
+              <AlertsPanel symbol={symbol} orientation="vertical" />
             </aside>
           );
           const centerContent = (

@@ -262,8 +262,10 @@ describe("Dashboard", () => {
 
     await screen.findByLabelText("Chart de velas para SPY");
     await waitFor(() => expect(apiMocks.getOptionChain).toHaveBeenCalled());
+    // AlertsPanel is per-symbol by design (product decision) -- only the
+    // active chart symbol is queried, not every underlying.
     await waitFor(() => expect(apiMocks.getAlerts).toHaveBeenCalledWith("SPY", expect.any(AbortSignal)));
-    await waitFor(() => expect(apiMocks.getAlerts).toHaveBeenCalledWith("GOOGL", expect.any(AbortSignal)));
+    expect(apiMocks.getAlerts).not.toHaveBeenCalledWith("GOOGL", expect.any(AbortSignal));
 
     const duplicateKeyWarnings = consoleError.mock.calls.filter((args) =>
       args.some(

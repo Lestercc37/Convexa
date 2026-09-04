@@ -7,11 +7,13 @@ import { useLanguage } from "@/lib/i18n/language-context";
 import type { Translations } from "@/lib/i18n/translations";
 import { type ContractSide, parseContractSide } from "@/lib/occ-symbol";
 import { POLLING_INTERVAL_MS } from "@/lib/polling";
-import type { Underlying, WhaleAlert } from "@/lib/types";
+import type { WhaleAlert } from "@/lib/types";
 import { WhaleThresholdsPanel } from "./whale-thresholds-panel";
 
 type AlertsPanelProps = {
-  underlyings: Underlying[];
+  // Per-symbol by design (confirmed with product before this change) --
+  // the active chart symbol, not the whole underlyings universe.
+  symbol: string;
   // "horizontal" (default) is the original scrollable strip — kept as an
   // option in case this panel is ever reused outside the left sidebar.
   // The Calls/Puts split below only applies to "vertical" (the sidebar),
@@ -88,7 +90,7 @@ function AlertCard({ alert, t }: { alert: WhaleAlert; t: Translations }) {
   );
 }
 
-export function AlertsPanel({ underlyings, orientation = "horizontal" }: AlertsPanelProps) {
+export function AlertsPanel({ symbol, orientation = "horizontal" }: AlertsPanelProps) {
   const { t } = useLanguage();
   const [alerts, setAlerts] = useState<WhaleAlert[]>([]);
   const [error, setError] = useState<unknown>(null);
@@ -96,18 +98,18 @@ export function AlertsPanel({ underlyings, orientation = "horizontal" }: AlertsP
   const [showThresholdsPanel, setShowThresholdsPanel] = useState(false);
 
   useEffect(() => {
-    if (!underlyings.length) return;
+    if (!symbol) return;
     const controller = new AbortController();
 
     const refresh = async () => {
       try {
-        const responses = await Promise.all(
-          underlyings.map((underlying) => getAlerts(underlying.symbol, controller.signal)),
-        );
-        const combined = responses
-          .flatMap((response) => response.alerts)
-          .sort((left, right) => Date.parse(right.timestamp) - Date.parse(left.timestamp));
-        setAlerts(combined);
+        // recent_alerts() (backend/domain/use_cases/flow.py) already
+        // returns most-recent-first -- no client-side sort needed for a
+        // single symbol's response (that sort only mattered when merging
+        // several symbols' responses together, before this was
+        // per-symbol).
+        const response = await getAlerts(symbol, controller.signal);
+        setAlerts(response.alerts);
         setError(null);
       } catch (reason: unknown) {
         if (!controller.signal.aborted) {
@@ -122,7 +124,9 @@ export function AlertsPanel({ underlyings, orientation = "horizontal" }: AlertsP
       controller.abort();
       window.clearInterval(interval);
     };
-  }, [underlyings]);
+    // Re-runs (and its cleanup clears the previous interval) whenever the
+    // active chart symbol changes, not just on its own 30s cadence.
+  }, [symbol]);
 
   // Only the sidebar (vertical) splits by side — the horizontal strip is
   // legacy/unused chrome kept as an option, out of this task's scope.

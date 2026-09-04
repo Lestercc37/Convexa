@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiError } from "@/lib/api";
 import { renderWithLanguage } from "@/lib/i18n/test-utils";
-import type { Underlying, WhaleAlertsResponse } from "@/lib/types";
+import type { WhaleAlertsResponse } from "@/lib/types";
 import { AlertsPanel } from "./alerts-panel";
 
 const apiMocks = vi.hoisted(() => ({
@@ -16,11 +16,6 @@ vi.mock("@/lib/api", async () => {
   return { ...actual, ...apiMocks };
 });
 
-const underlyings: Underlying[] = [
-  { symbol: "SPY", kind: "equity", is_priority: true },
-  { symbol: "QQQ", kind: "equity", is_priority: true },
-];
-
 function alertsResponse(symbol: string, alerts: WhaleAlertsResponse["alerts"]): WhaleAlertsResponse {
   return { schema_version: 1, symbol, alerts };
 }
@@ -32,7 +27,34 @@ beforeEach(() => {
 });
 
 describe("AlertsPanel", () => {
-  it("renders alert cards from every active underlying, most recent first", async () => {
+  it("queries only the active symbol, not every underlying (confirmed by design, PR product decision)", async () => {
+    apiMocks.getAlerts.mockResolvedValue(
+      alertsResponse("SPY", [
+        {
+          symbol: "SPY",
+          contract: "SPY260220C00540000",
+          type: "UNUSUAL",
+          amount: 45000,
+          timestamp: "2026-08-03T14:00:00Z",
+          estimated_buy_volume: 22500,
+          estimated_sell_volume: 22500,
+        },
+      ]),
+    );
+
+    renderWithLanguage(<AlertsPanel symbol="SPY" />);
+
+    await waitFor(() => expect(apiMocks.getAlerts).toHaveBeenCalledTimes(1));
+    expect(apiMocks.getAlerts).toHaveBeenCalledWith("SPY", expect.any(AbortSignal));
+
+    const cards = await screen.findAllByRole("article");
+    expect(cards).toHaveLength(1);
+    expect(cards[0]).toHaveTextContent("SPY");
+    expect(cards[0]).toHaveTextContent("Unusual");
+    expect(cards[0]).toHaveTextContent("$45,000");
+  });
+
+  it("re-fetches for the new symbol when the active chart symbol changes, not just on its own 30s interval", async () => {
     apiMocks.getAlerts.mockImplementation((symbol: string) =>
       Promise.resolve(
         symbol === "SPY"
@@ -61,20 +83,20 @@ describe("AlertsPanel", () => {
       ),
     );
 
-    renderWithLanguage(<AlertsPanel underlyings={underlyings} />);
+    const { rerender } = renderWithLanguage(<AlertsPanel symbol="SPY" />);
+    await waitFor(() => expect(apiMocks.getAlerts).toHaveBeenCalledWith("SPY", expect.any(AbortSignal)));
+    let cards = await screen.findAllByRole("article");
+    expect(cards).toHaveLength(1);
+    expect(cards[0]).toHaveTextContent("SPY");
 
-    await waitFor(() => expect(apiMocks.getAlerts).toHaveBeenCalledTimes(2));
-    expect(apiMocks.getAlerts).toHaveBeenCalledWith("SPY", expect.any(AbortSignal));
-    expect(apiMocks.getAlerts).toHaveBeenCalledWith("QQQ", expect.any(AbortSignal));
+    rerender(<AlertsPanel symbol="QQQ" />);
 
-    const cards = await screen.findAllByRole("article");
-    expect(cards).toHaveLength(2);
-    // QQQ's alert (14:05) is more recent than SPY's (14:00) — sorted first.
+    await waitFor(() => expect(apiMocks.getAlerts).toHaveBeenCalledWith("QQQ", expect.any(AbortSignal)));
+    cards = await screen.findAllByRole("article");
+    expect(cards).toHaveLength(1);
     expect(cards[0]).toHaveTextContent("QQQ");
-    expect(cards[0]).toHaveTextContent("Whale");
-    expect(cards[0]).toHaveTextContent("$210,000");
-    expect(cards[1]).toHaveTextContent("SPY");
-    expect(cards[1]).toHaveTextContent("Unusual");
+    // The old SPY card is gone, not accumulated alongside QQQ's.
+    expect(screen.queryByText("SPY260220C00540000")).not.toBeInTheDocument();
   });
 
   it("defaults to the horizontal strip, and switches to a vertical column via orientation", async () => {
@@ -92,15 +114,13 @@ describe("AlertsPanel", () => {
       ]),
     );
 
-    const { container: horizontalContainer } = renderWithLanguage(
-      <AlertsPanel underlyings={[underlyings[0]]} />,
-    );
+    const { container: horizontalContainer } = renderWithLanguage(<AlertsPanel symbol="SPY" />);
     await screen.findAllByRole("article");
     expect(horizontalContainer.querySelector(".alerts-row")).toBeInTheDocument();
     expect(horizontalContainer.querySelector(".alerts-column")).not.toBeInTheDocument();
 
     const { container: verticalContainer } = renderWithLanguage(
-      <AlertsPanel underlyings={[underlyings[0]]} orientation="vertical" />,
+      <AlertsPanel symbol="SPY" orientation="vertical" />,
     );
     await screen.findAllByRole("article");
     expect(verticalContainer.querySelector(".alerts-column")).toBeInTheDocument();
@@ -113,7 +133,7 @@ describe("AlertsPanel", () => {
   it("shows an empty state, without an error, when there are no alerts", async () => {
     apiMocks.getAlerts.mockResolvedValue(alertsResponse("SPY", []));
 
-    renderWithLanguage(<AlertsPanel underlyings={[underlyings[0]]} />);
+    renderWithLanguage(<AlertsPanel symbol="SPY" />);
 
     await waitFor(() => expect(apiMocks.getAlerts).toHaveBeenCalled());
     expect(await screen.findByText("Sin alertas recientes.")).toBeInTheDocument();
@@ -146,7 +166,7 @@ describe("AlertsPanel", () => {
     );
 
     const user = userEvent.setup();
-    renderWithLanguage(<AlertsPanel underlyings={[underlyings[0]]} orientation="vertical" />);
+    renderWithLanguage(<AlertsPanel symbol="SPY" orientation="vertical" />);
 
     // Defaults to the Calls tab — only the call contract's card is shown.
     let cards = await screen.findAllByRole("article");
@@ -180,7 +200,7 @@ describe("AlertsPanel", () => {
     );
 
     const user = userEvent.setup();
-    renderWithLanguage(<AlertsPanel underlyings={[underlyings[0]]} orientation="vertical" />);
+    renderWithLanguage(<AlertsPanel symbol="SPY" orientation="vertical" />);
     await screen.findAllByRole("article");
 
     await user.click(screen.getByRole("button", { name: "Puts" }));
@@ -204,7 +224,7 @@ describe("AlertsPanel", () => {
 
     const user = userEvent.setup();
     const { container } = renderWithLanguage(
-      <AlertsPanel underlyings={[underlyings[0]]} orientation="vertical" />,
+      <AlertsPanel symbol="SPY" orientation="vertical" />,
     );
     await user.click(await screen.findByRole("button", { name: "Puts" }));
 
@@ -227,7 +247,7 @@ describe("AlertsPanel", () => {
     // `.message` — confirm the friendly, translated text renders, not this.
     apiMocks.getAlerts.mockRejectedValue(new ApiError(500));
 
-    renderWithLanguage(<AlertsPanel underlyings={[underlyings[0]]} />);
+    renderWithLanguage(<AlertsPanel symbol="SPY" />);
 
     const alert = await screen.findByRole("alert");
     expect(alert).toHaveTextContent("No se pudo completar la solicitud. Intenta de nuevo.");
@@ -240,7 +260,7 @@ describe("AlertsPanel", () => {
     // self-contained trigger+state+modal pattern as QuickScreener's own
     // settings gear.
     const user = userEvent.setup();
-    renderWithLanguage(<AlertsPanel underlyings={[underlyings[0]]} orientation="vertical" />);
+    renderWithLanguage(<AlertsPanel symbol="SPY" orientation="vertical" />);
 
     expect(screen.queryByText("Umbrales de Whale Alerts")).not.toBeInTheDocument();
 
