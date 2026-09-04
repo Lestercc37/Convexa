@@ -176,6 +176,44 @@ describe("PriceChart", () => {
     vi.useRealTimers();
   });
 
+  it("recovers via a full setData() resync instead of crashing when update() rejects the latest candle (regression)", () => {
+    // lightweight-charts throws "Cannot update oldest data" if update()'s
+    // new bar time ever regresses behind what the series already has --
+    // confirmed against the real library's source before this test was
+    // written. Reproduced here by making the mock throw on demand
+    // (candles.ts's own accumulation always stays ascending in practice,
+    // so this simulates whatever this component itself can't control end
+    // to end -- e.g. a stale seriesRef surviving a dev-only Fast Refresh
+    // reload), not by constructing an actually-out-of-order `candles`
+    // prop.
+    vi.setSystemTime(new Date("2026-08-06T15:00:00Z"));
+    const sessionOpenAnchor = regularSessionRange(Date.now()).openSeconds - 1;
+    const firstCandle = { time: 1_786_026_600, open: 548, high: 552, low: 548, close: 550 };
+    const secondCandle = { time: 1_786_026_660, open: 550, high: 553, low: 549, close: 551 };
+    const consoleWarn = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    const { rerender } = renderWithLanguage(
+      <PriceChart symbol="SPY" gamma={gamma} candles={[firstCandle]} />,
+    );
+    chartMocks.setData.mockClear();
+    chartMocks.update.mockImplementationOnce(() => {
+      throw new Error("Cannot update oldest data, last time=[object Object], new time=[object Object]");
+    });
+
+    rerender(<PriceChart symbol="SPY" gamma={gamma} candles={[firstCandle, secondCandle]} />);
+
+    expect(chartMocks.update).toHaveBeenCalledWith(secondCandle);
+    expect(chartMocks.setData).toHaveBeenCalledWith([
+      { time: sessionOpenAnchor },
+      firstCandle,
+      secondCandle,
+    ]);
+    expect(consoleWarn).toHaveBeenCalled();
+
+    consoleWarn.mockRestore();
+    vi.useRealTimers();
+  });
+
   it("anchors the x-axis at the session open even with only a handful of candles (regression)", () => {
     // Plain fitContent() zooms into just the sliver of real data -- right
     // after the open there's almost none, so the chart would read as if
