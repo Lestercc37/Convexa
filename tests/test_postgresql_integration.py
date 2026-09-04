@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import threading
 import time
 from collections.abc import Iterator
@@ -9,8 +10,10 @@ from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from uuid import uuid4
 
+import asyncpg
 import pytest
 from sqlalchemy import Engine, text
+from sqlalchemy.engine import make_url
 from sqlalchemy.exc import SQLAlchemyError
 
 from backend.adapters.providers.mock.provider import MockDataProvider
@@ -20,7 +23,7 @@ from backend.adapters.providers.thetadata.request_slots import (
     ThetaSlotsExhaustedError,
 )
 from backend.adapters.storage.postgresql import PostgreSQLStorage
-from backend.adapters.storage.postgresql_async import AsyncPostgreSQLStorage
+from backend.adapters.storage.postgresql_async import MARKET_PRICE_CHANNEL, AsyncPostgreSQLStorage
 from backend.core.settings import Settings
 from backend.domain.entities import (
     AggressorSide,
@@ -428,6 +431,55 @@ async def test_async_postgresql_storage_save_market_price_round_trips(
         assert await async_storage.get_latest_price(symbol) == price
     finally:
         await async_engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_save_market_price_sends_a_real_notify_on_market_price_channel(
+    postgresql_storage: tuple[PostgreSQLStorage, Engine, str],
+) -> None:
+    """The real-time chart push's Worker -> Postgres leg: proves
+    save_market_price's NOTIFY is genuinely delivered by Postgres, not
+    just that the SQL runs without erroring. Uses a raw asyncpg
+    connection with LISTEN + add_listener -- the same mechanism
+    backend/core/price_notifications.py's PriceNotificationListener
+    uses in production, not a mock -- so a change to the payload shape
+    or channel name in either place would break this test too."""
+    _, engine, symbol = postgresql_storage
+    settings = Settings(_env_file=".env")
+    dsn = make_url(settings.database_url).set(drivername="postgresql").render_as_string(
+        hide_password=False
+    )
+
+    received: list[str] = []
+    listener_connection = await asyncpg.connect(dsn)
+    try:
+        await listener_connection.add_listener(
+            MARKET_PRICE_CHANNEL, lambda conn, pid, channel, payload: received.append(payload)
+        )
+
+        async_engine = create_engine(settings.database_url)
+        try:
+            async_storage = AsyncPostgreSQLStorage(create_session_factory(async_engine))
+            now = datetime.now(timezone.utc)
+            price = MarketPrice(symbol=symbol, as_of=now, price=Decimal("552.25"), volume=1_000_000)
+            await async_storage.save_market_price(price)
+
+            # NOTIFY delivery to other connections happens asynchronously
+            # relative to the notifying transaction's commit -- give
+            # asyncpg's own connection a moment to receive and dispatch it.
+            for _ in range(20):
+                if received:
+                    break
+                await asyncio.sleep(0.1)
+        finally:
+            await async_engine.dispose()
+    finally:
+        await listener_connection.close()
+
+    assert len(received) == 1
+    payload = json.loads(received[0])
+    assert payload["symbol"] == symbol
+    assert payload["price"] == "552.25"
 
 
 def test_whale_alert_save_and_get_recent_against_postgresql(

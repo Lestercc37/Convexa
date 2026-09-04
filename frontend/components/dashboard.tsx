@@ -14,6 +14,7 @@ import {
 import { describeError } from "@/lib/i18n/describe-error";
 import { useLanguage, type Language } from "@/lib/i18n/language-context";
 import { isWithinRegularSession } from "@/lib/market-session";
+import { connectMarketPriceStream } from "@/lib/market-price-stream";
 import { POLLING_INTERVAL_MS } from "@/lib/polling";
 import type { GammaResponse, MarketResponse, Underlying } from "@/lib/types";
 import { AlertsPanel } from "./alerts-panel";
@@ -242,6 +243,24 @@ export function Dashboard() {
       if (interval !== undefined) window.clearInterval(interval);
     };
   }, [refresh, symbol]);
+
+  // Real-time push, additive to the 30s poll above -- never a
+  // replacement for it (see market-price-stream.ts's own comment). A
+  // tick appends to pricePoints exactly like the poll's own append
+  // does, so it flows through the same aggregateMinuteCandles ->
+  // PriceChart pipeline and updates the in-progress candle immediately
+  // instead of waiting for the next 30s cycle.
+  useEffect(() => {
+    if (!symbol) return;
+    const disconnect = connectMarketPriceStream(symbol, (tick) => {
+      if (!isWithinRegularSession(Date.parse(tick.as_of))) return;
+      setPricePoints((current) => [
+        ...current,
+        { timestamp: tick.as_of, price: Number(tick.price) },
+      ]);
+    });
+    return disconnect;
+  }, [symbol]);
 
   return (
     <main className="tv-shell">
