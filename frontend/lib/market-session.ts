@@ -5,7 +5,7 @@
 // EASTERN_TIME/MARKET_OPEN_ET/MARKET_CLOSE_ET constants (the same session
 // bounds, reused here rather than re-guessed).
 
-const EASTERN_TIME_ZONE = "America/New_York";
+export const EASTERN_TIME_ZONE = "America/New_York";
 const MARKET_OPEN_HOUR = 9;
 const MARKET_OPEN_MINUTE = 30;
 const MARKET_CLOSE_HOUR = 16;

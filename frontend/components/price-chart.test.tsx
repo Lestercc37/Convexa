@@ -1,5 +1,6 @@
 import { act, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { TickMarkType } from "lightweight-charts";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { MinuteCandle } from "@/lib/candles";
 import { renderWithLanguage } from "@/lib/i18n/test-utils";
@@ -41,6 +42,9 @@ vi.mock("lightweight-charts", () => ({
   LineSeries: "LineSeries",
   ColorType: { Solid: "solid" },
   LineStyle: { Dashed: 2, Solid: 0 },
+  // Real values from the library itself (lightweight-charts.development.mjs)
+  // -- price-chart.tsx switches on these in tickMarkFormatter.
+  TickMarkType: { Year: 0, Month: 1, DayOfMonth: 2, Time: 3, TimeWithSeconds: 4 },
   createChart: chartMocks.createChart,
 }));
 
@@ -206,6 +210,29 @@ describe("PriceChart", () => {
     expect(chartMocks.fitContent).toHaveBeenCalled();
 
     vi.useRealTimers();
+  });
+
+  it("formats axis tick marks in Eastern time, not the UTC digits lightweight-charts uses by default (regression)", () => {
+    // lightweight-charts formats every tick mark from the *UTC* digits of
+    // the given epoch second (confirmed by reading its own source) --
+    // left uncorrected, a real 15:59 ET candle (a minute before the
+    // regular session's close) prints as "19:59" during EDT, or "20:59"
+    // during EST, making perfectly in-session data look like extended
+    // hours. Confirmed live, 2026-09.
+    renderWithLanguage(<PriceChart symbol="SPY" gamma={gamma} candles={[]} />);
+
+    const chartOptions = chartMocks.createChart.mock.calls.at(-1)![1];
+    const formatter = chartOptions.timeScale.tickMarkFormatter;
+
+    // 19:59 UTC on a day inside EDT (UTC-4) -- must read as 15:59 ET, not
+    // the raw UTC digits "19:59".
+    const edtEpochSeconds = Date.UTC(2026, 8, 3, 19, 59, 0) / 1000;
+    expect(formatter(edtEpochSeconds, TickMarkType.Time, "en-US")).toBe("15:59");
+
+    // The same real ET wall-clock time (15:59) during EST (UTC-5) is a
+    // *different* UTC epoch (20:59 UTC) -- not a fixed 4-hour offset.
+    const estEpochSeconds = Date.UTC(2026, 0, 15, 20, 59, 0) / 1000;
+    expect(formatter(estEpochSeconds, TickMarkType.Time, "en-US")).toBe("15:59");
   });
 
   it("labels the chart title with the selected timeframe", () => {
