@@ -11,6 +11,7 @@ from backend.domain.entities import (
     OptionChain,
 )
 from backend.domain.ports import IStorage
+from backend.domain.use_cases.flow import WhaleAlert
 
 
 class SyncStorageAsyncReadAdapter:
@@ -39,6 +40,9 @@ class SyncStorageAsyncReadAdapter:
     async def get_latest_price(self, underlying: str) -> MarketPrice | None:
         return self._storage.get_latest_price(underlying)
 
+    async def save_market_price(self, price: MarketPrice) -> None:
+        self._storage.save_market_price(price)
+
     async def get_price_history(
         self, underlying: str, start: datetime, end: datetime
     ) -> list[MarketPrice]:
@@ -57,3 +61,6 @@ class SyncStorageAsyncReadAdapter:
         self, underlying: str, limit: int = 60
     ) -> list[DailyGammaReference]:
         return self._storage.get_daily_gamma_references(underlying, limit=limit)
+
+    async def get_recent_whale_alerts(self, underlying: str, limit: int = 100) -> list[WhaleAlert]:
+        return self._storage.get_recent_whale_alerts(underlying, limit=limit)

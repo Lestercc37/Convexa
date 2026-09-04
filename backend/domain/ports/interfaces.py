@@ -1,7 +1,17 @@
 from __future__ import annotations
 
 from datetime import date, datetime
-from typing import AsyncIterator, Protocol
+from typing import TYPE_CHECKING, AsyncIterator, Protocol
+
+if TYPE_CHECKING:
+    # WhaleAlert/WhaleAlertType live in domain/use_cases/flow.py, not
+    # entities.py -- a pre-existing quirk, not something this change
+    # relocates. A real (non-TYPE_CHECKING) import here would be
+    # circular: flow.py already imports IStorage from this module.
+    # `from __future__ import annotations` (above) makes every
+    # annotation in this file a lazy string, so this only matters for
+    # static type checkers, never at runtime.
+    from backend.domain.use_cases.flow import WhaleAlert
 
 from backend.domain.entities import (
     DailyBar,
@@ -113,20 +123,28 @@ class IStorage(Protocol):
     ) -> list[DailyGammaReference]: ...
     def save_daily_bar(self, bar: DailyBar) -> None: ...
     def get_daily_bars(self, underlying: str, limit: int = 15) -> list[DailyBar]: ...
+    def save_whale_alert(self, alert: WhaleAlert) -> None: ...
+    def get_recent_whale_alerts(self, underlying: str, limit: int = 100) -> list[WhaleAlert]: ...
 
 
 class IAsyncMarketReadStorage(Protocol):
-    """Async, read-only subset of `IStorage` -- exactly what
-    `/gamma/{symbol}` and `/market/{symbol}` need, so those routes can
-    be `async def` and run on the event loop instead of the threadpool
-    the scheduler's own 15 concurrent `asyncio.to_thread` refreshes
-    share (see AsyncPostgreSQLStorage's own docstring). Two
-    implementations: `AsyncPostgreSQLStorage` (real async Postgres) and
-    `SyncStorageAsyncReadAdapter` (wraps any sync `IStorage`, used for
-    `InMemoryStorage`/tests)."""
+    """Async subset of `IStorage` -- almost entirely read-only (exactly
+    what `/gamma/{symbol}` and `/market/{symbol}` need, so those routes
+    can be `async def` and run on the event loop instead of the
+    threadpool the scheduler's own 15 concurrent `asyncio.to_thread`
+    refreshes share), plus the one write `StreamUnderlyingPriceUseCase`
+    needs -- confirmed live, 2026-09: that write used to go through
+    plain synchronous `IStorage.save_market_price`, called directly
+    (unawaited, no thread) from inside `async def run()`'s loop, a real,
+    independent contributor to blocking the event loop alongside the
+    threadpool contention above. See AsyncPostgreSQLStorage's own
+    docstring. Two implementations: `AsyncPostgreSQLStorage` (real async
+    Postgres) and `SyncStorageAsyncReadAdapter` (wraps any sync
+    `IStorage`, used for `InMemoryStorage`/tests)."""
 
     async def get_latest_gamma_aggregate(self, underlying: str) -> GammaAggregate | None: ...
     async def get_latest_price(self, underlying: str) -> MarketPrice | None: ...
+    async def save_market_price(self, price: MarketPrice) -> None: ...
     async def get_price_history(
         self, underlying: str, start: datetime, end: datetime
     ) -> list[MarketPrice]: ...
@@ -136,6 +154,9 @@ class IAsyncMarketReadStorage(Protocol):
     async def get_daily_gamma_references(
         self, underlying: str, limit: int = 60
     ) -> list[DailyGammaReference]: ...
+    async def get_recent_whale_alerts(
+        self, underlying: str, limit: int = 100
+    ) -> list[WhaleAlert]: ...
 
 
 class INotificationService(Protocol):

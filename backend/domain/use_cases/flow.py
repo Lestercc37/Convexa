@@ -374,6 +374,14 @@ class WhaleAlertsEngine:
             estimated_sell_volume=estimated_sell_volume,
         )
         self._alerts.append(alert)
+        # Dual-write, this phase only: whale_alerts now persists the same
+        # alert this in-memory deque already held (see IStorage's own
+        # docstring) -- /alerts and the screener still read _alerts, not
+        # Postgres, until that migration is separately approved. Both
+        # paths funnel through this one method (process() and
+        # process_trade() both call _finalize_bucket, which only ever
+        # calls _emit here), so this is the single place that needs it.
+        self._storage.save_whale_alert(alert)
         return alert
 
     def recent_alerts(self, symbol: str, limit: int = 100) -> tuple[WhaleAlert, ...]:

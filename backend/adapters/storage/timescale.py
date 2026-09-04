@@ -10,6 +10,7 @@ from backend.domain.entities import (
     OptionChain,
     Underlying,
 )
+from backend.domain.use_cases.flow import WhaleAlert
 
 
 class TimescaleStorage:
@@ -66,4 +67,10 @@ class TimescaleStorage:
         raise NotImplementedError
 
     def get_daily_bars(self, underlying: str, limit: int = 15) -> list[DailyBar]:
+        raise NotImplementedError
+
+    def save_whale_alert(self, alert: WhaleAlert) -> None:
+        raise NotImplementedError
+
+    def get_recent_whale_alerts(self, underlying: str, limit: int = 100) -> list[WhaleAlert]:
         raise NotImplementedError

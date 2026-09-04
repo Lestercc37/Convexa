@@ -14,15 +14,19 @@ NOW = datetime(2026, 1, 15, 14, 30, tzinfo=UTC)
 
 
 class _FakeStorage:
+    """Async-shaped, same as the real IAsyncMarketReadStorage this use
+    case now depends on (see stream_underlying_price.py's own docstring
+    -- this used to take a plain sync IStorage)."""
+
     def __init__(self, seed: MarketPrice | None = None) -> None:
         self.saved: list[MarketPrice] = []
         self._latest: dict[str, MarketPrice] = {seed.symbol: seed} if seed is not None else {}
 
-    def save_market_price(self, price: MarketPrice) -> None:
+    async def save_market_price(self, price: MarketPrice) -> None:
         self.saved.append(price)
         self._latest[price.symbol] = price
 
-    def get_latest_price(self, underlying: str) -> MarketPrice | None:
+    async def get_latest_price(self, underlying: str) -> MarketPrice | None:
         return self._latest.get(underlying.upper())
 
 

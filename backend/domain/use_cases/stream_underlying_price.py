@@ -24,6 +24,16 @@ persisting one of those ticks was the one path that put an
 extended-hours point on the chart, since dashboard.tsx has no filter
 of its own on what it polls. Confirmed live, 2026-09: a tick as late as
 17:11 ET reached storage before this gate existed.
+
+`storage` takes `IAsyncMarketReadStorage`, not `IStorage` -- this used
+to call plain synchronous `IStorage.save_market_price` directly
+(unawaited, no thread) from inside `run()`'s async loop, blocking the
+event loop on every persisted tick. Confirmed live, 2026-09: a real,
+independent contributor to the same /gamma and /market latency the
+scheduler's own threadpool contention was already diagnosed for --
+`AsyncPostgreSQLStorage`'s `save_market_price` (added for this fix)
+reuses the same async engine that fix already established rather than
+opening a third way to reach Postgres.
 """
 
 from __future__ import annotations
@@ -31,7 +41,7 @@ from __future__ import annotations
 import time
 
 from backend.domain.entities import MarketPrice, UnderlyingTradeEvent
-from backend.domain.ports import IDataProvider, IStorage
+from backend.domain.ports import IAsyncMarketReadStorage, IDataProvider
 from backend.domain.use_cases.market_hours import is_market_open
 
 # A liquid stock's Trade Stream can print many times per second, and
@@ -49,7 +59,7 @@ class StreamUnderlyingPriceUseCase:
     def __init__(
         self,
         provider: IDataProvider,
-        storage: IStorage,
+        storage: IAsyncMarketReadStorage,
         min_write_interval_seconds: float = MIN_WRITE_INTERVAL_SECONDS,
     ) -> None:
         self._provider = provider
@@ -65,9 +75,9 @@ class StreamUnderlyingPriceUseCase:
         (MockDataProvider's stream_underlying_trades is an immediately-
         exhausted async generator)."""
         async for event in self._provider.stream_underlying_trades(underlying):
-            self._maybe_persist(event)
+            await self._maybe_persist(event)
 
-    def _maybe_persist(self, event: UnderlyingTradeEvent) -> None:
+    async def _maybe_persist(self, event: UnderlyingTradeEvent) -> None:
         # Nothing gated this stream on market hours -- confirmed live,
         # 2026-09: a real tick with as_of past 16:00 ET still got written,
         # and dashboard.tsx appends every MarketPrice.as_of it polls onto
@@ -96,8 +106,8 @@ class StreamUnderlyingPriceUseCase:
         # write (as frequent as once a second) can never reset it back to
         # 0. Falls back to 0 only if nothing has been written for this
         # symbol at all yet — same starting value this already had.
-        previous = self._storage.get_latest_price(event.symbol)
-        self._storage.save_market_price(
+        previous = await self._storage.get_latest_price(event.symbol)
+        await self._storage.save_market_price(
             MarketPrice(
                 symbol=event.symbol,
                 as_of=event.as_of,
