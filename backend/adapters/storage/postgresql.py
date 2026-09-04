@@ -21,6 +21,7 @@ from backend.domain.entities import (
     GammaAggregateItem,
     Greeks,
     MarketPrice,
+    MinuteBar,
     NegativeGammaBoardSettings,
     OptionChain,
     OptionContract,
@@ -773,6 +774,40 @@ class PostgreSQLStorage:
                 )
                 for row in rows
             ]
+
+    def save_minute_bar(self, bar: MinuteBar) -> None:
+        """Not part of `IStorage` — used only by the one-time Indices Pro
+        backfill (`backend/scripts/backfill_minute_history.py`), not by
+        any live use case yet."""
+        with self.session_factory.begin() as session:
+            underlying_id = self._ensure_underlying(session, bar.symbol)
+            session.execute(
+                text(
+                    """
+                    INSERT INTO minute_bars (
+                        time, underlying_id, open, high, low, close, volume
+                    )
+                    VALUES (
+                        :time, :underlying_id, :open, :high, :low, :close, :volume
+                    )
+                    ON CONFLICT (underlying_id, time) DO UPDATE SET
+                        open = EXCLUDED.open,
+                        high = EXCLUDED.high,
+                        low = EXCLUDED.low,
+                        close = EXCLUDED.close,
+                        volume = EXCLUDED.volume
+                    """
+                ),
+                {
+                    "time": bar.time,
+                    "underlying_id": underlying_id,
+                    "open": bar.open_price,
+                    "high": bar.high,
+                    "low": bar.low,
+                    "close": bar.close,
+                    "volume": bar.volume,
+                },
+            )
 
     @staticmethod
     def _ensure_underlying(session: Session, symbol: str) -> int:

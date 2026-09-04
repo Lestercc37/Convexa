@@ -1292,6 +1292,14 @@ del símbolo activo (`SPX`, `NDX`), nunca su contraparte semanal/0DTE (`SPXW`, `
 Abs. Gamma Level de SPX calculado sin ninguna OI semanal.
 
 **¿Son mutuamente excluyentes los conjuntos de vencimientos, o hay solapamiento?** Hay solapamiento
+**Seguimiento (2026-09-04): VIX/VIXW ya aplicado, con un matiz.** A diferencia de SPX/SPXW y NDX/NDXP
+arriba, confirmado en vivo que VIX y VIXW **no comparten ninguna fecha de vencimiento cercana** — VIX
+solo lista los mensuales estándar (2026-09-16, 10-21, 11-18... el 3er miércoles), y el propio listado de
+VIXW salta exactamente esas fechas, listando solo las semanales alrededor (09-02, 09-09, 09-23, 09-30).
+El razonamiento de "combinar sin deduplicar" abajo se mantiene como comportamiento por defecto (mismo
+código compartido), pero para VIX específicamente no hay hoy ningún vencimiento solapado donde eso
+importe en la práctica. `_WEEKLY_ROOT_BY_SYMBOL` ahora incluye `"VIX": "VIXW"`.
+
 real, confirmado en vivo: SPX y SPXW comparten 5 fechas (los próximos 5 mensuales: 2026-09-18, 10-16,
 11-20, 12-18, 2027-01-15); NDX y NDXP comparten 3. **Y en esas fechas compartidas, no son el mismo
 contrato** — confirmado comparando la misma combinación strike+expiración+right entre ambos roots:
@@ -1307,8 +1315,9 @@ de uno de los dos.
 `SPYW`/`QQQW`/`DIAW`/`IWMW` (equities/ETFs) — no existen como roots de ThetaData (error 500), y sus
 roots base YA devuelven vencimientos diarios/semanales completos por sí solos (SPY: 35 vencimientos
 empezando hoy mismo) — no necesitan combinación. **VIX sí muestra el mismo patrón** (existe un root real
-`VIXW`, con vencimientos más cercanos que el propio root `VIX`) — **reportado, no corregido**, tal como
-pidió el usuario para cualquier símbolo fuera de los dos mencionados explícitamente.
+`VIXW`, con vencimientos más cercanos que el propio root `VIX`) — en su momento **reportado, no
+corregido**, tal como pidió el usuario para cualquier símbolo fuera de los dos mencionados
+explícitamente; ver el seguimiento del 2026-09-04 arriba para el arreglo ya aplicado.
 
 **El arreglo.** Nuevo `_WEEKLY_ROOT_BY_SYMBOL = {"SPX": "SPXW", "NDX": "NDXP"}` y
 `_roots_for_symbol(symbol)` en `backend/adapters/providers/thetadata/provider.py`.
@@ -1547,6 +1556,37 @@ tests en `test_gamma_flip_engine.py`); sin cruce propagado como `None` end-to-en
 nuevos, todos del mismo patrón `FURB157` ya aceptado como convención de estilo — confirmado por `git
 stash`. Se corrigió además un problema real de orden de imports (`I001`) en el archivo de test nuevo,
 detectado por el propio `ruff`.
+
+---
+
+## Backfill histórico de 1 minuto (Indices Pro), limitado a 1 mes (2026-09-04)
+
+El plan activo (Indices Pro, $100/mes) incluye 7 años de historia para SPX/VIX/NDX. Primera versión
+deliberadamente limitada a **1 mes**, no los 7 años completos — la PC local (sin servidor dedicado
+activado todavía) tiene memoria limitada, y el usuario pidió confirmar el tamaño real antes de traer
+nada.
+
+**Endpoint confirmado en vivo:** `GET /v3/index/history/ohlc` con `interval=1m` (índices únicamente —
+mismo endpoint EOD que `get_daily_bars` ya usa, con `interval` en vez del sufijo `/eod`). Un solo día de
+sesión regular (09:30-16:00 ET) devuelve 391 barras — 390 minutos + el bar de cierre — y ~50-55KB de JSON
+crudo por símbolo. `volume`/`count` siempre 0 para un índice (mismo hecho ya documentado para
+`get_underlying_snapshot`: un índice no tiene volumen de acciones propio).
+
+**Estimado antes de traer nada:** 1 mes calendario (≈21 días hábiles) × 3 símbolos × 391 barras ≈ 24,600
+filas, ~3.3MB de JSON crudo total — trivial. Confirmado razonable, se procedió.
+
+**Ingesta real ejecutada:** tabla nueva `minute_bars` (migración `0022_create_minute_bars`, PK
+`(underlying_id, time)`, mismo patrón que `daily_bars`). Script de una sola vez,
+`backend/scripts/backfill_minute_history.py` (`python -m backend.scripts.backfill_minute_history`), no
+parte de `IDataProvider`/`IStorage` — `ThetaDataProvider.get_minute_bars()` y
+`PostgreSQLStorage.save_minute_bar()` existen solo para este backfill, deliberadamente no wireados a
+ningún caso de uso todavía. Resultado real contra la base Postgres local: **25,818 filas, 4,240 kB en
+disco** (30 días calendario × 3 símbolos, upsert por `ON CONFLICT` así que re-ejecutar el script para
+extender la ventana es seguro). Confía en el mismo semáforo de concurrencia
+(`THETADATA_MAX_CONCURRENT_REQUESTS`) que el resto del provider — no se agregó ninguno nuevo.
+
+**No implementado:** ningún consumidor de `minute_bars` (backtesting u otro) — solo ingesta y
+almacenamiento, tal como pidió el usuario.
 
 ---
 

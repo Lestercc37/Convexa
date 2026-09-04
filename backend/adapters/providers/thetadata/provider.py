@@ -19,6 +19,7 @@ from backend.domain.entities import (
     FlowEvent,
     FlowEventType,
     MarketSnapshot,
+    MinuteBar,
     OptionChain,
     OptionContract,
     OptionGreeks,
@@ -185,12 +186,19 @@ OPEN_INTEREST_CACHE_TTL_SECONDS = 20 * 60.0
 # options) already return same-day expirations under their own single
 # root, and "SPYW"/"QQQW"/"DIAW" aren't valid ThetaData roots at all.
 # VIX shows the same split (a real "VIXW" root exists, with nearer
-# expirations than VIX's own root) but is deliberately NOT included
-# here — reported separately, not fixed without asking, since this
-# constant is scoped to exactly what was confirmed and requested.
+# expirations than VIX's own root) -- unlike SPX/SPXW and NDX/NDXP,
+# confirmed live (2026-09) that VIX's and VIXW's near-term expirations
+# never actually overlap: VIX only lists the standard monthlies (e.g.
+# 2026-09-16, 10-21, 11-18 -- 3rd Wednesday), and VIXW's own listing
+# skips those same dates and only carries the weeklies around them (e.g.
+# 2026-09-02, 09-09, 09-23, 09-30). So the "must not dedupe, only add
+# both roots' contracts side by side" reasoning above still holds as a
+# defensive default, but for VIX specifically there is currently no
+# shared expiration where it would ever actually matter.
 _WEEKLY_ROOT_BY_SYMBOL: dict[str, str] = {
     "SPX": "SPXW",
     "NDX": "NDXP",
+    "VIX": "VIXW",
 }
 
 
@@ -1364,6 +1372,49 @@ class ThetaDataProvider:
                     high=Decimal(str(row["high"])),
                     low=Decimal(str(row["low"])),
                     close=Decimal(str(row["close"])),
+                )
+            )
+        return bars
+
+    def get_minute_bars(self, underlying: str, start: date, end: date) -> list[MinuteBar]:
+        """Closed 1-minute OHLCV bars from ThetaData's `/v3/index/history/
+        ohlc` (Indices Pro plan) for `underlying` between `start` and `end`
+        (inclusive, calendar dates). Confirmed live, 2026-09: 391 bars for
+        a single regular session (09:30-16:00 ET inclusive) on SPX/VIX/NDX,
+        `volume`/`count` always 0 for an index (no share volume of its
+        own — same fact `get_underlying_snapshot`'s volume handling
+        already documents for indices).
+
+        Index-only, and deliberately NOT part of `IDataProvider` — this
+        exists solely for the one-time historical backfill
+        (`backend/scripts/backfill_minute_history.py`), not for any live
+        use case yet.
+        """
+        symbol = underlying.upper()
+        active = ACTIVE_UNDERLYINGS_BY_SYMBOL.get(symbol)
+        if active is None or active.kind != UnderlyingKind.INDEX:
+            raise RuntimeError(
+                f"get_minute_bars is confirmed only for index underlyings, not {symbol}"
+            )
+        body = self._get_json(
+            "/v3/index/history/ohlc",
+            symbol=symbol,
+            start_date=start.strftime("%Y%m%d"),
+            end_date=end.strftime("%Y%m%d"),
+            interval="1m",
+            format="json",
+        )
+        bars = []
+        for row in body.get("response", []):
+            bars.append(
+                MinuteBar(
+                    symbol=symbol,
+                    time=_parse_et_timestamp(row["timestamp"]),
+                    open_price=Decimal(str(row["open"])),
+                    high=Decimal(str(row["high"])),
+                    low=Decimal(str(row["low"])),
+                    close=Decimal(str(row["close"])),
+                    volume=int(row["volume"]),
                 )
             )
         return bars

@@ -22,6 +22,7 @@ from backend.adapters.providers.thetadata.provider import (
     _log_req_response,
     _nearest_expiration_cutoff,
     _parse_et_timestamp,
+    _roots_for_symbol,
     _time_to_expiration_years,
 )
 from backend.domain.entities import ContractType, UnderlyingKind
@@ -627,6 +628,65 @@ class TestWeeklyRootCombination:
 
         assert request_count == 1
 
+    def test_vix_combines_with_its_weekly_root(self) -> None:
+        """VIX/VIXW: same combine-don't-dedupe mechanism as SPX/SPXW and
+        NDX/NDXP above, added after confirming live (2026-09) that VIX
+        and VIXW's near-term expirations never actually overlap -- VIX
+        only lists the standard monthlies, VIXW's own listing skips
+        those same dates. See _WEEKLY_ROOT_BY_SYMBOL's own comment in
+        provider.py for the full investigation writeup. Mirrors
+        test_nearest_expiration_considers_both_roots_not_just_the_bare_root
+        above, for VIX/VIXW instead of SPX/SPXW."""
+        assert _roots_for_symbol("VIX") == ("VIX", "VIXW")
+
+        nearer = _nearest_expiration_cutoff(datetime.now(EASTERN_TIME)).isoformat()
+        greeks_by_root_expiration = {
+            ("VIX", "2026-10-21"): [_first_order_entry("14.00", "CALL", expiration="2026-10-21", root="VIX")],
+            (
+                "VIXW",
+                nearer,
+            ): [_first_order_entry("14.00", "CALL", expiration=nearer, underlying_price="14.06", root="VIXW")],
+        }
+        oi_by_root_expiration = {
+            ("VIX", "2026-10-21"): [_open_interest_entry("14.00", "CALL", 700, expiration="2026-10-21", root="VIX")],
+            ("VIXW", nearer): [_open_interest_entry("14.00", "CALL", 90, expiration=nearer, root="VIXW")],
+        }
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            params = request.url.params
+            symbol = params.get("symbol")
+            expiration_param = params.get("expiration")
+            path = request.url.path
+            if path == "/v3/option/snapshot/greeks/first_order":
+                if expiration_param == "*":
+                    entries = [
+                        entry
+                        for (root, _exp), rows in greeks_by_root_expiration.items()
+                        if root == symbol
+                        for entry in rows
+                    ]
+                else:
+                    entries = greeks_by_root_expiration.get((symbol, expiration_param), [])
+                return httpx.Response(200, json={"response": entries})
+            if path == "/v3/option/snapshot/open_interest":
+                entries = oi_by_root_expiration.get((symbol, expiration_param), [])
+                return httpx.Response(200, json={"response": entries})
+            if path == "/v3/interest_rate/history/eod":
+                return httpx.Response(200, json={"response": [{"rate": 3.64, "created": "2026-08-31"}]})
+            if path == "/v3/index/history/eod":
+                return httpx.Response(200, json=_daily_bars_response(base_close=14.0, daily_range=1.0))
+            raise AssertionError(f"unexpected request: {request.url}")
+
+        provider = _provider_with_transport(handler)
+
+        chain = provider.get_option_chain("VIX")  # no expiration -> nearest
+
+        # VIXW's near-term expiration is nearer than VIX's own 10-21
+        # monthly -- combining both roots is what makes it reachable at
+        # all, matching what the user asked to confirm.
+        assert chain.contracts[0].expiration == date.fromisoformat(nearer)
+        assert chain.contracts[0].occ_symbol.startswith("VIXW")
+
 
 class TestGetUnderlyingSnapshot:
     def test_approximates_atm_iv_and_pc_oi_ratio_from_near_the_money_chain(self) -> None:
@@ -799,6 +859,71 @@ class TestGetDailyBars:
 
         provider = _provider_with_transport(handler)
         assert provider.get_daily_bars("ES", days=5) == []
+
+
+class TestGetMinuteBars:
+    """get_minute_bars: the Indices Pro historical backfill's only data
+    source (backend/scripts/backfill_minute_history.py) -- not part of
+    IDataProvider, index-only, confirmed live against the real
+    /v3/index/history/ohlc endpoint before this test was written (see
+    that script's own docstring)."""
+
+    def test_routes_to_index_history_ohlc_with_1m_interval(self) -> None:
+        seen_paths = []
+        seen_params = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen_paths.append(request.url.path)
+            seen_params.append(dict(request.url.params))
+            return httpx.Response(
+                200,
+                json={
+                    "response": [
+                        {
+                            "timestamp": "2026-09-03T09:30:00.000",
+                            "open": 7686.71,
+                            "high": 7702.62,
+                            "low": 7686.71,
+                            "close": 7702.06,
+                            "volume": 0,
+                            "count": 0,
+                            "vwap": 0.0,
+                        },
+                        {
+                            "timestamp": "2026-09-03T09:31:00.000",
+                            "open": 7701.82,
+                            "high": 7702.59,
+                            "low": 7698.18,
+                            "close": 7701.22,
+                            "volume": 0,
+                            "count": 0,
+                            "vwap": 0.0,
+                        },
+                    ]
+                },
+            )
+
+        provider = _provider_with_transport(handler)
+        bars = provider.get_minute_bars("SPX", date(2026, 9, 3), date(2026, 9, 3))
+
+        assert seen_paths == ["/v3/index/history/ohlc"]
+        assert seen_params[0]["interval"] == "1m"
+        assert seen_params[0]["start_date"] == "20260903"
+        assert seen_params[0]["end_date"] == "20260903"
+        assert len(bars) == 2
+        assert bars[0].symbol == "SPX"
+        assert bars[0].time == datetime(2026, 9, 3, 9, 30, tzinfo=EASTERN_TIME)
+        assert bars[0].close == Decimal("7702.06")
+        assert bars[0].volume == 0
+
+    def test_rejects_non_index_underlyings(self) -> None:
+        def handler(request: httpx.Request) -> httpx.Response:
+            raise AssertionError("no request should be made for a non-index underlying")
+
+        provider = _provider_with_transport(handler)
+
+        with pytest.raises(RuntimeError, match="index"):
+            provider.get_minute_bars("SPY", date(2026, 9, 3), date(2026, 9, 3))
 
 
 class TestRiskFreeRateCaching:
