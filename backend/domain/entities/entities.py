@@ -455,6 +455,38 @@ class DailyBar:
 
 
 @dataclass(frozen=True, slots=True)
+class MinuteBar:
+    """A single closed 1-minute OHLCV bar from ThetaData's Indices Pro
+    historical endpoint — the raw material for the `minute_bars` backfill
+    (see `backend/scripts/backfill_minute_history.py`), not written by
+    the live scheduler the way `MarketPrice`/`DailyBar` are.
+    """
+
+    symbol: str
+    time: datetime
+    open_price: Decimal
+    high: Decimal
+    low: Decimal
+    close: Decimal
+    volume: int
+
+    def __post_init__(self) -> None:
+        if not self.symbol or not self.symbol.strip():
+            raise InvalidOptionError("minute bar symbol is required")
+        object.__setattr__(self, "symbol", self.symbol.upper())
+        for name in ("open_price", "high", "low", "close"):
+            _ensure_finite_decimal(getattr(self, name), InvalidOptionError, name)
+        if self.high < self.low:
+            raise InvalidOptionError("minute bar high cannot be lower than low")
+        if not self.low <= self.open_price <= self.high:
+            raise InvalidOptionError("minute bar open must be within [low, high]")
+        if not self.low <= self.close <= self.high:
+            raise InvalidOptionError("minute bar close must be within [low, high]")
+        if self.volume < 0:
+            raise InvalidOptionError("minute bar volume cannot be negative")
+
+
+@dataclass(frozen=True, slots=True)
 class DerivedMetricValue:
     value: Decimal | None
     provisional: bool
