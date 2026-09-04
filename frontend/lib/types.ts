@@ -20,7 +20,12 @@ export type ScreenerPresetResult = {
   symbol: string;
   as_of: string;
   contract: string | null;
-  alert_type: "WHALE" | "UNUSUAL" | null;
+  // Confirmed live, 2026-09: a single reading can independently satisfy
+  // both a magnitude threshold (WHALE/UNUSUAL) and the separate
+  // sustained-flow window, so the same symbol+contract+as_of can appear
+  // twice in one response with different alert_type/amount -- see
+  // ResultsTable's row key in quick-screener.tsx.
+  alert_type: "WHALE" | "UNUSUAL" | "SUSTAINED_FLOW" | null;
   amount: number | null;
   net_gamma: number | null;
   gamma_flip: number | null;
