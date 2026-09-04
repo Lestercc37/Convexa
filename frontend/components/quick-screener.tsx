@@ -66,7 +66,17 @@ function ResultsTable({
         </thead>
         <tbody>
           {results.map((item) => (
-            <tr key={`${item.symbol}-${item.contract ?? item.as_of}`}>
+            // alert_type, not just contract -- confirmed live, 2026-09: a
+            // single reading can independently trip a magnitude threshold
+            // (WHALE/UNUSUAL) *and* the separate sustained-flow window, so
+            // the same symbol+contract+as_of legitimately appears twice in
+            // one response (e.g. QQQ260904C00722000 as both SUSTAINED_FLOW
+            // and UNUSUAL, same microsecond as_of) -- these are two real,
+            // distinct alerts, not a duplicate to dedupe away. Same
+            // WHALE+SUSTAINED_FLOW collision shape as alertKey() in
+            // alerts-panel.tsx/chart-secondary-panel.tsx, deliberately not
+            // touched here.
+            <tr key={`${item.symbol}-${item.contract ?? item.as_of}-${item.alert_type ?? ""}`}>
               <td className="screener-symbol">{item.symbol}</td>
               {preset === "unusual-options-activity" ? (
                 <>
