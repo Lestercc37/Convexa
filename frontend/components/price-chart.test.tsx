@@ -395,6 +395,71 @@ describe("PriceChart", () => {
     ]);
   });
 
+  it("collapses two history items that round to the same second, keeping the latest (regression)", async () => {
+    // Confirmed live, 2026-09 investigation: two genuinely separate
+    // GammaAggregate rows for SPY, saved ~373ms apart
+    // (2026-09-02T20:39:38.056402 and .429345 ET -- both real database
+    // inserts, not a query/merge artifact), floor to the exact same
+    // whole-second UTCTimestamp once mapped for the chart. setData()
+    // requires strictly ascending, unique-per-point time and threw:
+    // "data must be asc ordered by time, index=645, time=1788395978,
+    // prev time=1788395978". dedupeAscendingByTime (already used for
+    // VWAP below) fixes this the same way it already does there.
+    chartMocks.getGammaHistory.mockResolvedValue({
+      schema_version: 1,
+      symbol: "SPY",
+      items: [
+        {
+          schema_version: 1,
+          symbol: "SPY",
+          as_of: "2026-09-03T00:39:38.056Z",
+          gamma_flip: 765.63,
+          call_wall: 766,
+          put_wall: 765,
+          absolute_gamma_strike: 765,
+          max_pain: 766,
+          net_gamma: 1,
+          vega_exposure: 2,
+          theta_exposure: 3,
+          charm_exposure: 4,
+          vanna_exposure: 5,
+          dealer_position: "long_gamma",
+        },
+        {
+          // Same real second once floored to UTCTimestamp, distinct
+          // sub-second timestamp and (deliberately, to prove the *later*
+          // one wins) a different gamma_flip than the row above.
+          schema_version: 1,
+          symbol: "SPY",
+          as_of: "2026-09-03T00:39:38.429Z",
+          gamma_flip: 765.99,
+          call_wall: 766,
+          put_wall: 765,
+          absolute_gamma_strike: 765,
+          max_pain: 766,
+          net_gamma: 1,
+          vega_exposure: 2,
+          theta_exposure: 3,
+          charm_exposure: 4,
+          vanna_exposure: 5,
+          dealer_position: "long_gamma",
+        },
+      ],
+    });
+    const user = userEvent.setup();
+    renderWithLanguage(<PriceChart symbol="SPY" gamma={gamma} candles={[]} />);
+
+    await user.click(screen.getByRole("button", { name: "Histórico" }));
+    await waitFor(() => expect(chartMocks.lineSetData).toHaveBeenCalledTimes(4));
+
+    // Gamma Flip's own series is the 2nd of the 3 historical additions
+    // (HISTORICAL_LEVELS order: Call Wall, Gamma Flip, Put Wall) -- one
+    // point, not two, and it's the later (higher gamma_flip) value.
+    expect(chartMocks.lineSetData.mock.calls[2][0]).toEqual([
+      { time: 1_788_395_978, value: 765.99 },
+    ]);
+  });
+
   it("draws the VWAP line and both ATR bands when both are ready", () => {
     chartMocks.priceToCoordinate.mockImplementation((price: number) => 500 - price);
     const readyAtrRange: AtrRange = {

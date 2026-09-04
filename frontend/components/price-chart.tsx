@@ -528,13 +528,24 @@ export function PriceChart({
       // (item.gamma_flip can legitimately be null) -- setData() asserts
       // every value is a number and throws otherwise, so points with a
       // null value for this level are dropped rather than plotted.
+      //
+      // dedupeAscendingByTime (already used for VWAP below) also applies
+      // here: confirmed live, 2026-09 investigation -- two genuinely
+      // separate GammaAggregate rows, saved ~373ms apart (SPY,
+      // 2026-09-02 20:39:38.056402 and .429345 ET, both real inserts
+      // with byte-identical computed values, not a query/merge
+      // artifact), collapse to the exact same whole-second bucket once
+      // floored to UTCTimestamp -- lightweight-charts requires strictly
+      // ascending, unique-per-point time and throws otherwise.
       line.setData(
-        history
-          .filter((item) => item[level.field] !== null)
-          .map((item) => ({
-            time: Math.floor(new Date(item.as_of).getTime() / 1000) as UTCTimestamp,
-            value: item[level.field] as number,
-          })),
+        dedupeAscendingByTime(
+          history
+            .filter((item) => item[level.field] !== null)
+            .map((item) => ({
+              time: Math.floor(new Date(item.as_of).getTime() / 1000) as UTCTimestamp,
+              value: item[level.field] as number,
+            })),
+        ),
       );
       return line;
     });
