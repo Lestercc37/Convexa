@@ -1,4 +1,5 @@
 from backend.domain.ports.interfaces import (
+    IAsyncMarketReadStorage,
     IDataProvider,
     IGammaAggregateCalculator,
     IGammaExposureCalculator,
@@ -14,6 +15,7 @@ from backend.domain.ports.interfaces import (
 )
 
 __all__ = [
+    "IAsyncMarketReadStorage",
     "IDataProvider",
     "IGammaAggregateCalculator",
     "IGammaExposureCalculator",

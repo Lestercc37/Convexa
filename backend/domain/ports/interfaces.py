@@ -115,6 +115,29 @@ class IStorage(Protocol):
     def get_daily_bars(self, underlying: str, limit: int = 15) -> list[DailyBar]: ...
 
 
+class IAsyncMarketReadStorage(Protocol):
+    """Async, read-only subset of `IStorage` -- exactly what
+    `/gamma/{symbol}` and `/market/{symbol}` need, so those routes can
+    be `async def` and run on the event loop instead of the threadpool
+    the scheduler's own 15 concurrent `asyncio.to_thread` refreshes
+    share (see AsyncPostgreSQLStorage's own docstring). Two
+    implementations: `AsyncPostgreSQLStorage` (real async Postgres) and
+    `SyncStorageAsyncReadAdapter` (wraps any sync `IStorage`, used for
+    `InMemoryStorage`/tests)."""
+
+    async def get_latest_gamma_aggregate(self, underlying: str) -> GammaAggregate | None: ...
+    async def get_latest_price(self, underlying: str) -> MarketPrice | None: ...
+    async def get_price_history(
+        self, underlying: str, start: datetime, end: datetime
+    ) -> list[MarketPrice]: ...
+    async def get_latest_chain_snapshot(self, underlying: str) -> OptionChain | None: ...
+    async def get_daily_bars(self, underlying: str, limit: int = 15) -> list[DailyBar]: ...
+    async def get_recent_flow(self, underlying: str, limit: int = 20) -> list[FlowEvent]: ...
+    async def get_daily_gamma_references(
+        self, underlying: str, limit: int = 60
+    ) -> list[DailyGammaReference]: ...
+
+
 class INotificationService(Protocol):
     def notify(self, event: FlowEvent | GammaAggregate) -> None: ...
 

@@ -12,6 +12,7 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from backend.adapters.providers.mock.provider import MockDataProvider
 from backend.adapters.storage.postgresql import PostgreSQLStorage
+from backend.adapters.storage.postgresql_async import AsyncPostgreSQLStorage
 from backend.core.settings import Settings
 from backend.domain.entities import (
     AggressorSide,
@@ -28,8 +29,8 @@ from backend.domain.entities import (
     WhaleThreshold,
 )
 from backend.domain.underlyings import ACTIVE_UNDERLYINGS
-from backend.infrastructure.database.engine import create_sync_engine
-from backend.infrastructure.database.session import create_sync_session_factory
+from backend.infrastructure.database.engine import create_engine, create_sync_engine
+from backend.infrastructure.database.session import create_session_factory, create_sync_session_factory
 
 pytestmark = pytest.mark.integration
 
@@ -325,6 +326,73 @@ def test_daily_gamma_reference_upsert_and_read_against_postgresql(
     storage.save_daily_gamma_reference(replacement)
 
     assert storage.get_daily_gamma_references(symbol) == [replacement]
+
+
+@pytest.mark.asyncio
+async def test_async_postgresql_storage_reads_what_the_sync_storage_wrote(
+    postgresql_storage: tuple[PostgreSQLStorage, Engine, str],
+) -> None:
+    """AsyncPostgreSQLStorage (backing /gamma/{symbol} and /market/{symbol}
+    since the threadpool-contention fix) is hand-written SQL, not
+    generated from the sync PostgreSQLStorage queries it mirrors -- this
+    is the one place that actually exercises it against a real Postgres,
+    since the API test suite's InMemoryStorage-backed TestClient never
+    touches it (see SyncStorageAsyncReadAdapter's own docstring)."""
+    storage, engine, symbol = postgresql_storage
+    now = datetime.now(timezone.utc)
+
+    price = MarketPrice(symbol=symbol, as_of=now, price=Decimal("552.25"), volume=1_250_000)
+    storage.save_market_price(price)
+    gamma = GammaAggregate(
+        symbol=symbol,
+        as_of=now,
+        gamma_flip=Decimal("550"),
+        call_wall=Decimal("560"),
+        put_wall=Decimal("540"),
+        absolute_gamma_strike=Decimal("555"),
+        net_gamma=Decimal("100"),
+    )
+    storage.save_gamma_aggregate(gamma)
+    chain = MockDataProvider().get_option_chain(symbol)
+    storage.save_chain_snapshot(chain)
+    bar = DailyBar(
+        symbol=symbol,
+        date=date(2026, 1, 2),
+        open_price=Decimal("100.00"),
+        high=Decimal("101.00"),
+        low=Decimal("99.00"),
+        close=Decimal("100.50"),
+    )
+    storage.save_daily_bar(bar)
+    reference = DailyGammaReference(
+        date=date(2026, 8, 1),
+        symbol=symbol,
+        net_gamma=Decimal("100"),
+        pc_oi_ratio=Decimal("1.10"),
+        skew_25d=Decimal("0.03"),
+        atm_iv=Decimal("0.20"),
+    )
+    storage.save_daily_gamma_reference(reference)
+
+    async_engine = create_engine(Settings(_env_file=".env").database_url)
+    try:
+        async_storage = AsyncPostgreSQLStorage(create_session_factory(async_engine))
+
+        assert await async_storage.get_latest_price(symbol) == price
+        assert await async_storage.get_latest_gamma_aggregate(symbol) == gamma
+        loaded_chain = await async_storage.get_latest_chain_snapshot(symbol)
+        assert loaded_chain is not None
+        assert loaded_chain.symbol == symbol
+        assert loaded_chain.spot_price == chain.spot_price
+        assert loaded_chain.contracts == chain.contracts
+        assert await async_storage.get_daily_bars(symbol) == [bar]
+        assert await async_storage.get_daily_gamma_references(symbol) == [reference]
+        history = await async_storage.get_price_history(
+            symbol, now - timedelta(seconds=1), now + timedelta(seconds=1)
+        )
+        assert history == [price]
+    finally:
+        await async_engine.dispose()
 
 
 def _delete_test_data(engine: Engine, symbol: str) -> None:
