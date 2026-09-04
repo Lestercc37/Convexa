@@ -5,6 +5,7 @@ import { getScreenerPreset } from "@/lib/api";
 import { describeError } from "@/lib/i18n/describe-error";
 import { useLanguage } from "@/lib/i18n/language-context";
 import type { Translations } from "@/lib/i18n/translations";
+import { POLLING_INTERVAL_MS } from "@/lib/polling";
 import type {
   ScreenerPresetName,
   ScreenerPresetResult,
@@ -102,17 +103,30 @@ export function QuickScreener() {
 
   useEffect(() => {
     const controller = new AbortController();
-    getScreenerPreset(preset, controller.signal)
-      .then((response) => {
+
+    const refresh = async () => {
+      try {
+        const response = await getScreenerPreset(preset, controller.signal);
         setResults(response.results);
         setError(null);
-      })
-      .catch((reason: unknown) => {
+      } catch (reason: unknown) {
         if (!controller.signal.aborted) {
           setError(reason);
         }
-      })
-    return () => controller.abort();
+      }
+    };
+
+    void refresh();
+    // Same 30s cadence as the rest of the dashboard (POLLING_INTERVAL_MS)
+    // -- confirmed live this preset is cheap (reads already-computed
+    // aggregates, no recalculation; ~250ms end to end against the real
+    // backend across all active symbols), so this interval doesn't need
+    // to be longer or configurable.
+    const interval = window.setInterval(() => void refresh(), POLLING_INTERVAL_MS);
+    return () => {
+      controller.abort();
+      window.clearInterval(interval);
+    };
   }, [preset]);
 
   return (
