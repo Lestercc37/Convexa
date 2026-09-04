@@ -32,6 +32,7 @@ from backend.domain.entities import (
     WhaleThreshold,
 )
 from backend.domain.underlyings import ACTIVE_UNDERLYINGS_BY_SYMBOL
+from backend.domain.use_cases.flow import WhaleAlert, WhaleAlertType
 
 
 class PostgreSQLStorage:
@@ -771,6 +772,62 @@ class PostgreSQLStorage:
                     high=Decimal(row["high"]),
                     low=Decimal(row["low"]),
                     close=Decimal(row["close"]),
+                )
+                for row in rows
+            ]
+
+    def save_whale_alert(self, alert: WhaleAlert) -> None:
+        with self.session_factory.begin() as session:
+            underlying_id = self._ensure_underlying(session, alert.symbol)
+            session.execute(
+                text(
+                    """
+                    INSERT INTO whale_alerts (
+                        time, underlying_id, occ_symbol, alert_type, amount,
+                        estimated_buy_volume, estimated_sell_volume
+                    )
+                    VALUES (
+                        :time, :underlying_id, :occ_symbol, :alert_type, :amount,
+                        :estimated_buy_volume, :estimated_sell_volume
+                    )
+                    """
+                ),
+                {
+                    "time": alert.as_of,
+                    "underlying_id": underlying_id,
+                    "occ_symbol": alert.occ_symbol,
+                    "alert_type": alert.alert_type.value,
+                    "amount": alert.amount,
+                    "estimated_buy_volume": alert.estimated_buy_volume,
+                    "estimated_sell_volume": alert.estimated_sell_volume,
+                },
+            )
+
+    def get_recent_whale_alerts(self, underlying: str, limit: int = 100) -> list[WhaleAlert]:
+        with self.session_factory() as session:
+            rows = session.execute(
+                text(
+                    """
+                    SELECT w.time, u.symbol, w.occ_symbol, w.alert_type, w.amount,
+                           w.estimated_buy_volume, w.estimated_sell_volume
+                    FROM whale_alerts AS w
+                    JOIN underlyings AS u ON u.id = w.underlying_id
+                    WHERE u.symbol = :symbol
+                    ORDER BY w.time DESC
+                    LIMIT :limit
+                    """
+                ),
+                {"symbol": underlying.upper(), "limit": limit},
+            ).mappings()
+            return [
+                WhaleAlert(
+                    symbol=str(row["symbol"]),
+                    occ_symbol=str(row["occ_symbol"]),
+                    alert_type=WhaleAlertType(str(row["alert_type"])),
+                    amount=Decimal(row["amount"]),
+                    as_of=row["time"],
+                    estimated_buy_volume=Decimal(row["estimated_buy_volume"]),
+                    estimated_sell_volume=Decimal(row["estimated_sell_volume"]),
                 )
                 for row in rows
             ]

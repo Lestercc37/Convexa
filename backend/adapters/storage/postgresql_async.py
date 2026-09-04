@@ -21,6 +21,7 @@ from backend.domain.entities import (
     UnderlyingKind,
 )
 from backend.domain.underlyings import ACTIVE_UNDERLYINGS_BY_SYMBOL
+from backend.domain.use_cases.flow import WhaleAlert, WhaleAlertType
 
 
 class AsyncPostgreSQLStorage:
@@ -30,7 +31,11 @@ class AsyncPostgreSQLStorage:
     live, 2026-09: that use case used to call the plain synchronous
     `IStorage.save_market_price` directly (unawaited, no thread) from
     inside its `async def run()` loop, blocking the event loop on every
-    persisted tick.
+    persisted tick. Also `get_recent_whale_alerts`, added for
+    `whale_alerts`'s new persistence -- `/alerts/{symbol}` and the
+    screener don't read this yet (still in-memory `WhaleAlertsEngine`
+    in this phase), but the async read is built now, on the same
+    pattern, so nothing blocks that migration when it's approved.
 
     Deliberately not a full `IStorage` implementation otherwise (no
     `get_latest_chain_snapshot(expiration=...)` filter, no
@@ -292,6 +297,36 @@ class AsyncPostgreSQLStorage:
                 pc_oi_ratio=Decimal(row["pc_oi_ratio"]),
                 skew_25d=Decimal(row["skew_25d"]),
                 atm_iv=Decimal(row["atm_iv"]),
+            )
+            for row in rows
+        ]
+
+    async def get_recent_whale_alerts(self, underlying: str, limit: int = 100) -> list[WhaleAlert]:
+        async with self.session_factory() as session:
+            result = await session.execute(
+                text(
+                    """
+                    SELECT w.time, u.symbol, w.occ_symbol, w.alert_type, w.amount,
+                           w.estimated_buy_volume, w.estimated_sell_volume
+                    FROM whale_alerts AS w
+                    JOIN underlyings AS u ON u.id = w.underlying_id
+                    WHERE u.symbol = :symbol
+                    ORDER BY w.time DESC
+                    LIMIT :limit
+                    """
+                ),
+                {"symbol": underlying.upper(), "limit": limit},
+            )
+            rows = result.mappings().all()
+        return [
+            WhaleAlert(
+                symbol=str(row["symbol"]),
+                occ_symbol=str(row["occ_symbol"]),
+                alert_type=WhaleAlertType(str(row["alert_type"])),
+                amount=Decimal(row["amount"]),
+                as_of=row["time"],
+                estimated_buy_volume=Decimal(row["estimated_buy_volume"]),
+                estimated_sell_volume=Decimal(row["estimated_sell_volume"]),
             )
             for row in rows
         ]

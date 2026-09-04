@@ -18,6 +18,7 @@ from backend.domain.entities import (
     WhaleThreshold,
 )
 from backend.domain.underlyings import ACTIVE_UNDERLYINGS
+from backend.domain.use_cases.flow import WhaleAlert
 
 
 class InMemoryStorage:
@@ -32,6 +33,7 @@ class InMemoryStorage:
         self._flow: dict[str, list[FlowEvent]] = {}
         self._daily_gamma: dict[str, dict[date, DailyGammaReference]] = {}
         self._daily_bars: dict[str, dict[date, DailyBar]] = {}
+        self._whale_alerts: dict[str, list[WhaleAlert]] = {}
         self._whale_thresholds: dict[str, WhaleThreshold] = {
             underlying.symbol: WhaleThreshold(
                 symbol=underlying.symbol,
@@ -149,3 +151,10 @@ class InMemoryStorage:
     def get_daily_bars(self, underlying: str, limit: int = 15) -> list[DailyBar]:
         bars = self._daily_bars.get(underlying.upper(), {}).values()
         return sorted(bars, key=lambda item: item.date, reverse=True)[:limit]
+
+    def save_whale_alert(self, alert: WhaleAlert) -> None:
+        self._whale_alerts.setdefault(alert.symbol, []).append(alert)
+
+    def get_recent_whale_alerts(self, underlying: str, limit: int = 100) -> list[WhaleAlert]:
+        alerts = self._whale_alerts.get(underlying.upper(), [])
+        return sorted(alerts, key=lambda alert: alert.as_of, reverse=True)[:limit]

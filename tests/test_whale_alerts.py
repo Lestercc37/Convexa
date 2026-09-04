@@ -57,6 +57,32 @@ def test_engine_emits_unusual_after_five_previous_periods() -> None:
     assert alerts[0].amount == Decimal("45000.00")
 
 
+def test_engine_dual_writes_every_alert_to_storage_alongside_the_in_memory_deque() -> None:
+    """Phase 1 of the whale_alerts persistence migration: every alert
+    _emit() produces must also reach storage.save_whale_alert, on top
+    of (not instead of) the existing in-memory _alerts deque -- see
+    _emit()'s own comment. recent_alerts() (in-memory) and
+    storage.get_recent_whale_alerts() (Postgres/InMemoryStorage) must
+    agree, since both are the same alert taking two different paths."""
+    storage = InMemoryStorage()
+    engine = WhaleAlertsEngine(storage)
+    base = MockDataProvider().get_option_chain("IWM")
+
+    cumulative = 100
+    engine.process(_chain(base, cumulative, 0))
+    for period in range(1, 6):
+        cumulative += 100
+        engine.process(_chain(base, cumulative, period))
+    cumulative += 450
+    engine.process(_chain(base, cumulative, 6))
+    engine.process(_chain(base, cumulative, 7))
+
+    in_memory = engine.recent_alerts("IWM")
+    persisted = storage.get_recent_whale_alerts("IWM")
+    assert len(in_memory) == 1
+    assert persisted == list(in_memory)
+
+
 def test_engine_emits_whale_and_prioritizes_it_over_unusual() -> None:
     engine = WhaleAlertsEngine(InMemoryStorage())
     base = MockDataProvider().get_option_chain("IWM")

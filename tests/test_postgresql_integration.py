@@ -29,6 +29,7 @@ from backend.domain.entities import (
     WhaleThreshold,
 )
 from backend.domain.underlyings import ACTIVE_UNDERLYINGS
+from backend.domain.use_cases.flow import WhaleAlert, WhaleAlertType
 from backend.infrastructure.database.engine import create_engine, create_sync_engine
 from backend.infrastructure.database.session import create_session_factory, create_sync_session_factory
 
@@ -421,6 +422,70 @@ async def test_async_postgresql_storage_save_market_price_round_trips(
         await async_engine.dispose()
 
 
+def test_whale_alert_save_and_get_recent_against_postgresql(
+    postgresql_storage: tuple[PostgreSQLStorage, Engine, str],
+) -> None:
+    """whale_alerts -- new this phase, dual-written alongside
+    WhaleAlertsEngine's in-memory _alerts (see flow.py's _emit).
+    Confirms the sync PostgreSQLStorage side of that persistence
+    against a real table: round-trips every field, including
+    alert_type (stored as the CHECK-constrained text column the
+    migration defines), and that ordering is newest-first."""
+    storage, _, symbol = postgresql_storage
+    older = WhaleAlert(
+        symbol=symbol,
+        occ_symbol=f"{symbol}260220C00540000",
+        alert_type=WhaleAlertType.UNUSUAL,
+        amount=Decimal("45000"),
+        as_of=datetime(2026, 8, 3, 14, 0, tzinfo=timezone.utc),
+        estimated_buy_volume=Decimal("22500"),
+        estimated_sell_volume=Decimal("22500"),
+    )
+    newer = WhaleAlert(
+        symbol=symbol,
+        occ_symbol=f"{symbol}260220P00540000",
+        alert_type=WhaleAlertType.SUSTAINED_FLOW,
+        amount=Decimal("625220.5"),
+        as_of=datetime(2026, 8, 3, 14, 5, tzinfo=timezone.utc),
+        estimated_buy_volume=Decimal("300000"),
+        estimated_sell_volume=Decimal("325220.5"),
+    )
+
+    storage.save_whale_alert(older)
+    storage.save_whale_alert(newer)
+
+    assert storage.get_recent_whale_alerts(symbol) == [newer, older]
+    assert storage.get_recent_whale_alerts(symbol, limit=1) == [newer]
+
+
+@pytest.mark.asyncio
+async def test_async_postgresql_storage_get_recent_whale_alerts_reads_what_the_sync_storage_wrote(
+    postgresql_storage: tuple[PostgreSQLStorage, Engine, str],
+) -> None:
+    """AsyncPostgreSQLStorage.get_recent_whale_alerts -- built this
+    phase alongside the sync write, on the same async pattern as
+    /gamma and /market, ahead of /alerts and the screener actually
+    being migrated to read it (not yet approved)."""
+    sync_storage, _, symbol = postgresql_storage
+    alert = WhaleAlert(
+        symbol=symbol,
+        occ_symbol=f"{symbol}260220C00540000",
+        alert_type=WhaleAlertType.WHALE,
+        amount=Decimal("210000"),
+        as_of=datetime(2026, 8, 3, 14, 0, tzinfo=timezone.utc),
+        estimated_buy_volume=Decimal("150000"),
+        estimated_sell_volume=Decimal("60000"),
+    )
+    sync_storage.save_whale_alert(alert)
+
+    async_engine = create_engine(Settings(_env_file=".env").database_url)
+    try:
+        async_storage = AsyncPostgreSQLStorage(create_session_factory(async_engine))
+        assert await async_storage.get_recent_whale_alerts(symbol) == [alert]
+    finally:
+        await async_engine.dispose()
+
+
 def _delete_test_data(engine: Engine, symbol: str) -> None:
     with engine.begin() as connection:
         underlying_id = connection.execute(
@@ -467,7 +532,7 @@ def _delete_test_data(engine: Engine, symbol: str) -> None:
             text("DELETE FROM gamma_aggregate_items WHERE underlying_id = :id"),
             {"id": underlying_id},
         )
-        for table_name in ("gamma_aggregates", "market_snapshots"):
+        for table_name in ("gamma_aggregates", "market_snapshots", "whale_alerts"):
             connection.execute(
                 text(f"DELETE FROM {table_name} WHERE underlying_id = :id"),
                 {"id": underlying_id},
