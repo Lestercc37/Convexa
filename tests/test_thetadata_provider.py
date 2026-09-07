@@ -266,6 +266,142 @@ class TestGetOptionChain:
             provider.get_option_chain("SPY")
 
 
+class TestNearTheMoneyResubscription:
+    """Confirmed live, 2026-09: the Trade/Quote Stream WebSocket
+    subscriptions were only ever registered once, at
+    ThetaDataProvider.start() (Worker startup) -- nothing re-discovered
+    or widened them as spot drifted during the session. get_option_chain
+    already recomputes "near-the-money right now" every scheduler cycle,
+    so it's the natural place to also register a contract that's
+    near-the-money now but wasn't at startup."""
+
+    def _handler(self) -> object:
+        def handler(request: httpx.Request) -> httpx.Response:
+            if "greeks/first_order" in str(request.url):
+                return httpx.Response(
+                    200,
+                    json={
+                        "response": [
+                            _first_order_entry("769.00", "CALL"),
+                            _first_order_entry("769.00", "PUT"),
+                        ]
+                    },
+                )
+            if "open_interest" in str(request.url):
+                return httpx.Response(200, json={"response": []})
+            if "interest_rate/history/eod" in str(request.url):
+                return httpx.Response(
+                    200, json={"response": [{"rate": 3.64, "created": "2026-08-31"}]}
+                )
+            if "stock/history/eod" in str(request.url):
+                return httpx.Response(200, json=_daily_bars_response())
+            raise AssertionError(f"unexpected request: {request.url}")
+
+        return handler
+
+    def test_registers_a_newly_near_the_money_contract_in_both_streams(self) -> None:
+        provider = _provider_with_transport(self._handler())
+        occ_call = _build_occ_symbol("SPY", date(2026, 9, 18), ContractType.CALL, Decimal("769.00"))
+        occ_put = _build_occ_symbol("SPY", date(2026, 9, 18), ContractType.PUT, Decimal("769.00"))
+        assert provider._stream.has_contract(occ_call) is False
+        assert provider._quote_stream.has_contract(occ_call) is False
+
+        provider.get_option_chain("SPY")
+
+        assert provider._stream.has_contract(occ_call) is True
+        assert provider._stream.has_contract(occ_put) is True
+        assert provider._quote_stream.has_contract(occ_call) is True
+        assert provider._quote_stream.has_contract(occ_put) is True
+
+    def test_requests_reconnect_on_both_streams_when_a_contract_is_newly_registered(self) -> None:
+        provider = _provider_with_transport(self._handler())
+        trade_reconnects = []
+        quote_reconnects = []
+        provider._stream.request_reconnect = lambda: trade_reconnects.append(1)
+        provider._quote_stream.request_reconnect = lambda: quote_reconnects.append(1)
+
+        provider.get_option_chain("SPY")
+
+        assert trade_reconnects == [1]
+        assert quote_reconnects == [1]
+
+    def test_does_not_request_reconnect_when_nothing_new_is_registered(self) -> None:
+        provider = _provider_with_transport(self._handler())
+        occ_call = _build_occ_symbol("SPY", date(2026, 9, 18), ContractType.CALL, Decimal("769.00"))
+        occ_put = _build_occ_symbol("SPY", date(2026, 9, 18), ContractType.PUT, Decimal("769.00"))
+        for occ, contract_type in ((occ_call, ContractType.CALL), (occ_put, ContractType.PUT)):
+            provider._stream.register_contract(
+                occ, "SPY", date(2026, 9, 18), contract_type, Decimal("769.00")
+            )
+            provider._quote_stream.register_contract(
+                occ, "SPY", date(2026, 9, 18), contract_type, Decimal("769.00")
+            )
+        reconnects = []
+        provider._stream.request_reconnect = lambda: reconnects.append("trade")
+        provider._quote_stream.request_reconnect = lambda: reconnects.append("quote")
+
+        provider.get_option_chain("SPY")
+
+        assert reconnects == []
+
+    def test_price_drift_across_scheduler_cycles_widens_the_registered_set_without_dropping_the_old_one(
+        self,
+    ) -> None:
+        """End-to-end simulation of the real scenario this exists for:
+        market closed today, so this drives ThetaDataProvider.get_option_chain
+        -- the real production code path, not a mock of the resubscription
+        logic itself -- through two "scheduler cycles" with a mocked
+        transport, the first at spot=769 and the second (simulating spot
+        having drifted) at spot=800, confirming the newly-relevant strike
+        gets registered and reconnected while the original one is *not*
+        dropped (deliberately additive-only, see this class's own
+        docstring and get_option_chain's inline comment for the
+        keep-vs-unsubscribe trade-off)."""
+        call_count = 0
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            nonlocal call_count
+            if "greeks/first_order" in str(request.url):
+                spot = "769.00" if call_count == 0 else "800.00"
+                return httpx.Response(
+                    200,
+                    json={"response": [_first_order_entry(spot, "CALL", underlying_price=spot)]},
+                )
+            if "open_interest" in str(request.url):
+                return httpx.Response(200, json={"response": []})
+            if "interest_rate/history/eod" in str(request.url):
+                return httpx.Response(
+                    200, json={"response": [{"rate": 3.64, "created": "2026-08-31"}]}
+                )
+            if "stock/history/eod" in str(request.url):
+                return httpx.Response(200, json=_daily_bars_response())
+            raise AssertionError(f"unexpected request: {request.url}")
+
+        provider = _provider_with_transport(handler)
+        occ_at_769 = _build_occ_symbol("SPY", date(2026, 9, 18), ContractType.CALL, Decimal("769.00"))
+        occ_at_800 = _build_occ_symbol("SPY", date(2026, 9, 18), ContractType.CALL, Decimal("800.00"))
+        reconnects: list[int] = []
+        provider._stream.request_reconnect = lambda: reconnects.append(len(reconnects) + 1)
+        provider._quote_stream.request_reconnect = lambda: None
+
+        provider.get_option_chain("SPY")  # cycle 1: spot=769
+        assert provider._stream.has_contract(occ_at_769) is True
+        assert provider._stream.has_contract(occ_at_800) is False
+        assert reconnects == [1]
+
+        call_count = 1
+        # NEAR_THE_MONEY_CACHE_TTL_SECONDS (10s) would otherwise serve
+        # cycle 1's cached chain again -- cleared here to simulate "enough
+        # real time passed for the cache to expire" without actually
+        # sleeping 10s in the test.
+        provider._near_the_money_cache.clear()
+        provider.get_option_chain("SPY")  # cycle 2: spot drifted to 800
+
+        assert provider._stream.has_contract(occ_at_800) is True, "new strike must be registered"
+        assert provider._stream.has_contract(occ_at_769) is True, "old strike must not be dropped"
+        assert reconnects == [1, 2], "second cycle must reconnect again for the newly-widened set"
+
+
 class TestExpiredContractFiltering:
     """ThetaData's snapshot endpoint keeps returning an already-expired
     contract's last-known (dead) quote for a while after it expires --
@@ -1081,16 +1217,27 @@ class TestReqResponseHandling:
     def test_all_three_stream_classes_route_req_response_through_the_shared_helper(
         self,
     ) -> None:
-        """Confirms the elif branch exists in all 3 _connect_and_consume
-        methods (not just that _log_req_response itself works) -- reads
-        the compiled source directly rather than driving a full
-        websocket loop, matching this file's own convention of testing
-        _handle_trade/_handle_quote directly instead of the recv() loop
-        around them."""
+        """Confirms the elif branch exists in all 3 stream classes' own
+        message-loop method (not just that _log_req_response itself
+        works) -- reads the compiled source directly rather than driving
+        a full websocket loop, matching this file's own convention of
+        testing _handle_trade/_handle_quote directly instead of the
+        recv() loop around them.
+
+        ThetaTradeStream/ThetaQuoteStream's message loop lives in
+        `_consume` (split out of `_connect_and_consume` so
+        request_reconnect() -- near-the-money re-subscription as spot
+        drifts -- has a `finally` block to clear `_active_websocket` in);
+        ThetaUnderlyingTradeStream doesn't need that (subscribes by
+        symbol, not by strike, so it's never subject to a near-the-money
+        window), so its message loop is still directly in
+        `_connect_and_consume`.
+        """
         import inspect
 
         for stream_class in (ThetaTradeStream, ThetaQuoteStream, ThetaUnderlyingTradeStream):
-            source = inspect.getsource(stream_class._connect_and_consume)
+            message_loop_method = getattr(stream_class, "_consume", stream_class._connect_and_consume)
+            source = inspect.getsource(message_loop_method)
             assert '"REQ_RESPONSE"' in source
             assert "_log_req_response" in source
 
@@ -1132,6 +1279,49 @@ class TestTradeStream:
         stream._handle_trade({"contract": {"root": "SPY"}, "trade": {}})
         # No exception, no volume recorded anywhere.
         assert stream._cumulative_volume == {}
+
+    def test_has_contract_reflects_registration(self) -> None:
+        stream = ThetaTradeStream(WS_URL, httpx.Client(base_url=REST_URL))
+        occ = _build_occ_symbol("SPY", date(2026, 9, 18), ContractType.CALL, Decimal("770"))
+
+        assert stream.has_contract(occ) is False
+
+        stream.register_contract(occ, "SPY", date(2026, 9, 18), ContractType.CALL, Decimal("770"))
+
+        assert stream.has_contract(occ) is True
+
+    def test_request_reconnect_is_a_no_op_before_start(self) -> None:
+        # Near-the-money re-subscription (get_option_chain) calls this
+        # unconditionally whenever it registers a new contract -- must
+        # never raise for the API process's own dormant ThetaDataProvider
+        # instance (never started, per backend/main.py's lifespan) or
+        # before the Worker's own stream has connected for the first time.
+        stream = ThetaTradeStream(WS_URL, httpx.Client(base_url=REST_URL))
+        stream.request_reconnect()  # must not raise
+
+    @pytest.mark.asyncio
+    async def test_request_reconnect_closes_the_active_connection(self) -> None:
+        class _FakeWebsocket:
+            def __init__(self) -> None:
+                self.closed = False
+
+            async def close(self) -> None:
+                self.closed = True
+
+        stream = ThetaTradeStream(WS_URL, httpx.Client(base_url=REST_URL))
+        fake_websocket = _FakeWebsocket()
+        stream._loop = asyncio.get_running_loop()
+        stream._active_websocket = fake_websocket  # type: ignore[assignment]
+
+        stream.request_reconnect()
+        # request_reconnect schedules the close via run_coroutine_threadsafe
+        # (safe to call from a different thread than the event loop's own,
+        # which get_option_chain's caller -- a scheduler worker thread --
+        # actually is) rather than awaiting it directly -- give the loop a
+        # moment to actually run the scheduled coroutine.
+        await asyncio.sleep(0.05)
+
+        assert fake_websocket.closed is True
 
     def test_reconcile_logs_warning_on_large_discrepancy(
         self, caplog: pytest.LogCaptureFixture
