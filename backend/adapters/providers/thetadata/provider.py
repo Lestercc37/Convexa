@@ -354,6 +354,15 @@ class ThetaTradeStream:
         self._task: asyncio.Task[None] | None = None
         self._next_request_id = 1
         self._reconciled_at: datetime | None = None
+        # Set by start() (always called from the event loop thread) and by
+        # _connect_and_consume() while a connection is live -- together,
+        # what request_reconnect() needs to nudge an already-running
+        # connection from a *different* thread (get_option_chain() runs
+        # via asyncio.to_thread in the scheduler's worker pool). See
+        # request_reconnect()'s own docstring for why this, not a live
+        # subscribe over the open connection.
+        self._loop: asyncio.AbstractEventLoop | None = None
+        self._active_websocket: websockets.ClientConnection | None = None
 
     def register_contract(
         self,
@@ -366,12 +375,16 @@ class ThetaTradeStream:
         self._contracts[occ_symbol] = (root, expiration, contract_type, strike)
         self._cumulative_volume.setdefault(occ_symbol, 0)
 
+    def has_contract(self, occ_symbol: str) -> bool:
+        return occ_symbol in self._contracts
+
     def cumulative_volume(self, occ_symbol: str) -> int:
         return self._cumulative_volume.get(occ_symbol, 0)
 
     def start(self) -> None:
         if self._task is not None:
             return
+        self._loop = asyncio.get_running_loop()
         self._task = asyncio.create_task(self._run())
 
     async def stop(self) -> None:
@@ -389,6 +402,36 @@ class ThetaTradeStream:
         self._subscribers.setdefault(underlying.upper(), []).append(queue)
         return queue
 
+    def request_reconnect(self) -> None:
+        """Nudge an already-connected stream to reconnect, so newly
+        `register_contract()`-ed contracts (near-the-money re-subscription
+        as spot drifts -- see ThetaDataProvider.get_option_chain()) get
+        subscribed without waiting for an unrelated disconnect.
+
+        Deliberately a reconnect, not a live SUBSCRIBE sent over the
+        existing connection: _connect_and_consume() only ever subscribes
+        once, right after connecting (see its own body) -- teaching it to
+        also accept a live subscribe mid-connection is real additional
+        surface for comparatively little gain, since the existing
+        reconnect loop (_run()) already has robust, tested backoff/retry
+        behavior this reuses as-is. The cost is a brief gap in trade
+        coverage for *already*-subscribed contracts too, bounded by
+        RECONNECT_BASE_DELAY_SECONDS (2s) -- accepted because this only
+        fires when spot has genuinely drifted out of the registered
+        near-the-money window, not on every scheduler cycle.
+
+        Safe to call from any thread: get_option_chain() (the caller) runs
+        in a worker thread via asyncio.to_thread, not the event loop
+        thread that owns `_active_websocket` -- run_coroutine_threadsafe
+        is what makes closing it from there safe. A no-op if the stream
+        was never started (API process's own dormant ThetaDataProvider
+        instance -- see backend/main.py's lifespan) or has no live
+        connection at this exact moment (already mid-reconnect).
+        """
+        if self._loop is None or self._active_websocket is None:
+            return
+        asyncio.run_coroutine_threadsafe(self._active_websocket.close(), self._loop)
+
     async def _run(self) -> None:
         delay = RECONNECT_BASE_DELAY_SECONDS
         while True:
@@ -404,38 +447,45 @@ class ThetaTradeStream:
 
     async def _connect_and_consume(self) -> None:
         async with websockets.connect(self._ws_url) as websocket:
-            for root, expiration, contract_type, strike in self._contracts.values():
-                await self._subscribe(websocket, root, expiration, contract_type, strike)
-            last_status_at = utc_now()
-            reconciled_at = self._reconciled_at or utc_now()
-            while True:
-                try:
-                    raw = await asyncio.wait_for(
-                        websocket.recv(), timeout=STATUS_STALE_AFTER_SECONDS
-                    )
-                except TimeoutError as exc:
-                    raise ConnectionError(
-                        "No message from Theta Terminal within heartbeat window"
-                    ) from exc
-                message = json.loads(raw)
-                header = message.get("header", {})
-                status = header.get("status")
-                if header.get("type") == "STATUS":
-                    if status != "CONNECTED":
-                        raise ConnectionError(f"Theta Terminal reported status: {status}")
-                    last_status_at = utc_now()
-                elif header.get("type") == "TRADE":
-                    self._handle_trade(message)
-                elif header.get("type") == "REQ_RESPONSE":
-                    _log_req_response("ThetaTradeStream", message)
+            self._active_websocket = websocket
+            try:
+                await self._consume(websocket)
+            finally:
+                self._active_websocket = None
 
-                now = utc_now()
-                if (now - last_status_at).total_seconds() > STATUS_STALE_AFTER_SECONDS:
-                    raise ConnectionError("Heartbeat stale — no STATUS message recently")
-                if (now - reconciled_at).total_seconds() > RECONCILE_INTERVAL_SECONDS:
-                    await asyncio.to_thread(self._reconcile)
-                    reconciled_at = now
-                    self._reconciled_at = now
+    async def _consume(self, websocket: websockets.ClientConnection) -> None:
+        for root, expiration, contract_type, strike in self._contracts.values():
+            await self._subscribe(websocket, root, expiration, contract_type, strike)
+        last_status_at = utc_now()
+        reconciled_at = self._reconciled_at or utc_now()
+        while True:
+            try:
+                raw = await asyncio.wait_for(
+                    websocket.recv(), timeout=STATUS_STALE_AFTER_SECONDS
+                )
+            except TimeoutError as exc:
+                raise ConnectionError(
+                    "No message from Theta Terminal within heartbeat window"
+                ) from exc
+            message = json.loads(raw)
+            header = message.get("header", {})
+            status = header.get("status")
+            if header.get("type") == "STATUS":
+                if status != "CONNECTED":
+                    raise ConnectionError(f"Theta Terminal reported status: {status}")
+                last_status_at = utc_now()
+            elif header.get("type") == "TRADE":
+                self._handle_trade(message)
+            elif header.get("type") == "REQ_RESPONSE":
+                _log_req_response("ThetaTradeStream", message)
+
+            now = utc_now()
+            if (now - last_status_at).total_seconds() > STATUS_STALE_AFTER_SECONDS:
+                raise ConnectionError("Heartbeat stale — no STATUS message recently")
+            if (now - reconciled_at).total_seconds() > RECONCILE_INTERVAL_SECONDS:
+                await asyncio.to_thread(self._reconcile)
+                reconciled_at = now
+                self._reconciled_at = now
 
     async def _subscribe(
         self,
@@ -579,6 +629,10 @@ class ThetaQuoteStream:
         self._subscribers: dict[str, list[asyncio.Queue[QuoteEvent]]] = {}
         self._task: asyncio.Task[None] | None = None
         self._next_request_id = 1
+        # See ThetaTradeStream's own fields/request_reconnect() docstring
+        # -- identical mechanism, mirrored here.
+        self._loop: asyncio.AbstractEventLoop | None = None
+        self._active_websocket: websockets.ClientConnection | None = None
 
     def register_contract(
         self,
@@ -590,9 +644,19 @@ class ThetaQuoteStream:
     ) -> None:
         self._contracts[occ_symbol] = (root, expiration, contract_type, strike)
 
+    def has_contract(self, occ_symbol: str) -> bool:
+        return occ_symbol in self._contracts
+
+    def request_reconnect(self) -> None:
+        """See ThetaTradeStream.request_reconnect() -- identical mechanism."""
+        if self._loop is None or self._active_websocket is None:
+            return
+        asyncio.run_coroutine_threadsafe(self._active_websocket.close(), self._loop)
+
     def start(self) -> None:
         if self._task is not None:
             return
+        self._loop = asyncio.get_running_loop()
         self._task = asyncio.create_task(self._run())
 
     async def stop(self) -> None:
@@ -625,33 +689,40 @@ class ThetaQuoteStream:
 
     async def _connect_and_consume(self) -> None:
         async with websockets.connect(self._ws_url) as websocket:
-            for root, expiration, contract_type, strike in self._contracts.values():
-                await self._subscribe(websocket, root, expiration, contract_type, strike)
-            last_status_at = utc_now()
-            while True:
-                try:
-                    raw = await asyncio.wait_for(
-                        websocket.recv(), timeout=STATUS_STALE_AFTER_SECONDS
-                    )
-                except TimeoutError as exc:
-                    raise ConnectionError(
-                        "No message from Theta Terminal within heartbeat window"
-                    ) from exc
-                message = json.loads(raw)
-                header = message.get("header", {})
-                status = header.get("status")
-                if header.get("type") == "STATUS":
-                    if status != "CONNECTED":
-                        raise ConnectionError(f"Theta Terminal reported status: {status}")
-                    last_status_at = utc_now()
-                elif header.get("type") == "QUOTE":
-                    self._handle_quote(message)
-                elif header.get("type") == "REQ_RESPONSE":
-                    _log_req_response("ThetaQuoteStream", message)
+            self._active_websocket = websocket
+            try:
+                await self._consume(websocket)
+            finally:
+                self._active_websocket = None
 
-                now = utc_now()
-                if (now - last_status_at).total_seconds() > STATUS_STALE_AFTER_SECONDS:
-                    raise ConnectionError("Heartbeat stale — no STATUS message recently")
+    async def _consume(self, websocket: websockets.ClientConnection) -> None:
+        for root, expiration, contract_type, strike in self._contracts.values():
+            await self._subscribe(websocket, root, expiration, contract_type, strike)
+        last_status_at = utc_now()
+        while True:
+            try:
+                raw = await asyncio.wait_for(
+                    websocket.recv(), timeout=STATUS_STALE_AFTER_SECONDS
+                )
+            except TimeoutError as exc:
+                raise ConnectionError(
+                    "No message from Theta Terminal within heartbeat window"
+                ) from exc
+            message = json.loads(raw)
+            header = message.get("header", {})
+            status = header.get("status")
+            if header.get("type") == "STATUS":
+                if status != "CONNECTED":
+                    raise ConnectionError(f"Theta Terminal reported status: {status}")
+                last_status_at = utc_now()
+            elif header.get("type") == "QUOTE":
+                self._handle_quote(message)
+            elif header.get("type") == "REQ_RESPONSE":
+                _log_req_response("ThetaQuoteStream", message)
+
+            now = utc_now()
+            if (now - last_status_at).total_seconds() > STATUS_STALE_AFTER_SECONDS:
+                raise ConnectionError("Heartbeat stale — no STATUS message recently")
 
     async def _subscribe(
         self,
@@ -1257,6 +1328,27 @@ class ThetaDataProvider:
         spot_price: Decimal | None = None
         latest_as_of = utc_now()
         contracts = []
+        # Near-the-money re-subscription, confirmed live 2026-09: the
+        # Trade/Quote Stream WebSocket subscriptions are only ever
+        # registered once, at ThetaDataProvider.start() (Worker startup),
+        # from whatever chain was near-the-money at that moment -- nothing
+        # re-discovers or widens that set as spot drifts during the
+        # session. This chain fetch already recomputes "near-the-money
+        # right now" every scheduler cycle (~30s, via
+        # RefreshUnderlyingSnapshotUseCase -> get_option_chain), so it's
+        # the natural place to also register any contract that's near-
+        # the-money now but wasn't at startup -- no separate timer, no
+        # distance-from-center math, just a direct membership check
+        # against what's already registered. Deliberately additive only
+        # (never unsubscribes a contract that drifted OUT of range) --
+        # the accumulated set over one session is small and bounded (a
+        # handful of strikes at most, even for a large move), and the
+        # Worker's near-the-money set resets fresh on its next restart
+        # anyway; unsubscribing would need to guard against tearing down
+        # a contract mid-bucket in WhaleAlertsEngine's own state, for a
+        # benefit (WS message volume) that isn't the real constraint here
+        # (that's REST request concurrency, via theta_request_slots).
+        newly_registered = False
         for entry in chain.entries:
             contract_meta = entry["contract"]
             data = entry["data"][0]
@@ -1282,6 +1374,12 @@ class ThetaDataProvider:
             bsm = calculate_bsm_greeks(underlying_price, strike, rate, iv, time_to_expiration)
 
             occ_symbol = _build_occ_symbol(root, chain.expiration, contract_type, strike)
+            if not self._stream.has_contract(occ_symbol):
+                self._stream.register_contract(occ_symbol, root, chain.expiration, contract_type, strike)
+                self._quote_stream.register_contract(
+                    occ_symbol, root, chain.expiration, contract_type, strike
+                )
+                newly_registered = True
             open_interest = open_interest_by_key.get((root, strike, right), 0)
             volume = self._stream.cumulative_volume(occ_symbol)
             as_of = _parse_et_timestamp(data["timestamp"])
@@ -1310,6 +1408,11 @@ class ThetaDataProvider:
                     ),
                 )
             )
+
+        if newly_registered:
+            logger.info("Near-the-money set for %s widened, reconnecting streams", symbol)
+            self._stream.request_reconnect()
+            self._quote_stream.request_reconnect()
 
         if spot_price is None:
             raise RuntimeError(f"ThetaData returned no usable contracts for {symbol}")
