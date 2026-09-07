@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { getAlerts } from "@/lib/api";
 import { describeError } from "@/lib/i18n/describe-error";
 import { useLanguage } from "@/lib/i18n/language-context";
@@ -16,8 +16,9 @@ type AlertsPanelProps = {
   symbol: string;
   // "horizontal" (default) is the original scrollable strip — kept as an
   // option in case this panel is ever reused outside the left sidebar.
-  // The Calls/Puts split below only applies to "vertical" (the sidebar),
-  // matching the task's own scope ("dentro de la misma columna izquierda").
+  // "vertical" (the sidebar) only changes layout (a column vs. a row) --
+  // both show the same single, unified feed (see AlertCard/dominantSide
+  // below for why Calls/Puts are no longer split into separate tabs).
   orientation?: "horizontal" | "vertical";
 };
 
@@ -33,10 +34,12 @@ export const TYPE_LABEL: Record<WhaleAlert["type"], string> = {
 
 // English regardless of UI language, matching the Calls/Puts legend
 // already hardcoded this way in pre-session-panel.tsx and
-// volatility-smile.tsx.
+// volatility-smile.tsx. Singular -- this labels one card's own contract,
+// not a tab (the Calls/Puts tabs this used to feed are gone; see the
+// unified single feed below).
 const SIDE_LABEL: Record<ContractSide, string> = {
-  call: "Calls",
-  put: "Puts",
+  call: "Call",
+  put: "Put",
 };
 
 const CURRENCY_FORMAT = new Intl.NumberFormat("en-US", {
@@ -70,12 +73,37 @@ function buyPercent(alert: WhaleAlert): number {
   return (alert.estimated_buy_volume / total) * 100;
 }
 
+type DominantSide = "buy" | "sell" | "mixed";
+
+// "Mixed" isn't an arbitrary near-50 band (that would suppress a real,
+// if modest, majority like 52/48) -- it's specifically the exact-50%
+// case, which in this codebase only ever comes from a documented "we
+// don't have enough signal" fallback: buyPercent's own total<=0 guard
+// above, or calculate_bvc_split's identical σ=0 convention on the
+// backend (backend/domain/use_cases/calculate_bvc.py). Both construct
+// the buy/sell halves as an exact split (half = premium / 2 on the
+// backend), so this lands on exactly 50 in floating point too, not
+// merely close to it -- confirmed before picking this rule rather than
+// assuming a threshold.
+function dominantSide(buyPct: number): DominantSide {
+  if (buyPct === 50) return "mixed";
+  return buyPct > 50 ? "buy" : "sell";
+}
+
 function AlertCard({ alert, t }: { alert: WhaleAlert; t: Translations }) {
   const buyPct = buyPercent(alert);
   const sellPct = 100 - buyPct;
+  const side = parseContractSide(alert.contract);
+  const dominant = dominantSide(buyPct);
+  const dominantLabel = {
+    buy: t.alertsPanel.dominantBuy,
+    sell: t.alertsPanel.dominantSell,
+    mixed: t.alertsPanel.dominantMixed,
+  }[dominant];
   return (
     <article className={`alert-card alert-${alert.type.toLowerCase()}`}>
       <span className="alert-symbol">{alert.symbol}</span>
+      {side && <span className={`alert-side alert-side-${side}`}>{SIDE_LABEL[side]}</span>}
       <span className="alert-contract">{alert.contract}</span>
       <span className="alert-type">{TYPE_LABEL[alert.type]}</span>
       <span className="alert-amount">{CURRENCY_FORMAT.format(alert.amount)}</span>
@@ -94,6 +122,8 @@ function AlertCard({ alert, t }: { alert: WhaleAlert; t: Translations }) {
         </span>
         <span className="alert-bvc-caption">
           {t.alertsPanel.bvcLabel} · {PERCENT_FORMAT.format(buyPct)}% / {PERCENT_FORMAT.format(sellPct)}%
+          {" · "}
+          <span className={`alert-dominant alert-dominant-${dominant}`}>{dominantLabel}</span>
         </span>
       </span>
     </article>
@@ -104,7 +134,6 @@ export function AlertsPanel({ symbol, orientation = "horizontal" }: AlertsPanelP
   const { t } = useLanguage();
   const [alerts, setAlerts] = useState<WhaleAlert[]>([]);
   const [error, setError] = useState<unknown>(null);
-  const [activeSide, setActiveSide] = useState<ContractSide>("call");
   const [showThresholdsPanel, setShowThresholdsPanel] = useState(false);
 
   useEffect(() => {
@@ -138,20 +167,7 @@ export function AlertsPanel({ symbol, orientation = "horizontal" }: AlertsPanelP
     // active chart symbol changes, not just on its own 30s cadence.
   }, [symbol]);
 
-  // Only the sidebar (vertical) splits by side — the horizontal strip is
-  // legacy/unused chrome kept as an option, out of this task's scope.
   const isVertical = orientation === "vertical";
-
-  const bySide = useMemo(() => {
-    const groups: Record<ContractSide, WhaleAlert[]> = { call: [], put: [] };
-    for (const alert of alerts) {
-      const side = parseContractSide(alert.contract);
-      if (side) groups[side].push(alert);
-    }
-    return groups;
-  }, [alerts]);
-
-  const visibleAlerts = isVertical ? bySide[activeSide] : alerts;
 
   return (
     <section
@@ -175,29 +191,11 @@ export function AlertsPanel({ symbol, orientation = "horizontal" }: AlertsPanelP
       {showThresholdsPanel && (
         <WhaleThresholdsPanel onClose={() => setShowThresholdsPanel(false)} />
       )}
-      {isVertical && !error && (
-        <div
-          className="alerts-side-tabs"
-          role="group"
-          aria-label={t.alertsPanel.sideTabsAriaLabel}
-        >
-          {(["call", "put"] as ContractSide[]).map((side) => (
-            <button
-              key={side}
-              type="button"
-              aria-pressed={activeSide === side}
-              onClick={() => setActiveSide(side)}
-            >
-              {SIDE_LABEL[side]}
-            </button>
-          ))}
-        </div>
-      )}
       {error ? (
         <p className="alerts-empty error" role="alert">
           {describeError(error, t)}
         </p>
-      ) : visibleAlerts.length === 0 ? (
+      ) : alerts.length === 0 ? (
         <p className="alerts-empty" aria-live="polite">
           {t.alertsPanel.empty}
         </p>
@@ -206,7 +204,7 @@ export function AlertsPanel({ symbol, orientation = "horizontal" }: AlertsPanelP
           className={isVertical ? "alerts-column" : "alerts-row"}
           aria-label={t.alertsPanel.recentAriaLabel}
         >
-          {visibleAlerts.map((alert) => (
+          {alerts.map((alert) => (
             <AlertCard key={alertKey(alert)} alert={alert} t={t} />
           ))}
         </div>

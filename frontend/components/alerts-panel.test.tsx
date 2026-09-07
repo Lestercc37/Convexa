@@ -186,18 +186,15 @@ describe("AlertsPanel", () => {
     expect(screen.queryByRole("article")).not.toBeInTheDocument();
   });
 
-  it("splits alerts into Calls and Puts tabs, based on the OCC contract symbol", async () => {
+  it("shows Calls and Puts mixed in one feed, sorted by time (no more tabs)", async () => {
+    // Lester's own request: a single feed, most-recent-first, so Calls
+    // vs. Puts dominance is read from how often each appears, not from
+    // switching tabs. recent_alerts() (backend) already returns
+    // most-recent-first, so the two responses below (call at 14:00,
+    // put at 14:05) must render put-first, call-second, both visible
+    // at once -- never a per-side tab to click between them.
     apiMocks.getAlerts.mockResolvedValue(
       alertsResponse("SPY", [
-        {
-          symbol: "SPY",
-          contract: "SPY260220C00540000",
-          type: "UNUSUAL",
-          amount: 45000,
-          timestamp: "2026-08-03T14:00:00Z",
-          estimated_buy_volume: 30000,
-          estimated_sell_volume: 15000,
-        },
         {
           symbol: "SPY",
           contract: "SPY260220P00540000",
@@ -207,29 +204,73 @@ describe("AlertsPanel", () => {
           estimated_buy_volume: 60000,
           estimated_sell_volume: 150000,
         },
+        {
+          symbol: "SPY",
+          contract: "SPY260220C00540000",
+          type: "UNUSUAL",
+          amount: 45000,
+          timestamp: "2026-08-03T14:00:00Z",
+          estimated_buy_volume: 30000,
+          estimated_sell_volume: 15000,
+        },
       ]),
     );
 
-    const user = userEvent.setup();
     renderWithLanguage(<AlertsPanel symbol="SPY" orientation="vertical" />);
 
-    // Defaults to the Calls tab — only the call contract's card is shown.
-    let cards = await screen.findAllByRole("article");
-    expect(cards).toHaveLength(1);
-    expect(cards[0]).toHaveTextContent("SPY260220C00540000");
-
-    await user.click(screen.getByRole("button", { name: "Puts" }));
-
-    cards = await screen.findAllByRole("article");
-    expect(cards).toHaveLength(1);
+    const cards = await screen.findAllByRole("article");
+    expect(cards).toHaveLength(2);
     expect(cards[0]).toHaveTextContent("SPY260220P00540000");
+    expect(cards[1]).toHaveTextContent("SPY260220C00540000");
+    // No Calls/Puts tab buttons anywhere in this panel anymore.
+    expect(screen.queryByRole("button", { name: "Calls" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Puts" })).not.toBeInTheDocument();
+    // Type (Call/Put) stays visible per card, just not as a tab filter.
+    expect(cards[0]).toHaveTextContent("Put");
+    expect(cards[1]).toHaveTextContent("Call");
     // BVC estimate rendered on the card, explicitly labeled as an estimate
     // (renderWithLanguage defaults to Spanish).
     expect(cards[0]).toHaveTextContent("29% / 71%");
     expect(cards[0]).toHaveTextContent("Compra/venta estimado (BVC)");
   });
 
-  it("shows a clear empty state for a side with no active alerts, without an error", async () => {
+  it("labels each card Compra or Venta based on which side of the BVC split dominates", async () => {
+    apiMocks.getAlerts.mockResolvedValue(
+      alertsResponse("SPY", [
+        {
+          // 67% buy / 33% sell -- buy dominates.
+          symbol: "SPY",
+          contract: "SPY260220C00540000",
+          type: "UNUSUAL",
+          amount: 45000,
+          timestamp: "2026-08-03T14:05:00Z",
+          estimated_buy_volume: 30000,
+          estimated_sell_volume: 15000,
+        },
+        {
+          // 25% buy / 75% sell -- sell dominates.
+          symbol: "SPY",
+          contract: "SPY260220P00540000",
+          type: "WHALE",
+          amount: 210000,
+          timestamp: "2026-08-03T14:00:00Z",
+          estimated_buy_volume: 15000,
+          estimated_sell_volume: 45000,
+        },
+      ]),
+    );
+
+    renderWithLanguage(<AlertsPanel symbol="SPY" orientation="vertical" />);
+
+    // Scoped to the dedicated .alert-dominant element, not a whole-card
+    // text match -- "Compra" is also a substring of the unrelated
+    // "Compra/venta estimado (BVC)" caption on every card.
+    const cards = await screen.findAllByRole("article");
+    expect(cards[0].querySelector(".alert-dominant")).toHaveTextContent("Compra");
+    expect(cards[1].querySelector(".alert-dominant")).toHaveTextContent("Venta");
+  });
+
+  it("labels an exact 50/50 split Mixto, not Compra or Venta (documented no-signal fallback, not a real tie)", async () => {
     apiMocks.getAlerts.mockResolvedValue(
       alertsResponse("SPY", [
         {
@@ -244,19 +285,14 @@ describe("AlertsPanel", () => {
       ]),
     );
 
-    const user = userEvent.setup();
     renderWithLanguage(<AlertsPanel symbol="SPY" orientation="vertical" />);
-    await screen.findAllByRole("article");
 
-    await user.click(screen.getByRole("button", { name: "Puts" }));
-
-    expect(await screen.findByText("Sin alertas recientes.")).toBeInTheDocument();
-    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
-    expect(screen.queryByRole("article")).not.toBeInTheDocument();
+    const card = await screen.findByRole("article");
+    expect(card.querySelector(".alert-dominant")).toHaveTextContent("Mixto");
   });
 
-  it("keeps many alerts on one side scrollable within the column, not the whole page", async () => {
-    const manyPuts = Array.from({ length: 30 }, (_, index) => ({
+  it("keeps many alerts scrollable within the column, not the whole page", async () => {
+    const manyAlerts = Array.from({ length: 30 }, (_, index) => ({
       symbol: "SPY",
       contract: `SPY260220P0054${String(index).padStart(4, "0")}`,
       type: (index % 2 === 0 ? "WHALE" : "UNUSUAL") as "WHALE" | "UNUSUAL",
@@ -265,13 +301,11 @@ describe("AlertsPanel", () => {
       estimated_buy_volume: 75_000,
       estimated_sell_volume: 75_000,
     }));
-    apiMocks.getAlerts.mockResolvedValue(alertsResponse("SPY", manyPuts));
+    apiMocks.getAlerts.mockResolvedValue(alertsResponse("SPY", manyAlerts));
 
-    const user = userEvent.setup();
     const { container } = renderWithLanguage(
       <AlertsPanel symbol="SPY" orientation="vertical" />,
     );
-    await user.click(await screen.findByRole("button", { name: "Puts" }));
 
     await waitFor(() => {
       const column = container.querySelector(".alerts-column");

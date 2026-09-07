@@ -109,9 +109,11 @@ export type Translations = {
     title: string;
     empty: string;
     recentAriaLabel: string;
-    sideTabsAriaLabel: string;
     bvcLabel: string;
     bvcAriaLabel: (buyPct: number, sellPct: number) => string;
+    dominantBuy: string;
+    dominantSell: string;
+    dominantMixed: string;
   };
   quickScreener: {
     eyebrow: string;
