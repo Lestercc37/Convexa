@@ -13,7 +13,7 @@ import {
 } from "@/lib/candles";
 import { describeError } from "@/lib/i18n/describe-error";
 import { useLanguage, type Language } from "@/lib/i18n/language-context";
-import { isWithinRegularSession } from "@/lib/market-session";
+import { isWithinTheMostRecentSession } from "@/lib/market-session";
 import { connectMarketPriceStream } from "@/lib/market-price-stream";
 import { POLLING_INTERVAL_MS } from "@/lib/polling";
 import type { GammaResponse, MarketResponse, Underlying } from "@/lib/types";
@@ -163,14 +163,20 @@ export function Dashboard() {
       ]);
       setGamma(gammaData);
       setMarket(marketData);
-      // The chart is meant to show only the regular 09:30-16:00 ET
-      // session -- confirmed live, 2026-09: the backend stream gate
-      // (StreamUnderlyingPriceUseCase) stops *new* extended-hours ticks
-      // from being stored, but a tick written before that gate existed
-      // can still be the "latest" MarketPrice this polls until the next
-      // in-session write, so this stays defensive here too rather than
-      // trusting the API response's as_of unconditionally.
-      if (isWithinRegularSession(Date.parse(marketData.as_of))) {
+      // The chart is meant to show only the most recent regular
+      // 09:30-16:00 ET session -- confirmed live, 2026-09: the backend
+      // stream gate (StreamUnderlyingPriceUseCase) stops *new*
+      // extended-hours ticks from being stored, but a tick written
+      // before that gate existed can still be the "latest" MarketPrice
+      // this polls until the next in-session write, so this stays
+      // defensive here too rather than trusting the API response's
+      // as_of unconditionally. isWithinTheMostRecentSession, not
+      // isWithinRegularSession -- a stale price from a real, but
+      // *older*, trading day used to pass the weaker check (it only
+      // verified the timestamp was within *some* session, its own) and
+      // get plotted as if it were current, corrupting the x-axis
+      // against PriceChart's own anchor (see that check's own comment).
+      if (isWithinTheMostRecentSession(Date.parse(marketData.as_of))) {
         setPricePoints((current) => [
           ...current,
           { timestamp: marketData.as_of, price: marketData.price },
@@ -185,7 +191,7 @@ export function Dashboard() {
         anchoredVwap &&
         !anchoredVwap.provisional &&
         anchoredVwap.value !== null &&
-        isWithinRegularSession(Date.parse(marketData.as_of))
+        isWithinTheMostRecentSession(Date.parse(marketData.as_of))
       ) {
         const value = anchoredVwap.value;
         setVwapPoints((current) =>
@@ -253,7 +259,7 @@ export function Dashboard() {
   useEffect(() => {
     if (!symbol) return;
     const disconnect = connectMarketPriceStream(symbol, (tick) => {
-      if (!isWithinRegularSession(Date.parse(tick.as_of))) return;
+      if (!isWithinTheMostRecentSession(Date.parse(tick.as_of))) return;
       setPricePoints((current) => [
         ...current,
         { timestamp: tick.as_of, price: Number(tick.price) },

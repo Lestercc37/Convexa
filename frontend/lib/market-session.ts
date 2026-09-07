@@ -74,22 +74,47 @@ export function regularSessionRange(referenceMs: number): SessionRange {
   return { openSeconds: Math.floor(openMs / 1000), closeSeconds: Math.floor(closeMs / 1000) };
 }
 
-// Mirrors backend/domain/use_cases/market_hours.py's is_market_open:
-// weekday (Mon-Fri) and the half-open [09:30, 16:00) ET interval -- same
-// known, deliberate limitation (no exchange holiday calendar). Used as a
-// second, defense-in-depth check on the frontend: the backend stream
-// gate (StreamUnderlyingPriceUseCase) stops *new* extended-hours ticks
-// from ever being stored, but a tick written before that gate existed
-// can still be the "latest" MarketPrice the API returns until the next
-// in-session write -- this keeps dashboard.tsx from ever plotting one
-// regardless of what storage currently holds.
-export function isWithinRegularSession(referenceMs: number): boolean {
+// Walks back to the most recent trading day (Mon-Fri) at or before
+// `referenceMs`'s own Eastern calendar date -- Saturday rolls back 1 day
+// to Friday, Sunday rolls back 2. Same "no exchange holiday calendar"
+// limitation as regularSessionRange/market_hours.py's is_market_open,
+// deliberately out of scope (a holiday would need one more day of
+// rollback this doesn't attempt).
+//
+// Confirmed live, 2026-09 (a real Saturday): price-chart.tsx used to
+// anchor the chart's left edge at `regularSessionRange(Date.now())`
+// directly -- on a non-trading day that's the bounds of a session that
+// never happened, computed purely from today's calendar date. Any
+// stale-but-real price already in storage from a past weekday (the
+// "latest" MarketPrice on file when nothing fresh has been written
+// since) still passed the old isWithinRegularSession check, because
+// that check only verified the timestamp was within *some* session --
+// its own -- never that it matched today's or the most recent one. That
+// stale point then violated lightweight-charts' strict ascending-order
+// requirement once anchored against a `today` that came after it,
+// crashing the whole dashboard. Anchoring against the most recent real
+// session instead (Friday's, on a weekend) fixes both: the anchor
+// itself is meaningful, and a genuinely-stale-relative-to-that-session
+// point is what isWithinTheMostRecentSession below now actually rejects.
+export function mostRecentSessionRange(referenceMs: number): SessionRange {
   const weekday = new Intl.DateTimeFormat("en-US", {
     timeZone: EASTERN_TIME_ZONE,
     weekday: "short",
   }).format(new Date(referenceMs));
-  if (weekday === "Sat" || weekday === "Sun") return false;
-  const { openSeconds, closeSeconds } = regularSessionRange(referenceMs);
+  const rollBackDays = weekday === "Sun" ? 2 : weekday === "Sat" ? 1 : 0;
+  const oneDayMs = 24 * 60 * 60 * 1000;
+  return regularSessionRange(referenceMs - rollBackDays * oneDayMs);
+}
+
+// Mirrors backend/domain/use_cases/market_hours.py's is_market_open, but
+// against the most recent real session as of `nowMs` (defaults to real
+// "now"), not `referenceMs`'s own date -- see mostRecentSessionRange's
+// own comment for exactly why that distinction matters. A tick genuinely
+// from the most recent session (Friday's own price, checked over the
+// weekend) is still valid; a stale tick from days before that session
+// is not, even though it was a real, in-session price on its own day.
+export function isWithinTheMostRecentSession(referenceMs: number, nowMs: number = Date.now()): boolean {
+  const { openSeconds, closeSeconds } = mostRecentSessionRange(nowMs);
   const referenceSeconds = Math.floor(referenceMs / 1000);
   return referenceSeconds >= openSeconds && referenceSeconds < closeSeconds;
 }

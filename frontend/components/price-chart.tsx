@@ -18,7 +18,7 @@ import {
 import { getGammaHistory } from "@/lib/api";
 import type { MinuteCandle, Timeframe, VwapPoint } from "@/lib/candles";
 import { useLanguage } from "@/lib/i18n/language-context";
-import { EASTERN_TIME_ZONE, regularSessionRange } from "@/lib/market-session";
+import { EASTERN_TIME_ZONE, mostRecentSessionRange } from "@/lib/market-session";
 import type { AtrRange, GammaHistoryItem, GammaResponse } from "@/lib/types";
 import { LEVEL_MERGE_THRESHOLD } from "./gravity-map";
 
@@ -290,7 +290,16 @@ export function PriceChart({
   // Computed once per mount (the whole component remounts on symbol
   // change via its `key`, so a new session's open is picked up then) --
   // see withSessionOpenAnchor for why this only anchors the left edge.
-  const sessionOpenSecondsRef = useRef(regularSessionRange(Date.now()).openSeconds);
+  // mostRecentSessionRange, not regularSessionRange(Date.now()) directly
+  // -- confirmed live, 2026-09 (a real Saturday): on a non-trading day,
+  // the plain "today" range is a session that never happened, so any
+  // real stale price already on file (from the actual most recent
+  // trading day, e.g. Friday) landed *before* that bogus anchor and
+  // crashed lightweight-charts' strict ascending-order check. Anchoring
+  // against the most recent real session (mostRecentSessionRange's own
+  // comment) fixes this at the source, for every symbol, not just the
+  // one that happened to be open when this was caught.
+  const sessionOpenSecondsRef = useRef(mostRecentSessionRange(Date.now()).openSeconds);
   const [levelMode, setLevelMode] = useState<LevelMode>("static");
   const [history, setHistory] = useState<GammaHistoryItem[]>([]);
   const [showVwap, setShowVwap] = useState(true);
