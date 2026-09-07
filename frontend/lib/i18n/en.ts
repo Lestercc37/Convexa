@@ -118,10 +118,12 @@ export const en: Translations = {
     title: "Alerts",
     empty: "No recent alerts.",
     recentAriaLabel: "Recent alerts",
-    sideTabsAriaLabel: "Side",
     bvcLabel: "Estimated buy/sell (BVC)",
     bvcAriaLabel: (buyPct, sellPct) =>
       `Estimated: ${buyPct}% buy, ${sellPct}% sell — not confirmed data`,
+    dominantBuy: "Buy",
+    dominantSell: "Sell",
+    dominantMixed: "Mixed",
   },
   quickScreener: {
     eyebrow: "Convexa Presets",

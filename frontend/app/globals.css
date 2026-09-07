@@ -480,9 +480,14 @@ button, select { font: inherit; }
 .alert-amount { font-variant-numeric: tabular-nums; }
 .alert-time { color: var(--tv-text-dim); font-size: 0.66rem; }
 
-.alerts-side-tabs { display: flex; align-items: center; gap: 2px; margin-bottom: 8px; border: 1px solid var(--tv-border); border-radius: 6px; padding: 2px; }
-.alerts-side-tabs button { flex: 1 1 0; border: 0; border-radius: 4px; background: transparent; color: var(--tv-text-dim); cursor: pointer; font-size: 0.72rem; font-weight: 700; padding: 5px 0; }
-.alerts-side-tabs button[aria-pressed="true"] { background: var(--tv-panel-raised); color: var(--tv-text); }
+/* Call/Put, per card -- the only place this was visible before was the
+   Calls/Puts tab context itself; now that the unified feed mixes both,
+   this is the only remaining cue (same --calm/--risk pair the rest of
+   the codebase already uses for call/put, e.g. pre-session-panel.tsx,
+   volatility-smile.tsx). */
+.alert-side { align-self: flex-start; font-size: 0.64rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; }
+.alert-side-call { color: var(--calm); }
+.alert-side-put { color: var(--risk); }
 
 /* BVC (PR #67) — a per-card estimate, never confirmed buy/sell data,
    hence the explicit caption text on every card, not just a color. */
@@ -491,6 +496,13 @@ button, select { font: inherit; }
 .alert-bvc-buy { display: block; height: 100%; background: var(--calm); }
 .alert-bvc-sell { display: block; height: 100%; background: var(--risk); }
 .alert-bvc-caption { display: block; margin-top: 2px; color: var(--tv-text-dim); font-size: 0.6rem; }
+/* Dominant side label, computed from the same BVC % already shown --
+   "mixed" (exact 50/50) is a documented no-signal fallback, not a real
+   tie, see alerts-panel.tsx's dominantSide() for why. */
+.alert-dominant { font-weight: 700; }
+.alert-dominant-buy { color: var(--calm); }
+.alert-dominant-sell { color: var(--risk); }
+.alert-dominant-mixed { color: var(--tv-text-dim); }
 
 .tv-settings-button {
   border: 1px solid var(--tv-border);
