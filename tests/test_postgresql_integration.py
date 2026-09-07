@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import threading
 import time
 from collections.abc import Iterator
@@ -24,7 +25,6 @@ from backend.adapters.providers.thetadata.request_slots import (
 )
 from backend.adapters.storage.postgresql import PostgreSQLStorage
 from backend.adapters.storage.postgresql_async import MARKET_PRICE_CHANNEL, AsyncPostgreSQLStorage
-from backend.core.settings import Settings
 from backend.domain.entities import (
     AggressorSide,
     DailyBar,
@@ -47,13 +47,46 @@ from backend.infrastructure.database.session import create_session_factory, crea
 pytestmark = pytest.mark.integration
 
 
+def _require_test_database_url() -> str:
+    """The dedicated, disposable Postgres database every test in this
+    file must run against -- never DATABASE_URL (the real dev database
+    backend/worker/dashboard read from live).
+
+    Confirmed live, 2026-09: two tests here (the symbol_flow_pressure
+    upsert test and the async-reads-what-sync-wrote test) left orphaned
+    rows in the real dev database after their run got interrupted before
+    `postgresql_storage`'s own cleanup could execute -- those rows then
+    leaked into the dashboard's /underlyings dropdown as 2 garbage
+    symbols. `postgresql_storage` previously read DATABASE_URL directly
+    (silently reusing whatever real database the app itself is
+    configured against) specifically so a contributor without Postgres
+    configured could skip these tests harmlessly -- but that same
+    fallback is what let leaked test data land in a real, shared
+    database. Failing loudly when TEST_DATABASE_URL is unset (not
+    skipping, and never falling back to DATABASE_URL) makes that
+    misconfiguration impossible to hit by accident.
+    """
+    url = os.environ.get("TEST_DATABASE_URL")
+    if not url:
+        pytest.fail(
+            "TEST_DATABASE_URL is not set. These tests must run against a "
+            "dedicated, disposable Postgres database -- never DATABASE_URL "
+            "(the real database the live app uses). Create one once "
+            "(e.g. `CREATE DATABASE Convexa_test`), run migrations against it "
+            "(DATABASE_URL=<its URL> alembic upgrade head), then set "
+            "TEST_DATABASE_URL to that same URL before running -m integration tests.",
+            pytrace=False,
+        )
+    if not url.startswith("postgresql"):
+        pytest.fail(f"TEST_DATABASE_URL must point to PostgreSQL, got: {url!r}", pytrace=False)
+    return url
+
+
 @pytest.fixture
 def postgresql_storage() -> Iterator[tuple[PostgreSQLStorage, Engine, str]]:
-    settings = Settings(_env_file=".env")
-    if not settings.database_url.startswith("postgresql"):
-        pytest.skip("DATABASE_URL does not point to PostgreSQL")
+    test_database_url = _require_test_database_url()
 
-    engine = create_sync_engine(settings.database_url)
+    engine = create_sync_engine(test_database_url)
     try:
         with engine.connect() as connection:
             connection.execute(text("SELECT 1"))
@@ -386,7 +419,7 @@ async def test_async_postgresql_storage_reads_what_the_sync_storage_wrote(
     )
     storage.save_daily_gamma_reference(reference)
 
-    async_engine = create_engine(Settings(_env_file=".env").database_url)
+    async_engine = create_engine(_require_test_database_url())
     try:
         async_storage = AsyncPostgreSQLStorage(create_session_factory(async_engine))
 
@@ -422,7 +455,7 @@ async def test_async_postgresql_storage_save_market_price_round_trips(
     now = datetime.now(timezone.utc)
     price = MarketPrice(symbol=symbol, as_of=now, price=Decimal("328.50"), volume=2_000_000)
 
-    async_engine = create_engine(Settings(_env_file=".env").database_url)
+    async_engine = create_engine(_require_test_database_url())
     try:
         async_storage = AsyncPostgreSQLStorage(create_session_factory(async_engine))
         await async_storage.save_market_price(price)
@@ -445,8 +478,8 @@ async def test_save_market_price_sends_a_real_notify_on_market_price_channel(
     uses in production, not a mock -- so a change to the payload shape
     or channel name in either place would break this test too."""
     _, engine, symbol = postgresql_storage
-    settings = Settings(_env_file=".env")
-    dsn = make_url(settings.database_url).set(drivername="postgresql").render_as_string(
+    test_database_url = _require_test_database_url()
+    dsn = make_url(test_database_url).set(drivername="postgresql").render_as_string(
         hide_password=False
     )
 
@@ -457,7 +490,7 @@ async def test_save_market_price_sends_a_real_notify_on_market_price_channel(
             MARKET_PRICE_CHANNEL, lambda conn, pid, channel, payload: received.append(payload)
         )
 
-        async_engine = create_engine(settings.database_url)
+        async_engine = create_engine(test_database_url)
         try:
             async_storage = AsyncPostgreSQLStorage(create_session_factory(async_engine))
             now = datetime.now(timezone.utc)
@@ -538,7 +571,7 @@ async def test_async_postgresql_storage_get_recent_whale_alerts_reads_what_the_s
     )
     sync_storage.save_whale_alert(alert)
 
-    async_engine = create_engine(Settings(_env_file=".env").database_url)
+    async_engine = create_engine(_require_test_database_url())
     try:
         async_storage = AsyncPostgreSQLStorage(create_session_factory(async_engine))
         assert await async_storage.get_recent_whale_alerts(symbol) == [alert]
@@ -547,10 +580,7 @@ async def test_async_postgresql_storage_get_recent_whale_alerts_reads_what_the_s
 
 
 def _theta_slots_engine() -> Engine:
-    settings = Settings(_env_file=".env")
-    if not settings.database_url.startswith("postgresql"):
-        pytest.skip("DATABASE_URL does not point to PostgreSQL")
-    return create_sync_engine(settings.database_url)
+    return create_sync_engine(_require_test_database_url())
 
 
 def test_symbol_flow_pressure_upserts_rather_than_appending(
@@ -613,7 +643,7 @@ async def test_async_postgresql_storage_get_symbol_flow_pressure_reads_what_the_
     )
     sync_storage.save_symbol_flow_pressure(flow)
 
-    async_engine = create_engine(Settings(_env_file=".env").database_url)
+    async_engine = create_engine(_require_test_database_url())
     try:
         async_storage = AsyncPostgreSQLStorage(create_session_factory(async_engine))
         assert await async_storage.get_symbol_flow_pressure(symbol) == flow
@@ -648,10 +678,10 @@ def test_postgres_theta_request_slots_never_double_acquires_under_real_concurren
     here; this proves the atomic UPDATE...WHERE slot = (SELECT ...
     FOR UPDATE SKIP LOCKED) form doesn't.
 
-    Runs against the same live database the dev server uses (same
-    pattern as every other test in this file) -- doesn't assume
-    exclusive ownership of the table, only that none of THIS test's
-    own concurrent holders ever collide, which holds regardless of
+    Runs against the dedicated test database (TEST_DATABASE_URL, same
+    as every other test in this file) -- doesn't assume exclusive
+    ownership of the table, only that none of THIS test's own
+    concurrent holders ever collide, which holds regardless of
     whatever else might be acquiring slots at the same time."""
     engine = _theta_slots_engine()
     holder_prefix = f"race-test-{uuid4().hex[:8]}"
@@ -775,11 +805,9 @@ async def test_async_postgres_theta_request_slots_never_double_acquires_under_re
     AsyncPostgresThetaRequestSlots -- not wired to any caller yet (see
     its own docstring), but its correctness shouldn't wait for Phase 2
     to find out."""
-    settings = Settings(_env_file=".env")
-    if not settings.database_url.startswith("postgresql"):
-        pytest.skip("DATABASE_URL does not point to PostgreSQL")
-    sync_engine = create_sync_engine(settings.database_url)
-    async_engine = create_engine(settings.database_url)
+    test_database_url = _require_test_database_url()
+    sync_engine = create_sync_engine(test_database_url)
+    async_engine = create_engine(test_database_url)
     holder_prefix = f"async-race-test-{uuid4().hex[:8]}"
     try:
         session_factory = create_session_factory(async_engine)

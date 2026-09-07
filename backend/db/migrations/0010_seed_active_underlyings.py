@@ -19,7 +19,18 @@ depends_on = None
 
 
 def upgrade() -> None:
-    """Insert active symbols and correct any stale classifications."""
+    """Insert active symbols and correct any stale classifications.
+
+    Filtered to kind in ('equity', 'index') -- the only two values
+    underlyings_kind_check (migration 0001) allows at this point in the
+    chain. ACTIVE_UNDERLYINGS is imported live here, not a frozen
+    snapshot, so replaying migrations from scratch against today's
+    constant (which now also carries 'future', added later by migration
+    0015) violates that constraint before 0015 ever widens it --
+    confirmed live, 2026-09, bootstrapping a fresh test database from
+    revision <base>. 0015 seeds the 'future' rows itself, immediately
+    after widening the constraint that allows them.
+    """
     connection = op.get_bind()
     statement = text(
         """
@@ -39,6 +50,7 @@ def upgrade() -> None:
                 "is_priority": underlying.is_priority,
             }
             for underlying in ACTIVE_UNDERLYINGS
+            if underlying.kind.value in ("equity", "index")
         ],
     )
 
