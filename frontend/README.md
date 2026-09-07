@@ -16,6 +16,8 @@ Abre `http://localhost:3000`.
 
 Para usar otra instancia del backend, cambia `CONVEXA_API_URL` en `.env.local`.
 
+`pnpm dev` corre con `--webpack` (no Turbopack, el default de Next.js 16.2.x) porque Turbopack se cae con un error de memoria tras ~30min activo — bug conocido, sin resolver: [vercel/next.js#94915](https://github.com/vercel/next.js/issues/94915). Revertir una vez que se resuelva upstream.
+
 ## Validación
 
 ```powershell

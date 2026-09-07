@@ -3,8 +3,9 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
+  "//dev": "--webpack: Turbopack (Next.js 16.2.x's default) crashes with an out-of-memory error after ~30min of dev server uptime -- unresolved upstream bug, see https://github.com/vercel/next.js/issues/94915. Revert to plain `next dev` once that's fixed.",
   "scripts": {
-    "dev": "next dev",
+    "dev": "next dev --webpack",
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
