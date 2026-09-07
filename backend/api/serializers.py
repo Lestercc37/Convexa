@@ -22,6 +22,7 @@ from backend.domain.entities import (
     Walls,
 )
 from backend.domain.use_cases.errors import QllError
+from backend.domain.use_cases.flow import SymbolFlowPressure
 
 
 def underlyings_response(items: list[Underlying]) -> dict[str, Any]:
@@ -325,6 +326,21 @@ def flow_response(symbol: str, events: list[FlowEvent]) -> dict[str, Any]:
             }
             for e in events
         ],
+    }
+
+
+def flow_pressure_response(flow: SymbolFlowPressure) -> dict[str, Any]:
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "symbol": flow.symbol,
+        "as_of": _dt(flow.as_of),
+        "net_call_premium": _num(flow.net_call_premium),
+        "net_put_premium": _num(flow.net_put_premium),
+        "net_client_flow_pressure": _num(flow.net_client_flow_pressure),
+        "rolling_net_call_premium": _num(flow.rolling_net_call_premium),
+        "rolling_net_put_premium": _num(flow.rolling_net_put_premium),
+        "rolling_net_client_flow_pressure": _num(flow.rolling_net_client_flow_pressure),
+        "rolling_window_minutes": flow.rolling_window_minutes,
     }
 
 

@@ -366,6 +366,35 @@ class FlowResponse(BaseModel):
     events: list[FlowEventResponse]
 
 
+class FlowPressureResponse(BaseModel):
+    """Net CLIENT (aggressor) options premium flow -- see
+    `methodology_note` and SymbolFlowPressure's own docstring
+    (backend/domain/use_cases/flow.py) for the full caveat: this is the
+    customer's buy/sell side (Lee-Ready), not a confirmed reading of
+    dealer positioning."""
+
+    schema_version: int = Field(examples=[1])
+    symbol: str
+    as_of: str
+    net_call_premium: Number
+    net_put_premium: Number
+    net_client_flow_pressure: Number
+    rolling_net_call_premium: Number
+    rolling_net_put_premium: Number
+    rolling_net_client_flow_pressure: Number
+    rolling_window_minutes: int
+    methodology_note: str = Field(
+        default=(
+            "Measures the CLIENT/aggressor side of each trade (Lee-Ready "
+            "classification), not a confirmed reading of dealer "
+            "positioning. A customer selling puts does not by itself "
+            "confirm the dealer is long gamma from it -- that depends on "
+            "whether the dealer is opening or closing a position, which "
+            "isn't observable from trade classification alone."
+        )
+    )
+
+
 class TriggerCalculationResponse(BaseModel):
     schema_version: int = Field(examples=[1])
     symbol: str

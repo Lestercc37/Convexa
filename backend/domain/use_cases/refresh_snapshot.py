@@ -35,6 +35,26 @@ class RefreshUnderlyingSnapshotUseCase:
         self.storage.save_chain_snapshot(chain)
         self.whale_alerts_engine.process(chain)
 
+        # Net client flow pressure (SymbolFlowPressure) lives only in
+        # WhaleAlertsEngine's in-memory session accumulation, fed by
+        # process_trade() (the real trade stream) -- see that method's
+        # own comment for why process() above doesn't also feed it.
+        # Snapshotting it to storage here, on the same ~30s cadence as
+        # everything else this method persists, is what makes it visible
+        # to the API process at all: since the process split, the API's
+        # own WhaleAlertsEngine instance never receives any
+        # process()/process_trade() calls (it doesn't run the streams),
+        # so reading the Worker's in-memory engine directly from an API
+        # route would always see nothing. A plain sync write, not
+        # debounced per-trade -- this whole method already runs off the
+        # event loop (asyncio.to_thread, see core/scheduler.py), so
+        # there's no risk of blocking it the way an ungated per-trade
+        # write would (that mistake already happened once, and was fixed,
+        # for StreamUnderlyingPriceUseCase's own MarketPrice writes).
+        flow_pressure = self.whale_alerts_engine.symbol_flow(symbol)
+        if flow_pressure is not None:
+            self.storage.save_symbol_flow_pressure(flow_pressure)
+
         market = self.market_data_provider.get_underlying_snapshot(symbol)
         self.storage.save_market_price(
             MarketPrice(

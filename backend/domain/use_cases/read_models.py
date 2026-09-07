@@ -15,6 +15,7 @@ from backend.domain.use_cases.calculate_expected_move import (
     calculate_time_to_close_pct,
 )
 from backend.domain.use_cases.errors import NotFoundError
+from backend.domain.use_cases.flow import SymbolFlowPressure
 from backend.domain.use_cases.market_hours import is_market_open
 
 DEFAULT_FRESHNESS_SECONDS = 60
@@ -47,6 +48,22 @@ def get_option_chain(
 
 def get_flow(storage: IStorage, underlying: str, since: datetime | None = None, limit: int = 100):
     return storage.get_flow_events(underlying, since, limit)
+
+
+async def get_symbol_flow_pressure_async(
+    storage: IAsyncMarketReadStorage, underlying: str
+) -> SymbolFlowPressure:
+    """`/flow/{symbol}/pressure`'s own read -- async for the same reason
+    as build_market_snapshot_async (see AsyncPostgreSQLStorage's own
+    docstring): a plain storage read, no reason to share the scheduler's
+    threadpool. Raises NotFoundError when nothing has been persisted yet
+    (the Worker hasn't classified a trade for this symbol this session --
+    see SymbolFlowPressure's own docstring for when that happens), same
+    "no data at all" convention as build_market_snapshot_async above."""
+    flow = await storage.get_symbol_flow_pressure(underlying)
+    if flow is None:
+        raise NotFoundError(f"No net flow pressure found for {underlying}")
+    return flow
 
 
 def build_market_snapshot(storage: IStorage, underlying: str) -> MarketSnapshot:

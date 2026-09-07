@@ -497,3 +497,128 @@ def test_process_and_process_trade_never_share_state_for_the_same_contract() -> 
     assert len(alerts) == 1
     assert alerts[0].alert_type is WhaleAlertType.UNUSUAL
     assert alerts[0].amount == Decimal("45000.00")
+
+
+# --- symbol_flow() -- net client flow pressure, per underlying, fed only
+# by process_trade() (see SymbolFlowPressure's own docstring for why not
+# process() too).
+
+TRADE_PUT_OCC_SYMBOL = "IWM260220P00185000"
+
+
+def _trade_for(occ_symbol: str, period: int, premium: str) -> FlowEvent:
+    return FlowEvent(
+        symbol=TRADE_SYMBOL,
+        occ_symbol=occ_symbol,
+        as_of=TRADE_BASE_TIME + timedelta(minutes=period),
+        event_type=FlowEventType.UNUSUAL,
+        premium=Decimal(premium),
+        size=1,
+        aggressor_side=Side.UNKNOWN,
+    )
+
+
+def test_symbol_flow_is_none_before_any_trade() -> None:
+    engine = WhaleAlertsEngine(InMemoryStorage())
+    assert engine.symbol_flow(TRADE_SYMBOL) is None
+
+
+def test_symbol_flow_accumulates_net_premium_separately_for_calls_and_puts() -> None:
+    engine = WhaleAlertsEngine(InMemoryStorage())
+
+    # BUY_LEANING_QUOTE's midpoint is far below every premium here, so
+    # every trade classifies as a clean quote-rule BUY.
+    engine.process_trade(_trade_for(TRADE_OCC_SYMBOL, 0, "1000"), BUY_LEANING_QUOTE)
+    engine.process_trade(_trade_for(TRADE_OCC_SYMBOL, 1, "500"), BUY_LEANING_QUOTE)
+    engine.process_trade(_trade_for(TRADE_PUT_OCC_SYMBOL, 2, "200"), BUY_LEANING_QUOTE)
+
+    flow = engine.symbol_flow(TRADE_SYMBOL)
+
+    assert flow is not None
+    assert flow.symbol == TRADE_SYMBOL
+    assert flow.net_call_premium == Decimal("1500")
+    assert flow.net_put_premium == Decimal("200")
+    assert flow.net_client_flow_pressure == Decimal("1300")  # 1500 - 200
+
+
+def test_symbol_flow_nets_buys_against_sells_on_the_same_side() -> None:
+    engine = WhaleAlertsEngine(InMemoryStorage())
+    sell_leaning_quote = LatestQuote(bid=Decimal("99999"), ask=Decimal("100000"), as_of=TRADE_BASE_TIME)
+
+    engine.process_trade(_trade_for(TRADE_OCC_SYMBOL, 0, "1000"), BUY_LEANING_QUOTE)  # +1000
+    engine.process_trade(_trade_for(TRADE_OCC_SYMBOL, 1, "300"), sell_leaning_quote)  # -300
+
+    flow = engine.symbol_flow(TRADE_SYMBOL)
+
+    assert flow is not None
+    assert flow.net_call_premium == Decimal("700")  # 1000 - 300
+
+
+def test_symbol_flow_is_scoped_per_symbol() -> None:
+    engine = WhaleAlertsEngine(InMemoryStorage())
+    engine.process_trade(_trade_for(TRADE_OCC_SYMBOL, 0, "1000"), BUY_LEANING_QUOTE)
+
+    other_symbol_trade = FlowEvent(
+        symbol="SPY",
+        occ_symbol="SPY260220C00540000",
+        as_of=TRADE_BASE_TIME,
+        event_type=FlowEventType.UNUSUAL,
+        premium=Decimal("5000"),
+        size=1,
+        aggressor_side=Side.UNKNOWN,
+    )
+    engine.process_trade(other_symbol_trade, BUY_LEANING_QUOTE)
+
+    assert engine.symbol_flow(TRADE_SYMBOL).net_call_premium == Decimal("1000")
+    assert engine.symbol_flow("SPY").net_call_premium == Decimal("5000")
+
+
+def test_symbol_flow_resets_at_a_new_session() -> None:
+    engine = WhaleAlertsEngine(InMemoryStorage())
+    engine.process_trade(_trade_for(TRADE_OCC_SYMBOL, 0, "1000"), BUY_LEANING_QUOTE)
+    assert engine.symbol_flow(TRADE_SYMBOL).net_call_premium == Decimal("1000")
+
+    next_session_trade = FlowEvent(
+        symbol=TRADE_SYMBOL,
+        occ_symbol=TRADE_OCC_SYMBOL,
+        as_of=TRADE_BASE_TIME + timedelta(days=1),
+        event_type=FlowEventType.UNUSUAL,
+        premium=Decimal("50"),
+        size=1,
+        aggressor_side=Side.UNKNOWN,
+    )
+    engine.process_trade(next_session_trade, BUY_LEANING_QUOTE)
+
+    flow = engine.symbol_flow(TRADE_SYMBOL)
+    assert flow.net_call_premium == Decimal("50"), "yesterday's total must not carry over"
+
+
+def test_symbol_flow_rolling_window_excludes_trades_older_than_the_window() -> None:
+    engine = WhaleAlertsEngine(InMemoryStorage())
+    # _NET_FLOW_ROLLING_WINDOW is 15 minutes -- this trade will have aged
+    # out of the rolling window (but not the session total) by the time
+    # the second trade lands 20 minutes later.
+    engine.process_trade(_trade_for(TRADE_OCC_SYMBOL, 0, "1000"), BUY_LEANING_QUOTE)
+    engine.process_trade(_trade_for(TRADE_OCC_SYMBOL, 20, "300"), BUY_LEANING_QUOTE)
+
+    flow = engine.symbol_flow(TRADE_SYMBOL)
+
+    assert flow.net_call_premium == Decimal("1300"), "session total includes both trades"
+    assert flow.rolling_net_call_premium == Decimal("300"), "rolling window excludes the aged-out one"
+    assert flow.rolling_window_minutes == 15
+
+
+def test_process_never_feeds_symbol_flow_to_avoid_double_counting_the_trade_stream() -> None:
+    # Confirmed live, 2026-09: OptionContract.volume (what process()'s BVC
+    # classification is derived from) already comes from
+    # ThetaTradeStream.cumulative_volume -- the same counter
+    # process_trade() classifies directly. Accumulating both into
+    # symbol_flow() would double-count the same real trades.
+    engine = WhaleAlertsEngine(InMemoryStorage())
+    base = MockDataProvider().get_option_chain("IWM")
+    cumulative = 100
+    for period in range(8):
+        cumulative += 1000
+        engine.process(_chain(base, cumulative, period))
+
+    assert engine.symbol_flow("IWM") is None

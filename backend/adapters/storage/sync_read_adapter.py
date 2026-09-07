@@ -11,7 +11,7 @@ from backend.domain.entities import (
     OptionChain,
 )
 from backend.domain.ports import IStorage
-from backend.domain.use_cases.flow import WhaleAlert
+from backend.domain.use_cases.flow import SymbolFlowPressure, WhaleAlert
 
 
 class SyncStorageAsyncReadAdapter:
@@ -64,3 +64,6 @@ class SyncStorageAsyncReadAdapter:
 
     async def get_recent_whale_alerts(self, underlying: str, limit: int = 100) -> list[WhaleAlert]:
         return self._storage.get_recent_whale_alerts(underlying, limit=limit)
+
+    async def get_symbol_flow_pressure(self, underlying: str) -> SymbolFlowPressure | None:
+        return self._storage.get_symbol_flow_pressure(underlying)

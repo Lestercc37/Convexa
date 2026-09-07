@@ -2,17 +2,18 @@ from __future__ import annotations
 
 from collections import deque
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 from enum import StrEnum
 
-from backend.domain.entities import FlowEvent, LatestQuote, OptionChain, Side
+from backend.domain.entities import ContractType, FlowEvent, LatestQuote, OptionChain, Side
 from backend.domain.ports import IStorage
 from backend.domain.use_cases.calculate_bvc import (
     calculate_bvc_split,
     calculate_price_volatility,
 )
 from backend.domain.use_cases.calculate_lee_ready import classify_trade_side
+from backend.domain.use_cases.market_hours import EASTERN_TIME
 
 
 class WhaleAlertType(StrEnum):
@@ -47,6 +48,52 @@ class WhaleAlert:
     # confirmed buy/sell-side order flow. See calculate_bvc.py.
     estimated_buy_volume: Decimal
     estimated_sell_volume: Decimal
+
+
+@dataclass(frozen=True, slots=True)
+class SymbolFlowPressure:
+    """Net CLIENT (aggressor) options premium flow for one underlying,
+    classified by Lee-Ready (process_trade) -- never a confirmed reading
+    of dealer positioning. A trade's aggressor side tells us whether the
+    *customer* bought or sold that contract; whether the dealer on the
+    other side is opening or closing a position, and therefore what this
+    implies about dealer gamma, is not observable from this alone. Field
+    names say "client", not "dealer", deliberately, so this isn't
+    mistaken for the latter downstream.
+
+    Deliberately fed only by process_trade() (Lee-Ready, the real trade
+    stream), never by process() (BVC, periodic chain-snapshot polling)
+    even though both eventually classify buy/sell volume -- confirmed
+    live, 2026-09: OptionContract.volume (what process()'s volume-delta
+    BVC classification is derived from) already comes from
+    ThetaTradeStream.cumulative_volume, the *same* trade-stream counter
+    process_trade() classifies directly and more precisely, trade by
+    trade rather than via a coarser volume-delta proxy. Accumulating
+    both here would double-count the same real trades under two
+    different classifiers. If the real trade stream isn't connected
+    (MockDataProvider, or a real one that never connects), this stays
+    empty rather than silently substituting the coarser BVC reading --
+    the same "empty and honest, not a stand-in" convention this codebase
+    already applies elsewhere (e.g. DerivedMetricValue.provisional).
+    """
+
+    symbol: str
+    as_of: datetime
+    net_call_premium: Decimal
+    net_put_premium: Decimal
+    net_client_flow_pressure: Decimal
+    rolling_net_call_premium: Decimal
+    rolling_net_put_premium: Decimal
+    rolling_net_client_flow_pressure: Decimal
+    rolling_window_minutes: int
+
+
+def _contract_type_from_occ_symbol(occ_symbol: str) -> ContractType:
+    """OCC symbols this codebase builds (_build_occ_symbol in the
+    ThetaData adapter) always end in <YYMMDD><C or P><8-digit strike> --
+    15 trailing characters regardless of root length, so the call/put
+    character is always exactly 9 characters from the end."""
+    return ContractType.CALL if occ_symbol[-9] == "C" else ContractType.PUT
 
 
 def _floor_to_minute(moment: datetime) -> datetime:
@@ -93,6 +140,26 @@ class _ContractState:
     previous_side: Side = Side.UNKNOWN
 
 
+@dataclass(slots=True)
+class _SymbolFlowState:
+    """Per-underlying (not per-contract) net client flow — see
+    SymbolFlowPressure for the full methodology caveat. `rolling_flow`
+    holds one (as_of, call_net, put_net) entry per process_trade() call
+    for this symbol, trimmed to the trailing window as new entries
+    arrive; `rolling_call_sum`/`rolling_put_sum` are maintained
+    incrementally alongside it (updated on both append and trim) so
+    reading the current rolling totals is O(1), not a fresh sum over the
+    deque on every read."""
+
+    session_date: date | None = None
+    net_call_premium: Decimal = Decimal(0)
+    net_put_premium: Decimal = Decimal(0)
+    rolling_flow: deque[tuple[datetime, Decimal, Decimal]] = field(default_factory=deque)
+    rolling_call_sum: Decimal = Decimal(0)
+    rolling_put_sum: Decimal = Decimal(0)
+    last_as_of: datetime | None = None
+
+
 class WhaleAlertsEngine:
     """Detect unusual contract volume from provider-independent chain snapshots.
 
@@ -120,6 +187,16 @@ class WhaleAlertsEngine:
     # anchored to real elapsed time so it holds regardless of how often
     # readings actually arrive (see `_ContractState.price_deltas`).
     _PRICE_VOLATILITY_WINDOW = timedelta(minutes=10)
+    # Net client flow pressure (SymbolFlowPressure): same order of
+    # magnitude as _PRICE_VOLATILITY_WINDOW (10min) and the per-contract
+    # Sustained Flow window (15 readings) above -- picked to sit in the
+    # same ballpark as this file's other time-based windows, not a new,
+    # unrelated magnitude. Answers "is something concentrated happening
+    # right now", alongside net_call_premium/net_put_premium's
+    # session-since-open total, which answers "what's today's bias so
+    # far" -- genuinely different questions, so both are kept rather than
+    # picking one.
+    _NET_FLOW_ROLLING_WINDOW = timedelta(minutes=15)
 
     def __init__(
         self,
@@ -138,6 +215,10 @@ class WhaleAlertsEngine:
         # bucket. See _ContractState and process_trade().
         self._trade_states: dict[str, _ContractState] = {}
         self._alerts: deque[WhaleAlert] = deque(maxlen=alert_limit)
+        # Per-underlying (not per-contract) net client flow -- see
+        # SymbolFlowPressure/_SymbolFlowState. Fed only by process_trade()
+        # (see that method's own comment for why not process() too).
+        self._symbol_flow: dict[str, _SymbolFlowState] = {}
 
     def _resolve_thresholds(self, symbol: str) -> WhaleAlertThresholds:
         persisted = self._storage.get_whale_thresholds().get(symbol.upper())
@@ -270,6 +351,13 @@ class WhaleAlertsEngine:
             half = event.premium / 2
             buy_volume, sell_volume = half, half
 
+        self._record_symbol_flow(
+            event.symbol,
+            event.as_of,
+            _contract_type_from_occ_symbol(event.occ_symbol),
+            buy_volume - sell_volume,
+        )
+
         generated: list[WhaleAlert] = []
         if current_bucket_start != state.bucket_start:
             generated.extend(
@@ -388,6 +476,68 @@ class WhaleAlertsEngine:
         normalized = symbol.upper()
         matches = (alert for alert in reversed(self._alerts) if alert.symbol == normalized)
         return tuple(alert for _, alert in zip(range(limit), matches, strict=False))
+
+    def _record_symbol_flow(
+        self, symbol: str, as_of: datetime, contract_type: ContractType, net: Decimal
+    ) -> None:
+        normalized = symbol.upper()
+        state = self._symbol_flow.setdefault(normalized, _SymbolFlowState())
+
+        session_date = as_of.astimezone(EASTERN_TIME).date()
+        if state.session_date != session_date:
+            # New session (or the first reading ever for this symbol) --
+            # the whole point of a session-accumulated total is that it
+            # resets at the open, same convention as
+            # calculate_session_open/isWithinRegularSession elsewhere in
+            # this codebase, just enforced here rather than assumed from
+            # a gap in incoming events (a Worker restart mid-session
+            # would otherwise silently look like a fresh session too --
+            # accepted, since a restart already loses this in-memory
+            # state entirely regardless).
+            state.session_date = session_date
+            state.net_call_premium = Decimal(0)
+            state.net_put_premium = Decimal(0)
+            state.rolling_flow.clear()
+            state.rolling_call_sum = Decimal(0)
+            state.rolling_put_sum = Decimal(0)
+
+        if contract_type == ContractType.CALL:
+            state.net_call_premium += net
+            state.rolling_call_sum += net
+            state.rolling_flow.append((as_of, net, Decimal(0)))
+        else:
+            state.net_put_premium += net
+            state.rolling_put_sum += net
+            state.rolling_flow.append((as_of, Decimal(0), net))
+
+        cutoff = as_of - self._NET_FLOW_ROLLING_WINDOW
+        while state.rolling_flow and state.rolling_flow[0][0] < cutoff:
+            _, old_call, old_put = state.rolling_flow.popleft()
+            state.rolling_call_sum -= old_call
+            state.rolling_put_sum -= old_put
+
+        state.last_as_of = as_of
+
+    def symbol_flow(self, symbol: str) -> SymbolFlowPressure | None:
+        """Current net client flow pressure for `symbol`, or `None` if no
+        trade has been classified for it yet this session (Worker just
+        started, or the real trade stream isn't connected -- see
+        SymbolFlowPressure's own docstring for why this is left empty
+        rather than approximated)."""
+        state = self._symbol_flow.get(symbol.upper())
+        if state is None or state.last_as_of is None:
+            return None
+        return SymbolFlowPressure(
+            symbol=symbol.upper(),
+            as_of=state.last_as_of,
+            net_call_premium=state.net_call_premium,
+            net_put_premium=state.net_put_premium,
+            net_client_flow_pressure=state.net_call_premium - state.net_put_premium,
+            rolling_net_call_premium=state.rolling_call_sum,
+            rolling_net_put_premium=state.rolling_put_sum,
+            rolling_net_client_flow_pressure=state.rolling_call_sum - state.rolling_put_sum,
+            rolling_window_minutes=int(self._NET_FLOW_ROLLING_WINDOW.total_seconds() // 60),
+        )
 
     @staticmethod
     def _classify(

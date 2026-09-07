@@ -32,7 +32,7 @@ from backend.domain.entities import (
     WhaleThreshold,
 )
 from backend.domain.underlyings import ACTIVE_UNDERLYINGS_BY_SYMBOL
-from backend.domain.use_cases.flow import WhaleAlert, WhaleAlertType
+from backend.domain.use_cases.flow import SymbolFlowPressure, WhaleAlert, WhaleAlertType
 
 
 class PostgreSQLStorage:
@@ -831,6 +831,85 @@ class PostgreSQLStorage:
                 )
                 for row in rows
             ]
+
+    def save_symbol_flow_pressure(self, flow: SymbolFlowPressure) -> None:
+        # Upsert, not append: only the current snapshot is kept (unlike
+        # whale_alerts' append-only history) -- the API only ever needs
+        # "what is it right now", and the Worker overwrites this every
+        # scheduler cycle (~30s) from WhaleAlertsEngine.symbol_flow()'s
+        # own in-memory session accumulation, so there's no history to
+        # lose by replacing the row each time.
+        with self.session_factory.begin() as session:
+            underlying_id = self._ensure_underlying(session, flow.symbol)
+            session.execute(
+                text(
+                    """
+                    INSERT INTO symbol_flow_pressure (
+                        underlying_id, as_of, net_call_premium, net_put_premium,
+                        rolling_net_call_premium, rolling_net_put_premium,
+                        rolling_window_minutes
+                    )
+                    VALUES (
+                        :underlying_id, :as_of, :net_call_premium, :net_put_premium,
+                        :rolling_net_call_premium, :rolling_net_put_premium,
+                        :rolling_window_minutes
+                    )
+                    ON CONFLICT (underlying_id) DO UPDATE SET
+                        as_of = EXCLUDED.as_of,
+                        net_call_premium = EXCLUDED.net_call_premium,
+                        net_put_premium = EXCLUDED.net_put_premium,
+                        rolling_net_call_premium = EXCLUDED.rolling_net_call_premium,
+                        rolling_net_put_premium = EXCLUDED.rolling_net_put_premium,
+                        rolling_window_minutes = EXCLUDED.rolling_window_minutes
+                    """
+                ),
+                {
+                    "underlying_id": underlying_id,
+                    "as_of": flow.as_of,
+                    "net_call_premium": flow.net_call_premium,
+                    "net_put_premium": flow.net_put_premium,
+                    "rolling_net_call_premium": flow.rolling_net_call_premium,
+                    "rolling_net_put_premium": flow.rolling_net_put_premium,
+                    "rolling_window_minutes": flow.rolling_window_minutes,
+                },
+            )
+
+    def get_symbol_flow_pressure(self, underlying: str) -> SymbolFlowPressure | None:
+        with self.session_factory() as session:
+            row = (
+                session.execute(
+                    text(
+                        """
+                        SELECT u.symbol, f.as_of, f.net_call_premium, f.net_put_premium,
+                               f.rolling_net_call_premium, f.rolling_net_put_premium,
+                               f.rolling_window_minutes
+                        FROM symbol_flow_pressure AS f
+                        JOIN underlyings AS u ON u.id = f.underlying_id
+                        WHERE u.symbol = :symbol
+                        """
+                    ),
+                    {"symbol": underlying.upper()},
+                )
+                .mappings()
+                .one_or_none()
+            )
+        if row is None:
+            return None
+        net_call = Decimal(row["net_call_premium"])
+        net_put = Decimal(row["net_put_premium"])
+        rolling_call = Decimal(row["rolling_net_call_premium"])
+        rolling_put = Decimal(row["rolling_net_put_premium"])
+        return SymbolFlowPressure(
+            symbol=str(row["symbol"]),
+            as_of=row["as_of"],
+            net_call_premium=net_call,
+            net_put_premium=net_put,
+            net_client_flow_pressure=net_call - net_put,
+            rolling_net_call_premium=rolling_call,
+            rolling_net_put_premium=rolling_put,
+            rolling_net_client_flow_pressure=rolling_call - rolling_put,
+            rolling_window_minutes=int(row["rolling_window_minutes"]),
+        )
 
     def save_minute_bar(self, bar: MinuteBar) -> None:
         """Not part of `IStorage` — used only by the one-time Indices Pro

@@ -22,7 +22,7 @@ from backend.domain.entities import (
     UnderlyingKind,
 )
 from backend.domain.underlyings import ACTIVE_UNDERLYINGS_BY_SYMBOL
-from backend.domain.use_cases.flow import WhaleAlert, WhaleAlertType
+from backend.domain.use_cases.flow import SymbolFlowPressure, WhaleAlert, WhaleAlertType
 
 # One shared channel for every symbol's live price ticks, not one
 # channel per symbol -- a single LISTEN on the API side covers every
@@ -340,6 +340,40 @@ class AsyncPostgreSQLStorage:
             )
             for row in rows
         ]
+
+    async def get_symbol_flow_pressure(self, underlying: str) -> SymbolFlowPressure | None:
+        async with self.session_factory() as session:
+            result = await session.execute(
+                text(
+                    """
+                    SELECT u.symbol, f.as_of, f.net_call_premium, f.net_put_premium,
+                           f.rolling_net_call_premium, f.rolling_net_put_premium,
+                           f.rolling_window_minutes
+                    FROM symbol_flow_pressure AS f
+                    JOIN underlyings AS u ON u.id = f.underlying_id
+                    WHERE u.symbol = :symbol
+                    """
+                ),
+                {"symbol": underlying.upper()},
+            )
+            row = result.mappings().one_or_none()
+        if row is None:
+            return None
+        net_call = Decimal(row["net_call_premium"])
+        net_put = Decimal(row["net_put_premium"])
+        rolling_call = Decimal(row["rolling_net_call_premium"])
+        rolling_put = Decimal(row["rolling_net_put_premium"])
+        return SymbolFlowPressure(
+            symbol=str(row["symbol"]),
+            as_of=row["as_of"],
+            net_call_premium=net_call,
+            net_put_premium=net_put,
+            net_client_flow_pressure=net_call - net_put,
+            rolling_net_call_premium=rolling_call,
+            rolling_net_put_premium=rolling_put,
+            rolling_net_client_flow_pressure=rolling_call - rolling_put,
+            rolling_window_minutes=int(row["rolling_window_minutes"]),
+        )
 
     async def save_market_price(self, price: MarketPrice) -> None:
         # pg_notify() inside the same transaction as the INSERT --

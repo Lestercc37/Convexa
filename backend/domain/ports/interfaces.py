@@ -4,14 +4,14 @@ from datetime import date, datetime
 from typing import TYPE_CHECKING, AsyncIterator, Protocol
 
 if TYPE_CHECKING:
-    # WhaleAlert/WhaleAlertType live in domain/use_cases/flow.py, not
-    # entities.py -- a pre-existing quirk, not something this change
-    # relocates. A real (non-TYPE_CHECKING) import here would be
-    # circular: flow.py already imports IStorage from this module.
-    # `from __future__ import annotations` (above) makes every
-    # annotation in this file a lazy string, so this only matters for
-    # static type checkers, never at runtime.
-    from backend.domain.use_cases.flow import WhaleAlert
+    # WhaleAlert/WhaleAlertType/SymbolFlowPressure live in
+    # domain/use_cases/flow.py, not entities.py -- a pre-existing quirk,
+    # not something this change relocates. A real (non-TYPE_CHECKING)
+    # import here would be circular: flow.py already imports IStorage
+    # from this module. `from __future__ import annotations` (above)
+    # makes every annotation in this file a lazy string, so this only
+    # matters for static type checkers, never at runtime.
+    from backend.domain.use_cases.flow import SymbolFlowPressure, WhaleAlert
 
 from backend.domain.entities import (
     DailyBar,
@@ -125,6 +125,8 @@ class IStorage(Protocol):
     def get_daily_bars(self, underlying: str, limit: int = 15) -> list[DailyBar]: ...
     def save_whale_alert(self, alert: WhaleAlert) -> None: ...
     def get_recent_whale_alerts(self, underlying: str, limit: int = 100) -> list[WhaleAlert]: ...
+    def save_symbol_flow_pressure(self, flow: SymbolFlowPressure) -> None: ...
+    def get_symbol_flow_pressure(self, underlying: str) -> SymbolFlowPressure | None: ...
 
 
 class IAsyncMarketReadStorage(Protocol):
@@ -157,6 +159,7 @@ class IAsyncMarketReadStorage(Protocol):
     async def get_recent_whale_alerts(
         self, underlying: str, limit: int = 100
     ) -> list[WhaleAlert]: ...
+    async def get_symbol_flow_pressure(self, underlying: str) -> SymbolFlowPressure | None: ...
 
 
 class INotificationService(Protocol):

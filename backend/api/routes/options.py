@@ -5,6 +5,7 @@ from datetime import date, datetime, timezone
 from fastapi import APIRouter, Query, Request
 
 from backend.api.schemas import (
+    FlowPressureResponse,
     FlowResponse,
     GammaAggregateResponse,
     GammaFlipResponse,
@@ -15,6 +16,7 @@ from backend.api.schemas import (
 )
 from backend.api.serializers import (
     chain_response,
+    flow_pressure_response,
     flow_response,
     gamma_aggregate_response,
     gamma_flip_response,
@@ -31,6 +33,7 @@ from backend.domain.use_cases import (
     get_gamma_exposure_async,
     get_gamma_history,
     get_option_chain,
+    get_symbol_flow_pressure_async,
 )
 
 router = APIRouter(tags=["options"])
@@ -124,3 +127,21 @@ def flow(
     container: Container = request.app.state.container
     events = get_flow(container.storage, symbol, since, limit)
     return FlowResponse.model_validate(flow_response(symbol, events))
+
+
+@router.get(
+    "/flow/{symbol}/pressure",
+    response_model=FlowPressureResponse,
+    summary="Net client options flow pressure",
+    description=(
+        "Net CLIENT (aggressor) options premium flow, classified by "
+        "Lee-Ready -- NOT a confirmed reading of dealer positioning. "
+        "See the response's own methodology_note."
+    ),
+)
+async def flow_pressure(symbol: str, request: Request) -> FlowPressureResponse:
+    # async def, not def: same reasoning as /gamma and /market -- a pure
+    # storage read (see AsyncPostgreSQLStorage's own docstring).
+    container: Container = request.app.state.container
+    flow = await get_symbol_flow_pressure_async(container.async_market_storage, symbol)
+    return FlowPressureResponse.model_validate(flow_pressure_response(flow))
