@@ -4,7 +4,7 @@ import { TickMarkType } from "lightweight-charts";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { MinuteCandle } from "@/lib/candles";
 import { renderWithLanguage } from "@/lib/i18n/test-utils";
-import { regularSessionRange } from "@/lib/market-session";
+import { mostRecentSessionRange } from "@/lib/market-session";
 import type { AtrRange, GammaResponse } from "@/lib/types";
 import { derivedMetricsFixture } from "@/test/fixtures";
 import { PriceChart } from "./price-chart";
@@ -136,7 +136,7 @@ const gamma: GammaResponse = {
 describe("PriceChart", () => {
   it("mounts Lightweight Charts with candles and Gamma overlays", () => {
     vi.setSystemTime(new Date("2026-08-06T15:00:00Z")); // 11:00 ET, same day as the fixture candle
-    const sessionOpenAnchor = regularSessionRange(Date.now()).openSeconds - 1;
+    const sessionOpenAnchor = mostRecentSessionRange(Date.now()).openSeconds - 1;
 
     const { container } = renderWithLanguage(
       <PriceChart
@@ -187,7 +187,7 @@ describe("PriceChart", () => {
     // reload), not by constructing an actually-out-of-order `candles`
     // prop.
     vi.setSystemTime(new Date("2026-08-06T15:00:00Z"));
-    const sessionOpenAnchor = regularSessionRange(Date.now()).openSeconds - 1;
+    const sessionOpenAnchor = mostRecentSessionRange(Date.now()).openSeconds - 1;
     const firstCandle = { time: 1_786_026_600, open: 548, high: 552, low: 548, close: 550 };
     const secondCandle = { time: 1_786_026_660, open: 550, high: 553, low: 549, close: 551 };
     const consoleWarn = vi.spyOn(console, "warn").mockImplementation(() => {});
@@ -231,7 +231,7 @@ describe("PriceChart", () => {
     // market is still open. That's a real library constraint, not an
     // oversight here.
     vi.setSystemTime(new Date("2026-09-03T14:00:00Z")); // 10:00 ET
-    const sessionOpenAnchor = regularSessionRange(Date.now()).openSeconds - 1;
+    const sessionOpenAnchor = mostRecentSessionRange(Date.now()).openSeconds - 1;
 
     renderWithLanguage(
       <PriceChart
@@ -787,7 +787,7 @@ describe("PriceChart", () => {
 
   it("nudges the price scale to recompute autoscale whenever Gamma or ATR reference levels change", () => {
     vi.setSystemTime(new Date("2026-08-03T15:00:00Z")); // 11:00 ET -- matches candlesWithRange's own day
-    const sessionOpenAnchor = regularSessionRange(Date.now()).openSeconds - 1;
+    const sessionOpenAnchor = mostRecentSessionRange(Date.now()).openSeconds - 1;
 
     const { rerender } = renderWithLanguage(
       <PriceChart symbol="SPY" gamma={gamma} candles={candlesWithRange} />,
