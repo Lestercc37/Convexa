@@ -10,7 +10,7 @@ from backend.domain.entities import (
     OptionChain,
     Underlying,
 )
-from backend.domain.use_cases.flow import WhaleAlert
+from backend.domain.use_cases.flow import SymbolFlowPressure, WhaleAlert
 
 
 class TimescaleStorage:
@@ -73,4 +73,10 @@ class TimescaleStorage:
         raise NotImplementedError
 
     def get_recent_whale_alerts(self, underlying: str, limit: int = 100) -> list[WhaleAlert]:
+        raise NotImplementedError
+
+    def save_symbol_flow_pressure(self, flow: SymbolFlowPressure) -> None:
+        raise NotImplementedError
+
+    def get_symbol_flow_pressure(self, underlying: str) -> SymbolFlowPressure | None:
         raise NotImplementedError

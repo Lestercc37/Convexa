@@ -40,7 +40,7 @@ from backend.domain.entities import (
     WhaleThreshold,
 )
 from backend.domain.underlyings import ACTIVE_UNDERLYINGS
-from backend.domain.use_cases.flow import WhaleAlert, WhaleAlertType
+from backend.domain.use_cases.flow import SymbolFlowPressure, WhaleAlert, WhaleAlertType
 from backend.infrastructure.database.engine import create_engine, create_sync_engine
 from backend.infrastructure.database.session import create_session_factory, create_sync_session_factory
 
@@ -553,6 +553,75 @@ def _theta_slots_engine() -> Engine:
     return create_sync_engine(settings.database_url)
 
 
+def test_symbol_flow_pressure_upserts_rather_than_appending(
+    postgresql_storage: tuple[PostgreSQLStorage, Engine, str],
+) -> None:
+    """symbol_flow_pressure keeps only the current snapshot (unlike
+    whale_alerts' append-only history) -- the Worker's scheduler cycle
+    overwrites this every ~30s from WhaleAlertsEngine.symbol_flow()'s own
+    in-memory session accumulation. Confirms a second save REPLACES the
+    row for the same symbol rather than adding a second one."""
+    storage, _, symbol = postgresql_storage
+    first = SymbolFlowPressure(
+        symbol=symbol,
+        as_of=datetime(2026, 8, 3, 14, 0, tzinfo=timezone.utc),
+        net_call_premium=Decimal("1000"),
+        net_put_premium=Decimal("200"),
+        net_client_flow_pressure=Decimal("800"),
+        rolling_net_call_premium=Decimal("1000"),
+        rolling_net_put_premium=Decimal("200"),
+        rolling_net_client_flow_pressure=Decimal("800"),
+        rolling_window_minutes=15,
+    )
+    second = SymbolFlowPressure(
+        symbol=symbol,
+        as_of=datetime(2026, 8, 3, 14, 5, tzinfo=timezone.utc),
+        net_call_premium=Decimal("1500"),
+        net_put_premium=Decimal("200"),
+        net_client_flow_pressure=Decimal("1300"),
+        rolling_net_call_premium=Decimal("500"),
+        rolling_net_put_premium=Decimal("0"),
+        rolling_net_client_flow_pressure=Decimal("500"),
+        rolling_window_minutes=15,
+    )
+
+    storage.save_symbol_flow_pressure(first)
+    storage.save_symbol_flow_pressure(second)
+
+    assert storage.get_symbol_flow_pressure(symbol) == second
+
+
+@pytest.mark.asyncio
+async def test_async_postgresql_storage_get_symbol_flow_pressure_reads_what_the_sync_storage_wrote(
+    postgresql_storage: tuple[PostgreSQLStorage, Engine, str],
+) -> None:
+    """AsyncPostgreSQLStorage.get_symbol_flow_pressure -- the read
+    GET /flow/{symbol}/pressure uses, same async pattern as /gamma and
+    /market (a pure storage read, see AsyncPostgreSQLStorage's own
+    docstring)."""
+    sync_storage, _, symbol = postgresql_storage
+    flow = SymbolFlowPressure(
+        symbol=symbol,
+        as_of=datetime(2026, 8, 3, 14, 0, tzinfo=timezone.utc),
+        net_call_premium=Decimal("1000"),
+        net_put_premium=Decimal("200"),
+        net_client_flow_pressure=Decimal("800"),
+        rolling_net_call_premium=Decimal("1000"),
+        rolling_net_put_premium=Decimal("200"),
+        rolling_net_client_flow_pressure=Decimal("800"),
+        rolling_window_minutes=15,
+    )
+    sync_storage.save_symbol_flow_pressure(flow)
+
+    async_engine = create_engine(Settings(_env_file=".env").database_url)
+    try:
+        async_storage = AsyncPostgreSQLStorage(create_session_factory(async_engine))
+        assert await async_storage.get_symbol_flow_pressure(symbol) == flow
+        assert await async_storage.get_symbol_flow_pressure("ZZZZ-NOT-A-REAL-SYMBOL") is None
+    finally:
+        await async_engine.dispose()
+
+
 def _release_any_slots_held_by(engine: Engine, holder_prefix: str) -> None:
     """Best-effort cleanup so a failed assertion (or a thread this test
     started that's still winding down) never leaves a real slot stuck
@@ -796,7 +865,12 @@ def _delete_test_data(engine: Engine, symbol: str) -> None:
             text("DELETE FROM gamma_aggregate_items WHERE underlying_id = :id"),
             {"id": underlying_id},
         )
-        for table_name in ("gamma_aggregates", "market_snapshots", "whale_alerts"):
+        for table_name in (
+            "gamma_aggregates",
+            "market_snapshots",
+            "whale_alerts",
+            "symbol_flow_pressure",
+        ):
             connection.execute(
                 text(f"DELETE FROM {table_name} WHERE underlying_id = :id"),
                 {"id": underlying_id},
