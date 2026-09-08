@@ -73,7 +73,7 @@ function buyPercent(alert: WhaleAlert): number {
   return (alert.estimated_buy_volume / total) * 100;
 }
 
-type DominantSide = "buy" | "sell" | "mixed";
+type DominantSide = "buy" | "sell" | "mixed" | "quote_unavailable";
 
 // "Mixed" isn't an arbitrary near-50 band (that would suppress a real,
 // if modest, majority like 52/48) -- it's specifically the exact-50%
@@ -85,8 +85,18 @@ type DominantSide = "buy" | "sell" | "mixed";
 // backend), so this lands on exactly 50 in floating point too, not
 // merely close to it -- confirmed before picking this rule rather than
 // assuming a threshold.
-function dominantSide(buyPct: number): DominantSide {
-  if (buyPct === 50) return "mixed";
+//
+// That exact-50% case itself has two genuinely different causes,
+// confirmed live 2026-09 against real SPX 0DTE alerts: most of them
+// were quote_unavailable (Lee-Ready had no bid/ask yet for that
+// contract -- calculate_lee_ready.py's Side.UNKNOWN, see WhaleAlert.
+// quote_unavailable's own docstring in backend/domain/use_cases/flow.py),
+// not a real tied market. Showing both as "Mixto" made a missing-data
+// artifact look like an impossible statistical pattern (dozens of exact
+// ties in a row) -- quote_unavailable is now its own label, "mixed"
+// stays reserved for an exact split confirmed NOT caused by that.
+function dominantSide(alert: WhaleAlert, buyPct: number): DominantSide {
+  if (buyPct === 50) return alert.quote_unavailable ? "quote_unavailable" : "mixed";
   return buyPct > 50 ? "buy" : "sell";
 }
 
@@ -94,11 +104,12 @@ function AlertCard({ alert, t }: { alert: WhaleAlert; t: Translations }) {
   const buyPct = buyPercent(alert);
   const sellPct = 100 - buyPct;
   const side = parseContractSide(alert.contract);
-  const dominant = dominantSide(buyPct);
+  const dominant = dominantSide(alert, buyPct);
   const dominantLabel = {
     buy: t.alertsPanel.dominantBuy,
     sell: t.alertsPanel.dominantSell,
     mixed: t.alertsPanel.dominantMixed,
+    quote_unavailable: t.alertsPanel.dominantQuoteUnavailable,
   }[dominant];
   return (
     <article className={`alert-card alert-${alert.type.toLowerCase()}`}>

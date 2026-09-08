@@ -38,6 +38,7 @@ describe("AlertsPanel", () => {
           timestamp: "2026-08-03T14:00:00Z",
           estimated_buy_volume: 22500,
           estimated_sell_volume: 22500,
+          quote_unavailable: false,
         },
       ]),
     );
@@ -73,6 +74,7 @@ describe("AlertsPanel", () => {
           timestamp: "2026-09-04T13:59:11.879640Z",
           estimated_buy_volume: 300000,
           estimated_sell_volume: 296745,
+          quote_unavailable: false,
         },
         {
           symbol: "SPY",
@@ -82,6 +84,7 @@ describe("AlertsPanel", () => {
           timestamp: "2026-09-04T13:59:11.879640Z",
           estimated_buy_volume: 250000,
           estimated_sell_volume: 243889,
+          quote_unavailable: false,
         },
       ]),
     );
@@ -112,6 +115,7 @@ describe("AlertsPanel", () => {
                 timestamp: "2026-08-03T14:00:00Z",
                 estimated_buy_volume: 22500,
                 estimated_sell_volume: 22500,
+                quote_unavailable: false,
               },
             ])
           : alertsResponse("QQQ", [
@@ -123,6 +127,7 @@ describe("AlertsPanel", () => {
                 timestamp: "2026-08-03T14:05:00Z",
                 estimated_buy_volume: 105000,
                 estimated_sell_volume: 105000,
+                quote_unavailable: false,
               },
             ]),
       ),
@@ -155,6 +160,7 @@ describe("AlertsPanel", () => {
           timestamp: "2026-08-03T14:00:00Z",
           estimated_buy_volume: 22500,
           estimated_sell_volume: 22500,
+          quote_unavailable: false,
         },
       ]),
     );
@@ -203,6 +209,7 @@ describe("AlertsPanel", () => {
           timestamp: "2026-08-03T14:05:00Z",
           estimated_buy_volume: 60000,
           estimated_sell_volume: 150000,
+          quote_unavailable: false,
         },
         {
           symbol: "SPY",
@@ -212,6 +219,7 @@ describe("AlertsPanel", () => {
           timestamp: "2026-08-03T14:00:00Z",
           estimated_buy_volume: 30000,
           estimated_sell_volume: 15000,
+          quote_unavailable: false,
         },
       ]),
     );
@@ -246,6 +254,7 @@ describe("AlertsPanel", () => {
           timestamp: "2026-08-03T14:05:00Z",
           estimated_buy_volume: 30000,
           estimated_sell_volume: 15000,
+          quote_unavailable: false,
         },
         {
           // 25% buy / 75% sell -- sell dominates.
@@ -256,6 +265,7 @@ describe("AlertsPanel", () => {
           timestamp: "2026-08-03T14:00:00Z",
           estimated_buy_volume: 15000,
           estimated_sell_volume: 45000,
+          quote_unavailable: false,
         },
       ]),
     );
@@ -281,6 +291,7 @@ describe("AlertsPanel", () => {
           timestamp: "2026-08-03T14:00:00Z",
           estimated_buy_volume: 22500,
           estimated_sell_volume: 22500,
+          quote_unavailable: false,
         },
       ]),
     );
@@ -289,6 +300,35 @@ describe("AlertsPanel", () => {
 
     const card = await screen.findByRole("article");
     expect(card.querySelector(".alert-dominant")).toHaveTextContent("Mixto");
+  });
+
+  it("labels an exact 50/50 split Sin cotización, not Mixto, when quote_unavailable is true (confirmed live, real SPX 0DTE)", async () => {
+    // The confusion this fixes: Side.UNKNOWN (no bid/ask yet for this
+    // contract, calculate_lee_ready.py) produces the exact same
+    // buy==sell numbers as a real tie -- confirmed live against real
+    // SPX 0DTE alerts, ~94% of them were this, not a real tied market.
+    // Same exact-50% numbers as the "Mixto" test above; only
+    // quote_unavailable differs, and only the label must.
+    apiMocks.getAlerts.mockResolvedValue(
+      alertsResponse("SPX", [
+        {
+          symbol: "SPX",
+          contract: "SPXW260908C07700000",
+          type: "UNUSUAL",
+          amount: 45000,
+          timestamp: "2026-09-08T14:00:00Z",
+          estimated_buy_volume: 22500,
+          estimated_sell_volume: 22500,
+          quote_unavailable: true,
+        },
+      ]),
+    );
+
+    renderWithLanguage(<AlertsPanel symbol="SPX" orientation="vertical" />);
+
+    const card = await screen.findByRole("article");
+    expect(card.querySelector(".alert-dominant")).toHaveTextContent("Sin cotización");
+    expect(card.querySelector(".alert-dominant")).not.toHaveTextContent("Mixto");
   });
 
   it("keeps many alerts scrollable within the column, not the whole page", async () => {
@@ -300,6 +340,7 @@ describe("AlertsPanel", () => {
       timestamp: new Date(Date.UTC(2026, 7, 3, 14, 30, index)).toISOString(),
       estimated_buy_volume: 75_000,
       estimated_sell_volume: 75_000,
+      quote_unavailable: false,
     }));
     apiMocks.getAlerts.mockResolvedValue(alertsResponse("SPY", manyAlerts));
 

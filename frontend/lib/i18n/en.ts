@@ -124,6 +124,7 @@ export const en: Translations = {
     dominantBuy: "Buy",
     dominantSell: "Sell",
     dominantMixed: "Mixed",
+    dominantQuoteUnavailable: "No quote",
   },
   quickScreener: {
     eyebrow: "Convexa Presets",

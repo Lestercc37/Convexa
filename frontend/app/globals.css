@@ -513,6 +513,10 @@ button, select { font: inherit; }
 .alert-dominant-buy { color: var(--calm); }
 .alert-dominant-sell { color: var(--risk); }
 .alert-dominant-mixed { color: var(--tv-text-dim); }
+/* Deliberately distinct from .alert-dominant-mixed's neutral gray --
+   this is a data-quality caveat (no quote yet), not a market signal,
+   same warning token closing-dynamics-panel's "urgent" state uses. */
+.alert-dominant-quote_unavailable { color: var(--warning); }
 
 .tv-settings-button {
   border: 1px solid var(--tv-border);

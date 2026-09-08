@@ -262,6 +262,10 @@ export type WhaleAlert = {
   // buy/sell-side order flow.
   estimated_buy_volume: number;
   estimated_sell_volume: number;
+  // True when estimated_buy_volume == estimated_sell_volume happened
+  // because Lee-Ready had no bid/ask to classify against, not because of
+  // a genuinely tied split — see alerts-panel.tsx's own dominantSide().
+  quote_unavailable: boolean;
 };
 
 export type WhaleAlertsResponse = {
