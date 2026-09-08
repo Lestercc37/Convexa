@@ -123,6 +123,39 @@ STATUS_STALE_AFTER_SECONDS = 15
 RECONNECT_BASE_DELAY_SECONDS = 2
 RECONNECT_MAX_DELAY_SECONDS = 60
 
+# Confirmed live, 2026-09, real market open, from the Worker's own log:
+# the exponential backoff above never actually resets in practice, for
+# any of the 3 stream classes -- `_run()`'s `delay = RECONNECT_BASE_
+# DELAY_SECONDS` right after `await self._connect_and_consume()` is
+# unreachable dead code, because _connect_and_consume() (via _consume()'s
+# own `while True`) never returns normally; it only ever exits by
+# raising. So once *anything* pushes delay up, it climbs monotonically
+# for the rest of the process's life and gets stuck at
+# RECONNECT_MAX_DELAY_SECONDS (60s) -- observed live: 2s -> 4s -> 8s ->
+# 16s -> 32s -> 60s, then every single subsequent reconnect (natural
+# near-the-money widening, or the data-silence watchdog above forcing
+# one) waited a full 60s before even attempting, regardless of how the
+# previous connection actually behaved. The watchdog made this actively
+# worse, not better: every reconnect it forces also ratchets a backoff
+# that never comes back down.
+#
+# STABLE_CONNECTION_RESET_SECONDS=30, not an arbitrary number: 2x
+# STATUS_STALE_AFTER_SECONDS (15s) -- a connection that outlives twice
+# the heartbeat-staleness window has clearly demonstrated it can
+# actually receive traffic reliably, so a fresh failure after that point
+# is a new problem, not a continuation of whatever caused the last one.
+# This also comfortably covers a watchdog-forced reconnect in the common
+# case: DATA_SILENCE_THRESHOLD_SECONDS (20s) is itself already how long
+# the connection was alive and receiving *something* before the watchdog
+# even noticed data had stopped, so a watchdog-triggered reconnect
+# reaching this threshold is the expected case, not a fluke -- it's
+# exactly the "the connection was fine, something else glitched" case
+# this reset exists for. A connection that can't even stay up for half a
+# minute, repeatedly, still escalates without resetting -- that's a
+# genuinely different, ongoing problem this must keep protecting
+# against, not paper over.
+STABLE_CONNECTION_RESET_SECONDS = 2 * STATUS_STALE_AFTER_SECONDS
+
 # Real-DATA silence watchdog (ThetaUnderlyingTradeStream, ThetaQuoteStream)
 # -- confirmed live, 2026-09, with a controlled instrumented reproduction
 # (forced a Trade/Quote Stream reconnect, then measured message arrival
@@ -471,12 +504,21 @@ class ThetaTradeStream:
     async def _run(self) -> None:
         delay = RECONNECT_BASE_DELAY_SECONDS
         while True:
+            connected_at = time.monotonic()
             try:
                 await self._connect_and_consume()
-                delay = RECONNECT_BASE_DELAY_SECONDS
             except asyncio.CancelledError:
                 raise
             except Exception:
+                # See STABLE_CONNECTION_RESET_SECONDS's own module-level
+                # comment: _connect_and_consume() never returns normally
+                # (only ever raises), so this is the only place that can
+                # tell "was the connection we just lost actually stable
+                # for a while" from "this is a fresh failure right after
+                # the last one" -- the two need different treatment, not
+                # the same ever-climbing delay regardless of which.
+                if time.monotonic() - connected_at >= STABLE_CONNECTION_RESET_SECONDS:
+                    delay = RECONNECT_BASE_DELAY_SECONDS
                 logger.exception("ThetaData trade stream disconnected, reconnecting in %ss", delay)
                 await asyncio.sleep(delay)
                 delay = min(delay * 2, RECONNECT_MAX_DELAY_SECONDS)
@@ -762,12 +804,16 @@ class ThetaQuoteStream:
     async def _run(self) -> None:
         delay = RECONNECT_BASE_DELAY_SECONDS
         while True:
+            connected_at = time.monotonic()
             try:
                 await self._connect_and_consume()
-                delay = RECONNECT_BASE_DELAY_SECONDS
             except asyncio.CancelledError:
                 raise
             except Exception:
+                # See STABLE_CONNECTION_RESET_SECONDS's own module-level
+                # comment / ThetaTradeStream._run()'s identical logic.
+                if time.monotonic() - connected_at >= STABLE_CONNECTION_RESET_SECONDS:
+                    delay = RECONNECT_BASE_DELAY_SECONDS
                 logger.exception("ThetaData quote stream disconnected, reconnecting in %ss", delay)
                 await asyncio.sleep(delay)
                 delay = min(delay * 2, RECONNECT_MAX_DELAY_SECONDS)
@@ -1036,12 +1082,16 @@ class ThetaUnderlyingTradeStream:
     async def _run(self) -> None:
         delay = RECONNECT_BASE_DELAY_SECONDS
         while True:
+            connected_at = time.monotonic()
             try:
                 await self._connect_and_consume()
-                delay = RECONNECT_BASE_DELAY_SECONDS
             except asyncio.CancelledError:
                 raise
             except Exception:
+                # See STABLE_CONNECTION_RESET_SECONDS's own module-level
+                # comment / ThetaTradeStream._run()'s identical logic.
+                if time.monotonic() - connected_at >= STABLE_CONNECTION_RESET_SECONDS:
+                    delay = RECONNECT_BASE_DELAY_SECONDS
                 logger.exception(
                     "ThetaData underlying trade stream disconnected, reconnecting in %ss", delay
                 )

@@ -1393,6 +1393,70 @@ class TestTradeStream:
         assert sleep_calls[1] == 4
         assert sleep_calls[2] == 8
 
+    @pytest.mark.asyncio
+    async def test_run_keeps_escalating_on_rapid_failures_but_resets_after_a_stable_connection(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The actual fix, confirmed live 2026-09 from the real Worker's
+        own log: _run()'s `delay = RECONNECT_BASE_DELAY_SECONDS` right
+        after `await self._connect_and_consume()` was unreachable dead
+        code (_connect_and_consume() never returns normally, only ever
+        raises) -- once anything pushed delay up, it climbed forever,
+        stuck at RECONNECT_MAX_DELAY_SECONDS for the rest of the
+        process's life regardless of how a later connection actually
+        behaved. Two connections that fail almost immediately (real
+        problem, keep backing off) followed by one that stays up well
+        past STABLE_CONNECTION_RESET_SECONDS before failing (a fresh,
+        unrelated hiccup) must reset to the base delay for what comes
+        after it, not continue escalating from 8s."""
+        stream = ThetaTradeStream(WS_URL, httpx.Client(base_url=REST_URL))
+        clock = _FakeMonotonicClock()
+        monkeypatch.setattr(provider_module.time, "monotonic", clock)
+
+        sleep_calls: list[float] = []
+
+        async def fake_sleep(seconds: float) -> None:
+            sleep_calls.append(seconds)
+
+        attempt = {"n": 0}
+
+        async def fake_connect_and_consume() -> None:
+            attempt["n"] += 1
+            if attempt["n"] in (1, 2):
+                clock.advance(1)  # fails almost immediately both times
+                raise ConnectionError(f"quick failure {attempt['n']}")
+            if attempt["n"] == 3:
+                # Stays up well past the reset threshold this time.
+                clock.advance(provider_module.STABLE_CONNECTION_RESET_SECONDS + 5)
+                raise ConnectionError("failure after a stable stretch")
+            raise asyncio.CancelledError
+
+        monkeypatch.setattr(asyncio, "sleep", fake_sleep)
+        monkeypatch.setattr(stream, "_connect_and_consume", fake_connect_and_consume)
+
+        with pytest.raises(asyncio.CancelledError):
+            await stream._run()
+
+        # 2 -> 4 (still escalating, both quick failures) -> 2 (reset,
+        # the third connection was stable for a while before it failed).
+        assert sleep_calls == [2, 4, 2]
+
+
+class _FakeMonotonicClock:
+    """A controllable stand-in for time.monotonic() -- lets a test decide
+    exactly how much (simulated) time a connection stayed alive before
+    failing, to test STABLE_CONNECTION_RESET_SECONDS's reset logic
+    deterministically instead of waiting on a real wall-clock."""
+
+    def __init__(self, start: float = 0.0) -> None:
+        self._value = start
+
+    def __call__(self) -> float:
+        return self._value
+
+    def advance(self, seconds: float) -> None:
+        self._value += seconds
+
 
 def _fake_sleep_letting_n_iterations_run(iterations: int = 1):
     """An asyncio.sleep fake for testing a `while True: await
@@ -1477,6 +1541,42 @@ class TestQuoteStream:
         assert sleep_calls[0] == 2
         assert sleep_calls[1] == 4
         assert sleep_calls[2] == 8
+
+    @pytest.mark.asyncio
+    async def test_run_keeps_escalating_on_rapid_failures_but_resets_after_a_stable_connection(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """See ThetaTradeStream's identical test -- same fix, same
+        reasoning, applied here too (not just the class where the
+        symptom was most visible)."""
+        stream = ThetaQuoteStream(WS_URL)
+        clock = _FakeMonotonicClock()
+        monkeypatch.setattr(provider_module.time, "monotonic", clock)
+
+        sleep_calls: list[float] = []
+
+        async def fake_sleep(seconds: float) -> None:
+            sleep_calls.append(seconds)
+
+        attempt = {"n": 0}
+
+        async def fake_connect_and_consume() -> None:
+            attempt["n"] += 1
+            if attempt["n"] in (1, 2):
+                clock.advance(1)
+                raise ConnectionError(f"quick failure {attempt['n']}")
+            if attempt["n"] == 3:
+                clock.advance(provider_module.STABLE_CONNECTION_RESET_SECONDS + 5)
+                raise ConnectionError("failure after a stable stretch")
+            raise asyncio.CancelledError
+
+        monkeypatch.setattr(asyncio, "sleep", fake_sleep)
+        monkeypatch.setattr(stream, "_connect_and_consume", fake_connect_and_consume)
+
+        with pytest.raises(asyncio.CancelledError):
+            await stream._run()
+
+        assert sleep_calls == [2, 4, 2]
 
     @pytest.mark.asyncio
     async def test_start_and_stop_manage_a_single_background_task(self) -> None:
@@ -1822,6 +1922,43 @@ class TestUnderlyingTradeStream:
         assert sleep_calls[0] == 2
         assert sleep_calls[1] == 4
         assert sleep_calls[2] == 8
+
+    @pytest.mark.asyncio
+    async def test_run_keeps_escalating_on_rapid_failures_but_resets_after_a_stable_connection(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """See ThetaTradeStream's identical test -- same fix, same
+        reasoning, applied here too. This is the class where the symptom
+        was most visible (candles going into slow motion), but the bug
+        and the fix are identical in all 3 classes."""
+        stream = ThetaUnderlyingTradeStream(WS_URL)
+        clock = _FakeMonotonicClock()
+        monkeypatch.setattr(provider_module.time, "monotonic", clock)
+
+        sleep_calls: list[float] = []
+
+        async def fake_sleep(seconds: float) -> None:
+            sleep_calls.append(seconds)
+
+        attempt = {"n": 0}
+
+        async def fake_connect_and_consume() -> None:
+            attempt["n"] += 1
+            if attempt["n"] in (1, 2):
+                clock.advance(1)
+                raise ConnectionError(f"quick failure {attempt['n']}")
+            if attempt["n"] == 3:
+                clock.advance(provider_module.STABLE_CONNECTION_RESET_SECONDS + 5)
+                raise ConnectionError("failure after a stable stretch")
+            raise asyncio.CancelledError
+
+        monkeypatch.setattr(asyncio, "sleep", fake_sleep)
+        monkeypatch.setattr(stream, "_connect_and_consume", fake_connect_and_consume)
+
+        with pytest.raises(asyncio.CancelledError):
+            await stream._run()
+
+        assert sleep_calls == [2, 4, 2]
 
     @pytest.mark.asyncio
     async def test_start_and_stop_manage_a_single_background_task(self) -> None:
