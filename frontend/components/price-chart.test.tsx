@@ -151,6 +151,11 @@ describe("PriceChart", () => {
     expect(screen.getByLabelText("Chart de velas para SPY")).toBeInTheDocument();
     expect(container.querySelector('img[src*="logo-watermark.png"]')).toBeInTheDocument();
     expect(screen.getByText("SPY · Velas de 1 minuto")).toBeInTheDocument();
+    // RegimeCompactBadge, next to the "En vivo" mode-pill -- reads gamma
+    // straight from this same prop, so it's already live-updating on
+    // every 30s poll that refreshes `gamma`, not a frozen snapshot.
+    expect(screen.getByText(/^LONG GAMMA/)).toBeInTheDocument();
+    expect(screen.getByText("En vivo")).toBeInTheDocument();
     expect(chartMocks.createChart).toHaveBeenCalledOnce();
     expect(chartMocks.createChart).toHaveBeenCalledWith(
       expect.any(HTMLElement),

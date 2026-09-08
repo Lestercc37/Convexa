@@ -198,8 +198,18 @@ button, select { font: inherit; }
    and mostly redundant with the live chart's own Gamma Flip/wall lines.
    Pre-Sesión has no such visual context of its own, and had genuine
    unused space below its chart to hold this — no compact override
-   needed anymore; this is always the full form. */
+   needed anymore; this is always the full form.
+
+   The one-line "LONG GAMMA +$18.4B" pill next to the price chart's own
+   "En vivo" mode-pill is NOT that removed compact variant come back --
+   it shows a different number entirely (net_gamma in dollars, which this
+   full form never displayed) and is its own component, RegimeCompactBadge
+   (regime-badge.tsx) with its own .regime-badge-compact styles below. */
 .pre-session-panel .regime-badge { margin-top: 14px; flex-shrink: 0; }
+
+.regime-badge-compact { display: inline-flex; align-items: center; gap: 5px; font-weight: 600; }
+.regime-badge-compact.long { border-color: rgba(0, 220, 90, 0.4); color: var(--calm); }
+.regime-badge-compact.short { border-color: rgba(250, 0, 10, 0.4); color: var(--risk); }
 
 .regime-badge { padding: 20px; display: flex; flex-direction: column; justify-content: space-between; gap: 14px; }
 .regime-badge.long { border-color: rgba(0, 220, 90, 0.4); background: linear-gradient(145deg, var(--calm-soft), var(--tv-panel)); }

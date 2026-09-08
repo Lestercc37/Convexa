@@ -21,6 +21,7 @@ import { useLanguage } from "@/lib/i18n/language-context";
 import { EASTERN_TIME_ZONE, mostRecentSessionRange } from "@/lib/market-session";
 import type { AtrRange, GammaHistoryItem, GammaResponse } from "@/lib/types";
 import { LEVEL_MERGE_THRESHOLD } from "./gravity-map";
+import { RegimeCompactBadge } from "./regime-badge";
 
 type PriceChartProps = {
   symbol: string;
@@ -712,6 +713,7 @@ export function PriceChart({
               {t.priceChart.clearTrendlineButton}
             </button>
           </fieldset>
+          <RegimeCompactBadge gamma={gamma} />
           <span className="mode-pill">{t.dashboard.liveButton}</span>
         </div>
       </div>
