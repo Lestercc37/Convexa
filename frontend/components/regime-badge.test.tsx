@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { renderWithLanguage } from "@/lib/i18n/test-utils";
 import type { GammaResponse, MarketResponse } from "@/lib/types";
 import { derivedMetricsFixture } from "@/test/fixtures";
-import { RegimeBadge } from "./regime-badge";
+import { RegimeBadge, RegimeCompactBadge } from "./regime-badge";
 
 const gamma: GammaResponse = {
   schema_version: 1,
@@ -68,5 +68,40 @@ describe("RegimeBadge", () => {
       "title",
       tooltip,
     );
+  });
+});
+
+describe("RegimeCompactBadge", () => {
+  it("renders LONG GAMMA with a compact, sign-explicit dollar amount for a positive net_gamma", () => {
+    renderWithLanguage(
+      <RegimeCompactBadge gamma={{ ...gamma, dealer_position: "long_gamma", net_gamma: 16_580_000_000 }} />,
+    );
+
+    expect(screen.getByText("LONG GAMMA +$16.6B")).toBeInTheDocument();
+    expect(screen.getByLabelText("LONG GAMMA +$16.6B")).toHaveClass("long");
+  });
+
+  it("renders SHORT GAMMA with a negative amount for a negative net_gamma", () => {
+    renderWithLanguage(
+      <RegimeCompactBadge gamma={{ ...gamma, dealer_position: "short_gamma", net_gamma: -29_530_000 }} />,
+    );
+
+    expect(screen.getByText("SHORT GAMMA -$29.5M")).toBeInTheDocument();
+    expect(screen.getByLabelText("SHORT GAMMA -$29.5M")).toHaveClass("short");
+  });
+
+  it("derives the label from gamma.dealer_position, not from a market prop", () => {
+    // RegimeCompactBadge takes no `market` prop at all -- this test exists
+    // to document why: RegimeBadge (above) can legitimately show a regime
+    // that disagrees with dealer_position while "unconfirmed" (see the
+    // price-vs-Gamma-Flip test above), but that would let this badge's
+    // label and its own dollar amount (always net_gamma's real sign)
+    // disagree with each other. Reading both off the same `gamma` object
+    // makes that structurally impossible, not just untested.
+    renderWithLanguage(
+      <RegimeCompactBadge gamma={{ ...gamma, dealer_position: "long_gamma", net_gamma: 5 }} />,
+    );
+
+    expect(screen.getByText(/^LONG GAMMA/)).toBeInTheDocument();
   });
 });
