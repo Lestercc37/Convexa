@@ -9,6 +9,16 @@ from backend.domain.use_cases import StreamUnderlyingPriceUseCase
 
 logger = logging.getLogger(__name__)
 
+# Same exponential-backoff shape and values already established for
+# every other ThetaData WebSocket reconnect in this codebase
+# (ThetaTradeStream/ThetaQuoteStream/ThetaUnderlyingTradeStream in
+# adapters/providers/thetadata/provider.py, and
+# core/price_notifications.py's own Postgres LISTEN reconnect) --
+# deliberately the same numbers, not a new convention for this one
+# supervisor.
+RECONNECT_BASE_DELAY_SECONDS = 2
+RECONNECT_MAX_DELAY_SECONDS = 60
+
 
 class UnderlyingPriceStreamManager:
     """Runs StreamUnderlyingPriceUseCase.run() concurrently for every
@@ -24,12 +34,20 @@ class UnderlyingPriceStreamManager:
     generator, so each symbol's task just completes right away) —
     deliberately provider-agnostic, same reasoning that already keeps
     UnderlyingRefreshScheduler/WhaleAlertsStreamManager unaware of which
-    concrete provider they're driving. One symbol's stream failing (or
-    ThetaData's Stocks plan simply not being active yet — see
-    ThetaUnderlyingTradeStream's docstring) is caught per-task and
-    logged, never crashing the process or another symbol's task — the
-    dashboard keeps working off the REST scheduler's own writes exactly
-    as it does today.
+    concrete provider they're driving.
+
+    One symbol's stream failing (or ThetaData's Stocks plan simply not
+    being active yet — see ThetaUnderlyingTradeStream's docstring) is
+    caught per-task, logged, AND RESTARTED with backoff — never crashing
+    the process or another symbol's task. This used to just log and give
+    up on that symbol forever, silently falling back to the REST
+    scheduler's own 30s writes for the rest of the process's life —
+    confirmed live, 2026-09 (real market open): a Worker running since
+    the day before had every symbol's real-time push dead this way,
+    undetected, for hours. A clean return from run() (MockDataProvider's
+    exhausted generator, or any provider whose stream just ends on its
+    own) is NOT retried -- only an actual exception is, so this stays a
+    true no-op under MockDataProvider/tests exactly as before.
     """
 
     def __init__(self, container: Container) -> None:
@@ -49,12 +67,24 @@ class UnderlyingPriceStreamManager:
         ]
 
     async def _run_symbol(self, use_case: StreamUnderlyingPriceUseCase, symbol: str) -> None:
-        try:
-            await use_case.run(symbol)
-        except asyncio.CancelledError:
-            raise
-        except Exception:
-            logger.exception("Underlying price stream consumer failed for %s", symbol)
+        delay = RECONNECT_BASE_DELAY_SECONDS
+        while True:
+            try:
+                await use_case.run(symbol)
+                # A clean return (not an exception) -- nothing to
+                # restart; matches MockDataProvider's exhausted
+                # generator and any provider whose stream simply ends.
+                return
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.exception(
+                    "Underlying price stream consumer failed for %s, restarting in %ss",
+                    symbol,
+                    delay,
+                )
+                await asyncio.sleep(delay)
+                delay = min(delay * 2, RECONNECT_MAX_DELAY_SECONDS)
 
     async def stop(self) -> None:
         for task in self._tasks:

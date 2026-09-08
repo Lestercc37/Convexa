@@ -127,6 +127,12 @@ class WhaleAlertResponse(BaseModel):
     # buy/sell-side order flow.
     estimated_buy_volume: Number
     estimated_sell_volume: Number
+    # True when estimated_buy_volume == estimated_sell_volume happened
+    # because Lee-Ready had no bid/ask to classify against, not because
+    # of a genuinely tied split — see WhaleAlert.quote_unavailable's own
+    # docstring (backend/domain/use_cases/flow.py). The frontend must
+    # label this "Sin cotización", not "Mixto".
+    quote_unavailable: bool
 
 
 class WhaleAlertsResponse(BaseModel):

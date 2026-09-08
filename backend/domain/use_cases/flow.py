@@ -48,6 +48,15 @@ class WhaleAlert:
     # confirmed buy/sell-side order flow. See calculate_bvc.py.
     estimated_buy_volume: Decimal
     estimated_sell_volume: Decimal
+    # True when estimated_buy_volume == estimated_sell_volume happened
+    # because Lee-Ready had no bid/ask to classify against (Side.UNKNOWN,
+    # calculate_lee_ready.py), not because of a genuinely tied split --
+    # always False for process()/BVC-derived alerts (that path has no
+    # "missing quote" concept; see _ContractState.bucket_quote_unavailable's
+    # own comment). The frontend must show a distinct label ("Sin
+    # cotización") for this, reserving "Mixto" for an exact split that
+    # wasn't caused by missing quote data.
+    quote_unavailable: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -138,6 +147,23 @@ class _ContractState:
     # forward on a zero tick" memory. process()/BVC never reads or writes
     # this field, so this addition changes nothing about that path.
     previous_side: Side = Side.UNKNOWN
+    # Lee-Ready only, same non-contamination guarantee as previous_side
+    # above (process()/BVC never reads or writes either field, so both
+    # stay at their class default -- False/empty -- for every BVC-derived
+    # alert). True exactly when every trade that has contributed to the
+    # CURRENT in-progress bucket was Side.UNKNOWN (no Quote Stream bid/ask
+    # yet for this contract) rather than a real BUY/SELL classification --
+    # an AND-accumulation, reset to True (vacuously, nothing to
+    # contradict it yet) whenever a bucket rolls over. Confirmed live,
+    # 2026-09 (real SPX 0DTE, market open): most of a contract's alerts
+    # showing an exact 50/50 estimated_buy_volume/estimated_sell_volume
+    # split were this -- a missing quote, not a genuine tied market --
+    # process_trade()'s own neutral-split fallback made the two
+    # indistinguishable in the stored WhaleAlert until this field.
+    bucket_quote_unavailable: bool = False
+    # Same idea across the 15-bucket Sustained Flow window -- True only
+    # if every one of those buckets was itself quote_unavailable.
+    sustained_quote_unavailable: deque[bool] = field(default_factory=lambda: deque(maxlen=15))
 
 
 @dataclass(slots=True)
@@ -327,7 +353,15 @@ class WhaleAlertsEngine:
 
         state = self._trade_states.get(event.occ_symbol)
         if state is None:
-            state = _ContractState(cumulative_volume=0, bucket_start=current_bucket_start)
+            # bucket_quote_unavailable=True: vacuously, for the same
+            # reason _finalize_bucket resets it to True on every rollover
+            # -- nothing has contributed to this brand-new bucket yet to
+            # disprove it. Only process_trade() ever passes this kwarg;
+            # process()'s own _ContractState construction leaves it at
+            # its class default (False, inert for that path).
+            state = _ContractState(
+                cumulative_volume=0, bucket_start=current_bucket_start, bucket_quote_unavailable=True
+            )
             self._trade_states[event.occ_symbol] = state
 
         # FlowEvent carries `premium` (price × size × 100), not the raw
@@ -374,6 +408,14 @@ class WhaleAlertsEngine:
         state.bucket_amount += event.premium
         state.bucket_buy_volume += buy_volume
         state.bucket_sell_volume += sell_volume
+        # AND-accumulation, not assignment: stays True only if EVERY
+        # trade contributing to this bucket (including ones already
+        # folded in before this call) was Side.UNKNOWN. One real BUY/SELL
+        # trade in an otherwise-UNKNOWN bucket correctly flips this to
+        # False for the whole bucket -- an exact tie in that mixed case
+        # would be a genuine coincidence worth calling "Mixto", not
+        # "Sin cotización".
+        state.bucket_quote_unavailable = state.bucket_quote_unavailable and side is Side.UNKNOWN
         return tuple(generated)
 
     def _finalize_bucket(
@@ -396,6 +438,7 @@ class WhaleAlertsEngine:
         finalized_amount = state.bucket_amount
         finalized_buy_volume = state.bucket_buy_volume
         finalized_sell_volume = state.bucket_sell_volume
+        finalized_quote_unavailable = state.bucket_quote_unavailable
 
         if len(state.previous_amounts) == self._WINDOW_SIZE:
             average_amount = sum(state.previous_amounts, Decimal()) / self._WINDOW_SIZE
@@ -410,12 +453,14 @@ class WhaleAlertsEngine:
                         finalized_amount,
                         finalized_buy_volume,
                         finalized_sell_volume,
+                        finalized_quote_unavailable,
                     )
                 )
 
         state.sustained_amounts.append(finalized_amount)
         state.sustained_buy_volumes.append(finalized_buy_volume)
         state.sustained_sell_volumes.append(finalized_sell_volume)
+        state.sustained_quote_unavailable.append(finalized_quote_unavailable)
         if len(state.sustained_amounts) == self._SUSTAINED_WINDOW_SIZE:
             sustained_total = sum(state.sustained_amounts, Decimal())
             if sustained_total >= thresholds.sustained_flow_min:
@@ -430,6 +475,7 @@ class WhaleAlertsEngine:
                             sustained_total,
                             sum(state.sustained_buy_volumes, Decimal()),
                             sum(state.sustained_sell_volumes, Decimal()),
+                            all(state.sustained_quote_unavailable),
                         )
                     )
             else:
@@ -440,6 +486,12 @@ class WhaleAlertsEngine:
         state.bucket_amount = Decimal(0)
         state.bucket_buy_volume = Decimal(0)
         state.bucket_sell_volume = Decimal(0)
+        # Vacuously true for the bucket that starts now -- nothing has
+        # contributed to it yet to disprove it. process()/BVC resets this
+        # too (shared method), but since that path never reads it, it's
+        # inert there -- same non-contamination guarantee as the field's
+        # own comment.
+        state.bucket_quote_unavailable = True
         return generated
 
     def _emit(
@@ -451,6 +503,7 @@ class WhaleAlertsEngine:
         amount: Decimal,
         estimated_buy_volume: Decimal,
         estimated_sell_volume: Decimal,
+        quote_unavailable: bool = False,
     ) -> WhaleAlert:
         alert = WhaleAlert(
             symbol=symbol,
@@ -460,6 +513,7 @@ class WhaleAlertsEngine:
             as_of=as_of,
             estimated_buy_volume=estimated_buy_volume,
             estimated_sell_volume=estimated_sell_volume,
+            quote_unavailable=quote_unavailable,
         )
         self._alerts.append(alert)
         # Dual-write, this phase only: whale_alerts now persists the same

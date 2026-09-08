@@ -114,6 +114,7 @@ export type Translations = {
     dominantBuy: string;
     dominantSell: string;
     dominantMixed: string;
+    dominantQuoteUnavailable: string;
   };
   quickScreener: {
     eyebrow: string;

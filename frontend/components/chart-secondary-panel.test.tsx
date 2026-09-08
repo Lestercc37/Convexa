@@ -77,6 +77,7 @@ function alert(overrides: Partial<WhaleAlert> = {}): WhaleAlert {
     timestamp: "2026-08-07T14:30:00Z",
     estimated_buy_volume: 1500,
     estimated_sell_volume: 500,
+    quote_unavailable: false,
     ...overrides,
   };
 }

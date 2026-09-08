@@ -39,6 +39,7 @@ async def get_alerts(
                     "timestamp": alert.as_of.isoformat(),
                     "estimated_buy_volume": alert.estimated_buy_volume,
                     "estimated_sell_volume": alert.estimated_sell_volume,
+                    "quote_unavailable": alert.quote_unavailable,
                 }
                 for alert in alerts
             ],

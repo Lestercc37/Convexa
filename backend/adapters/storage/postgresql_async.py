@@ -317,7 +317,7 @@ class AsyncPostgreSQLStorage:
                 text(
                     """
                     SELECT w.time, u.symbol, w.occ_symbol, w.alert_type, w.amount,
-                           w.estimated_buy_volume, w.estimated_sell_volume
+                           w.estimated_buy_volume, w.estimated_sell_volume, w.quote_unavailable
                     FROM whale_alerts AS w
                     JOIN underlyings AS u ON u.id = w.underlying_id
                     WHERE u.symbol = :symbol
@@ -337,6 +337,7 @@ class AsyncPostgreSQLStorage:
                 as_of=row["time"],
                 estimated_buy_volume=Decimal(row["estimated_buy_volume"]),
                 estimated_sell_volume=Decimal(row["estimated_sell_volume"]),
+                quote_unavailable=bool(row["quote_unavailable"]),
             )
             for row in rows
         ]

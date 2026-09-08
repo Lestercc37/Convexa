@@ -40,7 +40,7 @@ logger = logging.getLogger(__name__)
 
 async def run() -> None:
     container = build_container()
-    configure_logging(container.settings)
+    configure_logging(container.settings, log_file="logs/worker.log")
     logger.info("Starting %s worker", container.settings.app_name)
 
     if not container.settings.enable_scheduler:
