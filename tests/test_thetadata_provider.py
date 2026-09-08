@@ -12,6 +12,7 @@ from typing import ClassVar
 import httpx
 import pytest
 
+import backend.adapters.providers.thetadata.provider as provider_module
 from backend.adapters.providers.thetadata.provider import (
     DAILY_BARS_CACHE_TTL_SECONDS,
     THETADATA_MAX_CONCURRENT_REQUESTS,
@@ -1393,6 +1394,25 @@ class TestTradeStream:
         assert sleep_calls[2] == 8
 
 
+def _fake_sleep_letting_n_iterations_run(iterations: int = 1):
+    """An asyncio.sleep fake for testing a `while True: await
+    asyncio.sleep(...); <body>` loop (the watchdogs below): returns
+    normally for the first `iterations` calls, so the loop's own body
+    actually executes that many times for real, then raises
+    CancelledError to break out of the otherwise-infinite loop --
+    without this, a fake that raises on the very first call never lets
+    the body run at all, and a test asserting "didn't reconnect" would
+    pass even if the watchdog's check logic were completely broken."""
+    calls = {"n": 0}
+
+    async def fake_sleep(seconds: float) -> None:
+        calls["n"] += 1
+        if calls["n"] > iterations:
+            raise asyncio.CancelledError
+
+    return fake_sleep
+
+
 class TestQuoteStream:
     def test_handle_quote_publishes_a_quote_event_to_subscribers(self) -> None:
         stream = ThetaQuoteStream(WS_URL)
@@ -1472,6 +1492,79 @@ class TestQuoteStream:
 
         await stream.stop()
         assert stream._task is None
+
+    @pytest.mark.asyncio
+    async def test_start_and_stop_also_manage_the_watchdog_task(self) -> None:
+        stream = ThetaQuoteStream(WS_URL)
+        stream.start()
+        watchdog_task = stream._watchdog_task
+        assert watchdog_task is not None
+        assert not watchdog_task.done()
+
+        await stream.stop()
+
+        assert stream._watchdog_task is None
+        assert watchdog_task.cancelled()
+
+    @pytest.mark.asyncio
+    async def test_watchdog_forces_reconnect_after_data_silence_during_market_hours(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Same mechanism as ThetaUnderlyingTradeStream's own watchdog --
+        extended here as the same family of cause applied to QUOTE
+        instead of TRADE, NOT independently confirmed for this class the
+        same way (see this stream's own __init__ comment on
+        _last_quote_at for exactly what this does and doesn't cover)."""
+        stream = ThetaQuoteStream(WS_URL)
+        reconnects: list[int] = []
+        monkeypatch.setattr(stream, "request_reconnect", lambda: reconnects.append(1))
+        monkeypatch.setattr(provider_module, "is_market_open", lambda now: True)
+        stream._last_quote_at = (
+            time.monotonic() - provider_module.DATA_SILENCE_THRESHOLD_SECONDS - 1
+        )
+
+        monkeypatch.setattr(asyncio, "sleep", _fake_sleep_letting_n_iterations_run(1))
+
+        with pytest.raises(asyncio.CancelledError):
+            await stream._watch_for_data_silence()
+
+        assert reconnects == [1]
+
+    @pytest.mark.asyncio
+    async def test_watchdog_does_not_reconnect_while_the_market_is_closed(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        stream = ThetaQuoteStream(WS_URL)
+        reconnects: list[int] = []
+        monkeypatch.setattr(stream, "request_reconnect", lambda: reconnects.append(1))
+        monkeypatch.setattr(provider_module, "is_market_open", lambda now: False)
+        stream._last_quote_at = (
+            time.monotonic() - provider_module.DATA_SILENCE_THRESHOLD_SECONDS - 1
+        )
+
+        monkeypatch.setattr(asyncio, "sleep", _fake_sleep_letting_n_iterations_run(1))
+
+        with pytest.raises(asyncio.CancelledError):
+            await stream._watch_for_data_silence()
+
+        assert reconnects == []
+
+    @pytest.mark.asyncio
+    async def test_watchdog_does_not_reconnect_before_the_first_quote_ever_arrives(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        stream = ThetaQuoteStream(WS_URL)
+        reconnects: list[int] = []
+        monkeypatch.setattr(stream, "request_reconnect", lambda: reconnects.append(1))
+        monkeypatch.setattr(provider_module, "is_market_open", lambda now: True)
+        assert stream._last_quote_at is None
+
+        monkeypatch.setattr(asyncio, "sleep", _fake_sleep_letting_n_iterations_run(1))
+
+        with pytest.raises(asyncio.CancelledError):
+            await stream._watch_for_data_silence()
+
+        assert reconnects == []
 
 
 class TestUnderlyingTradeStream:
@@ -1742,6 +1835,134 @@ class TestUnderlyingTradeStream:
 
         await stream.stop()
         assert stream._task is None
+
+    @pytest.mark.asyncio
+    async def test_start_and_stop_also_manage_the_watchdog_task(self) -> None:
+        # This class had no watchdog at all before -- confirms stop()
+        # actually tears it down too, not just the main _run() task
+        # (an orphaned watchdog would keep calling request_reconnect()
+        # on a stream nothing else owns anymore).
+        stream = ThetaUnderlyingTradeStream(WS_URL)
+        stream.start()
+        watchdog_task = stream._watchdog_task
+        assert watchdog_task is not None
+        assert not watchdog_task.done()
+
+        await stream.stop()
+
+        assert stream._watchdog_task is None
+        assert watchdog_task.cancelled()
+
+    def test_request_reconnect_is_a_no_op_before_start(self) -> None:
+        # Same reasoning as ThetaTradeStream's own version of this test --
+        # this class had no request_reconnect() at all before (confirmed
+        # live, 2026-09: needed so its own data-silence watchdog has a
+        # recovery action to call).
+        stream = ThetaUnderlyingTradeStream(WS_URL)
+        stream.request_reconnect()  # must not raise
+
+    @pytest.mark.asyncio
+    async def test_request_reconnect_closes_the_active_connection(self) -> None:
+        class _FakeWebsocket:
+            def __init__(self) -> None:
+                self.closed = False
+
+            async def close(self) -> None:
+                self.closed = True
+
+        stream = ThetaUnderlyingTradeStream(WS_URL)
+        fake_websocket = _FakeWebsocket()
+        stream._loop = asyncio.get_running_loop()
+        stream._active_websocket = fake_websocket  # type: ignore[assignment]
+
+        stream.request_reconnect()
+        await asyncio.sleep(0.05)
+
+        assert fake_websocket.closed is True
+
+    @pytest.mark.asyncio
+    async def test_watchdog_forces_reconnect_after_data_silence_during_market_hours(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The actual fix, confirmed live 2026-09 with an instrumented
+        reproduction: Theta Terminal can stop delivering TRADE messages
+        to this connection (while its STATUS heartbeat stays perfectly
+        healthy) after a *different* stream reconnects. Manually forcing
+        this stream's own reconnect restored delivery every time it was
+        tried live -- this test confirms the watchdog automates exactly
+        that action once silence crosses the threshold."""
+        stream = ThetaUnderlyingTradeStream(WS_URL)
+        reconnects: list[int] = []
+        monkeypatch.setattr(stream, "request_reconnect", lambda: reconnects.append(1))
+        monkeypatch.setattr(provider_module, "is_market_open", lambda now: True)
+        stream._last_trade_at = (
+            time.monotonic() - provider_module.DATA_SILENCE_THRESHOLD_SECONDS - 1
+        )
+
+        monkeypatch.setattr(asyncio, "sleep", _fake_sleep_letting_n_iterations_run(1))
+
+        with pytest.raises(asyncio.CancelledError):
+            await stream._watch_for_data_silence()
+
+        assert reconnects == [1]
+
+    @pytest.mark.asyncio
+    async def test_watchdog_does_not_reconnect_while_the_market_is_closed(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # A genuinely quiet closed market must never trip this -- the
+        # explicit "don't fire unnecessary reconnects" requirement.
+        stream = ThetaUnderlyingTradeStream(WS_URL)
+        reconnects: list[int] = []
+        monkeypatch.setattr(stream, "request_reconnect", lambda: reconnects.append(1))
+        monkeypatch.setattr(provider_module, "is_market_open", lambda now: False)
+        stream._last_trade_at = (
+            time.monotonic() - provider_module.DATA_SILENCE_THRESHOLD_SECONDS - 1
+        )
+
+        monkeypatch.setattr(asyncio, "sleep", _fake_sleep_letting_n_iterations_run(1))
+
+        with pytest.raises(asyncio.CancelledError):
+            await stream._watch_for_data_silence()
+
+        assert reconnects == []
+
+    @pytest.mark.asyncio
+    async def test_watchdog_does_not_reconnect_before_the_first_trade_ever_arrives(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # _last_trade_at is None until the very first TRADE-type message
+        # -- a fresh connection that hasn't had a chance to receive
+        # anything yet must not be judged as "silent".
+        stream = ThetaUnderlyingTradeStream(WS_URL)
+        reconnects: list[int] = []
+        monkeypatch.setattr(stream, "request_reconnect", lambda: reconnects.append(1))
+        monkeypatch.setattr(provider_module, "is_market_open", lambda now: True)
+        assert stream._last_trade_at is None
+
+        monkeypatch.setattr(asyncio, "sleep", _fake_sleep_letting_n_iterations_run(1))
+
+        with pytest.raises(asyncio.CancelledError):
+            await stream._watch_for_data_silence()
+
+        assert reconnects == []
+
+    @pytest.mark.asyncio
+    async def test_watchdog_does_not_reconnect_while_trades_are_still_arriving(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        stream = ThetaUnderlyingTradeStream(WS_URL)
+        reconnects: list[int] = []
+        monkeypatch.setattr(stream, "request_reconnect", lambda: reconnects.append(1))
+        monkeypatch.setattr(provider_module, "is_market_open", lambda now: True)
+        stream._last_trade_at = time.monotonic()  # fresh, well under the threshold
+
+        monkeypatch.setattr(asyncio, "sleep", _fake_sleep_letting_n_iterations_run(1))
+
+        with pytest.raises(asyncio.CancelledError):
+            await stream._watch_for_data_silence()
+
+        assert reconnects == []
 
 
 class TestProviderLifecycle:

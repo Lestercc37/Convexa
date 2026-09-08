@@ -35,7 +35,7 @@ from backend.adapters.providers.thetadata.request_slots import (
 from backend.domain.underlyings import ACTIVE_UNDERLYINGS_BY_SYMBOL
 from backend.domain.use_cases.calculate_bsm_greeks import calculate_bsm_greeks
 from backend.domain.use_cases.calculate_near_the_money_width import calculate_near_the_money_width
-from backend.domain.use_cases.market_hours import EASTERN_TIME, MARKET_CLOSE_ET
+from backend.domain.use_cases.market_hours import EASTERN_TIME, MARKET_CLOSE_ET, is_market_open
 
 logger = logging.getLogger(__name__)
 
@@ -122,6 +122,42 @@ RECONCILE_INTERVAL_SECONDS = 20 * 60
 STATUS_STALE_AFTER_SECONDS = 15
 RECONNECT_BASE_DELAY_SECONDS = 2
 RECONNECT_MAX_DELAY_SECONDS = 60
+
+# Real-DATA silence watchdog (ThetaUnderlyingTradeStream, ThetaQuoteStream)
+# -- confirmed live, 2026-09, with a controlled instrumented reproduction
+# (forced a Trade/Quote Stream reconnect, then measured message arrival
+# with time.perf_counter() on all 3 streams): Theta Terminal can stop
+# delivering TRADE-type messages to an already-open connection after a
+# *different* connection from this same client reconnects and re-sends
+# its own subscribe burst -- while that affected connection's own STATUS
+# heartbeat (the existing STATUS_STALE_AFTER_SECONDS check above) keeps
+# arriving completely normally, once a second, indefinitely. The existing
+# heartbeat is therefore blind to this failure mode by construction: it
+# only asks "is *any* message arriving", never "is real data arriving".
+# Reproduced 4/4 times, ~2s after the trigger every time (matching
+# RECONNECT_BASE_DELAY_SECONDS, i.e. exactly when the *other* stream's
+# reconnect attempt actually lands). Manually forcing the affected
+# stream's own reconnect (the same request_reconnect() mechanism this
+# watchdog now automates) restored delivery within one reconnect cycle
+# every time, sustained for the rest of that observation window --
+# that's the empirical basis for reusing request_reconnect() here rather
+# than inventing a different recovery mechanism.
+#
+# 20s, not the 15s STATUS threshold: deliberately looser, since this is a
+# softer signal than "no message of any kind" -- ThetaUnderlyingTradeStream
+# alone registers every active non-future underlying at once (14 highly
+# liquid symbols) *plus* whatever cross-contaminated option trades Theta
+# Terminal broadcasts to it (confirmed live: thousands/second during
+# active windows), so genuine, healthy silence across all of that for
+# anywhere near 20s during real market hours essentially never happens --
+# but a single quiet contract, or the first few seconds right after a
+# fresh connection, still shouldn't trigger a reconnect on its own. 20s
+# also stays comfortably under the 30s REST-scheduler poll's own staleness
+# ceiling, so self-healing here is never slower than just waiting for that
+# fallback would have been anyway. Gated on is_market_open() so a
+# genuinely quiet closed market never trips it.
+DATA_SILENCE_THRESHOLD_SECONDS = 20
+DATA_SILENCE_CHECK_INTERVAL_SECONDS = 5
 
 # ThetaData's real concurrency limit is per ACCOUNT, not per endpoint or
 # symbol, and doesn't add up across subscriptions — the highest tier
@@ -633,6 +669,24 @@ class ThetaQuoteStream:
         # -- identical mechanism, mirrored here.
         self._loop: asyncio.AbstractEventLoop | None = None
         self._active_websocket: websockets.ClientConnection | None = None
+        # Data-silence watchdog -- see ThetaUnderlyingTradeStream's own
+        # _watch_for_data_silence() and DATA_SILENCE_THRESHOLD_SECONDS'
+        # module-level comment for the confirmed mechanism this guards
+        # against (a *whole connection* going quiet after another stream
+        # reconnects, while its own STATUS heartbeat stays healthy).
+        # Extended here as the same family of cause applied to QUOTE
+        # instead of TRADE messages -- proposed, not proven, for this
+        # class specifically. Explicitly NOT the same failure this cannot
+        # help with: the original SPX Quote Stream finding was specific
+        # *contracts* (a subset) never receiving their first quote while
+        # the connection overall stayed busy with quotes for others --
+        # this watchdog only tracks the connection's own most recent
+        # quote of any kind, so it would never fire for that pattern (the
+        # aggregate signal stays fresh the whole time). It only helps if
+        # the entire connection goes silent the way the underlying stream
+        # was confirmed to.
+        self._last_quote_at: float | None = None
+        self._watchdog_task: asyncio.Task[None] | None = None
 
     def register_contract(
         self,
@@ -658,8 +712,16 @@ class ThetaQuoteStream:
             return
         self._loop = asyncio.get_running_loop()
         self._task = asyncio.create_task(self._run())
+        self._watchdog_task = asyncio.create_task(self._watch_for_data_silence())
 
     async def stop(self) -> None:
+        if self._watchdog_task is not None:
+            self._watchdog_task.cancel()
+            try:
+                await self._watchdog_task
+            except asyncio.CancelledError:
+                pass
+            self._watchdog_task = None
         if self._task is None:
             return
         self._task.cancel()
@@ -673,6 +735,29 @@ class ThetaQuoteStream:
         queue: asyncio.Queue[QuoteEvent] = asyncio.Queue()
         self._subscribers.setdefault(underlying.upper(), []).append(queue)
         return queue
+
+    async def _watch_for_data_silence(self) -> None:
+        """See ThetaUnderlyingTradeStream._watch_for_data_silence's own
+        docstring -- identical mechanism (independent task, transparent
+        across reconnects, request_reconnect() as the recovery action,
+        no exception ever surfaces to a caller so this cannot interact
+        with any per-symbol exception supervisor). Only the field it
+        watches differs (_last_quote_at, not _last_trade_at)."""
+        while True:
+            await asyncio.sleep(DATA_SILENCE_CHECK_INTERVAL_SECONDS)
+            if self._last_quote_at is None:
+                continue
+            if not is_market_open(utc_now()):
+                continue
+            silence = time.monotonic() - self._last_quote_at
+            if silence > DATA_SILENCE_THRESHOLD_SECONDS:
+                logger.warning(
+                    "ThetaQuoteStream: no QUOTE message in %.0fs during market hours -- "
+                    "forcing a reconnect",
+                    silence,
+                )
+                self.request_reconnect()
+                self._last_quote_at = time.monotonic()
 
     async def _run(self) -> None:
         delay = RECONNECT_BASE_DELAY_SECONDS
@@ -716,6 +801,9 @@ class ThetaQuoteStream:
                     raise ConnectionError(f"Theta Terminal reported status: {status}")
                 last_status_at = utc_now()
             elif header.get("type") == "QUOTE":
+                # Recorded before any filtering, same reasoning as
+                # ThetaUnderlyingTradeStream's own _last_trade_at.
+                self._last_quote_at = time.monotonic()
                 self._handle_quote(message)
             elif header.get("type") == "REQ_RESPONSE":
                 _log_req_response("ThetaQuoteStream", message)
@@ -849,16 +937,50 @@ class ThetaUnderlyingTradeStream:
         self._subscribers: dict[str, list[asyncio.Queue[UnderlyingTradeEvent]]] = {}
         self._task: asyncio.Task[None] | None = None
         self._next_request_id = 1
+        # See ThetaTradeStream's own fields/request_reconnect() docstring
+        # -- identical mechanism, mirrored here. Added alongside the data-
+        # silence watchdog below, which is this class's only caller of
+        # request_reconnect() today.
+        self._loop: asyncio.AbstractEventLoop | None = None
+        self._active_websocket: websockets.ClientConnection | None = None
+        # Data-silence watchdog state -- see DATA_SILENCE_THRESHOLD_SECONDS'
+        # own module-level comment for why this exists and why 20s. None
+        # until the first TRADE-type message of any kind (relevant or
+        # cross-contaminated) arrives on the *current* connection --
+        # _watch_for_data_silence() treats None as "still warming up",
+        # never as silence, so a fresh connection is never judged before
+        # it's had a real chance to receive anything.
+        self._last_trade_at: float | None = None
+        self._watchdog_task: asyncio.Task[None] | None = None
 
     def register_symbol(self, symbol: str, kind: UnderlyingKind) -> None:
         self._symbols[symbol.upper()] = kind
 
+    def request_reconnect(self) -> None:
+        """See ThetaTradeStream.request_reconnect() -- identical mechanism.
+        Called externally by nothing today (unlike ThetaTradeStream/
+        ThetaQuoteStream, near-the-money widening doesn't apply to plain
+        underlying symbols) -- this class's own _watch_for_data_silence()
+        is its only caller."""
+        if self._loop is None or self._active_websocket is None:
+            return
+        asyncio.run_coroutine_threadsafe(self._active_websocket.close(), self._loop)
+
     def start(self) -> None:
         if self._task is not None:
             return
+        self._loop = asyncio.get_running_loop()
         self._task = asyncio.create_task(self._run())
+        self._watchdog_task = asyncio.create_task(self._watch_for_data_silence())
 
     async def stop(self) -> None:
+        if self._watchdog_task is not None:
+            self._watchdog_task.cancel()
+            try:
+                await self._watchdog_task
+            except asyncio.CancelledError:
+                pass
+            self._watchdog_task = None
         if self._task is None:
             return
         self._task.cancel()
@@ -872,6 +994,44 @@ class ThetaUnderlyingTradeStream:
         queue: asyncio.Queue[UnderlyingTradeEvent] = asyncio.Queue()
         self._subscribers.setdefault(underlying.upper(), []).append(queue)
         return queue
+
+    async def _watch_for_data_silence(self) -> None:
+        """Independent of _run()'s own reconnect loop -- runs for this
+        object's whole lifetime, transparent to whichever connection
+        happens to be live underneath it at any moment. Deliberately a
+        *separate* task, not folded into _connect_and_consume()'s own
+        while-loop: this needs to keep ticking across reconnects
+        triggered for any other reason too (a real disconnect, the
+        existing STATUS-staleness check), not just reset alongside them.
+
+        This forcing a reconnect never surfaces as an exception to
+        StreamUnderlyingPriceUseCase.run() -- the same as any other
+        reconnect _run() already handles internally -- so it cannot
+        interact with UnderlyingPriceStreamManager's per-symbol
+        exception supervisor (core/underlying_price_stream.py) at all;
+        that one only ever sees an exception if this whole class's
+        reconnect loop itself gave up, which this watchdog exists
+        specifically to make less likely, not to bypass.
+        """
+        while True:
+            await asyncio.sleep(DATA_SILENCE_CHECK_INTERVAL_SECONDS)
+            if self._last_trade_at is None:
+                continue
+            if not is_market_open(utc_now()):
+                continue
+            silence = time.monotonic() - self._last_trade_at
+            if silence > DATA_SILENCE_THRESHOLD_SECONDS:
+                logger.warning(
+                    "ThetaUnderlyingTradeStream: no TRADE message in %.0fs during market "
+                    "hours -- forcing a reconnect",
+                    silence,
+                )
+                self.request_reconnect()
+                # Give the reconnect a full threshold's grace before this
+                # can fire again, instead of re-triggering on every
+                # subsequent check while the new connection is still
+                # establishing/resubscribing.
+                self._last_trade_at = time.monotonic()
 
     async def _run(self) -> None:
         delay = RECONNECT_BASE_DELAY_SECONDS
@@ -890,33 +1050,44 @@ class ThetaUnderlyingTradeStream:
 
     async def _connect_and_consume(self) -> None:
         async with websockets.connect(self._ws_url) as websocket:
-            for symbol, kind in self._symbols.items():
-                await self._subscribe(websocket, symbol, kind)
-            last_status_at = utc_now()
-            while True:
-                try:
-                    raw = await asyncio.wait_for(
-                        websocket.recv(), timeout=STATUS_STALE_AFTER_SECONDS
-                    )
-                except TimeoutError as exc:
-                    raise ConnectionError(
-                        "No message from Theta Terminal within heartbeat window"
-                    ) from exc
-                message = json.loads(raw)
-                header = message.get("header", {})
-                status = header.get("status")
-                if header.get("type") == "STATUS":
-                    if status != "CONNECTED":
-                        raise ConnectionError(f"Theta Terminal reported status: {status}")
-                    last_status_at = utc_now()
-                elif header.get("type") == "TRADE":
-                    self._handle_trade(message)
-                elif header.get("type") == "REQ_RESPONSE":
-                    _log_req_response("ThetaUnderlyingTradeStream", message)
+            self._active_websocket = websocket
+            try:
+                for symbol, kind in self._symbols.items():
+                    await self._subscribe(websocket, symbol, kind)
+                last_status_at = utc_now()
+                while True:
+                    try:
+                        raw = await asyncio.wait_for(
+                            websocket.recv(), timeout=STATUS_STALE_AFTER_SECONDS
+                        )
+                    except TimeoutError as exc:
+                        raise ConnectionError(
+                            "No message from Theta Terminal within heartbeat window"
+                        ) from exc
+                    message = json.loads(raw)
+                    header = message.get("header", {})
+                    status = header.get("status")
+                    if header.get("type") == "STATUS":
+                        if status != "CONNECTED":
+                            raise ConnectionError(f"Theta Terminal reported status: {status}")
+                        last_status_at = utc_now()
+                    elif header.get("type") == "TRADE":
+                        # Recorded before any filtering (root/security_type
+                        # match) -- the watchdog's question is "is Theta
+                        # Terminal sending this connection TRADE messages
+                        # at all", not "are any of them ours"; a cross-
+                        # contaminated trade for a root nobody registered
+                        # is just as valid a sign of life as one that is.
+                        self._last_trade_at = time.monotonic()
+                        self._handle_trade(message)
+                    elif header.get("type") == "REQ_RESPONSE":
+                        _log_req_response("ThetaUnderlyingTradeStream", message)
 
-                now = utc_now()
-                if (now - last_status_at).total_seconds() > STATUS_STALE_AFTER_SECONDS:
-                    raise ConnectionError("Heartbeat stale — no STATUS message recently")
+                    now = utc_now()
+                    if (now - last_status_at).total_seconds() > STATUS_STALE_AFTER_SECONDS:
+                        raise ConnectionError("Heartbeat stale — no STATUS message recently")
+            finally:
+                self._active_websocket = None
 
     async def _subscribe(
         self, websocket: websockets.ClientConnection, symbol: str, kind: UnderlyingKind
