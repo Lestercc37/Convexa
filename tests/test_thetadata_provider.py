@@ -17,9 +17,7 @@ from backend.adapters.providers.thetadata.provider import (
     DAILY_BARS_CACHE_TTL_SECONDS,
     THETADATA_MAX_CONCURRENT_REQUESTS,
     ThetaDataProvider,
-    ThetaQuoteStream,
-    ThetaTradeStream,
-    ThetaUnderlyingTradeStream,
+    ThetaStreamHub,
     _build_occ_symbol,
     _log_req_response,
     _nearest_expiration_cutoff,
@@ -99,7 +97,7 @@ def _make_client(handler: httpx.MockTransport | None, transport_handler=None) ->
 def _provider_with_transport(transport_handler) -> ThetaDataProvider:
     provider = ThetaDataProvider(REST_URL, WS_URL)
     provider._client = _make_client(None, transport_handler)
-    provider._stream = ThetaTradeStream(WS_URL, provider._client)
+    provider._hub = ThetaStreamHub(WS_URL, provider._client)
     return provider
 
 
@@ -189,10 +187,10 @@ class TestGetOptionChain:
 
         provider = _provider_with_transport(handler)
         occ_call = _build_occ_symbol("SPY", date(2026, 9, 18), ContractType.CALL, Decimal("769.00"))
-        provider._stream.register_contract(
+        provider._hub.register_contract(
             occ_call, "SPY", date(2026, 9, 18), ContractType.CALL, Decimal("769.00")
         )
-        provider._stream._cumulative_volume[occ_call] = 4242
+        provider._hub._cumulative_volume[occ_call] = 4242
 
         chain = provider.get_option_chain("SPY")
 
@@ -300,46 +298,36 @@ class TestNearTheMoneyResubscription:
 
         return handler
 
-    def test_registers_a_newly_near_the_money_contract_in_both_streams(self) -> None:
+    def test_registers_a_newly_near_the_money_contract(self) -> None:
         provider = _provider_with_transport(self._handler())
         occ_call = _build_occ_symbol("SPY", date(2026, 9, 18), ContractType.CALL, Decimal("769.00"))
         occ_put = _build_occ_symbol("SPY", date(2026, 9, 18), ContractType.PUT, Decimal("769.00"))
-        assert provider._stream.has_contract(occ_call) is False
-        assert provider._quote_stream.has_contract(occ_call) is False
+        assert provider._hub.has_contract(occ_call) is False
 
         provider.get_option_chain("SPY")
 
-        assert provider._stream.has_contract(occ_call) is True
-        assert provider._stream.has_contract(occ_put) is True
-        assert provider._quote_stream.has_contract(occ_call) is True
-        assert provider._quote_stream.has_contract(occ_put) is True
+        assert provider._hub.has_contract(occ_call) is True
+        assert provider._hub.has_contract(occ_put) is True
 
-    def test_requests_reconnect_on_both_streams_when_a_contract_is_newly_registered(self) -> None:
+    def test_requests_reconnect_when_a_contract_is_newly_registered(self) -> None:
         provider = _provider_with_transport(self._handler())
-        trade_reconnects = []
-        quote_reconnects = []
-        provider._stream.request_reconnect = lambda: trade_reconnects.append(1)
-        provider._quote_stream.request_reconnect = lambda: quote_reconnects.append(1)
+        reconnects = []
+        provider._hub.request_reconnect = lambda: reconnects.append(1)
 
         provider.get_option_chain("SPY")
 
-        assert trade_reconnects == [1]
-        assert quote_reconnects == [1]
+        assert reconnects == [1]
 
     def test_does_not_request_reconnect_when_nothing_new_is_registered(self) -> None:
         provider = _provider_with_transport(self._handler())
         occ_call = _build_occ_symbol("SPY", date(2026, 9, 18), ContractType.CALL, Decimal("769.00"))
         occ_put = _build_occ_symbol("SPY", date(2026, 9, 18), ContractType.PUT, Decimal("769.00"))
         for occ, contract_type in ((occ_call, ContractType.CALL), (occ_put, ContractType.PUT)):
-            provider._stream.register_contract(
-                occ, "SPY", date(2026, 9, 18), contract_type, Decimal("769.00")
-            )
-            provider._quote_stream.register_contract(
+            provider._hub.register_contract(
                 occ, "SPY", date(2026, 9, 18), contract_type, Decimal("769.00")
             )
         reconnects = []
-        provider._stream.request_reconnect = lambda: reconnects.append("trade")
-        provider._quote_stream.request_reconnect = lambda: reconnects.append("quote")
+        provider._hub.request_reconnect = lambda: reconnects.append("reconnect")
 
         provider.get_option_chain("SPY")
 
@@ -382,12 +370,11 @@ class TestNearTheMoneyResubscription:
         occ_at_769 = _build_occ_symbol("SPY", date(2026, 9, 18), ContractType.CALL, Decimal("769.00"))
         occ_at_800 = _build_occ_symbol("SPY", date(2026, 9, 18), ContractType.CALL, Decimal("800.00"))
         reconnects: list[int] = []
-        provider._stream.request_reconnect = lambda: reconnects.append(len(reconnects) + 1)
-        provider._quote_stream.request_reconnect = lambda: None
+        provider._hub.request_reconnect = lambda: reconnects.append(len(reconnects) + 1)
 
         provider.get_option_chain("SPY")  # cycle 1: spot=769
-        assert provider._stream.has_contract(occ_at_769) is True
-        assert provider._stream.has_contract(occ_at_800) is False
+        assert provider._hub.has_contract(occ_at_769) is True
+        assert provider._hub.has_contract(occ_at_800) is False
         assert reconnects == [1]
 
         call_count = 1
@@ -398,8 +385,8 @@ class TestNearTheMoneyResubscription:
         provider._near_the_money_cache.clear()
         provider.get_option_chain("SPY")  # cycle 2: spot drifted to 800
 
-        assert provider._stream.has_contract(occ_at_800) is True, "new strike must be registered"
-        assert provider._stream.has_contract(occ_at_769) is True, "old strike must not be dropped"
+        assert provider._hub.has_contract(occ_at_800) is True, "new strike must be registered"
+        assert provider._hub.has_contract(occ_at_769) is True, "old strike must not be dropped"
         assert reconnects == [1, 2], "second cycle must reconnect again for the newly-widened set"
 
 
@@ -1215,74 +1202,75 @@ class TestReqResponseHandling:
 
         assert any(record.levelno == logging.ERROR for record in caplog.records)
 
-    def test_all_three_stream_classes_route_req_response_through_the_shared_helper(
-        self,
-    ) -> None:
-        """Confirms the elif branch exists in all 3 stream classes' own
+    def test_consume_routes_req_response_through_the_shared_helper(self) -> None:
+        """Confirms the elif branch exists in ThetaStreamHub's own
         message-loop method (not just that _log_req_response itself
         works) -- reads the compiled source directly rather than driving
         a full websocket loop, matching this file's own convention of
-        testing _handle_trade/_handle_quote directly instead of the
-        recv() loop around them.
-
-        ThetaTradeStream/ThetaQuoteStream's message loop lives in
-        `_consume` (split out of `_connect_and_consume` so
-        request_reconnect() -- near-the-money re-subscription as spot
-        drifts -- has a `finally` block to clear `_active_websocket` in);
-        ThetaUnderlyingTradeStream doesn't need that (subscribes by
-        symbol, not by strike, so it's never subject to a near-the-money
-        window), so its message loop is still directly in
-        `_connect_and_consume`.
-        """
+        testing _handle_option_trade/_handle_quote/_handle_underlying_trade
+        directly instead of the recv() loop around them. All 3 logical
+        streams share this one loop now (see ThetaStreamHub's own
+        docstring for why: ThetaData's docs only support one connection
+        to this endpoint)."""
         import inspect
 
-        for stream_class in (ThetaTradeStream, ThetaQuoteStream, ThetaUnderlyingTradeStream):
-            message_loop_method = getattr(stream_class, "_consume", stream_class._connect_and_consume)
-            source = inspect.getsource(message_loop_method)
-            assert '"REQ_RESPONSE"' in source
-            assert "_log_req_response" in source
+        source = inspect.getsource(ThetaStreamHub._consume)
+        assert '"REQ_RESPONSE"' in source
+        assert "_log_req_response" in source
 
 
-class TestTradeStream:
-    def test_handle_trade_accumulates_cumulative_volume(self) -> None:
-        stream = ThetaTradeStream(WS_URL, httpx.Client(base_url=REST_URL))
+class TestOptionTradeHandling:
+    def test_handle_option_trade_accumulates_cumulative_volume(self) -> None:
+        stream = ThetaStreamHub(WS_URL, httpx.Client(base_url=REST_URL))
         message = {
             "header": {"type": "TRADE", "status": "CONNECTED"},
-            "contract": {"root": "SPY", "expiration": 20260918, "strike": 770000, "right": "C"},
+            "contract": {
+                "security_type": "OPTION",
+                "root": "SPY",
+                "expiration": 20260918,
+                "strike": 770000,
+                "right": "C",
+            },
             "trade": {"size": 15, "price": 1.09, "sequence": 12345},
         }
 
-        stream._handle_trade(message)
-        stream._handle_trade(message)
+        stream._handle_option_trade(message)
+        stream._handle_option_trade(message)
 
         occ = _build_occ_symbol("SPY", date(2026, 9, 18), ContractType.CALL, Decimal("770"))
         assert stream.cumulative_volume(occ) == 30
 
     @pytest.mark.asyncio
-    async def test_handle_trade_publishes_a_flow_event_to_subscribers(self) -> None:
-        stream = ThetaTradeStream(WS_URL, httpx.Client(base_url=REST_URL))
-        queue = stream.subscribe_queue("SPY")
+    async def test_handle_option_trade_publishes_a_flow_event_to_subscribers(self) -> None:
+        stream = ThetaStreamHub(WS_URL, httpx.Client(base_url=REST_URL))
+        queue = stream.subscribe_trade_queue("SPY")
         message = {
             "header": {"type": "TRADE", "status": "CONNECTED"},
-            "contract": {"root": "SPY", "expiration": 20260918, "strike": 770000, "right": "C"},
+            "contract": {
+                "security_type": "OPTION",
+                "root": "SPY",
+                "expiration": 20260918,
+                "strike": 770000,
+                "right": "C",
+            },
             "trade": {"size": 10, "price": 2.00, "sequence": 1},
         }
 
-        stream._handle_trade(message)
+        stream._handle_option_trade(message)
         event = await asyncio.wait_for(queue.get(), timeout=1)
 
         assert event.symbol == "SPY"
         assert event.size == 10
         assert event.premium == Decimal("2.00") * Decimal(10) * Decimal(100)
 
-    def test_handle_trade_ignores_incomplete_messages(self) -> None:
-        stream = ThetaTradeStream(WS_URL, httpx.Client(base_url=REST_URL))
-        stream._handle_trade({"contract": {"root": "SPY"}, "trade": {}})
+    def test_handle_option_trade_ignores_incomplete_messages(self) -> None:
+        stream = ThetaStreamHub(WS_URL, httpx.Client(base_url=REST_URL))
+        stream._handle_option_trade({"contract": {"root": "SPY"}, "trade": {}})
         # No exception, no volume recorded anywhere.
         assert stream._cumulative_volume == {}
 
     def test_has_contract_reflects_registration(self) -> None:
-        stream = ThetaTradeStream(WS_URL, httpx.Client(base_url=REST_URL))
+        stream = ThetaStreamHub(WS_URL, httpx.Client(base_url=REST_URL))
         occ = _build_occ_symbol("SPY", date(2026, 9, 18), ContractType.CALL, Decimal("770"))
 
         assert stream.has_contract(occ) is False
@@ -1291,38 +1279,34 @@ class TestTradeStream:
 
         assert stream.has_contract(occ) is True
 
-    def test_request_reconnect_is_a_no_op_before_start(self) -> None:
-        # Near-the-money re-subscription (get_option_chain) calls this
-        # unconditionally whenever it registers a new contract -- must
-        # never raise for the API process's own dormant ThetaDataProvider
-        # instance (never started, per backend/main.py's lifespan) or
-        # before the Worker's own stream has connected for the first time.
-        stream = ThetaTradeStream(WS_URL, httpx.Client(base_url=REST_URL))
-        stream.request_reconnect()  # must not raise
+    def test_subscribe_option_sends_the_documented_trade_payload(self) -> None:
+        stream = ThetaStreamHub(WS_URL, httpx.Client(base_url=REST_URL))
+        sent: list[str] = []
 
-    @pytest.mark.asyncio
-    async def test_request_reconnect_closes_the_active_connection(self) -> None:
-        class _FakeWebsocket:
-            def __init__(self) -> None:
-                self.closed = False
+        class _FakeWebSocket:
+            async def send(self, payload: str) -> None:
+                sent.append(payload)
 
-            async def close(self) -> None:
-                self.closed = True
+        asyncio.run(
+            stream._subscribe_option(
+                _FakeWebSocket(), "SPY", date(2026, 9, 18), ContractType.CALL, Decimal("770"), "TRADE"
+            )
+        )
 
-        stream = ThetaTradeStream(WS_URL, httpx.Client(base_url=REST_URL))
-        fake_websocket = _FakeWebsocket()
-        stream._loop = asyncio.get_running_loop()
-        stream._active_websocket = fake_websocket  # type: ignore[assignment]
-
-        stream.request_reconnect()
-        # request_reconnect schedules the close via run_coroutine_threadsafe
-        # (safe to call from a different thread than the event loop's own,
-        # which get_option_chain's caller -- a scheduler worker thread --
-        # actually is) rather than awaiting it directly -- give the loop a
-        # moment to actually run the scheduled coroutine.
-        await asyncio.sleep(0.05)
-
-        assert fake_websocket.closed is True
+        payload = json.loads(sent[0])
+        assert payload == {
+            "msg_type": "STREAM",
+            "sec_type": "OPTION",
+            "req_type": "TRADE",
+            "add": True,
+            "id": 1,
+            "contract": {
+                "root": "SPY",
+                "expiration": 20260918,
+                "strike": 770000,
+                "right": "C",
+            },
+        }
 
     def test_reconcile_logs_warning_on_large_discrepancy(
         self, caplog: pytest.LogCaptureFixture
@@ -1338,7 +1322,7 @@ class TestTradeStream:
             )
 
         client = httpx.Client(base_url=REST_URL, transport=httpx.MockTransport(handler))
-        stream = ThetaTradeStream(WS_URL, client)
+        stream = ThetaStreamHub(WS_URL, client)
         stream.register_contract(
             "SPY260918C00770000", "SPY", date(2026, 9, 18), ContractType.CALL, Decimal("770")
         )
@@ -1356,7 +1340,7 @@ class TestTradeStream:
             return httpx.Response(200, json={"response": [{"data": [{"volume": 1000}]}]})
 
         client = httpx.Client(base_url=REST_URL, transport=httpx.MockTransport(handler))
-        stream = ThetaTradeStream(WS_URL, client)
+        stream = ThetaStreamHub(WS_URL, client)
         stream.register_contract(
             "SPY260918C00770000", "SPY", date(2026, 9, 18), ContractType.CALL, Decimal("770")
         )
@@ -1368,11 +1352,18 @@ class TestTradeStream:
         assert any("reconciled" in record.message for record in caplog.records)
         assert not any(record.levelno == logging.WARNING for record in caplog.records)
 
+
+class TestStreamHubReconnection:
+    """Backoff/reset now lives in exactly one _run() loop, shared by all
+    3 logical streams (see ThetaStreamHub's own docstring for why there's
+    only one connection) -- one test pair covers it, where before there
+    were 3 near-identical copies, one per now-deleted class."""
+
     @pytest.mark.asyncio
     async def test_run_backs_off_exponentially_between_reconnect_attempts(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        stream = ThetaTradeStream(WS_URL, httpx.Client(base_url=REST_URL))
+        stream = ThetaStreamHub(WS_URL, httpx.Client(base_url=REST_URL))
         sleep_calls: list[float] = []
 
         async def fake_sleep(seconds: float) -> None:
@@ -1409,7 +1400,7 @@ class TestTradeStream:
         past STABLE_CONNECTION_RESET_SECONDS before failing (a fresh,
         unrelated hiccup) must reset to the base delay for what comes
         after it, not continue escalating from 8s."""
-        stream = ThetaTradeStream(WS_URL, httpx.Client(base_url=REST_URL))
+        stream = ThetaStreamHub(WS_URL, httpx.Client(base_url=REST_URL))
         clock = _FakeMonotonicClock()
         monkeypatch.setattr(provider_module.time, "monotonic", clock)
 
@@ -1440,6 +1431,266 @@ class TestTradeStream:
         # 2 -> 4 (still escalating, both quick failures) -> 2 (reset,
         # the third connection was stable for a while before it failed).
         assert sleep_calls == [2, 4, 2]
+
+    @pytest.mark.asyncio
+    async def test_start_and_stop_manage_a_single_background_task(self) -> None:
+        stream = ThetaStreamHub(WS_URL, httpx.Client(base_url=REST_URL))
+        stream.start()
+        task = stream._task
+        assert task is not None
+
+        # A second start() while already running is a no-op.
+        stream.start()
+        assert stream._task is task
+
+        await stream.stop()
+        assert stream._task is None
+
+    @pytest.mark.asyncio
+    async def test_start_and_stop_also_manage_the_watchdog_task(self) -> None:
+        stream = ThetaStreamHub(WS_URL, httpx.Client(base_url=REST_URL))
+        stream.start()
+        watchdog_task = stream._watchdog_task
+        assert watchdog_task is not None
+        assert not watchdog_task.done()
+
+        await stream.stop()
+
+        assert stream._watchdog_task is None
+        assert watchdog_task.cancelled()
+
+    def test_request_reconnect_is_a_no_op_before_start(self) -> None:
+        # Near-the-money re-subscription (get_option_chain) and the
+        # data-silence watchdog both call this unconditionally -- must
+        # never raise for the API process's own dormant ThetaDataProvider
+        # instance (never started, per backend/main.py's lifespan) or
+        # before the Worker's own connection has been made for the first
+        # time.
+        stream = ThetaStreamHub(WS_URL, httpx.Client(base_url=REST_URL))
+        stream.request_reconnect()  # must not raise
+
+    @pytest.mark.asyncio
+    async def test_request_reconnect_closes_the_active_connection(self) -> None:
+        class _FakeWebsocket:
+            def __init__(self) -> None:
+                self.closed = False
+
+            async def close(self) -> None:
+                self.closed = True
+
+        stream = ThetaStreamHub(WS_URL, httpx.Client(base_url=REST_URL))
+        fake_websocket = _FakeWebsocket()
+        stream._loop = asyncio.get_running_loop()
+        stream._active_websocket = fake_websocket  # type: ignore[assignment]
+
+        stream.request_reconnect()
+        # request_reconnect schedules the close via run_coroutine_threadsafe
+        # (safe to call from a different thread than the event loop's own,
+        # which get_option_chain's caller -- a scheduler worker thread --
+        # actually is) rather than awaiting it directly -- give the loop a
+        # moment to actually run the scheduled coroutine.
+        await asyncio.sleep(0.05)
+
+        assert fake_websocket.closed is True
+
+
+class TestStreamHubDataSilenceWatchdog:
+    """One watchdog task now tracks 3 independent timestamps (QUOTE,
+    option TRADE, underlying TRADE) instead of 3 separate classes each
+    tracking their own -- see ThetaStreamHub._watch_for_data_silence's
+    own docstring. Confirmed live, 2026-09-09, real market open: this
+    mechanism (previously present on 2 of the 3 logical streams) was
+    missing entirely for option TRADE, and that was the direct cause of
+    a full session with zero Whale Alerts -- ThetaStreamHub now has it
+    for all 3."""
+
+    @pytest.mark.asyncio
+    async def test_watchdog_forces_reconnect_after_quote_silence_during_market_hours(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        stream = ThetaStreamHub(WS_URL, httpx.Client(base_url=REST_URL))
+        reconnects: list[int] = []
+        monkeypatch.setattr(stream, "request_reconnect", lambda: reconnects.append(1))
+        monkeypatch.setattr(provider_module, "is_market_open", lambda now: True)
+        stream._last_quote_at = (
+            time.monotonic() - provider_module.DATA_SILENCE_THRESHOLD_SECONDS - 1
+        )
+
+        monkeypatch.setattr(asyncio, "sleep", _fake_sleep_letting_n_iterations_run(1))
+
+        with pytest.raises(asyncio.CancelledError):
+            await stream._watch_for_data_silence()
+
+        assert reconnects == [1]
+
+    @pytest.mark.asyncio
+    async def test_watchdog_forces_reconnect_after_option_trade_silence_during_market_hours(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        stream = ThetaStreamHub(WS_URL, httpx.Client(base_url=REST_URL))
+        reconnects: list[int] = []
+        monkeypatch.setattr(stream, "request_reconnect", lambda: reconnects.append(1))
+        monkeypatch.setattr(provider_module, "is_market_open", lambda now: True)
+        stream._last_option_trade_at = (
+            time.monotonic() - provider_module.DATA_SILENCE_THRESHOLD_SECONDS - 1
+        )
+
+        monkeypatch.setattr(asyncio, "sleep", _fake_sleep_letting_n_iterations_run(1))
+
+        with pytest.raises(asyncio.CancelledError):
+            await stream._watch_for_data_silence()
+
+        assert reconnects == [1]
+
+    @pytest.mark.asyncio
+    async def test_watchdog_forces_reconnect_after_underlying_trade_silence_during_market_hours(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The actual fix, confirmed live 2026-09 with an instrumented
+        reproduction: Theta Terminal can stop delivering TRADE messages
+        to this connection (while its STATUS heartbeat stays perfectly
+        healthy) after a *different* logical stream's own subscribe
+        burst. Manually forcing a reconnect restored delivery every time
+        it was tried live -- this test confirms the watchdog automates
+        exactly that action once silence crosses the threshold."""
+        stream = ThetaStreamHub(WS_URL, httpx.Client(base_url=REST_URL))
+        reconnects: list[int] = []
+        monkeypatch.setattr(stream, "request_reconnect", lambda: reconnects.append(1))
+        monkeypatch.setattr(provider_module, "is_market_open", lambda now: True)
+        stream._last_underlying_trade_at = (
+            time.monotonic() - provider_module.DATA_SILENCE_THRESHOLD_SECONDS - 1
+        )
+
+        monkeypatch.setattr(asyncio, "sleep", _fake_sleep_letting_n_iterations_run(1))
+
+        with pytest.raises(asyncio.CancelledError):
+            await stream._watch_for_data_silence()
+
+        assert reconnects == [1]
+
+    @pytest.mark.asyncio
+    async def test_watchdog_does_not_reconnect_while_the_market_is_closed(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # A genuinely quiet closed market must never trip this, on any of
+        # the 3 tracked streams -- the explicit "don't fire unnecessary
+        # reconnects" requirement.
+        stream = ThetaStreamHub(WS_URL, httpx.Client(base_url=REST_URL))
+        reconnects: list[int] = []
+        monkeypatch.setattr(stream, "request_reconnect", lambda: reconnects.append(1))
+        monkeypatch.setattr(provider_module, "is_market_open", lambda now: False)
+        stale = time.monotonic() - provider_module.DATA_SILENCE_THRESHOLD_SECONDS - 1
+        stream._last_quote_at = stale
+        stream._last_option_trade_at = stale
+        stream._last_underlying_trade_at = stale
+
+        monkeypatch.setattr(asyncio, "sleep", _fake_sleep_letting_n_iterations_run(1))
+
+        with pytest.raises(asyncio.CancelledError):
+            await stream._watch_for_data_silence()
+
+        assert reconnects == []
+
+    @pytest.mark.asyncio
+    async def test_watchdog_does_not_reconnect_before_the_first_message_of_any_kind_arrives(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # All 3 timestamps are None until their respective first message
+        # -- a fresh connection that hasn't had a chance to receive
+        # anything yet must not be judged as "silent".
+        stream = ThetaStreamHub(WS_URL, httpx.Client(base_url=REST_URL))
+        reconnects: list[int] = []
+        monkeypatch.setattr(stream, "request_reconnect", lambda: reconnects.append(1))
+        monkeypatch.setattr(provider_module, "is_market_open", lambda now: True)
+        assert stream._last_quote_at is None
+        assert stream._last_option_trade_at is None
+        assert stream._last_underlying_trade_at is None
+
+        monkeypatch.setattr(asyncio, "sleep", _fake_sleep_letting_n_iterations_run(1))
+
+        with pytest.raises(asyncio.CancelledError):
+            await stream._watch_for_data_silence()
+
+        assert reconnects == []
+
+    @pytest.mark.asyncio
+    async def test_watchdog_does_not_reconnect_while_messages_are_still_arriving(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        stream = ThetaStreamHub(WS_URL, httpx.Client(base_url=REST_URL))
+        reconnects: list[int] = []
+        monkeypatch.setattr(stream, "request_reconnect", lambda: reconnects.append(1))
+        monkeypatch.setattr(provider_module, "is_market_open", lambda now: True)
+        fresh = time.monotonic()  # well under the threshold
+        stream._last_quote_at = fresh
+        stream._last_option_trade_at = fresh
+        stream._last_underlying_trade_at = fresh
+
+        monkeypatch.setattr(asyncio, "sleep", _fake_sleep_letting_n_iterations_run(1))
+
+        with pytest.raises(asyncio.CancelledError):
+            await stream._watch_for_data_silence()
+
+        assert reconnects == []
+
+
+class TestQuoteHandling:
+    def test_handle_quote_publishes_a_quote_event_to_subscribers(self) -> None:
+        stream = ThetaStreamHub(WS_URL, httpx.Client(base_url=REST_URL))
+        queue = stream.subscribe_quote_queue("SPY")
+        message = {
+            "header": {"type": "QUOTE", "status": "CONNECTED"},
+            "contract": {
+                "security_type": "OPTION",
+                "root": "SPY",
+                "expiration": 20260918,
+                "strike": 770000,
+                "right": "C",
+            },
+            "quote": {
+                "ms_of_day": 26622025,
+                "bid_size": 7,
+                "bid": 1.08,
+                "ask_size": 7,
+                "ask": 1.09,
+                "date": 20261219,
+            },
+        }
+
+        stream._handle_quote(message)
+        event = queue.get_nowait()
+
+        occ = _build_occ_symbol("SPY", date(2026, 9, 18), ContractType.CALL, Decimal("770"))
+        assert event.symbol == "SPY"
+        assert event.occ_symbol == occ
+        assert event.bid == Decimal("1.08")
+        assert event.ask == Decimal("1.09")
+
+    def test_handle_quote_ignores_incomplete_messages(self) -> None:
+        stream = ThetaStreamHub(WS_URL, httpx.Client(base_url=REST_URL))
+        queue = stream.subscribe_quote_queue("SPY")
+
+        stream._handle_quote({"contract": {"root": "SPY"}, "quote": {"bid": 1.08}})
+
+        assert queue.empty()
+
+    def test_subscribe_option_quote_sends_the_documented_quote_payload(self) -> None:
+        stream = ThetaStreamHub(WS_URL, httpx.Client(base_url=REST_URL))
+        sent: list[str] = []
+
+        class _FakeWebSocket:
+            async def send(self, payload: str) -> None:
+                sent.append(payload)
+
+        asyncio.run(
+            stream._subscribe_option(
+                _FakeWebSocket(), "SPY", date(2026, 9, 18), ContractType.CALL, Decimal("770"), "QUOTE"
+            )
+        )
+
+        payload = json.loads(sent[0])
+        assert payload["req_type"] == "QUOTE"
+        assert payload["sec_type"] == "OPTION"
 
 
 class _FakeMonotonicClock:
@@ -1477,230 +1728,33 @@ def _fake_sleep_letting_n_iterations_run(iterations: int = 1):
     return fake_sleep
 
 
-class TestQuoteStream:
-    def test_handle_quote_publishes_a_quote_event_to_subscribers(self) -> None:
-        stream = ThetaQuoteStream(WS_URL)
-        queue = stream.subscribe_queue("SPY")
-        message = {
-            "header": {"type": "QUOTE", "status": "CONNECTED"},
-            "contract": {
-                "security_type": "OPTION",
-                "root": "SPY",
-                "expiration": 20260918,
-                "strike": 770000,
-                "right": "C",
-            },
-            "quote": {
-                "ms_of_day": 26622025,
-                "bid_size": 7,
-                "bid": 1.08,
-                "ask_size": 7,
-                "ask": 1.09,
-                "date": 20261219,
-            },
-        }
-
-        stream._handle_quote(message)
-        event = queue.get_nowait()
-
-        occ = _build_occ_symbol("SPY", date(2026, 9, 18), ContractType.CALL, Decimal("770"))
-        assert event.symbol == "SPY"
-        assert event.occ_symbol == occ
-        assert event.bid == Decimal("1.08")
-        assert event.ask == Decimal("1.09")
-
-    def test_handle_quote_ignores_incomplete_messages(self) -> None:
-        stream = ThetaQuoteStream(WS_URL)
-        queue = stream.subscribe_queue("SPY")
-
-        stream._handle_quote({"contract": {"root": "SPY"}, "quote": {"bid": 1.08}})
-
-        assert queue.empty()
-
-    @pytest.mark.asyncio
-    async def test_run_backs_off_exponentially_between_reconnect_attempts(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        stream = ThetaQuoteStream(WS_URL)
-        sleep_calls: list[float] = []
-
-        async def fake_sleep(seconds: float) -> None:
-            sleep_calls.append(seconds)
-            if len(sleep_calls) >= 3:
-                raise asyncio.CancelledError
-
-        async def failing_connect() -> None:
-            raise ConnectionError("simulated disconnect")
-
-        monkeypatch.setattr(asyncio, "sleep", fake_sleep)
-        monkeypatch.setattr(stream, "_connect_and_consume", failing_connect)
-
-        with pytest.raises(asyncio.CancelledError):
-            await stream._run()
-
-        assert sleep_calls[0] == 2
-        assert sleep_calls[1] == 4
-        assert sleep_calls[2] == 8
-
-    @pytest.mark.asyncio
-    async def test_run_keeps_escalating_on_rapid_failures_but_resets_after_a_stable_connection(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """See ThetaTradeStream's identical test -- same fix, same
-        reasoning, applied here too (not just the class where the
-        symptom was most visible)."""
-        stream = ThetaQuoteStream(WS_URL)
-        clock = _FakeMonotonicClock()
-        monkeypatch.setattr(provider_module.time, "monotonic", clock)
-
-        sleep_calls: list[float] = []
-
-        async def fake_sleep(seconds: float) -> None:
-            sleep_calls.append(seconds)
-
-        attempt = {"n": 0}
-
-        async def fake_connect_and_consume() -> None:
-            attempt["n"] += 1
-            if attempt["n"] in (1, 2):
-                clock.advance(1)
-                raise ConnectionError(f"quick failure {attempt['n']}")
-            if attempt["n"] == 3:
-                clock.advance(provider_module.STABLE_CONNECTION_RESET_SECONDS + 5)
-                raise ConnectionError("failure after a stable stretch")
-            raise asyncio.CancelledError
-
-        monkeypatch.setattr(asyncio, "sleep", fake_sleep)
-        monkeypatch.setattr(stream, "_connect_and_consume", fake_connect_and_consume)
-
-        with pytest.raises(asyncio.CancelledError):
-            await stream._run()
-
-        assert sleep_calls == [2, 4, 2]
-
-    @pytest.mark.asyncio
-    async def test_start_and_stop_manage_a_single_background_task(self) -> None:
-        stream = ThetaQuoteStream(WS_URL)
-        stream.start()
-        task = stream._task
-        assert task is not None
-
-        # A second start() while already running is a no-op — same
-        # contract as ThetaTradeStream.start().
-        stream.start()
-        assert stream._task is task
-
-        await stream.stop()
-        assert stream._task is None
-
-    @pytest.mark.asyncio
-    async def test_start_and_stop_also_manage_the_watchdog_task(self) -> None:
-        stream = ThetaQuoteStream(WS_URL)
-        stream.start()
-        watchdog_task = stream._watchdog_task
-        assert watchdog_task is not None
-        assert not watchdog_task.done()
-
-        await stream.stop()
-
-        assert stream._watchdog_task is None
-        assert watchdog_task.cancelled()
-
-    @pytest.mark.asyncio
-    async def test_watchdog_forces_reconnect_after_data_silence_during_market_hours(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """Same mechanism as ThetaUnderlyingTradeStream's own watchdog --
-        extended here as the same family of cause applied to QUOTE
-        instead of TRADE, NOT independently confirmed for this class the
-        same way (see this stream's own __init__ comment on
-        _last_quote_at for exactly what this does and doesn't cover)."""
-        stream = ThetaQuoteStream(WS_URL)
-        reconnects: list[int] = []
-        monkeypatch.setattr(stream, "request_reconnect", lambda: reconnects.append(1))
-        monkeypatch.setattr(provider_module, "is_market_open", lambda now: True)
-        stream._last_quote_at = (
-            time.monotonic() - provider_module.DATA_SILENCE_THRESHOLD_SECONDS - 1
-        )
-
-        monkeypatch.setattr(asyncio, "sleep", _fake_sleep_letting_n_iterations_run(1))
-
-        with pytest.raises(asyncio.CancelledError):
-            await stream._watch_for_data_silence()
-
-        assert reconnects == [1]
-
-    @pytest.mark.asyncio
-    async def test_watchdog_does_not_reconnect_while_the_market_is_closed(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        stream = ThetaQuoteStream(WS_URL)
-        reconnects: list[int] = []
-        monkeypatch.setattr(stream, "request_reconnect", lambda: reconnects.append(1))
-        monkeypatch.setattr(provider_module, "is_market_open", lambda now: False)
-        stream._last_quote_at = (
-            time.monotonic() - provider_module.DATA_SILENCE_THRESHOLD_SECONDS - 1
-        )
-
-        monkeypatch.setattr(asyncio, "sleep", _fake_sleep_letting_n_iterations_run(1))
-
-        with pytest.raises(asyncio.CancelledError):
-            await stream._watch_for_data_silence()
-
-        assert reconnects == []
-
-    @pytest.mark.asyncio
-    async def test_watchdog_does_not_reconnect_before_the_first_quote_ever_arrives(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        stream = ThetaQuoteStream(WS_URL)
-        reconnects: list[int] = []
-        monkeypatch.setattr(stream, "request_reconnect", lambda: reconnects.append(1))
-        monkeypatch.setattr(provider_module, "is_market_open", lambda now: True)
-        assert stream._last_quote_at is None
-
-        monkeypatch.setattr(asyncio, "sleep", _fake_sleep_letting_n_iterations_run(1))
-
-        with pytest.raises(asyncio.CancelledError):
-            await stream._watch_for_data_silence()
-
-        assert reconnects == []
-
-
-class TestUnderlyingTradeStream:
+class TestUnderlyingTradeHandling:
     """Fixtures below were built from ThetaData's public v3 docs
     (https://docs.thetadata.us/Streaming/US-Stocks/Trade-Stream.html)
     and confirmed live against a real Theta Terminal, market open
     (2026-09-03, Stocks+Index plans active): SPY/TSLA (STOCK) and
     SPX/VIX/NDX (INDEX) all delivered genuine TRADE messages in exactly
-    this shape, size=0 confirmed for every INDEX message. REQ_RESPONSE
-    handling was confirmed live too — all 5 subscriptions logged
-    "SUBSCRIBED" at debug via the shared _log_req_response helper.
+    this shape, size=0 confirmed for every INDEX message.
 
     A real production bug was found and fixed here (2026-09-03): the
     local Theta Terminal broadcasts every symbol/contract with an active
     subscription ANYWHERE on that Terminal to EVERY connected WebSocket
-    client, not just what a given connection itself subscribed to. A
-    connection that only asked for `sec_type: "INDEX"` on "VIX" still
-    received `security_type: "OPTION"` trade messages for the same root
-    (leaking in from this same backend's own ThetaTradeStream, which was
-    separately subscribed to VIX's near-the-money option chain) —
-    `_handle_trade` used to only check `contract.root`, so those got
-    published as if they were VIX's own price. Quantified live before
-    the fix: 60% of root="VIX" messages over 60s were OPTION
-    contamination (9 of 15), ~9% for root="SPX" (13 of 139).
-    `_handle_trade` now also checks `contract.security_type` against the
-    registered `UnderlyingKind` — see
+    client, not just what a given connection itself subscribed to (now,
+    2026-09-09, the single ThetaStreamHub connection carries all of it,
+    so this is by design, not a leak). A STOCK/INDEX-shaped trade for a
+    root doesn't guarantee it matches THIS symbol's own registered kind
+    -- `_handle_underlying_trade` checks `contract.security_type`
+    against the registered `UnderlyingKind` for exactly that reason; see
     test_option_trades_sharing_the_same_root_are_filtered_out and its
     neighbors below, which also register a symbol/kind before calling
-    `_handle_trade` for exactly this reason (an unregistered symbol has
-    no expected `security_type` to validate against, so it's dropped —
-    see test_trade_for_an_unregistered_symbol_is_dropped_not_guessed)."""
+    `_handle_underlying_trade` (an unregistered symbol has no expected
+    `security_type` to validate against, so it's dropped -- see
+    test_trade_for_an_unregistered_symbol_is_dropped_not_guessed)."""
 
-    def test_handle_trade_publishes_an_underlying_trade_event_to_subscribers(self) -> None:
-        stream = ThetaUnderlyingTradeStream(WS_URL)
+    def test_handle_underlying_trade_publishes_an_event_to_subscribers(self) -> None:
+        stream = ThetaStreamHub(WS_URL, httpx.Client(base_url=REST_URL))
         stream.register_symbol("AAPL", UnderlyingKind.EQUITY)
-        queue = stream.subscribe_queue("AAPL")
+        queue = stream.subscribe_underlying_queue("AAPL")
         # Exact shape from ThetaData's docs' own example message.
         message = {
             "header": {"type": "TRADE", "status": "CONNECTED"},
@@ -1716,25 +1770,27 @@ class TestUnderlyingTradeStream:
             },
         }
 
-        stream._handle_trade(message)
+        stream._handle_underlying_trade(message)
         event = queue.get_nowait()
 
         assert event.symbol == "AAPL"
         assert event.price == Decimal("184.5099")
         assert event.size == 500
 
-    def test_handle_trade_only_publishes_to_the_matching_symbols_subscribers(self) -> None:
-        stream = ThetaUnderlyingTradeStream(WS_URL)
+    def test_handle_underlying_trade_only_publishes_to_the_matching_symbols_subscribers(
+        self,
+    ) -> None:
+        stream = ThetaStreamHub(WS_URL, httpx.Client(base_url=REST_URL))
         stream.register_symbol("AAPL", UnderlyingKind.EQUITY)
-        aapl_queue = stream.subscribe_queue("AAPL")
-        spy_queue = stream.subscribe_queue("SPY")
+        aapl_queue = stream.subscribe_underlying_queue("AAPL")
+        spy_queue = stream.subscribe_underlying_queue("SPY")
         message = {
             "header": {"type": "TRADE", "status": "CONNECTED"},
             "contract": {"security_type": "STOCK", "root": "AAPL"},
             "trade": {"size": 1, "price": 100.0},
         }
 
-        stream._handle_trade(message)
+        stream._handle_underlying_trade(message)
 
         assert not aapl_queue.empty()
         assert spy_queue.empty()
@@ -1742,16 +1798,20 @@ class TestUnderlyingTradeStream:
     def test_option_trades_sharing_the_same_root_are_filtered_out(self) -> None:
         """Regression test for a real production bug (confirmed live,
         2026-09-03 market open, see this class's own docstring): before
-        the fix, _handle_trade only checked contract.root, so this exact
+        the fix, this handler only checked contract.root, so this exact
         VIX call option trade (captured live) was accepted and published
         as if it were VIX's own price ($1.57 published as "VIX price",
-        real VIX index level ~14.87-14.89 at the same moment). Now
-        _handle_trade also checks contract.security_type against the
-        registered UnderlyingKind, so an OPTION trade sharing the root
-        must be dropped instead."""
-        stream = ThetaUnderlyingTradeStream(WS_URL)
+        real VIX index level ~14.87-14.89 at the same moment). Now it
+        also checks contract.security_type against the registered
+        UnderlyingKind, so an OPTION trade sharing the root must be
+        dropped instead. _consume() itself already keeps OPTION-typed
+        TRADE messages from ever reaching this handler in the running
+        system -- this drives the handler directly to also cover a
+        STOCK/INDEX-shaped message for a root that simply doesn't match
+        the registered kind."""
+        stream = ThetaStreamHub(WS_URL, httpx.Client(base_url=REST_URL))
         stream.register_symbol("VIX", UnderlyingKind.INDEX)
-        queue = stream.subscribe_queue("VIX")
+        queue = stream.subscribe_underlying_queue("VIX")
         # Exact shape captured live -- a VIX call option trade, not the
         # VIX index itself, sharing contract.root == "VIX".
         message = {
@@ -1774,7 +1834,7 @@ class TestUnderlyingTradeStream:
             },
         }
 
-        stream._handle_trade(message)
+        stream._handle_underlying_trade(message)
 
         assert queue.empty()
 
@@ -1783,9 +1843,9 @@ class TestUnderlyingTradeStream:
         VIX (security_type matching the registered UnderlyingKind.INDEX)
         must still publish normally. Exact shape captured live alongside
         the option-contamination messages above."""
-        stream = ThetaUnderlyingTradeStream(WS_URL)
+        stream = ThetaStreamHub(WS_URL, httpx.Client(base_url=REST_URL))
         stream.register_symbol("VIX", UnderlyingKind.INDEX)
-        queue = stream.subscribe_queue("VIX")
+        queue = stream.subscribe_underlying_queue("VIX")
         message = {
             "header": {"type": "TRADE", "status": "CONNECTED"},
             "contract": {"security_type": "INDEX", "root": "VIX"},
@@ -1800,7 +1860,7 @@ class TestUnderlyingTradeStream:
             },
         }
 
-        stream._handle_trade(message)
+        stream._handle_underlying_trade(message)
         event = queue.get_nowait()
 
         assert event.symbol == "VIX"
@@ -1812,9 +1872,9 @@ class TestUnderlyingTradeStream:
         60s), and the same leak mechanism applies to any registered
         EQUITY symbol whose options are subscribed elsewhere on the
         same Terminal."""
-        stream = ThetaUnderlyingTradeStream(WS_URL)
+        stream = ThetaStreamHub(WS_URL, httpx.Client(base_url=REST_URL))
         stream.register_symbol("SPY", UnderlyingKind.EQUITY)
-        queue = stream.subscribe_queue("SPY")
+        queue = stream.subscribe_underlying_queue("SPY")
         message = {
             "header": {"type": "TRADE", "status": "CONNECTED"},
             "contract": {
@@ -1827,7 +1887,7 @@ class TestUnderlyingTradeStream:
             "trade": {"size": 10, "price": 1.09},
         }
 
-        stream._handle_trade(message)
+        stream._handle_underlying_trade(message)
 
         assert queue.empty()
 
@@ -1837,35 +1897,35 @@ class TestUnderlyingTradeStream:
         guess. Harmless either way (no subscriber would exist for an
         unregistered symbol), but explicit is better than relying on
         that coincidence."""
-        stream = ThetaUnderlyingTradeStream(WS_URL)
-        queue = stream.subscribe_queue("QQQ")
+        stream = ThetaStreamHub(WS_URL, httpx.Client(base_url=REST_URL))
+        queue = stream.subscribe_underlying_queue("QQQ")
         message = {
             "header": {"type": "TRADE", "status": "CONNECTED"},
             "contract": {"security_type": "STOCK", "root": "QQQ"},
             "trade": {"size": 10, "price": 500.0},
         }
 
-        stream._handle_trade(message)
+        stream._handle_underlying_trade(message)
 
         assert queue.empty()
 
-    def test_handle_trade_ignores_incomplete_messages(self) -> None:
-        stream = ThetaUnderlyingTradeStream(WS_URL)
-        queue = stream.subscribe_queue("AAPL")
+    def test_handle_underlying_trade_ignores_incomplete_messages(self) -> None:
+        stream = ThetaStreamHub(WS_URL, httpx.Client(base_url=REST_URL))
+        queue = stream.subscribe_underlying_queue("AAPL")
 
-        stream._handle_trade({"contract": {"root": "AAPL"}, "trade": {"size": 500}})  # no price
+        stream._handle_underlying_trade({"contract": {"root": "AAPL"}, "trade": {"size": 500}})
 
         assert queue.empty()
 
-    def test_subscribe_sends_the_documented_stock_trade_stream_payload(self) -> None:
-        stream = ThetaUnderlyingTradeStream(WS_URL)
+    def test_subscribe_underlying_sends_the_documented_stock_trade_stream_payload(self) -> None:
+        stream = ThetaStreamHub(WS_URL, httpx.Client(base_url=REST_URL))
         sent: list[str] = []
 
         class _FakeWebSocket:
             async def send(self, payload: str) -> None:
                 sent.append(payload)
 
-        asyncio.run(stream._subscribe(_FakeWebSocket(), "AAPL", UnderlyingKind.EQUITY))
+        asyncio.run(stream._subscribe_underlying(_FakeWebSocket(), "AAPL", UnderlyingKind.EQUITY))
 
         payload = json.loads(sent[0])
         # Exact shape from ThetaData's docs — a stock's "contract" is
@@ -1879,248 +1939,43 @@ class TestUnderlyingTradeStream:
             "contract": {"root": "AAPL"},
         }
 
-    def test_subscribe_uses_sec_type_index_for_index_underlyings(self) -> None:
+    def test_subscribe_underlying_uses_sec_type_index_for_index_underlyings(self) -> None:
         # Confirmed from ThetaData's docs: indices use a genuinely
         # separate stream (US-Indices Price Stream, its own "Index
         # Standard" subscription) — sec_type is the only field that
         # differs from the stock variant, the trade message shape itself
         # is identical.
-        stream = ThetaUnderlyingTradeStream(WS_URL)
+        stream = ThetaStreamHub(WS_URL, httpx.Client(base_url=REST_URL))
         sent: list[str] = []
 
         class _FakeWebSocket:
             async def send(self, payload: str) -> None:
                 sent.append(payload)
 
-        asyncio.run(stream._subscribe(_FakeWebSocket(), "SPX", UnderlyingKind.INDEX))
+        asyncio.run(stream._subscribe_underlying(_FakeWebSocket(), "SPX", UnderlyingKind.INDEX))
 
         payload = json.loads(sent[0])
         assert payload["sec_type"] == "INDEX"
         assert payload["contract"] == {"root": "SPX"}
 
-    @pytest.mark.asyncio
-    async def test_run_backs_off_exponentially_between_reconnect_attempts(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        stream = ThetaUnderlyingTradeStream(WS_URL)
-        sleep_calls: list[float] = []
-
-        async def fake_sleep(seconds: float) -> None:
-            sleep_calls.append(seconds)
-            if len(sleep_calls) >= 3:
-                raise asyncio.CancelledError
-
-        async def failing_connect() -> None:
-            raise ConnectionError("simulated disconnect")
-
-        monkeypatch.setattr(asyncio, "sleep", fake_sleep)
-        monkeypatch.setattr(stream, "_connect_and_consume", failing_connect)
-
-        with pytest.raises(asyncio.CancelledError):
-            await stream._run()
-
-        assert sleep_calls[0] == 2
-        assert sleep_calls[1] == 4
-        assert sleep_calls[2] == 8
-
-    @pytest.mark.asyncio
-    async def test_run_keeps_escalating_on_rapid_failures_but_resets_after_a_stable_connection(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """See ThetaTradeStream's identical test -- same fix, same
-        reasoning, applied here too. This is the class where the symptom
-        was most visible (candles going into slow motion), but the bug
-        and the fix are identical in all 3 classes."""
-        stream = ThetaUnderlyingTradeStream(WS_URL)
-        clock = _FakeMonotonicClock()
-        monkeypatch.setattr(provider_module.time, "monotonic", clock)
-
-        sleep_calls: list[float] = []
-
-        async def fake_sleep(seconds: float) -> None:
-            sleep_calls.append(seconds)
-
-        attempt = {"n": 0}
-
-        async def fake_connect_and_consume() -> None:
-            attempt["n"] += 1
-            if attempt["n"] in (1, 2):
-                clock.advance(1)
-                raise ConnectionError(f"quick failure {attempt['n']}")
-            if attempt["n"] == 3:
-                clock.advance(provider_module.STABLE_CONNECTION_RESET_SECONDS + 5)
-                raise ConnectionError("failure after a stable stretch")
-            raise asyncio.CancelledError
-
-        monkeypatch.setattr(asyncio, "sleep", fake_sleep)
-        monkeypatch.setattr(stream, "_connect_and_consume", fake_connect_and_consume)
-
-        with pytest.raises(asyncio.CancelledError):
-            await stream._run()
-
-        assert sleep_calls == [2, 4, 2]
-
-    @pytest.mark.asyncio
-    async def test_start_and_stop_manage_a_single_background_task(self) -> None:
-        stream = ThetaUnderlyingTradeStream(WS_URL)
-        stream.start()
-        task = stream._task
-        assert task is not None
-
-        stream.start()  # a second start() while running is a no-op
-        assert stream._task is task
-
-        await stream.stop()
-        assert stream._task is None
-
-    @pytest.mark.asyncio
-    async def test_start_and_stop_also_manage_the_watchdog_task(self) -> None:
-        # This class had no watchdog at all before -- confirms stop()
-        # actually tears it down too, not just the main _run() task
-        # (an orphaned watchdog would keep calling request_reconnect()
-        # on a stream nothing else owns anymore).
-        stream = ThetaUnderlyingTradeStream(WS_URL)
-        stream.start()
-        watchdog_task = stream._watchdog_task
-        assert watchdog_task is not None
-        assert not watchdog_task.done()
-
-        await stream.stop()
-
-        assert stream._watchdog_task is None
-        assert watchdog_task.cancelled()
-
-    def test_request_reconnect_is_a_no_op_before_start(self) -> None:
-        # Same reasoning as ThetaTradeStream's own version of this test --
-        # this class had no request_reconnect() at all before (confirmed
-        # live, 2026-09: needed so its own data-silence watchdog has a
-        # recovery action to call).
-        stream = ThetaUnderlyingTradeStream(WS_URL)
-        stream.request_reconnect()  # must not raise
-
-    @pytest.mark.asyncio
-    async def test_request_reconnect_closes_the_active_connection(self) -> None:
-        class _FakeWebsocket:
-            def __init__(self) -> None:
-                self.closed = False
-
-            async def close(self) -> None:
-                self.closed = True
-
-        stream = ThetaUnderlyingTradeStream(WS_URL)
-        fake_websocket = _FakeWebsocket()
-        stream._loop = asyncio.get_running_loop()
-        stream._active_websocket = fake_websocket  # type: ignore[assignment]
-
-        stream.request_reconnect()
-        await asyncio.sleep(0.05)
-
-        assert fake_websocket.closed is True
-
-    @pytest.mark.asyncio
-    async def test_watchdog_forces_reconnect_after_data_silence_during_market_hours(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """The actual fix, confirmed live 2026-09 with an instrumented
-        reproduction: Theta Terminal can stop delivering TRADE messages
-        to this connection (while its STATUS heartbeat stays perfectly
-        healthy) after a *different* stream reconnects. Manually forcing
-        this stream's own reconnect restored delivery every time it was
-        tried live -- this test confirms the watchdog automates exactly
-        that action once silence crosses the threshold."""
-        stream = ThetaUnderlyingTradeStream(WS_URL)
-        reconnects: list[int] = []
-        monkeypatch.setattr(stream, "request_reconnect", lambda: reconnects.append(1))
-        monkeypatch.setattr(provider_module, "is_market_open", lambda now: True)
-        stream._last_trade_at = (
-            time.monotonic() - provider_module.DATA_SILENCE_THRESHOLD_SECONDS - 1
-        )
-
-        monkeypatch.setattr(asyncio, "sleep", _fake_sleep_letting_n_iterations_run(1))
-
-        with pytest.raises(asyncio.CancelledError):
-            await stream._watch_for_data_silence()
-
-        assert reconnects == [1]
-
-    @pytest.mark.asyncio
-    async def test_watchdog_does_not_reconnect_while_the_market_is_closed(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        # A genuinely quiet closed market must never trip this -- the
-        # explicit "don't fire unnecessary reconnects" requirement.
-        stream = ThetaUnderlyingTradeStream(WS_URL)
-        reconnects: list[int] = []
-        monkeypatch.setattr(stream, "request_reconnect", lambda: reconnects.append(1))
-        monkeypatch.setattr(provider_module, "is_market_open", lambda now: False)
-        stream._last_trade_at = (
-            time.monotonic() - provider_module.DATA_SILENCE_THRESHOLD_SECONDS - 1
-        )
-
-        monkeypatch.setattr(asyncio, "sleep", _fake_sleep_letting_n_iterations_run(1))
-
-        with pytest.raises(asyncio.CancelledError):
-            await stream._watch_for_data_silence()
-
-        assert reconnects == []
-
-    @pytest.mark.asyncio
-    async def test_watchdog_does_not_reconnect_before_the_first_trade_ever_arrives(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        # _last_trade_at is None until the very first TRADE-type message
-        # -- a fresh connection that hasn't had a chance to receive
-        # anything yet must not be judged as "silent".
-        stream = ThetaUnderlyingTradeStream(WS_URL)
-        reconnects: list[int] = []
-        monkeypatch.setattr(stream, "request_reconnect", lambda: reconnects.append(1))
-        monkeypatch.setattr(provider_module, "is_market_open", lambda now: True)
-        assert stream._last_trade_at is None
-
-        monkeypatch.setattr(asyncio, "sleep", _fake_sleep_letting_n_iterations_run(1))
-
-        with pytest.raises(asyncio.CancelledError):
-            await stream._watch_for_data_silence()
-
-        assert reconnects == []
-
-    @pytest.mark.asyncio
-    async def test_watchdog_does_not_reconnect_while_trades_are_still_arriving(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        stream = ThetaUnderlyingTradeStream(WS_URL)
-        reconnects: list[int] = []
-        monkeypatch.setattr(stream, "request_reconnect", lambda: reconnects.append(1))
-        monkeypatch.setattr(provider_module, "is_market_open", lambda now: True)
-        stream._last_trade_at = time.monotonic()  # fresh, well under the threshold
-
-        monkeypatch.setattr(asyncio, "sleep", _fake_sleep_letting_n_iterations_run(1))
-
-        with pytest.raises(asyncio.CancelledError):
-            await stream._watch_for_data_silence()
-
-        assert reconnects == []
-
 
 class TestProviderLifecycle:
     @pytest.mark.asyncio
-    async def test_stop_closes_the_rest_client_and_stream(self) -> None:
+    async def test_stop_closes_the_rest_client_and_hub(self) -> None:
         provider = ThetaDataProvider(REST_URL, WS_URL)
         await provider.stop()
         assert provider._client.is_closed
-        assert provider._stream._task is None
-        assert provider._quote_stream._task is None
-        assert provider._underlying_trade_stream._task is None
+        assert provider._hub._task is None
 
     @pytest.mark.asyncio
     async def test_stream_underlying_trades_yields_events_from_the_queue(self) -> None:
         provider = ThetaDataProvider(REST_URL, WS_URL)
-        provider._underlying_trade_stream.register_symbol("SPY", UnderlyingKind.EQUITY)
+        provider._hub.register_symbol("SPY", UnderlyingKind.EQUITY)
         events = provider.stream_underlying_trades("SPY")
-        # Advance the async generator to its subscribe_queue() + first
-        # `await queue.get()` before publishing — otherwise the event
-        # below would be put_nowait'd to a queue nothing has subscribed
-        # to yet and silently dropped.
+        # Advance the async generator to its subscribe_underlying_queue()
+        # + first `await queue.get()` before publishing — otherwise the
+        # event below would be put_nowait'd to a queue nothing has
+        # subscribed to yet and silently dropped.
         pending = asyncio.ensure_future(events.__anext__())
         await asyncio.sleep(0)
 
@@ -2129,7 +1984,7 @@ class TestProviderLifecycle:
             "contract": {"security_type": "STOCK", "root": "SPY"},
             "trade": {"size": 100, "price": 552.25},
         }
-        provider._underlying_trade_stream._handle_trade(message)
+        provider._hub._handle_underlying_trade(message)
         event = await asyncio.wait_for(pending, timeout=1)
 
         assert event.symbol == "SPY"
@@ -2161,7 +2016,7 @@ class TestProviderLifecycle:
         try:
             await provider.start()
 
-            registered = provider._underlying_trade_stream._symbols
+            registered = provider._hub._symbols
             assert "ES" not in registered  # FUTURE — no confirmed stream type
             assert registered["SPY"] == UnderlyingKind.EQUITY
             assert registered["SPX"] == UnderlyingKind.INDEX
