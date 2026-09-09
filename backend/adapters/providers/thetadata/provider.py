@@ -7,11 +7,15 @@ import time
 from collections.abc import AsyncIterator
 from datetime import date, datetime, timedelta
 from decimal import Decimal
-from typing import Any
+from typing import Any, TypeVar
 
 import httpx
 import websockets
 
+from backend.adapters.providers.thetadata.request_slots import (
+    InProcessThetaRequestSlots,
+    PostgresThetaRequestSlots,
+)
 from backend.domain.entities import (
     ContractType,
     DailyBar,
@@ -27,10 +31,6 @@ from backend.domain.entities import (
     UnderlyingKind,
     UnderlyingTradeEvent,
     utc_now,
-)
-from backend.adapters.providers.thetadata.request_slots import (
-    InProcessThetaRequestSlots,
-    PostgresThetaRequestSlots,
 )
 from backend.domain.underlyings import ACTIVE_UNDERLYINGS_BY_SYMBOL
 from backend.domain.use_cases.calculate_bsm_greeks import calculate_bsm_greeks
@@ -191,6 +191,48 @@ STABLE_CONNECTION_RESET_SECONDS = 2 * STATUS_STALE_AFTER_SECONDS
 # genuinely quiet closed market never trips it.
 DATA_SILENCE_THRESHOLD_SECONDS = 20
 DATA_SILENCE_CHECK_INTERVAL_SECONDS = 5
+
+# Investigation instrumentation (2026-09-09): after PR #122 consolidated
+# 3 separate connections into ThetaStreamHub's one shared read loop, the
+# chart and Whale Alerts froze together mid-session (backend.worker's own
+# process disappeared from its log with no traceback, no graceful
+# shutdown message -- see the incident's own PR for the raw evidence).
+# One live hypothesis was that internal fan-out to the 3 logical
+# consumers (Whale Alerts, Quote, underlying price) uses a *blocking*
+# queue write inside the shared read loop, so one slow consumer could
+# stall message delivery for the other two -- direct code inspection
+# ahead of adding this instrumentation already found that hypothesis, as
+# literally stated, false: every fan-out uses `put_nowait()` on an
+# *unbounded* `asyncio.Queue` (no `maxsize`), which is synchronous and
+# cannot block regardless of how far behind a consumer falls. What direct
+# inspection did find, in the same shared loop, is a real candidate:
+# `_reconcile()` (see its own docstring) makes one synchronous REST call
+# per registered contract in a plain `for` loop, and the loop awaits it
+# via `asyncio.to_thread` -- since `_consume()` is single-threaded, it
+# cannot call `websocket.recv()` again until that whole sequential REST
+# pass finishes, for however long that ends up taking. This existed
+# before the refactor too (isolated then to just the option-trade
+# connection); multiplexing all 3 logical streams onto it means a slow
+# reconcile now delays QUOTE and underlying TRADE messages too, not just
+# option TRADE. These constants back active logging placed at every
+# dispatch and around `_reconcile()` itself, deployed and observed live
+# against real market data before drawing any conclusion -- not proven
+# yet as *the* cause of the specific process death (that failure mode,
+# no exception ever logged, is more severe than what a single stalled
+# read loop alone would produce -- that would raise ConnectionError, get
+# caught by _run(), and reconnect, not kill the whole process silently),
+# but a confirmed, real blocking point in the same loop worth measuring
+# regardless.
+DISPATCH_SLOW_THRESHOLD_SECONDS = 0.1
+LOOP_ITERATION_SLOW_THRESHOLD_SECONDS = 0.1
+# Half of STATUS_STALE_AFTER_SECONDS -- not an arbitrary number: if
+# _reconcile() alone eats more than half the heartbeat-staleness budget,
+# it has materially eaten into the margin before Theta Terminal's own
+# STATUS messages would be judged stale and the connection torn down for
+# an unrelated reason, even if this one call doesn't blow the budget by
+# itself.
+RECONCILE_DANGEROUS_THRESHOLD_SECONDS = STATUS_STALE_AFTER_SECONDS / 2
+QUEUE_DEPTH_LOG_INTERVAL_SECONDS = 60
 
 # ThetaData's real concurrency limit is per ACCOUNT, not per endpoint or
 # symbol, and doesn't add up across subscriptions — the highest tier
@@ -394,6 +436,9 @@ class _NearTheMoneyChain:
         self.entries = entries
 
 
+_QueueEventT = TypeVar("_QueueEventT")
+
+
 class ThetaStreamHub:
     """Owns the single, real WebSocket connection to Theta Terminal's
     streaming endpoint (ws://127.0.0.1:25520/v1/events) and dispatches
@@ -462,6 +507,8 @@ class ThetaStreamHub:
         self._task: asyncio.Task[None] | None = None
         self._next_request_id = 1
         self._reconciled_at: datetime | None = None
+        # See QUEUE_DEPTH_LOG_INTERVAL_SECONDS' own module-level comment.
+        self._queue_depths_logged_at: datetime | None = None
         # Set by start() (always called from the event loop thread) and by
         # _connect_and_consume() while a connection is live -- together,
         # what request_reconnect() needs to nudge an already-running
@@ -642,6 +689,7 @@ class ThetaStreamHub:
 
         last_status_at = utc_now()
         reconciled_at = self._reconciled_at or utc_now()
+        queue_depths_logged_at = self._queue_depths_logged_at or utc_now()
         while True:
             try:
                 raw = await asyncio.wait_for(
@@ -651,6 +699,13 @@ class ThetaStreamHub:
                 raise ConnectionError(
                     "No message from Theta Terminal within heartbeat window"
                 ) from exc
+            # Everything from here to the next websocket.recv() call is
+            # processing time this connection is unavailable for -- see
+            # LOOP_ITERATION_SLOW_THRESHOLD_SECONDS' own module-level
+            # comment for why this is measured as one span rather than
+            # trusting that no future addition to this loop can ever
+            # block it.
+            iteration_started_at = time.perf_counter()
             message = json.loads(raw)
             header = message.get("header", {})
             status = header.get("status")
@@ -684,9 +739,41 @@ class ThetaStreamHub:
             if (now - last_status_at).total_seconds() > STATUS_STALE_AFTER_SECONDS:
                 raise ConnectionError("Heartbeat stale — no STATUS message recently")
             if (now - reconciled_at).total_seconds() > RECONCILE_INTERVAL_SECONDS:
+                reconcile_started_at = time.perf_counter()
                 await asyncio.to_thread(self._reconcile)
+                reconcile_elapsed = time.perf_counter() - reconcile_started_at
+                logger.info(
+                    "ThetaStreamHub: reconcile() took %.2fs for %d contract(s) -- "
+                    "websocket.recv() could not be called again during this window",
+                    reconcile_elapsed,
+                    len(self._contracts),
+                )
+                if reconcile_elapsed > RECONCILE_DANGEROUS_THRESHOLD_SECONDS:
+                    logger.warning(
+                        "ThetaStreamHub: reconcile() took %.2fs, over %.0f%% of "
+                        "STATUS_STALE_AFTER_SECONDS (%ss) -- this alone materially "
+                        "eats into the heartbeat-staleness budget for all 3 logical "
+                        "streams sharing this one connection",
+                        reconcile_elapsed,
+                        (reconcile_elapsed / STATUS_STALE_AFTER_SECONDS) * 100,
+                        STATUS_STALE_AFTER_SECONDS,
+                    )
                 reconciled_at = now
                 self._reconciled_at = now
+            if (now - queue_depths_logged_at).total_seconds() > QUEUE_DEPTH_LOG_INTERVAL_SECONDS:
+                self._log_queue_depths()
+                queue_depths_logged_at = now
+                self._queue_depths_logged_at = now
+
+            iteration_elapsed = time.perf_counter() - iteration_started_at
+            if iteration_elapsed > LOOP_ITERATION_SLOW_THRESHOLD_SECONDS:
+                logger.warning(
+                    "ThetaStreamHub: one loop iteration (message dispatch + "
+                    "housekeeping) took %.1fms before returning to websocket.recv() "
+                    "-- this delays every logical stream equally, since they all "
+                    "share the one connection",
+                    iteration_elapsed * 1000,
+                )
 
     async def _subscribe_option(
         self,
@@ -732,6 +819,53 @@ class ThetaStreamHub:
         self._next_request_id += 1
         await websocket.send(json.dumps(payload))
 
+    def _dispatch(
+        self, queues: list[asyncio.Queue[_QueueEventT]], event: _QueueEventT, kind: str
+    ) -> None:
+        """Fan `event` out to every subscriber queue for one message,
+        timing the whole fan-out. `put_nowait()` on an unbounded
+        `asyncio.Queue` is synchronous and cannot block on its own (see
+        DISPATCH_SLOW_THRESHOLD_SECONDS' own module-level comment) --
+        this measures that directly, live, rather than asserting it from
+        reading the code alone."""
+        if not queues:
+            return
+        started_at = time.perf_counter()
+        for queue in queues:
+            queue.put_nowait(event)
+        elapsed = time.perf_counter() - started_at
+        if elapsed > DISPATCH_SLOW_THRESHOLD_SECONDS:
+            logger.warning(
+                "ThetaStreamHub: dispatching one %s event to %d queue(s) took %.1fms -- "
+                "put_nowait() should never block; investigate if this recurs",
+                kind,
+                len(queues),
+                elapsed * 1000,
+            )
+
+    def _log_queue_depths(self) -> None:
+        """Real evidence for whether any subscriber queue is growing
+        unbounded (a consumer falling behind), not just plausible in
+        theory -- see QUEUE_DEPTH_LOG_INTERVAL_SECONDS' own module-level
+        comment. No such capture existed for the 2026-09-09 incident
+        itself, so this can only speak to what happens from here
+        forward."""
+        for label, subscribers in (
+            ("trade", self._trade_subscribers),
+            ("quote", self._quote_subscribers),
+            ("underlying", self._underlying_subscribers),
+        ):
+            depths = [queue.qsize() for queues in subscribers.values() for queue in queues]
+            if not depths:
+                continue
+            logger.info(
+                "ThetaStreamHub queue depths (%s): queues=%d max=%d total=%d",
+                label,
+                len(depths),
+                max(depths),
+                sum(depths),
+            )
+
     def _handle_quote(self, message: dict[str, Any]) -> None:
         contract = message.get("contract", {})
         quote = message.get("quote", {})
@@ -757,17 +891,17 @@ class ThetaStreamHub:
         strike = Decimal(strike_raw) / Decimal(1000)
         occ_symbol = _build_occ_symbol(root, expiration, contract_type, strike)
 
-        queues = self._quote_subscribers.get(root.upper(), [])
-        for queue in queues:
-            queue.put_nowait(
-                QuoteEvent(
-                    symbol=root.upper(),
-                    occ_symbol=occ_symbol,
-                    as_of=utc_now(),
-                    bid=Decimal(str(bid)),
-                    ask=Decimal(str(ask)),
-                )
-            )
+        self._dispatch(
+            self._quote_subscribers.get(root.upper(), []),
+            QuoteEvent(
+                symbol=root.upper(),
+                occ_symbol=occ_symbol,
+                as_of=utc_now(),
+                bid=Decimal(str(bid)),
+                ask=Decimal(str(ask)),
+            ),
+            "QUOTE",
+        )
 
     def _handle_option_trade(self, message: dict[str, Any]) -> None:
         contract = message.get("contract", {})
@@ -798,19 +932,19 @@ class ThetaStreamHub:
         # FlowEventType.UNUSUAL / Side.UNKNOWN as an honest placeholder,
         # not a real classification. Revisit once something consumes it.
         if price is not None:
-            queues = self._trade_subscribers.get(root.upper(), [])
-            for queue in queues:
-                queue.put_nowait(
-                    FlowEvent(
-                        symbol=root.upper(),
-                        occ_symbol=occ_symbol,
-                        as_of=utc_now(),
-                        event_type=FlowEventType.UNUSUAL,
-                        premium=Decimal(str(price)) * Decimal(size) * Decimal(100),
-                        size=int(size),
-                        aggressor_side=Side.UNKNOWN,
-                    )
-                )
+            self._dispatch(
+                self._trade_subscribers.get(root.upper(), []),
+                FlowEvent(
+                    symbol=root.upper(),
+                    occ_symbol=occ_symbol,
+                    as_of=utc_now(),
+                    event_type=FlowEventType.UNUSUAL,
+                    premium=Decimal(str(price)) * Decimal(size) * Decimal(100),
+                    size=int(size),
+                    aggressor_side=Side.UNKNOWN,
+                ),
+                "option TRADE",
+            )
 
     def _handle_underlying_trade(self, message: dict[str, Any]) -> None:
         contract = message.get("contract", {})
@@ -839,14 +973,16 @@ class ThetaStreamHub:
         expected_security_type = "INDEX" if kind == UnderlyingKind.INDEX else "STOCK"
         if contract.get("security_type") != expected_security_type:
             return
-        event = UnderlyingTradeEvent(
-            symbol=symbol,
-            as_of=utc_now(),
-            price=Decimal(str(price)),
-            size=int(size),
+        self._dispatch(
+            self._underlying_subscribers.get(symbol, []),
+            UnderlyingTradeEvent(
+                symbol=symbol,
+                as_of=utc_now(),
+                price=Decimal(str(price)),
+                size=int(size),
+            ),
+            "underlying TRADE",
         )
-        for queue in self._underlying_subscribers.get(symbol, []):
-            queue.put_nowait(event)
 
     def _reconcile(self) -> None:
         for occ_symbol, (root, expiration, contract_type, strike) in self._contracts.items():
