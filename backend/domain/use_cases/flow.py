@@ -418,6 +418,19 @@ class WhaleAlertsEngine:
         state.bucket_quote_unavailable = state.bucket_quote_unavailable and side is Side.UNKNOWN
         return tuple(generated)
 
+    def process_trade_batch(
+        self, events: list[tuple[FlowEvent, LatestQuote | None]]
+    ) -> tuple[WhaleAlert, ...]:
+        """Same per-trade classification/bucketing as calling process_trade()
+        once per (event, quote) pair in order -- this batches the CALLER's
+        executor submission (see StreamWhaleAlertsUseCase's own docstring
+        for why SPY specifically needs this), not the classification
+        algorithm itself, so results are identical to the unbatched path."""
+        generated: list[WhaleAlert] = []
+        for event, quote in events:
+            generated.extend(self.process_trade(event, quote))
+        return tuple(generated)
+
     def _finalize_bucket(
         self,
         state: _ContractState,
