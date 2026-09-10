@@ -941,7 +941,11 @@ class ThetaStreamHub:
             )
 
     def _dispatch_critical(
-        self, queues: list[asyncio.Queue[_QueueEventT]], event: _QueueEventT, kind: str
+        self,
+        queues: list[asyncio.Queue[_QueueEventT]],
+        event: _QueueEventT,
+        kind: str,
+        symbol: str,
     ) -> None:
         """For TRADE/QUOTE -- losing one of these silently is not
         acceptable (Whale Alerts and Lee-Ready both depend on seeing
@@ -953,17 +957,27 @@ class ThetaStreamHub:
         CRITICAL and still drops the one message (put_nowait() has
         nowhere else to put it -- the alternative, awaiting a free slot,
         is exactly the blocking-the-shared-loop bug this fan-out must
-        never reintroduce)."""
+        never reintroduce).
+
+        `symbol` (the registered root this queue is keyed under -- see
+        `_trade_subscribers`/`_quote_subscribers`) is logged explicitly:
+        confirmed live, 2026-09-10, that the aggregate-only queue-depth
+        log (`_log_queue_depths`) couldn't say *which* symbol's queue
+        was actually the one overflowing -- needed that identified
+        precisely to evaluate selective per-symbol batching, not guessed
+        from this project's own history of SPX being the usual suspect.
+        """
 
         def put_one(queue: asyncio.Queue[_QueueEventT]) -> None:
             try:
                 queue.put_nowait(event)
             except asyncio.QueueFull:
                 logger.critical(
-                    "ThetaStreamHub: %s queue is full (maxsize=%d) -- dropping one "
-                    "message. This should never happen under normal load; a consumer "
-                    "is stuck or falling behind.",
+                    "ThetaStreamHub: %s queue for %s is full (maxsize=%d) -- dropping "
+                    "one message. This should never happen under normal load; a "
+                    "consumer is stuck or falling behind.",
                     kind,
+                    symbol,
                     queue.maxsize,
                 )
 
@@ -999,29 +1013,40 @@ class ThetaStreamHub:
         forward. Reports depth as a percentage of each queue's own
         maxsize too -- an early-warning trend, not just a snapshot,
         since _dispatch_critical's own CRITICAL log only fires once a
-        queue has already actually filled up."""
+        queue has already actually filled up.
+
+        Also names the SYMBOL the fullest queue belongs to, not just an
+        anonymous queue object -- confirmed live, 2026-09-10, that the
+        prior aggregate-only version couldn't say which symbol was
+        actually responsible for a growing/full queue, which is exactly
+        what's needed to evaluate selective (per-symbol) vs. universal
+        batching rather than assuming it from this project's own history
+        of SPX being the usual suspect."""
         for label, subscribers in (
             ("trade", self._trade_subscribers),
             ("quote", self._quote_subscribers),
             ("underlying", self._underlying_subscribers),
         ):
-            all_queues = [queue for queues in subscribers.values() for queue in queues]
-            if not all_queues:
+            keyed_queues = [
+                (symbol, queue) for symbol, queues in subscribers.items() for queue in queues
+            ]
+            if not keyed_queues:
                 continue
-            depths = [queue.qsize() for queue in all_queues]
-            fullest = max(all_queues, key=lambda queue: queue.qsize())
+            depths = [queue.qsize() for _, queue in keyed_queues]
+            fullest_symbol, fullest = max(keyed_queues, key=lambda pair: pair[1].qsize())
             fullest_pct = (
                 (fullest.qsize() / fullest.maxsize) * 100 if fullest.maxsize else 0.0
             )
             logger.info(
                 "ThetaStreamHub queue depths (%s): queues=%d max=%d total=%d "
-                "fullest=%.1f%% of maxsize=%d",
+                "fullest=%.1f%% of maxsize=%d (symbol=%s)",
                 label,
                 len(depths),
                 max(depths),
                 sum(depths),
                 fullest_pct,
                 fullest.maxsize,
+                fullest_symbol,
             )
 
     def _handle_quote(self, message: dict[str, Any]) -> None:
@@ -1059,6 +1084,7 @@ class ThetaStreamHub:
                 ask=Decimal(str(ask)),
             ),
             "QUOTE",
+            root.upper(),
         )
 
     def _handle_option_trade(self, message: dict[str, Any]) -> None:
@@ -1102,6 +1128,7 @@ class ThetaStreamHub:
                     aggressor_side=Side.UNKNOWN,
                 ),
                 "option TRADE",
+                root.upper(),
             )
 
     def _handle_underlying_trade(self, message: dict[str, Any]) -> None:

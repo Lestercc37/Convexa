@@ -1479,18 +1479,23 @@ class TestQueueBackpressure:
         stream = ThetaStreamHub(WS_URL, httpx.Client(base_url=REST_URL))
 
         with caplog.at_level(logging.CRITICAL):
-            stream._dispatch_critical([queue], "dropped", "QUOTE")
+            stream._dispatch_critical([queue], "dropped", "QUOTE", "SPY")
 
         assert queue.qsize() == 1
         assert queue.get_nowait() == "already queued", "the queued item must not be disturbed"
-        assert any(record.levelno == logging.CRITICAL for record in caplog.records)
+        critical_records = [r for r in caplog.records if r.levelno == logging.CRITICAL]
+        assert critical_records
+        # The symbol responsible must be identifiable from the log alone --
+        # confirmed live, 2026-09-10, that an aggregate-only message
+        # couldn't say which symbol's queue was actually overflowing.
+        assert "SPY" in critical_records[0].getMessage()
 
     def test_dispatch_critical_does_not_raise_when_the_queue_is_full(self) -> None:
         queue: asyncio.Queue[str] = asyncio.Queue(maxsize=1)
         queue.put_nowait("already queued")
         stream = ThetaStreamHub(WS_URL, httpx.Client(base_url=REST_URL))
 
-        stream._dispatch_critical([queue], "dropped", "QUOTE")  # must not raise
+        stream._dispatch_critical([queue], "dropped", "QUOTE", "SPY")  # must not raise
 
     def test_dispatch_dropping_keeps_only_the_newest_items_in_fifo_order(self) -> None:
         queue: asyncio.Queue[int] = asyncio.Queue(maxsize=3)
@@ -1517,6 +1522,29 @@ class TestQueueBackpressure:
             stream._dispatch_dropping([queue], 2, "underlying TRADE")
 
         assert not any(record.levelno == logging.CRITICAL for record in caplog.records)
+
+    def test_log_queue_depths_names_the_symbol_with_the_fullest_queue(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Fix (2026-09-10): the periodic queue-depth log used to report
+        only aggregate stats (max/total/fullest_pct) per queue TYPE, with
+        no way to tell which symbol's queue was actually the fullest one
+        -- confirmed live this couldn't answer "which symbol is
+        responsible," which selective (per-symbol) batching needs to
+        know rather than assuming it's SPX from this project's history."""
+        stream = ThetaStreamHub(WS_URL, httpx.Client(base_url=REST_URL))
+        quiet_queue = stream.subscribe_trade_queue("AAPL")
+        quiet_queue.put_nowait("one")
+        busy_queue = stream.subscribe_trade_queue("SPX")
+        busy_queue.put_nowait("one")
+        busy_queue.put_nowait("two")
+        busy_queue.put_nowait("three")
+
+        with caplog.at_level(logging.INFO):
+            stream._log_queue_depths()
+
+        info_records = [r for r in caplog.records if r.levelno == logging.INFO]
+        assert any("SPX" in r.getMessage() for r in info_records)
 
 
 class TestStreamHubReconnection:
