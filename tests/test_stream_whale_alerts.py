@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import threading
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -139,3 +140,30 @@ async def test_run_consumes_both_streams_concurrently_and_returns_once_both_are_
     await asyncio.wait_for(use_case.run("SPY"), timeout=1)
 
     assert len(engine.calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_consume_trades_runs_process_trade_on_a_worker_thread_not_the_event_loop() -> None:
+    """The actual fix (2026-09-10): process_trade() can do a blocking
+    synchronous DB write (WhaleAlertsEngine._emit -> IStorage.
+    save_whale_alert) -- confirmed live with a py-spy dump of a frozen
+    worker process, real market hours: calling it directly from this
+    coroutine blocked ThetaStreamHub's own read loop too, since they
+    share one event loop. This proves process_trade() now actually runs
+    on a different OS thread, not just that the test suite still
+    passes."""
+    main_thread_id = threading.get_ident()
+    seen_thread_ids: list[int] = []
+
+    class _ThreadRecordingEngine:
+        def process_trade(self, event: FlowEvent, quote: LatestQuote | None) -> tuple[()]:
+            seen_thread_ids.append(threading.get_ident())
+            return ()
+
+    provider = _FakeProvider(trades=[_trade("100")])
+    use_case = StreamWhaleAlertsUseCase(provider, _ThreadRecordingEngine())
+
+    await use_case._consume_trades("SPY")
+
+    assert len(seen_thread_ids) == 1
+    assert seen_thread_ids[0] != main_thread_id

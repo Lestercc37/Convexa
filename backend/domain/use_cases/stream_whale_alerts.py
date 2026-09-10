@@ -11,6 +11,21 @@ on a live stream reduces to "most recently received," the same timestamp
 precision the rest of this codebase already has for trades (FlowEvent.
 as_of is stamped at local receipt time too, not a reconciled on-exchange
 timestamp) — see LatestQuote's own docstring.
+
+FIXED (2026-09-10, live production incident): `process_trade()` calls
+`WhaleAlertsEngine._emit()`, which does a *synchronous* `IStorage.
+save_whale_alert()` write (plain psycopg/SQLAlchemy, no async driver).
+Calling that directly from `_consume_trades()` — a coroutine on the same
+event loop `ThetaStreamHub`'s own read loop runs on — blocks market data
+delivery for the whole process on every DB write, not just this
+symbol's own stream. Confirmed live with a py-spy dump of the frozen
+worker process, mid-incident, real market hours: the main thread was
+inside `psycopg`'s own blocking wait, called from here. Same fix already
+applied to `_reconcile()` in ThetaStreamHub and to `RefreshUnderlyingSnapshotUseCase.execute()`
+in the REST scheduler — the write itself stays a plain synchronous
+method (the domain layer doesn't need to know or care that one adapter's
+implementation happens to be slow), and the call is offloaded to a
+worker thread at the point where an async consumer invokes it.
 """
 
 from __future__ import annotations
@@ -54,4 +69,8 @@ class StreamWhaleAlertsUseCase:
     async def _consume_trades(self, underlying: str) -> None:
         async for trade_event in self._provider.stream_trades(underlying):
             quote = self._latest_quotes.get(trade_event.occ_symbol)
-            self._engine.process_trade(trade_event, quote)
+            # See this module's own docstring -- process_trade() can do a
+            # blocking synchronous DB write (WhaleAlertsEngine._emit);
+            # offloaded to a worker thread so it can never stall the
+            # shared event loop ThetaStreamHub's own read loop runs on.
+            await asyncio.to_thread(self._engine.process_trade, trade_event, quote)
