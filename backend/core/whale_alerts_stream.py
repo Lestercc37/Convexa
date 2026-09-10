@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from concurrent.futures import ThreadPoolExecutor
 
 from backend.core.container import Container
 from backend.domain.underlyings import ACTIVE_UNDERLYINGS
@@ -17,6 +18,28 @@ logger = logging.getLogger(__name__)
 # supervisor.
 RECONNECT_BASE_DELAY_SECONDS = 2
 RECONNECT_MAX_DELAY_SECONDS = 60
+
+# Fix (2026-09-10): process_trade() (offloaded via StreamWhaleAlertsUseCase's
+# own executor -- see its docstring) used to run on asyncio.to_thread()'s
+# *default* executor, shared process-wide with the REST scheduler's own
+# concurrent symbol refreshes (up to THETADATA_MAX_CONCURRENT_REQUESTS=8
+# in flight) and ThetaStreamHub's reconcile(). Confirmed live, real market
+# open: the scheduler was demonstrably running continuously (a cycle every
+# ~30s, each holding threads for ~4-5s) throughout the exact minute SPX's
+# own trade queue filled and started dropping messages (4,265 confirmed
+# CRITICAL drops) -- real, measured cross-workload contention for a
+# 16-worker pool (12 CPUs + 4, this machine), not just a plausible theory.
+# A dedicated executor, sized to the number of active symbols rather than
+# CPU count (this workload is I/O-bound -- a BVC/Lee-Ready classification
+# plus an occasional Postgres write, not CPU-bound work), guarantees every
+# symbol's own trade-consumer task always has an uncontended thread
+# available, regardless of what the scheduler or reconcile() are doing at
+# that moment. Does NOT by itself raise the ceiling on how fast a single
+# very busy symbol's own sequential pipeline can drain (each symbol still
+# processes its own trades one at a time) -- if a burst that large recurs
+# even without cross-workload contention, that's the confirmed signal to
+# revisit batching instead, not a reason to guess at it now.
+WHALE_ALERTS_EXECUTOR_MAX_WORKERS = len(ACTIVE_UNDERLYINGS)
 
 
 class WhaleAlertsStreamManager:
@@ -54,13 +77,19 @@ class WhaleAlertsStreamManager:
     def __init__(self, container: Container) -> None:
         self._container = container
         self._tasks: list[asyncio.Task[None]] = []
+        self._executor: ThreadPoolExecutor | None = None
 
     def start(self) -> None:
         if self._tasks:
             return
+        self._executor = ThreadPoolExecutor(
+            max_workers=WHALE_ALERTS_EXECUTOR_MAX_WORKERS,
+            thread_name_prefix="whale-alerts",
+        )
         use_case = StreamWhaleAlertsUseCase(
             provider=self._container.market_data_provider,
             engine=self._container.whale_alerts_engine,
+            executor=self._executor,
         )
         self._tasks = [
             asyncio.create_task(self._run_symbol(use_case, underlying.symbol))
@@ -96,3 +125,14 @@ class WhaleAlertsStreamManager:
             except asyncio.CancelledError:
                 pass
         self._tasks = []
+        if self._executor is not None:
+            # wait=False, cancel_futures=True -- same "fast, non-blocking
+            # shutdown" contract as the task cancellation above, not a new
+            # convention. A process_trade() call already mid-flight in a
+            # worker thread when this runs keeps running to completion
+            # regardless (ThreadPoolExecutor has no way to interrupt a
+            # running thread) -- this only drops whatever hadn't started
+            # yet, same as CancelledError already does for the tasks
+            # themselves.
+            self._executor.shutdown(wait=False, cancel_futures=True)
+            self._executor = None

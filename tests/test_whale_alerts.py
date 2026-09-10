@@ -148,7 +148,7 @@ def test_bvc_split_on_a_real_alert_matches_the_pure_function_given_the_same_inpu
     # not the largest swing in the window, so it should skew toward
     # buying without being an extreme, saturated split.
     assert expected_buy > expected_sell
-    assert Decimal("800") < expected_buy < Decimal("1600")
+    assert Decimal(800) < expected_buy < Decimal(1600)
 
 
 def test_bvc_volatility_window_evicts_by_elapsed_time_not_reading_count() -> None:
@@ -183,7 +183,7 @@ def test_bvc_volatility_window_evicts_by_elapsed_time_not_reading_count() -> Non
     # is a single-point population stdev — exactly 0 — every time. BVC's
     # documented sigma==0 fallback is a neutral 50/50 split.
     assert alerts[0].estimated_buy_volume == alerts[0].estimated_sell_volume
-    assert alerts[0].estimated_buy_volume == Decimal("800")
+    assert alerts[0].estimated_buy_volume == Decimal(800)
 
 
 def test_engine_does_not_alert_below_multiplier_or_dollar_threshold() -> None:
@@ -227,7 +227,7 @@ def test_threshold_edits_take_effect_on_the_next_process_call_without_rebuilding
     # rebuild — then feed the exact same shape through again.
     raised = replace(
         storage.get_whale_thresholds()["IWM"],
-        unusual_min=Decimal("100000"),
+        unusual_min=Decimal(100000),
     )
     storage.save_whale_threshold(raised)
 
@@ -387,11 +387,34 @@ def test_process_trade_emits_unusual_with_a_full_buy_classification() -> None:
 
     assert len(alerts) == 1
     assert alerts[0].alert_type is WhaleAlertType.UNUSUAL
-    assert alerts[0].amount == Decimal("45000")
+    assert alerts[0].amount == Decimal(45000)
     # Quote rule: every trade here prices well above BUY_LEANING_QUOTE's
     # midpoint, so the whole bucket is classified as buyer-initiated.
-    assert alerts[0].estimated_buy_volume == Decimal("45000")
-    assert alerts[0].estimated_sell_volume == Decimal("0")
+    assert alerts[0].estimated_buy_volume == Decimal(45000)
+    assert alerts[0].estimated_sell_volume == Decimal(0)
+
+
+def test_process_trade_batch_produces_identical_results_to_calling_process_trade_in_order() -> None:
+    """Fix (2026-09-10): process_trade_batch() only batches the CALLER's
+    executor submission (see StreamWhaleAlertsUseCase's own docstring) --
+    it must classify identically to calling process_trade() once per
+    event in order, not run a different algorithm."""
+    trades = [(_trade(period, "100"), BUY_LEANING_QUOTE) for period in range(6)]
+    trades.append((_trade(6, "45000"), BUY_LEANING_QUOTE))
+    trades.append((_trade(7, "100"), BUY_LEANING_QUOTE))
+
+    sequential_engine = WhaleAlertsEngine(InMemoryStorage())
+    sequential_alerts = [
+        alert
+        for event, quote in trades
+        for alert in sequential_engine.process_trade(event, quote)
+    ]
+
+    batched_engine = WhaleAlertsEngine(InMemoryStorage())
+    batched_alerts = list(batched_engine.process_trade_batch(trades))
+
+    assert len(batched_alerts) == 1
+    assert batched_alerts == sequential_alerts
 
 
 def test_process_trade_classifies_a_trade_below_midpoint_as_a_full_sell() -> None:
@@ -411,8 +434,8 @@ def test_process_trade_classifies_a_trade_below_midpoint_as_a_full_sell() -> Non
     alerts = engine.process_trade(_trade(7, "100"), sell_leaning_quote)
 
     assert len(alerts) == 1
-    assert alerts[0].estimated_buy_volume == Decimal("0")
-    assert alerts[0].estimated_sell_volume == Decimal("45000")
+    assert alerts[0].estimated_buy_volume == Decimal(0)
+    assert alerts[0].estimated_sell_volume == Decimal(45000)
 
 
 def test_process_trade_neutral_split_when_no_quote_known_yet() -> None:
@@ -428,9 +451,9 @@ def test_process_trade_neutral_split_when_no_quote_known_yet() -> None:
     alerts = engine.process_trade(_trade(7, "100"), None)
 
     assert len(alerts) == 1
-    assert alerts[0].estimated_buy_volume == Decimal("22500")
-    assert alerts[0].estimated_sell_volume == Decimal("22500")
-    assert alerts[0].estimated_buy_volume + alerts[0].estimated_sell_volume == Decimal("45000")
+    assert alerts[0].estimated_buy_volume == Decimal(22500)
+    assert alerts[0].estimated_sell_volume == Decimal(22500)
+    assert alerts[0].estimated_buy_volume + alerts[0].estimated_sell_volume == Decimal(45000)
 
 
 def test_process_trade_sustained_flow_fires_once() -> None:
@@ -452,8 +475,8 @@ def test_process_trade_sustained_flow_fires_once() -> None:
 
     assert len(sustained_alerts) == 1
     assert sustained_alerts[0].alert_type is WhaleAlertType.SUSTAINED_FLOW
-    assert sustained_alerts[0].amount == Decimal("600000")
-    assert sustained_alerts[0].estimated_buy_volume == Decimal("600000")
+    assert sustained_alerts[0].amount == Decimal(600000)
+    assert sustained_alerts[0].estimated_buy_volume == Decimal(600000)
 
 
 def test_process_and_process_trade_never_share_state_for_the_same_contract() -> None:
@@ -477,7 +500,7 @@ def test_process_and_process_trade_never_share_state_for_the_same_contract() -> 
             occ_symbol=shared_occ_symbol,
             as_of=TRADE_BASE_TIME,
             event_type=FlowEventType.UNUSUAL,
-            premium=Decimal("999999"),
+            premium=Decimal(999999),
             size=1,
             aggressor_side=Side.UNKNOWN,
         ),
@@ -536,14 +559,14 @@ def test_symbol_flow_accumulates_net_premium_separately_for_calls_and_puts() -> 
 
     assert flow is not None
     assert flow.symbol == TRADE_SYMBOL
-    assert flow.net_call_premium == Decimal("1500")
-    assert flow.net_put_premium == Decimal("200")
-    assert flow.net_client_flow_pressure == Decimal("1300")  # 1500 - 200
+    assert flow.net_call_premium == Decimal(1500)
+    assert flow.net_put_premium == Decimal(200)
+    assert flow.net_client_flow_pressure == Decimal(1300)  # 1500 - 200
 
 
 def test_symbol_flow_nets_buys_against_sells_on_the_same_side() -> None:
     engine = WhaleAlertsEngine(InMemoryStorage())
-    sell_leaning_quote = LatestQuote(bid=Decimal("99999"), ask=Decimal("100000"), as_of=TRADE_BASE_TIME)
+    sell_leaning_quote = LatestQuote(bid=Decimal(99999), ask=Decimal(100000), as_of=TRADE_BASE_TIME)
 
     engine.process_trade(_trade_for(TRADE_OCC_SYMBOL, 0, "1000"), BUY_LEANING_QUOTE)  # +1000
     engine.process_trade(_trade_for(TRADE_OCC_SYMBOL, 1, "300"), sell_leaning_quote)  # -300
@@ -551,7 +574,7 @@ def test_symbol_flow_nets_buys_against_sells_on_the_same_side() -> None:
     flow = engine.symbol_flow(TRADE_SYMBOL)
 
     assert flow is not None
-    assert flow.net_call_premium == Decimal("700")  # 1000 - 300
+    assert flow.net_call_premium == Decimal(700)  # 1000 - 300
 
 
 def test_symbol_flow_is_scoped_per_symbol() -> None:
@@ -563,34 +586,34 @@ def test_symbol_flow_is_scoped_per_symbol() -> None:
         occ_symbol="SPY260220C00540000",
         as_of=TRADE_BASE_TIME,
         event_type=FlowEventType.UNUSUAL,
-        premium=Decimal("5000"),
+        premium=Decimal(5000),
         size=1,
         aggressor_side=Side.UNKNOWN,
     )
     engine.process_trade(other_symbol_trade, BUY_LEANING_QUOTE)
 
-    assert engine.symbol_flow(TRADE_SYMBOL).net_call_premium == Decimal("1000")
-    assert engine.symbol_flow("SPY").net_call_premium == Decimal("5000")
+    assert engine.symbol_flow(TRADE_SYMBOL).net_call_premium == Decimal(1000)
+    assert engine.symbol_flow("SPY").net_call_premium == Decimal(5000)
 
 
 def test_symbol_flow_resets_at_a_new_session() -> None:
     engine = WhaleAlertsEngine(InMemoryStorage())
     engine.process_trade(_trade_for(TRADE_OCC_SYMBOL, 0, "1000"), BUY_LEANING_QUOTE)
-    assert engine.symbol_flow(TRADE_SYMBOL).net_call_premium == Decimal("1000")
+    assert engine.symbol_flow(TRADE_SYMBOL).net_call_premium == Decimal(1000)
 
     next_session_trade = FlowEvent(
         symbol=TRADE_SYMBOL,
         occ_symbol=TRADE_OCC_SYMBOL,
         as_of=TRADE_BASE_TIME + timedelta(days=1),
         event_type=FlowEventType.UNUSUAL,
-        premium=Decimal("50"),
+        premium=Decimal(50),
         size=1,
         aggressor_side=Side.UNKNOWN,
     )
     engine.process_trade(next_session_trade, BUY_LEANING_QUOTE)
 
     flow = engine.symbol_flow(TRADE_SYMBOL)
-    assert flow.net_call_premium == Decimal("50"), "yesterday's total must not carry over"
+    assert flow.net_call_premium == Decimal(50), "yesterday's total must not carry over"
 
 
 def test_symbol_flow_rolling_window_excludes_trades_older_than_the_window() -> None:
@@ -603,8 +626,8 @@ def test_symbol_flow_rolling_window_excludes_trades_older_than_the_window() -> N
 
     flow = engine.symbol_flow(TRADE_SYMBOL)
 
-    assert flow.net_call_premium == Decimal("1300"), "session total includes both trades"
-    assert flow.rolling_net_call_premium == Decimal("300"), "rolling window excludes the aged-out one"
+    assert flow.net_call_premium == Decimal(1300), "session total includes both trades"
+    assert flow.rolling_net_call_premium == Decimal(300), "rolling window excludes the aged-out one"
     assert flow.rolling_window_minutes == 15
 
 

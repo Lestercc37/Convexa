@@ -88,6 +88,51 @@ async def test_stop_clears_every_task() -> None:
 
 
 @pytest.mark.asyncio
+async def test_start_creates_a_dedicated_executor_sized_to_active_symbols() -> None:
+    """Fix (2026-09-10): process_trade() used to share asyncio.
+    to_thread()'s default executor with the REST scheduler and
+    reconcile() -- confirmed live, real market open, that this let the
+    scheduler's own concurrent work starve Whale Alerts of threads
+    during a real burst, dropping messages. Sized by symbol count, not
+    CPU count -- this workload is I/O-bound (a Postgres write), not
+    CPU-bound, so every symbol's own trade-consumer task can always get
+    an uncontended thread regardless of what else is running."""
+    manager = _manager_with_stub()
+
+    manager.start()
+
+    assert manager._executor is not None
+    assert manager._executor._max_workers == len(ACTIVE_SYMBOLS)
+    await manager.stop()
+
+
+@pytest.mark.asyncio
+async def test_stop_shuts_down_the_executor() -> None:
+    manager = _manager_with_stub()
+    manager.start()
+    executor = manager._executor
+    assert executor is not None
+
+    await manager.stop()
+
+    assert manager._executor is None
+    # A shutdown ThreadPoolExecutor refuses new work -- the clearest
+    # black-box proof shutdown() actually ran, not just that the
+    # reference was cleared.
+    with pytest.raises(RuntimeError):
+        executor.submit(lambda: None)
+
+
+@pytest.mark.asyncio
+async def test_stop_before_start_does_not_touch_a_nonexistent_executor() -> None:
+    manager = _manager_with_stub()
+
+    await manager.stop()  # never started -- must not raise
+
+    assert manager._executor is None
+
+
+@pytest.mark.asyncio
 async def test_one_symbols_stream_failure_does_not_crash_the_others() -> None:
     class _FailingProvider:
         async def stream_trades(self, underlying: str) -> AsyncIterator[FlowEvent]:
