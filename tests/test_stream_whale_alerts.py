@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import threading
 from collections.abc import AsyncIterator
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 from decimal import Decimal
 
@@ -167,3 +168,34 @@ async def test_consume_trades_runs_process_trade_on_a_worker_thread_not_the_even
 
     assert len(seen_thread_ids) == 1
     assert seen_thread_ids[0] != main_thread_id
+
+
+@pytest.mark.asyncio
+async def test_consume_trades_uses_the_passed_executor_not_the_default_shared_one() -> None:
+    """The actual fix (2026-09-10, same day as the above): offloading
+    alone still shared asyncio.to_thread()'s default executor with the
+    REST scheduler and reconcile() -- confirmed live, real market open,
+    that the scheduler running concurrently was enough to make a busy
+    symbol's own trade queue fill up and start dropping messages. A
+    dedicated executor (owned by WhaleAlertsStreamManager) must actually
+    be the one process_trade() runs on, not just present and unused."""
+    seen_thread_names: list[str] = []
+
+    class _ThreadNameRecordingEngine:
+        def process_trade(self, event: FlowEvent, quote: LatestQuote | None) -> tuple[()]:
+            seen_thread_names.append(threading.current_thread().name)
+            return ()
+
+    executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="test-whale-alerts")
+    try:
+        provider = _FakeProvider(trades=[_trade("100")])
+        use_case = StreamWhaleAlertsUseCase(
+            provider, _ThreadNameRecordingEngine(), executor=executor
+        )
+
+        await use_case._consume_trades("SPY")
+
+        assert len(seen_thread_names) == 1
+        assert seen_thread_names[0].startswith("test-whale-alerts")
+    finally:
+        executor.shutdown(wait=False)
