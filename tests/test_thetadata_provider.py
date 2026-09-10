@@ -103,7 +103,7 @@ def _provider_with_transport(transport_handler) -> ThetaDataProvider:
 
 class TestHelpers:
     def test_build_occ_symbol_matches_mock_provider_pattern(self) -> None:
-        occ = _build_occ_symbol("SPY", date(2026, 9, 18), ContractType.CALL, Decimal("770"))
+        occ = _build_occ_symbol("SPY", date(2026, 9, 18), ContractType.CALL, Decimal(770))
         assert occ == "SPY260918C00770000"
 
     def test_build_occ_symbol_put(self) -> None:
@@ -586,8 +586,8 @@ class TestWeeklyRootCombination:
         occ_symbols = {c.occ_symbol for c in chain.contracts}
         # Distinct OCC symbols per root -- proves the two same-strike
         # contracts were kept separate, not collapsed into one.
-        assert _build_occ_symbol("SPX", date(2026, 9, 18), ContractType.CALL, Decimal("7700")) in occ_symbols
-        assert _build_occ_symbol("SPXW", date(2026, 9, 18), ContractType.CALL, Decimal("7700")) in occ_symbols
+        assert _build_occ_symbol("SPX", date(2026, 9, 18), ContractType.CALL, Decimal(7700)) in occ_symbols
+        assert _build_occ_symbol("SPXW", date(2026, 9, 18), ContractType.CALL, Decimal(7700)) in occ_symbols
 
     def test_open_interest_does_not_collide_between_roots_on_the_same_strike(self) -> None:
         provider = _provider_with_transport(self._spx_handler)
@@ -597,12 +597,12 @@ class TestWeeklyRootCombination:
         spx_call = next(
             c
             for c in chain.contracts
-            if c.occ_symbol == _build_occ_symbol("SPX", date(2026, 9, 18), ContractType.CALL, Decimal("7700"))
+            if c.occ_symbol == _build_occ_symbol("SPX", date(2026, 9, 18), ContractType.CALL, Decimal(7700))
         )
         spxw_call = next(
             c
             for c in chain.contracts
-            if c.occ_symbol == _build_occ_symbol("SPXW", date(2026, 9, 18), ContractType.CALL, Decimal("7700"))
+            if c.occ_symbol == _build_occ_symbol("SPXW", date(2026, 9, 18), ContractType.CALL, Decimal(7700))
         )
         # Each root's own OI survives intact -- a (strike, right)-only key
         # would have let one silently overwrite the other.
@@ -1237,7 +1237,7 @@ class TestOptionTradeHandling:
         stream._handle_option_trade(message)
         stream._handle_option_trade(message)
 
-        occ = _build_occ_symbol("SPY", date(2026, 9, 18), ContractType.CALL, Decimal("770"))
+        occ = _build_occ_symbol("SPY", date(2026, 9, 18), ContractType.CALL, Decimal(770))
         assert stream.cumulative_volume(occ) == 30
 
     @pytest.mark.asyncio
@@ -1271,11 +1271,11 @@ class TestOptionTradeHandling:
 
     def test_has_contract_reflects_registration(self) -> None:
         stream = ThetaStreamHub(WS_URL, httpx.Client(base_url=REST_URL))
-        occ = _build_occ_symbol("SPY", date(2026, 9, 18), ContractType.CALL, Decimal("770"))
+        occ = _build_occ_symbol("SPY", date(2026, 9, 18), ContractType.CALL, Decimal(770))
 
         assert stream.has_contract(occ) is False
 
-        stream.register_contract(occ, "SPY", date(2026, 9, 18), ContractType.CALL, Decimal("770"))
+        stream.register_contract(occ, "SPY", date(2026, 9, 18), ContractType.CALL, Decimal(770))
 
         assert stream.has_contract(occ) is True
 
@@ -1289,7 +1289,7 @@ class TestOptionTradeHandling:
 
         asyncio.run(
             stream._subscribe_option(
-                _FakeWebSocket(), "SPY", date(2026, 9, 18), ContractType.CALL, Decimal("770"), "TRADE"
+                _FakeWebSocket(), "SPY", date(2026, 9, 18), ContractType.CALL, Decimal(770), "TRADE"
             )
         )
 
@@ -1324,7 +1324,7 @@ class TestOptionTradeHandling:
         client = httpx.Client(base_url=REST_URL, transport=httpx.MockTransport(handler))
         stream = ThetaStreamHub(WS_URL, client)
         stream.register_contract(
-            "SPY260918C00770000", "SPY", date(2026, 9, 18), ContractType.CALL, Decimal("770")
+            "SPY260918C00770000", "SPY", date(2026, 9, 18), ContractType.CALL, Decimal(770)
         )
         stream._cumulative_volume["SPY260918C00770000"] = 500  # way below REST's 2000
 
@@ -1342,7 +1342,7 @@ class TestOptionTradeHandling:
         client = httpx.Client(base_url=REST_URL, transport=httpx.MockTransport(handler))
         stream = ThetaStreamHub(WS_URL, client)
         stream.register_contract(
-            "SPY260918C00770000", "SPY", date(2026, 9, 18), ContractType.CALL, Decimal("770")
+            "SPY260918C00770000", "SPY", date(2026, 9, 18), ContractType.CALL, Decimal(770)
         )
         stream._cumulative_volume["SPY260918C00770000"] = 995
 
@@ -1351,6 +1351,172 @@ class TestOptionTradeHandling:
 
         assert any("reconciled" in record.message for record in caplog.records)
         assert not any(record.levelno == logging.WARNING for record in caplog.records)
+
+
+class TestReconcileScheduling:
+    """Fix (2026-09-10): reconcile() used to run inline in _consume()'s
+    own read loop, confirmed live (2026-09-09 into 2026-09-10, ~48
+    cycles overnight) to block websocket.recv() for 44-55s every single
+    cycle -- 300%+ over STATUS_STALE_AFTER_SECONDS, stalling all 3
+    logical streams at once. It now runs on its own independent task
+    (_run_reconcile_loop), started by start() alongside the watchdog,
+    never inside _consume()."""
+
+    def test_consume_no_longer_calls_reconcile_inline(self) -> None:
+        """Regression guard for the actual fix -- reads the compiled
+        source directly, the same convention already used for
+        confirming the REQ_RESPONSE routing exists in _consume()."""
+        import inspect
+
+        source = inspect.getsource(ThetaStreamHub._consume)
+        assert "_reconcile" not in source
+        assert "asyncio.to_thread" not in source
+
+    @pytest.mark.asyncio
+    async def test_reconcile_loop_sleeps_the_configured_interval_before_each_cycle(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        stream = ThetaStreamHub(WS_URL, httpx.Client(base_url=REST_URL))
+        sleep_calls: list[float] = []
+        reconcile_calls = {"n": 0}
+
+        async def fake_sleep(seconds: float) -> None:
+            sleep_calls.append(seconds)
+            if len(sleep_calls) >= 2:
+                raise asyncio.CancelledError
+
+        def fake_reconcile() -> None:
+            reconcile_calls["n"] += 1
+
+        monkeypatch.setattr(asyncio, "sleep", fake_sleep)
+        monkeypatch.setattr(stream, "_reconcile", fake_reconcile)
+
+        with pytest.raises(asyncio.CancelledError):
+            await stream._run_reconcile_loop()
+
+        assert sleep_calls == [
+            provider_module.RECONCILE_INTERVAL_SECONDS,
+            provider_module.RECONCILE_INTERVAL_SECONDS,
+        ]
+        assert reconcile_calls["n"] == 1
+
+    @pytest.mark.asyncio
+    async def test_reconcile_loop_survives_an_unexpected_exception(
+        self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """The same class of bug already fixed once in this incident
+        (WhaleAlertsStreamManager/UnderlyingPriceStreamManager's own
+        per-symbol tasks) must not be reintroduced here: one bad cycle
+        must not silently end this periodic job forever."""
+        stream = ThetaStreamHub(WS_URL, httpx.Client(base_url=REST_URL))
+        sleep_calls: list[float] = []
+        reconcile_calls = {"n": 0}
+
+        async def fake_sleep(seconds: float) -> None:
+            sleep_calls.append(seconds)
+            # 3 sleeps, not 2: the 1st reconcile (after sleep #1) fails,
+            # so a 2nd reconcile (after sleep #2) is what actually proves
+            # the loop kept going -- cancelling on sleep #2 instead would
+            # only prove the loop reached the top again, not that it
+            # tried reconcile() a second time.
+            if len(sleep_calls) >= 3:
+                raise asyncio.CancelledError
+
+        def flaky_reconcile() -> None:
+            reconcile_calls["n"] += 1
+            if reconcile_calls["n"] == 1:
+                raise RuntimeError("simulated reconcile failure")
+
+        monkeypatch.setattr(asyncio, "sleep", fake_sleep)
+        monkeypatch.setattr(stream, "_reconcile", flaky_reconcile)
+
+        with caplog.at_level(logging.ERROR), pytest.raises(asyncio.CancelledError):
+            await stream._run_reconcile_loop()
+
+        assert reconcile_calls["n"] == 2, "the loop must keep running after the first failure"
+        assert any("failed unexpectedly" in record.message for record in caplog.records)
+
+    @pytest.mark.asyncio
+    async def test_start_and_stop_manage_the_reconcile_task(self) -> None:
+        stream = ThetaStreamHub(WS_URL, httpx.Client(base_url=REST_URL))
+        stream.start()
+        reconcile_task = stream._reconcile_task
+        assert reconcile_task is not None
+        assert not reconcile_task.done()
+
+        await stream.stop()
+
+        assert stream._reconcile_task is None
+        assert reconcile_task.cancelled()
+
+
+class TestQueueBackpressure:
+    """Fix (2026-09-10): every subscriber queue used to be unbounded.
+    Fine while reconcile() was the only thing that could ever make a
+    consumer fall behind (see TestReconcileScheduling) -- once that's
+    fixed, an unbounded queue stops being a safety net and starts being
+    a silent, unlimited memory leak if a consumer genuinely gets stuck
+    for an unrelated reason. TRADE/QUOTE (critical -- must not lose real
+    messages) alert loudly and drop the one message when truly full;
+    the underlying-price queue (only the latest price has any value for
+    a 0DTE chart) drops the oldest, silently, by design."""
+
+    def test_subscribed_queues_are_bounded_to_the_documented_sizes(self) -> None:
+        stream = ThetaStreamHub(WS_URL, httpx.Client(base_url=REST_URL))
+
+        assert stream.subscribe_trade_queue("SPY").maxsize == provider_module.TRADE_QUEUE_MAXSIZE
+        assert stream.subscribe_quote_queue("SPY").maxsize == provider_module.QUOTE_QUEUE_MAXSIZE
+        assert (
+            stream.subscribe_underlying_queue("SPY").maxsize
+            == provider_module.UNDERLYING_QUEUE_MAXSIZE
+        )
+
+    def test_dispatch_critical_drops_and_logs_critical_when_the_queue_is_full(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        queue: asyncio.Queue[str] = asyncio.Queue(maxsize=1)
+        queue.put_nowait("already queued")
+        stream = ThetaStreamHub(WS_URL, httpx.Client(base_url=REST_URL))
+
+        with caplog.at_level(logging.CRITICAL):
+            stream._dispatch_critical([queue], "dropped", "QUOTE")
+
+        assert queue.qsize() == 1
+        assert queue.get_nowait() == "already queued", "the queued item must not be disturbed"
+        assert any(record.levelno == logging.CRITICAL for record in caplog.records)
+
+    def test_dispatch_critical_does_not_raise_when_the_queue_is_full(self) -> None:
+        queue: asyncio.Queue[str] = asyncio.Queue(maxsize=1)
+        queue.put_nowait("already queued")
+        stream = ThetaStreamHub(WS_URL, httpx.Client(base_url=REST_URL))
+
+        stream._dispatch_critical([queue], "dropped", "QUOTE")  # must not raise
+
+    def test_dispatch_dropping_keeps_only_the_newest_items_in_fifo_order(self) -> None:
+        queue: asyncio.Queue[int] = asyncio.Queue(maxsize=3)
+        stream = ThetaStreamHub(WS_URL, httpx.Client(base_url=REST_URL))
+
+        for value in (1, 2, 3, 4, 5):
+            stream._dispatch_dropping([queue], value, "underlying TRADE")
+
+        # Oldest two (1, 2) were dropped as the queue filled; the
+        # remaining 3 keep their original relative (FIFO) order.
+        assert queue.qsize() == 3
+        assert [queue.get_nowait() for _ in range(3)] == [3, 4, 5]
+
+    def test_dispatch_dropping_does_not_log_critical(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Overflow here is the designed-for behavior, not a symptom --
+        must never alarm the way _dispatch_critical does."""
+        queue: asyncio.Queue[int] = asyncio.Queue(maxsize=1)
+        stream = ThetaStreamHub(WS_URL, httpx.Client(base_url=REST_URL))
+
+        with caplog.at_level(logging.CRITICAL):
+            stream._dispatch_dropping([queue], 1, "underlying TRADE")
+            stream._dispatch_dropping([queue], 2, "underlying TRADE")
+
+        assert not any(record.levelno == logging.CRITICAL for record in caplog.records)
 
 
 class TestStreamHubReconnection:
@@ -1660,7 +1826,7 @@ class TestQuoteHandling:
         stream._handle_quote(message)
         event = queue.get_nowait()
 
-        occ = _build_occ_symbol("SPY", date(2026, 9, 18), ContractType.CALL, Decimal("770"))
+        occ = _build_occ_symbol("SPY", date(2026, 9, 18), ContractType.CALL, Decimal(770))
         assert event.symbol == "SPY"
         assert event.occ_symbol == occ
         assert event.bid == Decimal("1.08")
@@ -1684,7 +1850,7 @@ class TestQuoteHandling:
 
         asyncio.run(
             stream._subscribe_option(
-                _FakeWebSocket(), "SPY", date(2026, 9, 18), ContractType.CALL, Decimal("770"), "QUOTE"
+                _FakeWebSocket(), "SPY", date(2026, 9, 18), ContractType.CALL, Decimal(770), "QUOTE"
             )
         )
 

@@ -9,6 +9,15 @@ from backend.domain.use_cases import StreamWhaleAlertsUseCase
 
 logger = logging.getLogger(__name__)
 
+# Same exponential-backoff shape and values already established for every
+# other ThetaData stream reconnect in this codebase (ThetaStreamHub's own
+# _run(), core/underlying_price_stream.py's identical supervisor,
+# core/price_notifications.py's own Postgres LISTEN reconnect) --
+# deliberately the same numbers, not a new convention for this one
+# supervisor.
+RECONNECT_BASE_DELAY_SECONDS = 2
+RECONNECT_MAX_DELAY_SECONDS = 60
+
 
 class WhaleAlertsStreamManager:
     """Runs StreamWhaleAlertsUseCase.run() concurrently for every active
@@ -27,6 +36,19 @@ class WhaleAlertsStreamManager:
     provider-agnostic, same reasoning that already keeps
     UnderlyingRefreshScheduler unaware of which concrete provider it's
     driving.
+
+    One symbol's stream failing is caught per-task, logged, AND
+    RESTARTED with backoff — never crashing the process or another
+    symbol's task, and never left dead forever. This used to just log
+    and give up on that symbol's Whale Alerts permanently, the exact
+    same class of bug UnderlyingPriceStreamManager already had fixed for
+    the chart's own per-symbol consumer (see its own docstring) --
+    confirmed missing here too during the 2026-09-09/10 ThetaStreamHub
+    investigation, fixed the same way rather than reintroducing it. A
+    clean return from run() (MockDataProvider's exhausted generator, or
+    any provider whose stream just ends on its own) is NOT retried --
+    only an actual exception is, so this stays a true no-op under
+    MockDataProvider/tests exactly as before.
     """
 
     def __init__(self, container: Container) -> None:
@@ -46,12 +68,24 @@ class WhaleAlertsStreamManager:
         ]
 
     async def _run_symbol(self, use_case: StreamWhaleAlertsUseCase, symbol: str) -> None:
-        try:
-            await use_case.run(symbol)
-        except asyncio.CancelledError:
-            raise
-        except Exception:
-            logger.exception("Whale Alerts trade-stream consumer failed for %s", symbol)
+        delay = RECONNECT_BASE_DELAY_SECONDS
+        while True:
+            try:
+                await use_case.run(symbol)
+                # A clean return (not an exception) -- nothing to
+                # restart; matches MockDataProvider's exhausted
+                # generator and any provider whose stream simply ends.
+                return
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.exception(
+                    "Whale Alerts trade-stream consumer failed for %s, restarting in %ss",
+                    symbol,
+                    delay,
+                )
+                await asyncio.sleep(delay)
+                delay = min(delay * 2, RECONNECT_MAX_DELAY_SECONDS)
 
     async def stop(self) -> None:
         for task in self._tasks:
