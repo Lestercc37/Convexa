@@ -204,11 +204,15 @@ def test_engine_does_not_alert_below_multiplier_or_dollar_threshold() -> None:
 
 def test_threshold_edits_take_effect_on_the_next_process_call_without_rebuilding_the_engine() -> None:
     # The whole point of Piece 1: an edit written to storage after the
-    # engine is constructed must change classification on the very next
-    # process() call — no restart, no rebuilding the engine (which would
-    # also wipe _states/_alerts).
+    # engine is constructed must change classification without a restart
+    # or rebuilding the engine (which would also wipe _states/_alerts).
+    # thresholds_cache_ttl_seconds=0 pins this test to "caching disabled"
+    # so it can assert same-call propagation deterministically -- the
+    # production default (WhaleAlertsEngine's own docstring) is a 5s TTL
+    # instead, covered separately by
+    # test_threshold_reads_are_cached_within_the_ttl_to_avoid_a_query_per_trade.
     storage = InMemoryStorage()
-    engine = WhaleAlertsEngine(storage)
+    engine = WhaleAlertsEngine(storage, thresholds_cache_ttl_seconds=0)
     base = MockDataProvider().get_option_chain("IWM")
 
     cumulative = 100
@@ -237,6 +241,39 @@ def test_threshold_edits_take_effect_on_the_next_process_call_without_rebuilding
     cumulative += 450
     engine.process(_chain(base, cumulative, 14))
     assert engine.process(_chain(base, cumulative, 15)) == ()
+
+
+def test_threshold_reads_are_cached_within_the_ttl_to_avoid_a_query_per_trade() -> None:
+    # See WhaleAlertsEngine's own docstring: confirmed live, 2026-09-11,
+    # that reading thresholds from storage on every single process_trade()
+    # call was ~85-95% of its real per-trade cost against production
+    # Postgres. This is what stops that -- one read serves every call
+    # within the TTL window, regardless of how many trades arrive.
+    class _CountingStorage(InMemoryStorage):
+        def __init__(self) -> None:
+            super().__init__()
+            self.get_whale_thresholds_calls = 0
+
+        def get_whale_thresholds(self):  # type: ignore[override]
+            self.get_whale_thresholds_calls += 1
+            return super().get_whale_thresholds()
+
+    storage = _CountingStorage()
+    engine = WhaleAlertsEngine(storage, thresholds_cache_ttl_seconds=60)
+    base = MockDataProvider().get_option_chain("IWM")
+
+    cumulative = 100
+    for period in range(5):
+        cumulative += 100
+        engine.process(_chain(base, cumulative, period))
+    assert storage.get_whale_thresholds_calls == 1
+
+    # Force the cached entry stale without a real sleep -- same effect as
+    # the TTL elapsing, deterministic and instant.
+    engine._thresholds_cache_at = 0.0
+    cumulative += 100
+    engine.process(_chain(base, cumulative, 5))
+    assert storage.get_whale_thresholds_calls == 2
 
 
 def test_alerts_endpoint_is_read_only_and_returns_recent_alerts() -> None:
