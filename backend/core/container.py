@@ -62,6 +62,10 @@ class Container:
     database_engine: AsyncEngine
     session_factory: async_sessionmaker[AsyncSession]
     storage_engine: Engine | None
+    # See build_container()'s own comment -- isolated from storage_engine
+    # above specifically so whale-alerts' DB calls never queue behind the
+    # REST scheduler's or reconcile()'s own contention for that other pool.
+    whale_alerts_storage_engine: Engine | None
     storage: IStorage
     async_market_storage: IAsyncMarketReadStorage
     market_data_provider: IDataProvider
@@ -110,6 +114,27 @@ def build_container() -> Container:
         storage_engine = create_sync_engine(settings.database_url, echo=settings.database_echo)
         sync_session_factory = create_sync_session_factory(storage_engine)
         storage: IStorage = PostgreSQLStorage(sync_session_factory)
+        # Dedicated pool for whale-alerts, same principle as its already-
+        # dedicated ThreadPoolExecutor (see stream_whale_alerts.py's own
+        # docstring) -- confirmed live, 2026-09-11, that sharing the one
+        # default-sized pool (5 + 10 overflow) above with the REST
+        # scheduler and reconcile() produced real contention: a 15-thread
+        # concurrent benchmark against that shared pool saw a single call's
+        # latency spike to ~870ms (vs ~1ms typical), enough on its own to
+        # stall a busy symbol's whole consumption for that long. Small
+        # pool size is deliberate, not an oversight -- the threshold-read
+        # TTL cache added the same day (see WhaleAlertsEngine's own
+        # docstring) already cut whale-alerts' real query volume by 2+
+        # orders of magnitude, so this pool mainly buys ISOLATION from the
+        # other workloads' contention, not raw extra capacity.
+        whale_alerts_storage_engine = create_sync_engine(
+            settings.database_url,
+            echo=settings.database_echo,
+            pool_size=5,
+            max_overflow=5,
+        )
+        whale_alerts_sync_session_factory = create_sync_session_factory(whale_alerts_storage_engine)
+        whale_alerts_storage: IStorage = PostgreSQLStorage(whale_alerts_sync_session_factory)
         # Real async Postgres reads for /gamma/{symbol} and /market/{symbol}
         # only when there's a real Postgres behind `session_factory` --
         # otherwise (InMemoryStorage, e.g. tests' sqlite DATABASE_URL, which
@@ -121,6 +146,10 @@ def build_container() -> Container:
         storage_engine = None
         sync_session_factory = None
         storage = InMemoryStorage()
+        # No real Postgres to isolate from -- InMemoryStorage has no
+        # connection pool to contend over, so whale-alerts just shares it.
+        whale_alerts_storage_engine = None
+        whale_alerts_storage = storage
         async_market_storage = SyncStorageAsyncReadAdapter(storage)
     theta_request_slots = build_theta_request_slots(
         storage_engine,
@@ -166,7 +195,7 @@ def build_container() -> Container:
         max_pain=calculate_max_pain_use_case,
     )
     calculate_derived_metrics_use_case = CalculateDerivedMetricsUseCase(storage)
-    whale_alerts_engine = build_whale_alerts_engine(storage)
+    whale_alerts_engine = build_whale_alerts_engine(whale_alerts_storage)
     refresh_underlying_snapshot_use_case = RefreshUnderlyingSnapshotUseCase(
         storage=storage,
         market_data_provider=market_data_provider,
@@ -179,6 +208,7 @@ def build_container() -> Container:
         database_engine=database_engine,
         session_factory=session_factory,
         storage_engine=storage_engine,
+        whale_alerts_storage_engine=whale_alerts_storage_engine,
         storage=storage,
         async_market_storage=async_market_storage,
         market_data_provider=market_data_provider,

@@ -126,7 +126,13 @@ def test_patch_endpoint_returns_not_found_for_unknown_symbol() -> None:
 def test_patch_takes_effect_on_the_engines_next_process_call() -> None:
     # End-to-end proof Piece 1 + Piece 2 actually work together: an edit
     # through the real HTTP endpoint changes real classification on the
-    # live container's long-lived engine, no restart.
+    # live container's long-lived engine, no restart. Since 2026-09-11,
+    # "next process() call" is only true once the engine's threshold
+    # cache has expired (see WhaleAlertsEngine's own docstring for why:
+    # a 5s TTL by default in production) -- the cache is forced stale
+    # here instead of sleeping out the real TTL, same as
+    # test_threshold_edits_take_effect_on_the_next_process_call_without_rebuilding_the_engine
+    # in test_whale_alerts.py.
     with TestClient(app) as client:
         base = MockDataProvider().get_option_chain("QQQ")
         engine = app.state.container.whale_alerts_engine
@@ -151,6 +157,7 @@ def test_patch_takes_effect_on_the_engines_next_process_call() -> None:
             },
         )
         assert patch.status_code == 200
+        engine._thresholds_cache_at = 0.0
 
         for period in range(8, 14):
             cumulative += 100

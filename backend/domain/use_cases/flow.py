@@ -1,12 +1,21 @@
 from __future__ import annotations
 
+import threading
+import time
 from collections import deque
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 from decimal import Decimal
 from enum import StrEnum
 
-from backend.domain.entities import ContractType, FlowEvent, LatestQuote, OptionChain, Side
+from backend.domain.entities import (
+    ContractType,
+    FlowEvent,
+    LatestQuote,
+    OptionChain,
+    Side,
+    WhaleThreshold,
+)
 from backend.domain.ports import IStorage
 from backend.domain.use_cases.calculate_bvc import (
     calculate_bvc_split,
@@ -196,18 +205,33 @@ class WhaleAlertsEngine:
     uses for candles), and only a *finalized* 1-minute bucket is ever
     classified or windowed — never a raw sub-minute reading.
 
-    Thresholds are read from `storage` fresh on every `process()` call,
-    not cached at construction — so an edit made through the thresholds
-    endpoint takes effect on the very next trigger, without a restart.
-    Only the thresholds are re-read live; `_states`/`_alerts` (the
-    per-contract windowing memory and alert history) stay exactly as
-    long-lived, in-memory engine state — re-fetching those per call would
-    defeat the whole windowing mechanism.
+    Thresholds are read from `storage`, cached for `_THRESHOLDS_CACHE_TTL_SECONDS`
+    at a time -- an edit made through the thresholds endpoint takes effect
+    within that window, not on the very next trigger, and never requires a
+    restart. Was an uncached read on every single call until 2026-09-11:
+    confirmed live (real Postgres, real concurrent load shaped like
+    production's ~15 whale-alerts consumer threads) that this query was
+    ~85-95% of process_trade()'s own per-trade cost, and under contention
+    for the shared connection pool its tail latency spiked to ~870ms on a
+    single call -- enough, on its own, to stall a busy symbol's entire
+    consumption for that long with nothing draining its queue. A five-
+    second TTL cuts real per-trade query volume by 2+ orders of magnitude
+    at the trade rates seen during that incident, while keeping threshold
+    edits' turnaround indistinguishable from "immediate" for the human
+    operator making them. Only the thresholds are cached this way;
+    `_states`/`_alerts` (the per-contract windowing memory and alert
+    history) stay exactly as long-lived, in-memory engine state --
+    re-fetching those per call would defeat the whole windowing mechanism.
     """
 
     _WINDOW_SIZE = 5
     _SUSTAINED_WINDOW_SIZE = 15
     _CONTRACT_MULTIPLIER = Decimal(100)
+    # See this class's own docstring for the live measurements behind this
+    # number. process_trade() is called concurrently from many different
+    # executor threads (one per symbol), so the cache itself must be
+    # thread-safe -- see _thresholds_cache_lock below.
+    _THRESHOLDS_CACHE_TTL_SECONDS = 5.0
     # 10 minutes: same order of magnitude the old 20-reading window
     # represented at the ~30s polling cadence it was designed around, but
     # anchored to real elapsed time so it holds regardless of how often
@@ -229,9 +253,19 @@ class WhaleAlertsEngine:
         storage: IStorage,
         default_thresholds: WhaleAlertThresholds | None = None,
         alert_limit: int = 1000,
+        thresholds_cache_ttl_seconds: float = _THRESHOLDS_CACHE_TTL_SECONDS,
     ) -> None:
         self._storage = storage
         self._default_thresholds = default_thresholds or WhaleAlertThresholds()
+        self._thresholds_cache_ttl_seconds = thresholds_cache_ttl_seconds
+        self._thresholds_cache: dict[str, WhaleThreshold] | None = None
+        self._thresholds_cache_at: float = 0.0
+        # Guards both the staleness check and the refresh itself -- a
+        # cache miss under this lock means only one of the ~15 concurrent
+        # symbol threads actually queries Postgres when the TTL expires,
+        # the rest see the freshly-populated cache instead of each firing
+        # their own redundant query at the same moment.
+        self._thresholds_cache_lock = threading.Lock()
         self._states: dict[str, _ContractState] = {}
         # Separate from _states (process()/BVC) on purpose — process_trade()
         # (Lee-Ready) keeps its own per-contract bucketing state so the two
@@ -246,8 +280,21 @@ class WhaleAlertsEngine:
         # (see that method's own comment for why not process() too).
         self._symbol_flow: dict[str, _SymbolFlowState] = {}
 
+    def _cached_thresholds(self) -> dict[str, WhaleThreshold]:
+        """See this class's own docstring for why this is cached (and why
+        with a lock) rather than querying `storage` on every trade."""
+        with self._thresholds_cache_lock:
+            now = time.monotonic()
+            if (
+                self._thresholds_cache is None
+                or now - self._thresholds_cache_at >= self._thresholds_cache_ttl_seconds
+            ):
+                self._thresholds_cache = self._storage.get_whale_thresholds()
+                self._thresholds_cache_at = now
+            return self._thresholds_cache
+
     def _resolve_thresholds(self, symbol: str) -> WhaleAlertThresholds:
-        persisted = self._storage.get_whale_thresholds().get(symbol.upper())
+        persisted = self._cached_thresholds().get(symbol.upper())
         if persisted is None:
             return self._default_thresholds
         return WhaleAlertThresholds(

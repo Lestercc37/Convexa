@@ -72,6 +72,8 @@ async def run() -> None:
         await container.market_data_provider.stop()
         if container.storage_engine is not None:
             container.storage_engine.dispose()
+        if container.whale_alerts_storage_engine is not None:
+            container.whale_alerts_storage_engine.dispose()
         await container.database_engine.dispose()
 
 
