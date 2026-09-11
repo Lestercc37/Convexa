@@ -6,6 +6,7 @@ import logging
 import threading
 import time
 from datetime import date, datetime, timedelta
+from datetime import time as dtime
 from decimal import Decimal
 from typing import ClassVar
 
@@ -15,6 +16,7 @@ import pytest
 import backend.adapters.providers.thetadata.provider as provider_module
 from backend.adapters.providers.thetadata.provider import (
     DAILY_BARS_CACHE_TTL_SECONDS,
+    MARKET_HOLIDAYS_CACHE_TTL_SECONDS,
     THETADATA_MAX_CONCURRENT_REQUESTS,
     ThetaDataProvider,
     ThetaStreamHub,
@@ -25,7 +27,7 @@ from backend.adapters.providers.thetadata.provider import (
     _roots_for_symbol,
     _time_to_expiration_years,
 )
-from backend.domain.entities import ContractType, UnderlyingKind
+from backend.domain.entities import ContractType, MarketHolidayType, UnderlyingKind
 from backend.domain.use_cases.market_hours import EASTERN_TIME
 
 REST_URL = "http://thetaterminal.test"
@@ -1043,6 +1045,94 @@ class TestDailyBarsCaching:
             provider._daily_bars_cache[("SPY", 5)][1],
         )
         provider.get_daily_bars("SPY", days=5)
+
+        assert request_count == 2
+
+
+def _year_holidays_response() -> dict[str, object]:
+    # A real subset confirmed live, 2026-09-11, against
+    # /v3/calendar/year_holidays?year=2026&format=json.
+    return {
+        "response": [
+            {"date": "2026-01-01", "type": "full_close", "open": None, "close": None},
+            {"date": "2026-11-26", "type": "full_close", "open": None, "close": None},
+            {"date": "2026-11-27", "type": "early_close", "open": "09:30:00", "close": "13:00:00"},
+            {"date": "2026-12-25", "type": "full_close", "open": None, "close": None},
+        ]
+    }
+
+
+class TestGetMarketHolidays:
+    def test_parses_full_close_and_early_close_rows(self) -> None:
+        def handler(request: httpx.Request) -> httpx.Response:
+            assert request.url.path == "/v3/calendar/year_holidays"
+            assert request.url.params["year"] == "2026"
+            return httpx.Response(200, json=_year_holidays_response())
+
+        provider = _provider_with_transport(handler)
+        holidays = provider.get_market_holidays(2026)
+
+        assert len(holidays) == 4
+        new_years = next(h for h in holidays if h.date == date(2026, 1, 1))
+        assert new_years.closure_type is MarketHolidayType.FULL_CLOSE
+        assert new_years.open is None
+        assert new_years.close is None
+
+        day_after_thanksgiving = next(h for h in holidays if h.date == date(2026, 11, 27))
+        assert day_after_thanksgiving.closure_type is MarketHolidayType.EARLY_CLOSE
+        assert day_after_thanksgiving.open == dtime(9, 30)
+        assert day_after_thanksgiving.close == dtime(13, 0)
+
+
+class TestMarketHolidaysCaching:
+    """Same reasoning as TestDailyBarsCaching -- a published year's
+    holidays don't change intra-year in practice, so re-fetching on every
+    scheduler tick (every 30s) would be pure waste."""
+
+    def test_second_call_within_ttl_reuses_the_cached_holidays(self) -> None:
+        request_count = 0
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            nonlocal request_count
+            request_count += 1
+            return httpx.Response(200, json=_year_holidays_response())
+
+        provider = _provider_with_transport(handler)
+        first = provider.get_market_holidays(2026)
+        second = provider.get_market_holidays(2026)
+
+        assert request_count == 1
+        assert second == first
+
+    def test_different_year_is_not_served_from_the_others_cache(self) -> None:
+        request_count = 0
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            nonlocal request_count
+            request_count += 1
+            return httpx.Response(200, json=_year_holidays_response())
+
+        provider = _provider_with_transport(handler)
+        provider.get_market_holidays(2026)
+        provider.get_market_holidays(2027)
+
+        assert request_count == 2
+
+    def test_expired_cache_re_fetches(self) -> None:
+        request_count = 0
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            nonlocal request_count
+            request_count += 1
+            return httpx.Response(200, json=_year_holidays_response())
+
+        provider = _provider_with_transport(handler)
+        provider.get_market_holidays(2026)
+        provider._market_holidays_cache[2026] = (
+            provider._market_holidays_cache[2026][0] - MARKET_HOLIDAYS_CACHE_TTL_SECONDS - 1,
+            provider._market_holidays_cache[2026][1],
+        )
+        provider.get_market_holidays(2026)
 
         assert request_count == 2
 

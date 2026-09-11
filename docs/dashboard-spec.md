@@ -492,13 +492,18 @@ manual aparte). El endpoint manual sigue existiendo tal cual, sin cambio de cont
 Automático de Cálculo) para el mecanismo completo, la investigación previa y la justificación de cada
 decisión de diseño.
 
-**Limitación conocida y aceptada, documentada explícitamente (no silenciosa):** el chequeo de horario
-(`is_market_open`, `backend/domain/use_cases/market_hours.py`) solo verifica día hábil (lunes-viernes)
-y hora (9:30am-4:00pm ET) — **no existe calendario de feriados bursátiles** en el proyecto. El
-scheduler intentará correr en un feriado que caiga entre semana (Acción de Gracias, Navidad, etc.),
-aunque en la práctica probablemente no obtenga datos útiles del proveedor real en ese caso (hoy sigue
-sobre `MockDataProvider`, que no tiene ese concepto tampoco). Construir un calendario de feriados
-completo queda fuera de alcance de este PR — decisión tomada explícitamente, no un descuido.
+**Calendario de feriados bursátiles — resuelto para el scheduler (2026-09), acotado a propósito.** El
+chequeo de horario (`is_market_open`, `backend/domain/use_cases/market_hours.py`) ahora acepta un
+calendario de feriados real (`IDataProvider.get_market_holidays`, respaldado por ThetaData's
+`/v3/calendar/year_holidays`) que `UnderlyingRefreshScheduler` resuelve y aplica en cada vuelta de su
+loop — un feriado de cierre total (Acción de Gracias, Navidad) cierra el día completo; uno de cierre
+temprano (ej. 1:00pm ET el día después de Acción de Gracias) angosta la ventana en vez de usar la fija
+9:30am-4:00pm ET. Los otros tres llamadores de `is_market_open` (`stream_underlying_price.py`,
+`read_models.py`, el chequeo interno del propio provider) siguen sin pasar feriados — decisión
+explícita, no un descuido: el scheduler es el único de los cuatro donde un feriado sin detectar cuesta
+algo medible (un ciclo completo de llamadas REST reales), los otros tres son casos benignos que se
+resuelven si algún día muestran un problema real. Ver `docs/use-cases.md` (sección Scheduler Automático
+de Cálculo) para el detalle completo.
 
 ## 22. Chart más compacto (ancho y alto), espacio ganado para el panel de métricas y un panel reservado
 
@@ -824,7 +829,8 @@ cambio (no un total corriente incremental) — más simple y sin riesgo de desin
 el tope de 1000 alertas.
 
 **Limitación conocida, con pendiente futuro real — no resuelta en este PR, documentada con la misma
-honestidad que `volume=0` o el calendario de feriados de `is_market_open`.** El flujo acumulado es
+honestidad que `volume=0` o el calendario de feriados que `is_market_open` todavía no aplica para sus
+otros tres llamadores (ver sección 21).** El flujo acumulado es
 *best-effort*, no una garantía de sesión completa:
 
 - `WhaleAlertsEngine._alerts` vive solo en memoria del proceso — un reinicio del backend borra todo el

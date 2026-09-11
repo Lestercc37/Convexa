@@ -20,6 +20,7 @@ from backend.domain.entities import (
     GammaAggregate,
     GammaExposure,
     GammaFlip,
+    MarketHoliday,
     MarketPrice,
     MarketSnapshot,
     MaxPain,
@@ -38,6 +39,11 @@ class IDataProvider(Protocol):
     def get_option_chain(self, underlying: str, expiration: date | None = None) -> OptionChain: ...
     def get_underlying_snapshot(self, underlying: str) -> MarketSnapshot: ...
     def get_daily_bars(self, underlying: str, days: int = 20) -> list[DailyBar]: ...
+    # Feeds market_hours.is_market_open()'s optional `holidays` parameter --
+    # see that function's own docstring and UnderlyingRefreshScheduler,
+    # its only caller so far. A plain year lookup (not a date range) to
+    # match ThetaData's own `/v3/calendar/year_holidays` shape exactly.
+    def get_market_holidays(self, year: int) -> list[MarketHoliday]: ...
     def stream_trades(self, underlying: str) -> AsyncIterator[FlowEvent]: ...
     # Added alongside stream_trades for Lee-Ready (StreamWhaleAlertsUseCase,
     # calculate_lee_ready.py) — the quote-rule needs the bid/ask prevailing

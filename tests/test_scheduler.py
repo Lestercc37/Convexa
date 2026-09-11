@@ -4,7 +4,8 @@ import asyncio
 import threading
 import time
 from dataclasses import replace
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, tzinfo
+from datetime import time as dtime
 
 import httpx
 import pytest
@@ -22,6 +23,7 @@ from backend.adapters.providers.thetadata.provider import (
 from backend.adapters.storage.memory import InMemoryStorage
 from backend.core.container import build_container
 from backend.core.scheduler import UnderlyingRefreshScheduler
+from backend.domain.entities import MarketHoliday, MarketHolidayType
 from backend.domain.underlyings import ACTIVE_UNDERLYINGS
 from backend.domain.use_cases import (
     CalculateDerivedMetricsUseCase,
@@ -34,6 +36,7 @@ from backend.domain.use_cases import (
     RefreshUnderlyingSnapshotUseCase,
     WhaleAlertsEngine,
 )
+from backend.domain.use_cases.market_hours import EASTERN_TIME
 
 ACTIVE_SYMBOLS = [underlying.symbol for underlying in ACTIVE_UNDERLYINGS]
 
@@ -63,6 +66,45 @@ def _scheduler_with_stub(
     return UnderlyingRefreshScheduler(container, interval_seconds=interval_seconds), stub
 
 
+class _FakeHolidayProvider:
+    """Minimal IDataProvider stand-in -- only get_market_holidays is ever
+    called from UnderlyingRefreshScheduler._run(), so nothing else needs
+    implementing for these tests."""
+
+    def __init__(self, holidays: list[MarketHoliday]) -> None:
+        self._holidays = holidays
+
+    def get_market_holidays(self, year: int) -> list[MarketHoliday]:
+        return self._holidays
+
+
+def _scheduler_with_holidays(
+    holidays: list[MarketHoliday],
+    interval_seconds: float = 0.01,
+) -> tuple[UnderlyingRefreshScheduler, _StubRefreshUseCase]:
+    stub = _StubRefreshUseCase()
+    container = replace(
+        build_container(),
+        refresh_underlying_snapshot_use_case=stub,
+        market_data_provider=_FakeHolidayProvider(holidays),
+    )
+    return UnderlyingRefreshScheduler(container, interval_seconds=interval_seconds), stub
+
+
+def _fixed_clock(fixed: datetime) -> type[datetime]:
+    """A datetime subclass whose now() always returns `fixed` -- lets a
+    test pin backend.core.scheduler's notion of "now" to a real, known
+    calendar date (Thanksgiving, Christmas, ...) instead of whatever day
+    the test suite actually runs on."""
+
+    class _Frozen(datetime):
+        @classmethod
+        def now(cls, tz: tzinfo | None = None) -> datetime:
+            return fixed.astimezone(tz) if tz is not None else fixed
+
+    return _Frozen
+
+
 @pytest.mark.asyncio
 async def test_cycle_processes_every_active_symbol() -> None:
     scheduler, stub = _scheduler_with_stub()
@@ -89,7 +131,7 @@ async def test_cycle_continues_for_remaining_symbols_when_one_fails() -> None:
 
 @pytest.mark.asyncio
 async def test_loop_does_not_run_a_cycle_outside_market_hours(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("backend.core.scheduler.is_market_open", lambda now: False)
+    monkeypatch.setattr("backend.core.scheduler.is_market_open", lambda now, holidays: False)
     scheduler, stub = _scheduler_with_stub(interval_seconds=0.01)
 
     scheduler.start()
@@ -101,7 +143,7 @@ async def test_loop_does_not_run_a_cycle_outside_market_hours(monkeypatch: pytes
 
 @pytest.mark.asyncio
 async def test_loop_runs_a_cycle_during_market_hours(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("backend.core.scheduler.is_market_open", lambda now: True)
+    monkeypatch.setattr("backend.core.scheduler.is_market_open", lambda now, holidays: True)
     scheduler, stub = _scheduler_with_stub(interval_seconds=0.01)
 
     scheduler.start()
@@ -109,6 +151,99 @@ async def test_loop_runs_a_cycle_during_market_hours(monkeypatch: pytest.MonkeyP
     await scheduler.stop()
 
     assert ACTIVE_SYMBOLS[0] in stub.calls
+
+
+@pytest.mark.asyncio
+async def test_current_holidays_resolves_the_provider_and_keys_by_date() -> None:
+    holiday = MarketHoliday(
+        date=date(2026, 12, 25), closure_type=MarketHolidayType.FULL_CLOSE, open=None, close=None
+    )
+    scheduler, _ = _scheduler_with_holidays([holiday])
+
+    resolved = await scheduler._current_holidays(datetime(2026, 12, 25, 15, 0, tzinfo=EASTERN_TIME))
+
+    assert resolved == {date(2026, 12, 25): holiday}
+
+
+@pytest.mark.asyncio
+async def test_loop_does_not_run_a_cycle_on_thanksgiving(monkeypatch: pytest.MonkeyPatch) -> None:
+    # 2026-11-26 is a real Thursday, mid-session by weekday/time-of-day
+    # alone -- only the full-close holiday makes this correctly closed.
+    thanksgiving_mid_session = datetime(2026, 11, 26, 15, 0, tzinfo=EASTERN_TIME)
+    holiday = MarketHoliday(
+        date=date(2026, 11, 26), closure_type=MarketHolidayType.FULL_CLOSE, open=None, close=None
+    )
+    monkeypatch.setattr("backend.core.scheduler.datetime", _fixed_clock(thanksgiving_mid_session))
+    scheduler, stub = _scheduler_with_holidays([holiday])
+
+    scheduler.start()
+    await asyncio.sleep(0.05)
+    await scheduler.stop()
+
+    assert stub.calls == []
+
+
+@pytest.mark.asyncio
+async def test_loop_does_not_run_a_cycle_on_christmas(monkeypatch: pytest.MonkeyPatch) -> None:
+    christmas_mid_session = datetime(2026, 12, 25, 11, 0, tzinfo=EASTERN_TIME)
+    holiday = MarketHoliday(
+        date=date(2026, 12, 25), closure_type=MarketHolidayType.FULL_CLOSE, open=None, close=None
+    )
+    monkeypatch.setattr("backend.core.scheduler.datetime", _fixed_clock(christmas_mid_session))
+    scheduler, stub = _scheduler_with_holidays([holiday])
+
+    scheduler.start()
+    await asyncio.sleep(0.05)
+    await scheduler.stop()
+
+    assert stub.calls == []
+
+
+@pytest.mark.asyncio
+async def test_loop_runs_a_cycle_before_the_early_close_the_day_after_thanksgiving(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # 2026-11-27 (the Friday after Thanksgiving) is a real early-close day,
+    # 09:30-13:00 ET -- 11:00 is still within that narrowed session.
+    before_early_close = datetime(2026, 11, 27, 11, 0, tzinfo=EASTERN_TIME)
+    holiday = MarketHoliday(
+        date=date(2026, 11, 27),
+        closure_type=MarketHolidayType.EARLY_CLOSE,
+        open=dtime(9, 30),
+        close=dtime(13, 0),
+    )
+    monkeypatch.setattr("backend.core.scheduler.datetime", _fixed_clock(before_early_close))
+    scheduler, stub = _scheduler_with_holidays([holiday])
+
+    scheduler.start()
+    await asyncio.sleep(0.05)
+    await scheduler.stop()
+
+    assert ACTIVE_SYMBOLS[0] in stub.calls
+
+
+@pytest.mark.asyncio
+async def test_loop_does_not_run_a_cycle_after_the_early_close_the_day_after_thanksgiving(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Same day, 14:00 ET -- inside the OLD fixed 9:30-16:00 window (would
+    # be reported open without the holiday), but past this real early
+    # close's own 13:00 cutoff.
+    after_early_close = datetime(2026, 11, 27, 14, 0, tzinfo=EASTERN_TIME)
+    holiday = MarketHoliday(
+        date=date(2026, 11, 27),
+        closure_type=MarketHolidayType.EARLY_CLOSE,
+        open=dtime(9, 30),
+        close=dtime(13, 0),
+    )
+    monkeypatch.setattr("backend.core.scheduler.datetime", _fixed_clock(after_early_close))
+    scheduler, stub = _scheduler_with_holidays([holiday])
+
+    scheduler.start()
+    await asyncio.sleep(0.05)
+    await scheduler.stop()
+
+    assert stub.calls == []
 
 
 @pytest.mark.asyncio

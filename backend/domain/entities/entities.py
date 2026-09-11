@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import date, datetime, timezone
+from datetime import date, datetime, time, timezone
 from decimal import Decimal
 from enum import StrEnum
 
@@ -452,6 +452,35 @@ class DailyBar:
             raise InvalidOptionError("daily bar open must be within [low, high]")
         if not self.low <= self.close <= self.high:
             raise InvalidOptionError("daily bar close must be within [low, high]")
+
+
+class MarketHolidayType(StrEnum):
+    FULL_CLOSE = "full_close"
+    EARLY_CLOSE = "early_close"
+
+
+@dataclass(frozen=True, slots=True)
+class MarketHoliday:
+    """One US equity market holiday or early-close day, as ThetaData's
+    `/v3/calendar/year_holidays` reports it -- see
+    `IDataProvider.get_market_holidays` and `market_hours.is_market_open`.
+
+    `open`/`close` are the session's actual bounds for `EARLY_CLOSE` (e.g.
+    09:30-13:00 ET the Friday after Thanksgiving); both are `None` for
+    `FULL_CLOSE`, matching ThetaData's own `null`/`null` for those rows --
+    there's no session to bound on a day the market never opens at all.
+    """
+
+    date: date
+    closure_type: MarketHolidayType
+    open: time | None
+    close: time | None
+
+    def __post_init__(self) -> None:
+        if self.closure_type is MarketHolidayType.EARLY_CLOSE and (
+            self.open is None or self.close is None
+        ):
+            raise DomainError("early_close holiday requires both open and close times")
 
 
 @dataclass(frozen=True, slots=True)
