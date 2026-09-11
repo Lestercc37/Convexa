@@ -9,6 +9,7 @@ from backend.domain.entities import (
     DailyBar,
     FlowEvent,
     Greeks,
+    MarketHoliday,
     MarketSnapshot,
     OptionChain,
     OptionContract,
@@ -68,6 +69,13 @@ class MockDataProvider:
                 )
             )
         return bars
+
+    def get_market_holidays(self, year: int) -> list[MarketHoliday]:
+        # No fixed calendar to fabricate deterministically here -- an empty
+        # list means market_hours.is_market_open() falls back to its plain
+        # weekday/time-of-day check, same behavior every test already
+        # expects from this provider.
+        return []
 
     async def stream_trades(self, underlying: str) -> AsyncIterator[FlowEvent]:
         if False:

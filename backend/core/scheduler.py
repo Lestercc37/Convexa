@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 
 from backend.core.container import Container
+from backend.domain.entities import MarketHoliday
 from backend.domain.underlyings import ACTIVE_UNDERLYINGS
 from backend.domain.use_cases import is_market_open
+from backend.domain.use_cases.market_hours import EASTERN_TIME
 
 logger = logging.getLogger(__name__)
 
@@ -17,9 +19,17 @@ class UnderlyingRefreshScheduler:
     """Refreshes gamma/market data for every active underlying on a timer.
 
     Runs one cycle every `interval_seconds`, but only while `is_market_open`
-    — see that function's docstring for the known holiday-calendar gap
-    (weekday + time-of-day only, no exchange holiday calendar). Started and
-    stopped from the FastAPI lifespan (`backend/main.py`) as a single
+    reports the market open -- resolves and passes real market-holiday data
+    (`_current_holidays`) so a full-closure day (Thanksgiving, Christmas)
+    or an early-closure day (1:00pm ET the Friday after Thanksgiving)
+    correctly skips cycles instead of firing real REST calls against a
+    closed market. This is the one `is_market_open` caller where an
+    undetected holiday has a real, measurable cost -- a full cycle of REST
+    calls per active symbol -- unlike that function's other callers
+    (`stream_underlying_price.py`, `read_models.py`, the provider's own
+    internal check), which stay on the plain weekday/time-of-day check for
+    now (see `is_market_open`'s own docstring). Started and stopped from
+    the FastAPI lifespan (`backend/main.py`) as a single
     `asyncio.Task` that lives for the process's lifetime; each symbol runs
     in a worker thread (`asyncio.to_thread`) via
     `RefreshUnderlyingSnapshotUseCase` so a slow/blocking data provider
@@ -69,9 +79,26 @@ class UnderlyingRefreshScheduler:
 
     async def _run(self) -> None:
         while True:
-            if is_market_open(datetime.now(UTC)):
+            now = datetime.now(UTC)
+            holidays = await self._current_holidays(now)
+            if is_market_open(now, holidays):
                 await self._run_cycle()
             await asyncio.sleep(self._interval_seconds)
+
+    async def _current_holidays(self, now: datetime) -> dict[date, MarketHoliday]:
+        """Resolves the holiday calendar for `now`'s Eastern-time year via
+        the real market data provider (`IDataProvider.get_market_holidays`)
+        -- offloaded to a worker thread since it can do real REST I/O on a
+        cache miss (see `ThetaDataProvider.get_market_holidays`'s own 24h
+        cache; a plain dict lookup the rest of the time). Every async
+        caller into a provider method must do this -- see
+        `stream_whale_alerts.py`'s own docstring for this exact class of
+        bug found live and fixed before this."""
+        year = now.astimezone(EASTERN_TIME).year
+        holidays = await asyncio.to_thread(
+            self._container.market_data_provider.get_market_holidays, year
+        )
+        return {holiday.date: holiday for holiday in holidays}
 
     async def _run_cycle(self) -> None:
         symbols = [underlying.symbol for underlying in ACTIVE_UNDERLYINGS]

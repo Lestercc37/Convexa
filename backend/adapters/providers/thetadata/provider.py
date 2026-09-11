@@ -6,6 +6,7 @@ import logging
 import time
 from collections.abc import AsyncIterator, Callable
 from datetime import date, datetime, timedelta
+from datetime import time as time_of_day
 from decimal import Decimal
 from typing import Any, TypeVar
 
@@ -21,6 +22,8 @@ from backend.domain.entities import (
     DailyBar,
     FlowEvent,
     FlowEventType,
+    MarketHoliday,
+    MarketHolidayType,
     MarketSnapshot,
     MinuteBar,
     OptionChain,
@@ -349,6 +352,13 @@ OPEN_INTEREST_CACHE_TTL_SECONDS = 20 * 60.0
 # docstring). Same 20-minute TTL as open interest, same reasoning:
 # conservative relative to "changes once a day," not a tight bound.
 DAILY_BARS_CACHE_TTL_SECONDS = 20 * 60.0
+
+# Market holidays for a given year are published well in advance and never
+# change intra-year in practice (see get_market_holidays) -- a 24h TTL is a
+# conservative "once a day at most" bound, not a tight one, same reasoning
+# as DAILY_BARS_CACHE_TTL_SECONDS above. The cache key is the year itself,
+# so the turn of a calendar year naturally forces a fresh fetch too.
+MARKET_HOLIDAYS_CACHE_TTL_SECONDS = 24 * 60 * 60.0
 
 # ThetaData splits certain broad-based, cash-settled index options into
 # two independently-quoted root symbols: the legacy AM-settled root
@@ -1255,6 +1265,7 @@ class ThetaDataProvider:
             tuple[str, date], tuple[float, dict[tuple[Decimal, str], int]]
         ] = {}
         self._daily_bars_cache: dict[tuple[str, int], tuple[float, list[DailyBar]]] = {}
+        self._market_holidays_cache: dict[int, tuple[float, list[MarketHoliday]]] = {}
 
     async def start(self) -> None:
         # Registered unconditionally for every active symbol (except
@@ -1754,6 +1765,33 @@ class ThetaDataProvider:
             )
         self._daily_bars_cache[cache_key] = (time.monotonic(), bars)
         return bars
+
+    def get_market_holidays(self, year: int) -> list[MarketHoliday]:
+        """Feeds market_hours.is_market_open()'s `holidays` parameter -- see
+        that function's own docstring and UnderlyingRefreshScheduler, its
+        only caller so far. Real call confirmed live, 2026-09-11, against
+        `/v3/calendar/year_holidays?year=2026`: 12 rows, `full_close` rows
+        carry `open`/`close` as JSON `null` (no session to bound), `early_
+        close` rows carry real times (e.g. "13:00:00" the Friday after
+        Thanksgiving and on Christmas Eve)."""
+        cached = self._market_holidays_cache.get(year)
+        if cached is not None and time.monotonic() - cached[0] < MARKET_HOLIDAYS_CACHE_TTL_SECONDS:
+            return cached[1]
+        body = self._get_json("/v3/calendar/year_holidays", year=str(year), format="json")
+        holidays = []
+        for row in body.get("response", []):
+            holidays.append(
+                MarketHoliday(
+                    date=date.fromisoformat(row["date"]),
+                    closure_type=MarketHolidayType(row["type"]),
+                    open=time_of_day.fromisoformat(row["open"]) if row["open"] is not None else None,
+                    close=time_of_day.fromisoformat(row["close"])
+                    if row["close"] is not None
+                    else None,
+                )
+            )
+        self._market_holidays_cache[year] = (time.monotonic(), holidays)
+        return holidays
 
     def get_minute_bars(self, underlying: str, start: date, end: date) -> list[MinuteBar]:
         """Closed 1-minute OHLCV bars from ThetaData's `/v3/index/history/

@@ -413,21 +413,45 @@ horario de mercado) corriendo de fondo durante ese test, con efectos secundarios
 según la hora real de ejecución de la suite. Mismo mecanismo ya usado por ese fixture para forzar
 SQLite en memoria en vez de la base de datos real del desarrollador.
 
-**Límite conocido y aceptado explícitamente: sin calendario de feriados bursátiles.**
-`is_market_open` (`backend/domain/use_cases/market_hours.py`) solo verifica día hábil (lunes-viernes)
-y horario (9:30am-4:00pm ET, intervalo semiabierto `[9:30, 16:00)`) — ningún feriado bursátil
-(Acción de Gracias, Navidad, etc.) está contemplado, porque no existe ningún calendario de feriados en
-el proyecto. El scheduler intentará correr en un feriado entre semana; documentado en el docstring de
-la función y en `docs/dashboard-spec.md` (sección 21) como limitación conocida y deliberada, no un
-descuido — construir un calendario de feriados completo queda fuera de alcance de este PR.
+**Calendario de feriados bursátiles — resuelto para el scheduler, 2026-09 (ThetaData
+`/v3/calendar/year_holidays`).** `is_market_open` (`backend/domain/use_cases/market_hours.py`) ahora
+recibe un parámetro opcional `holidays: Mapping[date, MarketHoliday] | None` — un feriado de cierre
+total (`full_close`, Acción de Gracias, Navidad, etc.) cierra el día completo sin importar la hora; uno
+de cierre temprano (`early_close`, ej. 1:00pm ET el viernes después de Acción de Gracias) angosta el
+intervalo `[open, close)` de ese día al de la fila del feriado en vez del fijo `[9:30, 16:00)`. La
+función sigue siendo pura — nunca hace red ella misma, solo recibe los datos ya resueltos.
+`UnderlyingRefreshScheduler` (`backend/core/scheduler.py`) es quien los resuelve: en cada vuelta de
+`_run()` llama a `IDataProvider.get_market_holidays(year)` (vía `asyncio.to_thread`, mismo motivo que
+cualquier otra llamada a un provider desde una corrutina — ver el propio historial de
+`stream_whale_alerts.py`) y arma el `dict[date, MarketHoliday]` que le pasa a `is_market_open`.
+`ThetaDataProvider.get_market_holidays` cachea por año con TTL de 24h (mismo patrón que
+`get_daily_bars`/`DAILY_BARS_CACHE_TTL_SECONDS` — un calendario de feriados publicado no cambia
+intra-año); `MockDataProvider.get_market_holidays` devuelve `[]`, preservando el comportamiento de
+siempre en tests/desarrollo.
 
-**Tests:** `tests/test_market_hours.py` (abierto en sesión regular, exactamente en el límite de
-apertura/cierre —intervalo semiabierto—, cerrado fuera de horario, cerrado en fin de semana, acepta
-cualquier timezone de entrada y convierte a ET, y un test que documenta explícitamente la limitación
-de feriados en vez de asumir una corrección que la función no ofrece), `tests/test_scheduler.py` (un
-ciclo procesa los 11 símbolos activos, un ciclo continúa con los 10 restantes si uno falla, el loop no
-corre ningún ciclo fuera de horario de mercado, el loop sí corre durante horario de mercado,
-`start()`/`stop()` son seguros de llamar repetidamente o antes de arrancar).
+**Alcance deliberadamente acotado al scheduler.** `is_market_open` tiene otros tres llamadores
+(`stream_underlying_price.py`, `read_models.py`, y el propio chequeo interno de
+`adapters/providers/thetadata/provider.py`) que **no** fueron tocados en este cambio — siguen con
+`holidays=None` (el default, que preserva el chequeo viejo de solo día/hora). Decisión explícita, no un
+descuido: el scheduler es el único de los cuatro donde un feriado sin detectar dispara un costo real
+medible (un ciclo completo de llamadas REST reales en un día sin mercado); los otros tres son casos más
+benignos (filtrar ticks que de todas formas no llegarían en un feriado real, o tratar datos como
+"frescos" cuando ya lo eran). Si alguno de los tres muestra un problema real por esto, se resuelve
+entonces, con su propio contexto — mismo criterio que ya usa el resto de este historial de PRs
+(no ampliar el alcance más allá de lo que un incidente real confirmó).
+
+**Tests:** `tests/test_market_hours.py` (los casos base de horario/fin de semana ya existentes, más:
+cerrado todo el día en un feriado de cierre total real cuando se pasan los feriados, ventana angostada
+en un feriado de cierre temprano real —incluyendo el límite exacto de las 13:00—, una fecha sin feriado
+en el mapa usa el horario normal, un fin de semana se mantiene cerrado aunque el mapa lo liste
+—defensivo—, y la validación de `MarketHoliday` rechaza un `early_close` sin sus propias horas).
+`tests/test_scheduler.py` (los casos base ya existentes, más: `_current_holidays` arma el lookup por
+fecha desde el provider, el loop no corre un ciclo en Acción de Gracias ni en Navidad —fechas reales,
+2026-11-26 y 2026-12-25—, sí corre un ciclo antes del cierre temprano del día después de Acción de
+Gracias —2026-11-27, antes de la 1:00pm ET real— y no corre uno después). `tests/test_thetadata_
+provider.py` (parseo real de filas `full_close`/`early_close` contra una respuesta real de ThetaData, y
+el mismo trío de casos de cache que `TestDailyBarsCaching`: reutiliza dentro del TTL, no comparte cache
+entre años distintos, re-consulta si el cache expiró).
 
 **`ThetaDataProvider` — proveedor real, conectado a un Theta Terminal v3 local.** Reemplaza a
 `MockDataProvider` cuando `QLL_DATA_PROVIDER=thetadata` (default: `mock`) — mecanismo de configuración
