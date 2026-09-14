@@ -1540,6 +1540,76 @@ class TestReconcileScheduling:
         assert reconcile_task.cancelled()
 
 
+class TestReconcileContractsThreadSafety:
+    """Bug found live, 2026-09-11 12:32 ET: "RuntimeError: dictionary
+    changed size during iteration" inside _reconcile()'s own `for
+    occ_symbol, ... in self._contracts.items()`. Root cause: register_
+    contract() runs from the scheduler's own worker threads (get_option_
+    chain() is called via asyncio.to_thread, one call per active symbol --
+    up to ~15 different OS threads writing concurrently), while _reconcile()
+    (its own separate asyncio.to_thread call) iterated that same dict with
+    no synchronization at all. Fixed by protecting every access to
+    self._contracts with self._contracts_lock, snapshotting under the lock
+    and iterating the snapshot outside it (both here and in _consume(),
+    which had the identical unguarded-iteration shape for the same dict,
+    just never observed failing live yet)."""
+
+    def test_reconcile_does_not_raise_while_contracts_are_registered_concurrently(self) -> None:
+        stream = ThetaStreamHub(WS_URL, httpx.Client(base_url=REST_URL))
+        for i in range(20):
+            stream.register_contract(
+                f"SPY260918C00{500 + i}000", "SPY", date(2026, 9, 18), ContractType.CALL, Decimal(500 + i)
+            )
+
+        def slow_get(path: str, **kwargs: object) -> httpx.Response:
+            # A real (if brief) wall-clock delay per contract, releasing the
+            # GIL each time -- gives the writer thread below a guaranteed
+            # window to interleave with the iteration below. Bounded on
+            # both sides (a small fixed contract count here, a small fixed
+            # write count below) so this stays fast regardless of exact
+            # thread scheduling -- an earlier unbounded version of this
+            # test (writer running until a stop signal, racing an
+            # ever-growing dict against slow reconcile passes) took over a
+            # minute and had to be killed.
+            time.sleep(0.001)
+            # A request must be attached for _reconcile()'s own
+            # response.raise_for_status() call to work at all -- a bare
+            # httpx.Response() has none by default.
+            return httpx.Response(200, json={"response": []}, request=httpx.Request("GET", path))
+
+        stream._rest_client.get = slow_get  # type: ignore[method-assign]
+
+        write_errors: list[BaseException] = []
+
+        def register_more_contracts() -> None:
+            for i in range(1000):
+                try:
+                    stream.register_contract(
+                        f"SPY260918C00{10_000 + i}000", "SPY", date(2026, 9, 18), ContractType.CALL,
+                        Decimal(10_000 + i),
+                    )
+                except BaseException as exc:  # noqa: BLE001 -- captured, not raised, from a
+                    # background thread pytest can't otherwise see a failure from.
+                    write_errors.append(exc)
+                    return
+
+        writer = threading.Thread(target=register_more_contracts)
+        writer.start()
+        try:
+            reconcile_errors: list[BaseException] = []
+            for _ in range(5):
+                try:
+                    stream._reconcile()
+                except BaseException as exc:  # noqa: BLE001 -- the exact failure mode under test.
+                    reconcile_errors.append(exc)
+        finally:
+            writer.join(timeout=10)
+
+        assert not writer.is_alive(), "writer thread did not finish in time"
+        assert reconcile_errors == []
+        assert write_errors == []
+
+
 class TestQueueBackpressure:
     """Fix (2026-09-10): every subscriber queue used to be unbounded.
     Fine while reconcile() was the only thing that could ever make a
