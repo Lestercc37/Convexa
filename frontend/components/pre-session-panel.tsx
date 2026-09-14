@@ -4,10 +4,10 @@ import { useEffect, useMemo, useState } from "react";
 import { getGammaProfile } from "@/lib/api";
 import { describeError } from "@/lib/i18n/describe-error";
 import { useLanguage, type Language } from "@/lib/i18n/language-context";
-import type { GammaAggregateItem, GammaAggregateResponse, GammaResponse, MarketResponse } from "@/lib/types";
+import type { GammaAggregateItem, GammaAggregateResponse, GammaResponse } from "@/lib/types";
 import { RegimeBadge } from "./regime-badge";
 
-type PreSessionPanelProps = { symbol: string; gamma: GammaResponse; market: MarketResponse };
+type PreSessionPanelProps = { symbol: string; gamma: GammaResponse };
 
 const PLOT = { top: 20, bottom: 320, centerLeft: 120, centerRight: 640, edgeLeft: 20, edgeRight: 740 };
 
@@ -36,7 +36,7 @@ function magnitude(value: number, peak: number, start: number, end: number) {
   return start + ratio * (end - start);
 }
 
-export function PreSessionPanel({ symbol, gamma, market }: PreSessionPanelProps) {
+export function PreSessionPanel({ symbol, gamma }: PreSessionPanelProps) {
   const { language, t } = useLanguage();
   const [profile, setProfile] = useState<GammaAggregateResponse | null>(null);
   const [error, setError] = useState<unknown>(null);
@@ -187,7 +187,7 @@ export function PreSessionPanel({ symbol, gamma, market }: PreSessionPanelProps)
           frozen, context-free snapshot view is where it actually adds
           something. Renders in the real empty space confirmed below the
           chart, not layered on top of anything. */}
-      <RegimeBadge gamma={gamma} market={market} />
+      <RegimeBadge gamma={gamma} />
     </section>
   );
 }

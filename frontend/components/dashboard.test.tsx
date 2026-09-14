@@ -462,22 +462,26 @@ describe("Dashboard", () => {
     expect(await screen.findByText("Griegas agregadas")).toBeInTheDocument();
   });
 
-  it("translates the Regime Badge in the Pre-Sesión view via the language switcher", async () => {
+  it("translates the Regime Badge's aria-label in the Pre-Sesión view via the language switcher", async () => {
+    // RegimeBadge only has one translated string left since the
+    // 2026-09-14 simplification (the label/amount themselves are not
+    // translated, matching RegimeCompactBadge's pre-existing convention)
+    // -- this asserts via aria-label rather than visible eyebrow text.
     const user = userEvent.setup();
     renderWithLanguage(<Dashboard />);
     await screen.findByLabelText("Chart de velas para SPY");
 
     await user.click(screen.getByRole("button", { name: "Pre-Sesión" }));
-    expect(await screen.findByText("Régimen actual")).toBeInTheDocument();
+    expect(await screen.findByLabelText("Régimen gamma")).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "EN" }));
-    expect(await screen.findByText("Current regime")).toBeInTheDocument();
-    expect(screen.queryByText("Régimen actual")).not.toBeInTheDocument();
+    expect(await screen.findByLabelText("Gamma regime")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Régimen gamma")).not.toBeInTheDocument();
 
     // Reset language before the test ends — it persists to localStorage
     // (language-context.tsx) and would otherwise leak into later tests.
     await user.click(screen.getByRole("button", { name: "ES" }));
-    expect(await screen.findByText("Régimen actual")).toBeInTheDocument();
+    expect(await screen.findByLabelText("Régimen gamma")).toBeInTheDocument();
   });
 
   it("moves Whale Alerts into a vertical left sidebar, replacing the old toolbar/footer", async () => {

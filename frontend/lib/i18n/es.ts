@@ -23,15 +23,6 @@ export const es: Translations = {
   },
   regimeBadge: {
     ariaLabel: "Régimen gamma",
-    currentRegimeEyebrow: "Régimen actual",
-    transientAriaLabel: "Régimen transitorio",
-    unconfirmedTooltip:
-      "El precio cruzó el Gamma Flip antes del último recálculo del agregado — régimen basado en precio.",
-    above: "arriba",
-    below: "debajo",
-    detail: (symbol, price, relation, flip) =>
-      `${symbol} ${price} — ${relation} del Flip (${flip})`,
-    updateFrequency: "Actualización cada 30 segundos",
   },
   derivedMetricsBar: {
     ariaLabel: "Métricas derivadas",

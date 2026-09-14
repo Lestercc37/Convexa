@@ -1,20 +1,12 @@
 import { useLanguage } from "@/lib/i18n/language-context";
-import type { GammaResponse, MarketResponse } from "@/lib/types";
-
-type RegimeBadgeProps = { gamma: GammaResponse; market: MarketResponse };
-
-const currency = new Intl.NumberFormat("en-US", {
-  style: "currency",
-  currency: "USD",
-  minimumFractionDigits: 2,
-});
+import type { GammaResponse } from "@/lib/types";
 
 // "+$18.4B" / "-$29.5M" -- signDisplay makes a positive net_gamma show its
 // own explicit "+" (Intl otherwise only marks negatives), notation:
 // "compact" is what turns a real net_gamma (single- to low-double-digit
 // billions for an index, tens of millions for a single stock -- confirmed
 // against live gamma_aggregates: SPX ~$16.6B, AAPL ~$46M) into "B"/"M"
-// instead of a wall of digits that would never fit a one-line pill.
+// instead of a wall of digits.
 const compactCurrency = new Intl.NumberFormat("en-US", {
   style: "currency",
   currency: "USD",
@@ -23,50 +15,28 @@ const compactCurrency = new Intl.NumberFormat("en-US", {
   signDisplay: "exceptZero",
 });
 
-export function RegimeBadge({ gamma, market }: RegimeBadgeProps) {
+// Simplified to exactly two fields -- the regime label and the total
+// dollar gamma amount -- per explicit request (2026-09-14): everything
+// else the badge used to show (price-vs-Gamma-Flip detail, the "unconfirmed
+// regime" warning, the update-frequency note) is gone. Deliberately reads
+// both fields off `gamma` alone (dealer_position, net_gamma), the same
+// pattern RegimeCompactBadge below already uses and its own test
+// documents: that's what makes the label and the amount structurally
+// unable to disagree, and is why this component no longer needs a
+// `market` prop at all -- the "unconfirmed" state it used to show existed
+// specifically to flag `market.dealer_mode` disagreeing with price, which
+// can't happen anymore now that `market` isn't consulted here.
+export function RegimeBadge({ gamma }: { gamma: GammaResponse }) {
   const { t } = useLanguage();
-  const isLong = market.dealer_mode === "long_gamma";
-  const relation = market.price >= gamma.gamma_flip ? t.regimeBadge.above : t.regimeBadge.below;
-  const isConfirmed = market.dealer_mode_confirmed;
-  const unconfirmedTooltip = t.regimeBadge.unconfirmedTooltip;
+  const isLong = gamma.dealer_position === "long_gamma";
 
   return (
     <section
-      className={`panel regime-badge ${isLong ? "long" : "short"}${
-        isConfirmed ? "" : " unconfirmed"
-      }`}
+      className={`panel regime-badge ${isLong ? "long" : "short"}`}
       aria-label={t.regimeBadge.ariaLabel}
-      title={isConfirmed ? undefined : unconfirmedTooltip}
     >
-      <div>
-        <p className="eyebrow">{t.regimeBadge.currentRegimeEyebrow}</p>
-        {isConfirmed ? (
-          <h2 className="regime-label">{isLong ? "LONG GAMMA" : "SHORT GAMMA"}</h2>
-        ) : (
-          <div className="regime-heading">
-            <h2 className="regime-label">{isLong ? "LONG GAMMA" : "SHORT GAMMA"}</h2>
-            <span
-              className="regime-warning"
-              role="img"
-              aria-label={t.regimeBadge.transientAriaLabel}
-              title={unconfirmedTooltip}
-            >
-              ⚠
-            </span>
-          </div>
-        )}
-      </div>
-      <div>
-        <p className="regime-detail">
-          {t.regimeBadge.detail(
-            gamma.symbol,
-            currency.format(market.price),
-            relation,
-            currency.format(gamma.gamma_flip),
-          )}
-        </p>
-        <span className="regime-meta">{t.regimeBadge.updateFrequency}</span>
-      </div>
+      <h2 className="regime-label">{isLong ? "LONG GAMMA" : "SHORT GAMMA"}</h2>
+      <p className="regime-detail">{compactCurrency.format(gamma.net_gamma)}</p>
     </section>
   );
 }
