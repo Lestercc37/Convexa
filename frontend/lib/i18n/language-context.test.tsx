@@ -29,7 +29,7 @@ describe("useLanguage / LanguageProvider", () => {
 
     act(() => result.current.setLanguage("es"));
     await waitFor(() => expect(result.current.language).toBe("es"));
-    expect(result.current.t.regimeBadge.currentRegimeEyebrow).toBe("Régimen actual");
+    expect(result.current.t.regimeBadge.ariaLabel).toBe("Régimen gamma");
   });
 
   it("persists the chosen language to localStorage", async () => {

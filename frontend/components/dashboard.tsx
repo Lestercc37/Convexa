@@ -406,12 +406,7 @@ export function Dashboard() {
                   />
                 </>
               ) : (
-                <PreSessionPanel
-                  key={`pre-session-${symbol}`}
-                  symbol={symbol}
-                  gamma={gamma}
-                  market={market}
-                />
+                <PreSessionPanel key={`pre-session-${symbol}`} symbol={symbol} gamma={gamma} />
               )}
             </div>
           );

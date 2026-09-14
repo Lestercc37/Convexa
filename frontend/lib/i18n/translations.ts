@@ -21,13 +21,6 @@ export type Translations = {
   };
   regimeBadge: {
     ariaLabel: string;
-    currentRegimeEyebrow: string;
-    transientAriaLabel: string;
-    unconfirmedTooltip: string;
-    above: string;
-    below: string;
-    detail: (symbol: string, price: string, relation: string, flip: string) => string;
-    updateFrequency: string;
   };
   derivedMetricsBar: {
     ariaLabel: string;
