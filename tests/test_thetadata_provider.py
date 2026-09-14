@@ -1824,7 +1824,9 @@ class TestStreamHubReconnection:
         stream.request_reconnect()  # must not raise
 
     @pytest.mark.asyncio
-    async def test_request_reconnect_closes_the_active_connection(self) -> None:
+    async def test_request_reconnect_closes_the_active_connection(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         class _FakeWebsocket:
             def __init__(self) -> None:
                 self.closed = False
@@ -1832,20 +1834,122 @@ class TestStreamHubReconnection:
             async def close(self) -> None:
                 self.closed = True
 
+        monkeypatch.setattr(provider_module, "RECONNECT_DEBOUNCE_SECONDS", 0.02)
         stream = ThetaStreamHub(WS_URL, httpx.Client(base_url=REST_URL))
         fake_websocket = _FakeWebsocket()
         stream._loop = asyncio.get_running_loop()
         stream._active_websocket = fake_websocket  # type: ignore[assignment]
 
         stream.request_reconnect()
-        # request_reconnect schedules the close via run_coroutine_threadsafe
-        # (safe to call from a different thread than the event loop's own,
-        # which get_option_chain's caller -- a scheduler worker thread --
-        # actually is) rather than awaiting it directly -- give the loop a
-        # moment to actually run the scheduled coroutine.
+        # request_reconnect schedules the debounced close via
+        # run_coroutine_threadsafe (safe to call from a different thread
+        # than the event loop's own, which get_option_chain's caller -- a
+        # scheduler worker thread -- actually is) rather than awaiting it
+        # directly -- give the loop time to run the scheduled coroutine
+        # past the (monkeypatched, short) debounce window.
         await asyncio.sleep(0.05)
 
         assert fake_websocket.closed is True
+
+    @pytest.mark.asyncio
+    async def test_multiple_rapid_calls_coalesce_into_one_close(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The actual fix (2026-09-14): confirmed live, real market open,
+        that near-the-money widening alone called request_reconnect() ~20
+        times in 13 minutes across the 15 active symbols, and every call
+        used to close the connection immediately -- interrupting every
+        logical stream for every symbol on each one, not just the symbol
+        that triggered it. Many calls arriving inside the same debounce
+        window must now cost exactly one close, not one per call."""
+
+        class _FakeWebsocket:
+            def __init__(self) -> None:
+                self.close_count = 0
+
+            async def close(self) -> None:
+                self.close_count += 1
+
+        monkeypatch.setattr(provider_module, "RECONNECT_DEBOUNCE_SECONDS", 0.05)
+        stream = ThetaStreamHub(WS_URL, httpx.Client(base_url=REST_URL))
+        fake_websocket = _FakeWebsocket()
+        stream._loop = asyncio.get_running_loop()
+        stream._active_websocket = fake_websocket  # type: ignore[assignment]
+
+        for _ in range(20):  # same order of magnitude as the live incident
+            stream.request_reconnect()
+
+        await asyncio.sleep(0.1)
+
+        assert fake_websocket.close_count == 1
+
+    @pytest.mark.asyncio
+    async def test_a_call_during_the_window_does_not_reset_it(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Fixed window from the FIRST pending request, not reset on each
+        new one -- an unbounded 'reset on each call' debounce could delay
+        the actual reconnect indefinitely under a bursty enough open. A
+        second call arriving mid-window must not push the close out
+        further than one window from the first call."""
+
+        class _FakeWebsocket:
+            def __init__(self) -> None:
+                self.closed_at: float | None = None
+
+            async def close(self) -> None:
+                self.closed_at = time.monotonic()
+
+        monkeypatch.setattr(provider_module, "RECONNECT_DEBOUNCE_SECONDS", 0.15)
+        stream = ThetaStreamHub(WS_URL, httpx.Client(base_url=REST_URL))
+        fake_websocket = _FakeWebsocket()
+        stream._loop = asyncio.get_running_loop()
+        stream._active_websocket = fake_websocket  # type: ignore[assignment]
+
+        first_call_at = time.monotonic()
+        stream.request_reconnect()
+        await asyncio.sleep(0.08)  # ~half the window
+        stream.request_reconnect()  # must be absorbed, not restart the window
+
+        await asyncio.sleep(0.2)  # comfortably past 0.15s from the first call
+
+        assert fake_websocket.closed_at is not None
+        elapsed = fake_websocket.closed_at - first_call_at
+        # Bounded to ~1 window from the FIRST call -- if the second call
+        # had wrongly reset the timer, this would land near 0.08+0.15=0.23s
+        # instead.
+        assert elapsed < 0.2, f"close landed at {elapsed:.3f}s -- window was reset, not coalesced"
+
+    @pytest.mark.asyncio
+    async def test_a_new_reconnect_can_be_requested_after_the_previous_one_completes(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The pending flag must clear once its debounced close actually
+        runs -- otherwise a real, later reconnect need (a second genuine
+        near-the-money widening, or the data-silence watchdog) would be
+        silently dropped forever after the first one."""
+
+        class _FakeWebsocket:
+            def __init__(self) -> None:
+                self.close_count = 0
+
+            async def close(self) -> None:
+                self.close_count += 1
+
+        monkeypatch.setattr(provider_module, "RECONNECT_DEBOUNCE_SECONDS", 0.02)
+        stream = ThetaStreamHub(WS_URL, httpx.Client(base_url=REST_URL))
+        fake_websocket = _FakeWebsocket()
+        stream._loop = asyncio.get_running_loop()
+        stream._active_websocket = fake_websocket  # type: ignore[assignment]
+
+        stream.request_reconnect()
+        await asyncio.sleep(0.05)
+        assert fake_websocket.close_count == 1
+        assert stream._reconnect_pending is False
+
+        stream.request_reconnect()
+        await asyncio.sleep(0.05)
+        assert fake_websocket.close_count == 2
 
 
 class TestStreamHubDataSilenceWatchdog:

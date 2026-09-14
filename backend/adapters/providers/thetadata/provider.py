@@ -196,6 +196,32 @@ STABLE_CONNECTION_RESET_SECONDS = 2 * STATUS_STALE_AFTER_SECONDS
 DATA_SILENCE_THRESHOLD_SECONDS = 20
 DATA_SILENCE_CHECK_INTERVAL_SECONDS = 5
 
+# request_reconnect() had no debounce at all -- confirmed live, 2026-09-14
+# open: near-the-money widening (ThetaDataProvider.get_option_chain(), one
+# call per active symbol every ~30s scheduler cycle) forced a full
+# reconnect of this ONE shared connection on every single newly-discovered
+# contract, for ANY of the 15 active symbols. During a volatile open, that
+# was ~20 reconnects in the first 13 minutes -- each one interrupting
+# every logical stream (trade/quote/underlying) for every symbol at once,
+# not just the symbol that triggered it. Confirmed via the existing
+# reconciliation mechanism (_reconcile()): 10-65% of real trade volume
+# missing per contract, SPY and SPX both, during that window.
+#
+# A fixed window from the FIRST pending request (not reset on each new
+# request) bounds the worst case to RECONNECT_DEBOUNCE_SECONDS regardless
+# of how many widening events pile up during it -- an unbounded "reset on
+# each call" debounce could starve indefinitely under a bursty enough
+# open. Only real cost: a newly-discovered contract's own subscription
+# lands up to this much later than before -- accepted, since near-the-
+# money discovery is continuous anyway (see get_option_chain()'s own call
+# site). Applies uniformly to both existing callers (near-the-money
+# widening and the data-silence watchdog above) -- neither is on the
+# genuine-crash-recovery path (that's _run()'s own independent exception
+# handling, untouched by this), so debouncing here never delays recovering
+# from an actual dropped connection, only these two voluntary refresh
+# triggers.
+RECONNECT_DEBOUNCE_SECONDS = 3.0
+
 # Investigation instrumentation (2026-09-09): after PR #122 consolidated
 # 3 separate connections into ThetaStreamHub's one shared read loop, the
 # chart and Whale Alerts froze together mid-session (backend.worker's own
@@ -603,6 +629,11 @@ class ThetaStreamHub:
         # subscribe over the open connection.
         self._loop: asyncio.AbstractEventLoop | None = None
         self._active_websocket: websockets.ClientConnection | None = None
+        # See RECONNECT_DEBOUNCE_SECONDS' own module-level comment.
+        # Guards the check-then-set below -- request_reconnect() is called
+        # from many different scheduler worker threads at once.
+        self._reconnect_lock = threading.Lock()
+        self._reconnect_pending = False
         # Data-silence watchdog state, one timestamp per logical stream
         # -- see DATA_SILENCE_THRESHOLD_SECONDS' own module-level comment
         # for why this exists. None means "still warming up on the
@@ -690,6 +721,16 @@ class ThetaStreamHub:
         and the data-silence watchdog below both call this as their
         recovery action.
 
+        Debounced (see RECONNECT_DEBOUNCE_SECONDS' own module-level
+        comment) -- confirmed live, 2026-09-14 open: near-the-money
+        widening alone can call this ~20 times in 13 minutes across the
+        15 active symbols, and every call used to close the connection
+        immediately, so each one interrupted every logical stream for
+        every symbol regardless of which symbol triggered it. A pending
+        debounce absorbs any further calls that arrive while it's
+        counting down -- multiple triggers in the same window still cost
+        exactly one reconnect, not one each.
+
         Deliberately a reconnect, not a live SUBSCRIBE sent over the
         existing connection: _connect_and_consume() only ever subscribes
         once, right after connecting -- teaching it to also accept a live
@@ -701,14 +742,37 @@ class ThetaStreamHub:
         Safe to call from any thread: get_option_chain() (one caller)
         runs in a worker thread via asyncio.to_thread, not the event loop
         thread that owns `_active_websocket` -- run_coroutine_threadsafe
-        is what makes closing it from there safe. A no-op if the stream
-        was never started (API process's own dormant ThetaDataProvider
-        instance -- see backend/main.py's lifespan) or has no live
-        connection at this exact moment (already mid-reconnect).
+        is what makes scheduling the debounced close from there safe. A
+        no-op if the stream was never started (API process's own dormant
+        ThetaDataProvider instance -- see backend/main.py's lifespan) or
+        has no live connection at this exact moment (already
+        mid-reconnect).
         """
         if self._loop is None or self._active_websocket is None:
             return
-        asyncio.run_coroutine_threadsafe(self._active_websocket.close(), self._loop)
+        with self._reconnect_lock:
+            if self._reconnect_pending:
+                return  # already counting down -- this call just coalesces into it
+            self._reconnect_pending = True
+        asyncio.run_coroutine_threadsafe(self._debounced_reconnect(), self._loop)
+
+    async def _debounced_reconnect(self) -> None:
+        """The actual close, after RECONNECT_DEBOUNCE_SECONDS -- see
+        request_reconnect()'s own docstring. Re-reads `_active_websocket`
+        fresh after the sleep rather than capturing it upfront: if the
+        connection already died and was replaced for an unrelated reason
+        during the debounce window (a genuine network drop, handled
+        entirely by _run()'s own independent reconnect loop, not this),
+        this closes whichever connection is actually live *now* -- one
+        possible extra reconnect in that rare case, never a crash on a
+        stale/closed reference."""
+        try:
+            await asyncio.sleep(RECONNECT_DEBOUNCE_SECONDS)
+            if self._active_websocket is not None:
+                await self._active_websocket.close()
+        finally:
+            with self._reconnect_lock:
+                self._reconnect_pending = False
 
     async def _watch_for_data_silence(self) -> None:
         """Independent of _run()'s own reconnect loop -- runs for this
