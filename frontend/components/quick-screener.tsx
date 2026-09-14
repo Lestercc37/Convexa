@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { getScreenerPreset } from "@/lib/api";
+import { formatCurrencyOrDash, formatNumberOrDash } from "@/lib/format";
 import { describeError } from "@/lib/i18n/describe-error";
 import { useLanguage } from "@/lib/i18n/language-context";
 import type { Translations } from "@/lib/i18n/translations";
@@ -21,20 +22,8 @@ const PRESETS: { name: ScreenerPresetName; label: string; icon: string }[] = [
   { name: "charm-decay-pressure", label: "Charm Decay Pressure", icon: "⏳" },
 ];
 
-const NUMBER_FORMAT = new Intl.NumberFormat("en-US", { maximumFractionDigits: 2 });
-const CURRENCY_FORMAT = new Intl.NumberFormat("en-US", {
-  style: "currency",
-  currency: "USD",
-  maximumFractionDigits: 0,
-});
-
-function number(value: number | null) {
-  return value === null ? "—" : NUMBER_FORMAT.format(value);
-}
-
-function currency(value: number | null) {
-  return value === null ? "—" : CURRENCY_FORMAT.format(value);
-}
+const number = formatNumberOrDash;
+const currency = formatCurrencyOrDash;
 
 function ResultsTable({
   preset,
