@@ -5,6 +5,7 @@ import json
 import logging
 import threading
 import time
+from collections import defaultdict
 from collections.abc import AsyncIterator, Callable
 from datetime import date, datetime, timedelta
 from datetime import time as time_of_day
@@ -632,6 +633,14 @@ class ThetaStreamHub:
     def has_contract(self, occ_symbol: str) -> bool:
         with self._contracts_lock:
             return occ_symbol in self._contracts
+
+    def contract_count(self) -> int:
+        """Number of contracts registered for streaming -- exposed for
+        live verification that _register_streaming_contracts stays
+        nearest-only even after the index all-expirations Gamma/Max Pain
+        expansion (see ThetaDataProvider.get_option_chain)."""
+        with self._contracts_lock:
+            return len(self._contracts)
 
     def cumulative_volume(self, occ_symbol: str) -> int:
         return self._cumulative_volume.get(occ_symbol, 0)
@@ -1369,6 +1378,17 @@ class ThetaDataProvider:
         self._open_interest_cache: dict[
             tuple[str, date], tuple[float, dict[tuple[Decimal, str], int]]
         ] = {}
+        # All-expirations siblings of the two caches above -- index-only
+        # source for Gamma Aggregate/Max Pain/Absolute Gamma Strike (see
+        # _fetch_near_the_money_entries_all/_fetch_open_interest_all_
+        # expirations). Same TTLs, kept as separate dicts rather than
+        # widening the existing keys/value shapes above, since those two
+        # are also used by get_underlying_snapshot and streaming
+        # registration, which must stay nearest-only for every symbol.
+        self._near_the_money_all_raw_cache: dict[str, tuple[float, list[dict[str, Any]]]] = {}
+        self._open_interest_all_cache: dict[
+            str, tuple[float, dict[tuple[str, Decimal, str, date], int]]
+        ] = {}
         self._daily_bars_cache: dict[tuple[str, int], tuple[float, list[DailyBar]]] = {}
         self._market_holidays_cache: dict[int, tuple[float, list[MarketHoliday]]] = {}
 
@@ -1549,17 +1569,14 @@ class ThetaDataProvider:
             # is never wrongly excluded.
             #
             # But "today" alone isn't enough once the market has actually
-            # closed -- see _nearest_expiration_cutoff.
-            cutoff = _nearest_expiration_cutoff(datetime.now(EASTERN_TIME))
-            unexpired_entries = [
-                entry
-                for entry in entries
-                if date.fromisoformat(entry["contract"]["expiration"]) >= cutoff
-            ]
-            if not unexpired_entries:
-                raise RuntimeError(
-                    f"ThetaData returned no unexpired near-the-money contracts for {symbol}"
-                )
+            # closed -- see _nearest_expiration_cutoff. Shared with
+            # _fetch_near_the_money_all_expirations (index-only,
+            # all-expirations Gamma/Max Pain source) via
+            # _fetch_near_the_money_entries_all so a get_option_chain()
+            # call needing both this nearest-only view and the
+            # all-expirations one makes exactly one real wildcard REST
+            # call per root, not two.
+            unexpired_entries = self._fetch_near_the_money_entries_all(symbol, entries)
             nearest = min(
                 date.fromisoformat(entry["contract"]["expiration"]) for entry in unexpired_entries
             )
@@ -1572,6 +1589,82 @@ class ThetaDataProvider:
 
         self._near_the_money_cache[cache_key] = (time.monotonic(), result)
         return result
+
+    def _fetch_near_the_money_entries_all(
+        self, symbol: str, wildcard_entries: list[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
+        """Cutoff-filtered (unexpired only), un-collapsed entries from a
+        wildcard (expiration=*) near-the-money fetch -- every expiration
+        kept, not just the nearest. `wildcard_entries` is whatever the
+        caller (always _fetch_near_the_money(symbol, expiration=None),
+        which has already decided a fresh REST fetch was needed) just
+        fetched THIS call -- always (re)processed and (re)cached here,
+        never served from a stale cache read of its own, so a widened
+        or drifted chain on this cycle is never masked by last cycle's
+        cached result. The cache written here exists purely so a
+        same-cycle call to _fetch_near_the_money_all_expirations
+        (index-only Gamma/Max Pain source) can reuse it instead of
+        issuing a second real REST call -- see that method's own
+        docstring."""
+        cache_key = symbol
+        cutoff = _nearest_expiration_cutoff(datetime.now(EASTERN_TIME))
+        unexpired_entries = [
+            entry
+            for entry in wildcard_entries
+            if date.fromisoformat(entry["contract"]["expiration"]) >= cutoff
+        ]
+        if not unexpired_entries:
+            raise RuntimeError(
+                f"ThetaData returned no unexpired near-the-money contracts for {symbol}"
+            )
+        self._near_the_money_all_raw_cache[cache_key] = (time.monotonic(), unexpired_entries)
+        return unexpired_entries
+
+    def _fetch_near_the_money_all_expirations(self, symbol: str) -> tuple[_NearTheMoneyChain, ...]:
+        """All unexpired expirations' near-the-money chains -- index-only
+        (SPX/NDX/VIX) source for Gamma Aggregate/Max Pain/Absolute Gamma
+        Strike. Confirmed live (2026-09-14): the single nearest
+        expiration Convexa used before this held only ~1.9% of SPX's
+        real total open interest, versus the all-expirations methodology
+        SpotGamma (a primary industry source) documents using. Deliberately
+        NOT used for streaming registration -- see
+        ThetaDataProvider._register_streaming_contracts, which only ever
+        takes a single nearest-only _NearTheMoneyChain.
+
+        Relies on _fetch_near_the_money(symbol, expiration=None) having
+        already run earlier in the same get_option_chain() cycle so the
+        wildcard fetch it made is still warm in
+        _near_the_money_all_raw_cache -- if called standalone (cache
+        cold), this still works, it just costs one real wildcard REST
+        call per root instead of reusing a same-cycle one.
+        """
+        cache_key = symbol
+        cached = self._near_the_money_all_raw_cache.get(cache_key)
+        if cached is None or time.monotonic() - cached[0] >= NEAR_THE_MONEY_CACHE_TTL_SECONDS:
+            entries: list[dict[str, Any]] = []
+            for root in _roots_for_symbol(symbol):
+                body = self._get_json_allow_no_data(
+                    "/v3/option/snapshot/greeks/first_order",
+                    symbol=root,
+                    expiration="*",
+                    strike_range=NEAR_THE_MONEY_OVERFETCH_STRIKE_RANGE,
+                    format="json",
+                )
+                entries.extend(entry for entry in body.get("response", []) if entry.get("data"))
+            if not entries:
+                raise RuntimeError(f"ThetaData returned no near-the-money contracts for {symbol}")
+            self._fetch_near_the_money_entries_all(symbol, entries)
+            cached = self._near_the_money_all_raw_cache[cache_key]
+
+        unexpired_entries = cached[1]
+        by_expiration: dict[date, list[dict[str, Any]]] = defaultdict(list)
+        for entry in unexpired_entries:
+            by_expiration[date.fromisoformat(entry["contract"]["expiration"])].append(entry)
+
+        return tuple(
+            _NearTheMoneyChain(expiration, self._filter_near_the_money(symbol, group))
+            for expiration, group in sorted(by_expiration.items())
+        )
 
     def _fetch_open_interest(
         self, symbol: str, expiration: date
@@ -1623,6 +1716,53 @@ class ThetaDataProvider:
         self._open_interest_cache[cache_key] = (time.monotonic(), result)
         return result
 
+    def _fetch_open_interest_all_expirations(
+        self, symbol: str
+    ) -> dict[tuple[str, Decimal, str, date], int]:
+        """All-expirations open interest -- index-only Gamma Aggregate/Max
+        Pain/Absolute Gamma Strike source. Keyed by (root, strike, right,
+        expiration), not just (root, strike, right) like the single-
+        expiration _fetch_open_interest above: that 3-part key would
+        collide across the 40+ real unexpired expirations SPX/NDX/VIX
+        carry, silently overwriting one expiration's open interest with
+        another's at the same strike/right.
+
+        Uses expiration=* (confirmed live: the open-interest snapshot
+        endpoint supports the same wildcard _fetch_near_the_money_all_
+        expirations relies on), one real REST call per root -- not one
+        per expiration -- so this costs the same as the single-expiration
+        fetch above, not 40x more.
+        """
+        cache_key = symbol
+        cached = self._open_interest_all_cache.get(cache_key)
+        if cached is not None and time.monotonic() - cached[0] < OPEN_INTEREST_CACHE_TTL_SECONDS:
+            return cached[1]
+
+        result: dict[tuple[str, Decimal, str, date], int] = {}
+        for root in _roots_for_symbol(symbol):
+            body = self._get_json_allow_no_data(
+                "/v3/option/snapshot/open_interest",
+                symbol=root,
+                expiration="*",
+                strike_range=NEAR_THE_MONEY_OVERFETCH_STRIKE_RANGE,
+                format="json",
+            )
+            for entry in body.get("response", []):
+                data_points = entry.get("data") or []
+                if not data_points:
+                    continue
+                contract_meta = entry["contract"]
+                key = (
+                    contract_meta["symbol"],
+                    Decimal(str(contract_meta["strike"])),
+                    contract_meta["right"],
+                    date.fromisoformat(contract_meta["expiration"]),
+                )
+                result[key] = int(data_points[0]["open_interest"])
+
+        self._open_interest_all_cache[cache_key] = (time.monotonic(), result)
+        return result
+
     def _fetch_underlying_volume(self, symbol: str, kind: UnderlyingKind) -> int:
         """Session-cumulative share volume for `symbol` — confirmed live
         (2026-09 investigation) via GET /v3/stock/snapshot/ohlc (equities,
@@ -1663,94 +1803,55 @@ class ThetaDataProvider:
             logger.exception("Failed to fetch underlying volume for %s", symbol)
             return 0
 
-    def get_option_chain(self, underlying: str, expiration: date | None = None) -> OptionChain:
-        symbol = underlying.upper()
-        chain = self._fetch_near_the_money(symbol, expiration)
-        open_interest_by_key = self._fetch_open_interest(symbol, chain.expiration)
-        rate = self._risk_free_rate()
-        now_et = datetime.now(EASTERN_TIME)
-        time_to_expiration = _time_to_expiration_years(chain.expiration, now_et)
+    def _register_streaming_contracts(self, symbol: str, chain: _NearTheMoneyChain) -> None:
+        """Registers/live-subscribes Whale Alerts' Trade/Quote streaming
+        for exactly `chain`'s contracts. Deliberately typed to take a
+        single _NearTheMoneyChain, never a collection of them -- this is
+        the structural half of the index-vs-streaming separation
+        (get_option_chain's own docstring/comment has the other half):
+        whatever `chain` this is ever called with is exactly and only
+        what gets streamed, for every symbol without exception, index or
+        not. A future caller could not accidentally widen streaming to
+        the all-expirations data get_option_chain fetches for indices
+        without first changing this method's signature -- a deliberate,
+        visible act, not a filter someone could quietly drop.
 
-        spot_price: Decimal | None = None
-        latest_as_of = utc_now()
-        contracts = []
-        # Near-the-money re-subscription, confirmed live 2026-09: the
-        # Trade/Quote Stream WebSocket subscriptions are only ever
-        # registered once, at ThetaDataProvider.start() (Worker startup),
-        # from whatever chain was near-the-money at that moment -- nothing
-        # re-discovers or widens that set as spot drifts during the
-        # session. This chain fetch already recomputes "near-the-money
-        # right now" every scheduler cycle (~30s, via
-        # RefreshUnderlyingSnapshotUseCase -> get_option_chain), so it's
-        # the natural place to also register any contract that's near-
-        # the-money now but wasn't at startup -- no separate timer, no
-        # distance-from-center math, just a direct membership check
-        # against what's already registered. Deliberately additive only
-        # (never unsubscribes a contract that drifted OUT of range) --
-        # the accumulated set over one session is small and bounded (a
-        # handful of strikes at most, even for a large move), and the
-        # Worker's near-the-money set resets fresh on its next restart
-        # anyway; unsubscribing would need to guard against tearing down
-        # a contract mid-bucket in WhaleAlertsEngine's own state, for a
-        # benefit (WS message volume) that isn't the real constraint here
-        # (that's REST request concurrency, via theta_request_slots).
+        Near-the-money re-subscription, confirmed live 2026-09: the
+        Trade/Quote Stream WebSocket subscriptions are only ever
+        registered once, at ThetaDataProvider.start() (Worker startup),
+        from whatever chain was near-the-money at that moment -- nothing
+        re-discovers or widens that set as spot drifts during the
+        session. get_option_chain's own near-the-money fetch already
+        recomputes "near-the-money right now" every scheduler cycle
+        (~30s, via RefreshUnderlyingSnapshotUseCase -> get_option_chain),
+        so this is the natural place to also register any contract
+        that's near-the-money now but wasn't at startup -- no separate
+        timer, no distance-from-center math, just a direct membership
+        check against what's already registered. Deliberately additive
+        only (never unsubscribes a contract that drifted OUT of range)
+        -- the accumulated set over one session is small and bounded (a
+        handful of strikes at most, even for a large move), and the
+        Worker's near-the-money set resets fresh on its next restart
+        anyway; unsubscribing would need to guard against tearing down a
+        contract mid-bucket in WhaleAlertsEngine's own state, for a
+        benefit (WS message volume) that isn't the real constraint here
+        (that's REST request concurrency, via theta_request_slots).
+        """
         newly_registered_contracts: list[tuple[str, date, ContractType, Decimal]] = []
         for entry in chain.entries:
             contract_meta = entry["contract"]
-            data = entry["data"][0]
             # The actual root this entry came from — for SPX/NDX this can
             # be the weekly root (e.g. "SPXW"), which lists real,
             # independently-traded contracts, not aliases of the bare
-            # root's own (see _roots_for_symbol's docstring). Used for the
-            # OCC symbol and the open-interest lookup so an overlapping
-            # expiration's two genuinely different contracts at the same
-            # strike/right don't collide into one.
+            # root's own (see _roots_for_symbol's docstring).
             root = contract_meta["symbol"]
             right = contract_meta["right"]
             contract_type = ContractType.CALL if right == "CALL" else ContractType.PUT
             strike = Decimal(str(contract_meta["strike"]))
-            underlying_price = Decimal(str(data["underlying_price"]))
-            spot_price = underlying_price
-            bid = Decimal(str(data["bid"]))
-            ask = Decimal(str(data["ask"]))
-            iv = Decimal(str(data["implied_vol"]))
-            delta = Decimal(str(data["delta"]))
-            theta = Decimal(str(data["theta"]))
-            vega = Decimal(str(data["vega"]))
-            bsm = calculate_bsm_greeks(underlying_price, strike, rate, iv, time_to_expiration)
-
             occ_symbol = _build_occ_symbol(root, chain.expiration, contract_type, strike)
             if not self._hub.has_contract(occ_symbol):
                 self._hub.register_contract(occ_symbol, root, chain.expiration, contract_type, strike)
                 newly_registered_contracts.append((root, chain.expiration, contract_type, strike))
-            open_interest = open_interest_by_key.get((root, strike, right), 0)
-            volume = self._hub.cumulative_volume(occ_symbol)
-            as_of = _parse_et_timestamp(data["timestamp"])
-            latest_as_of = max(latest_as_of, as_of)
-
-            contracts.append(
-                OptionContract(
-                    underlying=symbol,
-                    strike=strike,
-                    expiration=chain.expiration,
-                    contract_type=contract_type,
-                    occ_symbol=occ_symbol,
-                    bid=bid,
-                    ask=ask,
-                    last=(bid + ask) / 2,
-                    volume=volume,
-                    open_interest=open_interest,
-                    iv=iv,
-                    greeks=OptionGreeks(
-                        delta=delta,
-                        gamma=bsm.gamma,
-                        theta=theta,
-                        vega=vega,
-                        charm=bsm.charm,
-                        vanna=bsm.vanna,
-                    ),
-                )
-            )
 
         if newly_registered_contracts:
             logger.info(
@@ -1761,6 +1862,106 @@ class ThetaDataProvider:
             for new_root, new_expiration, new_contract_type, new_strike in newly_registered_contracts:
                 self._hub.subscribe_new_option_contract(
                     new_root, new_expiration, new_contract_type, new_strike
+                )
+
+    def get_option_chain(self, underlying: str, expiration: date | None = None) -> OptionChain:
+        symbol = underlying.upper()
+        # streaming_chain is ALWAYS the single nearest-expiration chain,
+        # for every symbol without exception, and is the ONLY thing ever
+        # passed to _register_streaming_contracts -- see that method's
+        # own docstring for why this is structural, not a filter.
+        streaming_chain = self._fetch_near_the_money(symbol, expiration)
+        self._register_streaming_contracts(symbol, streaming_chain)
+
+        # gamma_calc_chains feeds Gamma Aggregate/Max Pain/Absolute Gamma
+        # Strike only -- all unexpired expirations for index symbols
+        # (SPX/NDX/VIX), confirmed live 2026-09-14 that the nearest
+        # expiration alone holds only ~1.9% of SPX's real open interest
+        # (SpotGamma, a primary industry source, documents summing
+        # "across every strike and expiration"). Every other symbol
+        # (the 12 equities/ETFs + ES) keeps today's exact nearest-only
+        # behavior, just reusing streaming_chain -- zero extra fetches,
+        # zero behavior change.
+        #
+        # Gated on `expiration is None` too, not just index-ness: a
+        # caller that asked for one specific expiration (the option
+        # chain viewer/weeklies API, via LoadOptionChainUseCase) wants
+        # exactly that expiration's contracts back, same as for every
+        # other symbol -- never silently widened to every expiration
+        # just because the underlying happens to be an index. Only the
+        # scheduler's own no-expiration call (RefreshUnderlyingSnapshot
+        # UseCase -> Gamma Aggregate/Max Pain/Absolute Gamma Strike) ever
+        # triggers the expansion.
+        active = ACTIVE_UNDERLYINGS_BY_SYMBOL.get(symbol)
+        is_index = active is not None and active.kind == UnderlyingKind.INDEX
+        if expiration is None and is_index:
+            gamma_calc_chains = self._fetch_near_the_money_all_expirations(symbol)
+            open_interest_by_key = self._fetch_open_interest_all_expirations(symbol)
+        else:
+            gamma_calc_chains = (streaming_chain,)
+            open_interest_single = self._fetch_open_interest(symbol, streaming_chain.expiration)
+            open_interest_by_key = {
+                (root, strike, right, streaming_chain.expiration): oi
+                for (root, strike, right), oi in open_interest_single.items()
+            }
+
+        rate = self._risk_free_rate()
+        now_et = datetime.now(EASTERN_TIME)
+
+        spot_price: Decimal | None = None
+        latest_as_of = utc_now()
+        contracts = []
+        for chain in gamma_calc_chains:
+            # Computed per-chain, not once for the whole call — each
+            # expiration needs its own time-to-expiration for correct BSM
+            # greeks; a single index symbol can now span 50+ real
+            # expirations in one get_option_chain() call.
+            time_to_expiration = _time_to_expiration_years(chain.expiration, now_et)
+            for entry in chain.entries:
+                contract_meta = entry["contract"]
+                data = entry["data"][0]
+                root = contract_meta["symbol"]
+                right = contract_meta["right"]
+                contract_type = ContractType.CALL if right == "CALL" else ContractType.PUT
+                strike = Decimal(str(contract_meta["strike"]))
+                underlying_price = Decimal(str(data["underlying_price"]))
+                spot_price = underlying_price
+                bid = Decimal(str(data["bid"]))
+                ask = Decimal(str(data["ask"]))
+                iv = Decimal(str(data["implied_vol"]))
+                delta = Decimal(str(data["delta"]))
+                theta = Decimal(str(data["theta"]))
+                vega = Decimal(str(data["vega"]))
+                bsm = calculate_bsm_greeks(underlying_price, strike, rate, iv, time_to_expiration)
+
+                occ_symbol = _build_occ_symbol(root, chain.expiration, contract_type, strike)
+                open_interest = open_interest_by_key.get((root, strike, right, chain.expiration), 0)
+                volume = self._hub.cumulative_volume(occ_symbol)
+                as_of = _parse_et_timestamp(data["timestamp"])
+                latest_as_of = max(latest_as_of, as_of)
+
+                contracts.append(
+                    OptionContract(
+                        underlying=symbol,
+                        strike=strike,
+                        expiration=chain.expiration,
+                        contract_type=contract_type,
+                        occ_symbol=occ_symbol,
+                        bid=bid,
+                        ask=ask,
+                        last=(bid + ask) / 2,
+                        volume=volume,
+                        open_interest=open_interest,
+                        iv=iv,
+                        greeks=OptionGreeks(
+                            delta=delta,
+                            gamma=bsm.gamma,
+                            theta=theta,
+                            vega=vega,
+                            charm=bsm.charm,
+                            vanna=bsm.vanna,
+                        ),
+                    )
                 )
 
         if spot_price is None:
