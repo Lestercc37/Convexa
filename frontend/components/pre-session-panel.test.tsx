@@ -115,4 +115,22 @@ describe("PreSessionPanel", () => {
     await screen.findByRole("alert");
     expect(screen.getByRole("heading", { name: "LONG GAMMA" })).toBeInTheDocument();
   });
+
+  it("hides the Gamma Flip reference line entirely when gamma_flip is null, without hiding Max Pain", async () => {
+    // GOOGL, not a synthetic edge case: confirmed live (2026-09-14,
+    // full-session sample) that GOOGL alone accounts for every
+    // no-sign-crossing reading that day (71.6% of its own samples, 0%
+    // for every other symbol) -- this is the real shape of the null
+    // case in production, not a rare corner.
+    apiMocks.getGammaProfile.mockResolvedValue(profile({ symbol: "GOOGL", gamma_flip: null }));
+
+    renderWithLanguage(
+      <PreSessionPanel symbol="GOOGL" gamma={{ ...gamma, symbol: "GOOGL", gamma_flip: null }} />,
+    );
+
+    await screen.findByLabelText("Strike 545");
+    expect(screen.queryByLabelText(/^Gamma Flip/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Gamma Flip/)).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Max Pain 550")).toBeInTheDocument();
+  });
 });

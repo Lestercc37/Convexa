@@ -121,12 +121,12 @@ export type GammaResponse = {
   symbol: string;
   as_of: string;
   // Genuinely nullable at the API boundary (no sign crossing found in
-  // the current window) -- kept as `number` here, matching every other
-  // reader of this type, until the pending "how should no-crossing look"
-  // design decision lands everywhere at once instead of piecemeal.
-  // price-chart.tsx and gravity-map.tsx defend against the real null at
-  // runtime regardless of what this declared type claims.
-  gamma_flip: number;
+  // the current window, confirmed live 2026-09-14: GOOGL alone hit this
+  // 71.6% of the time in a full-session sample, 0% for every other
+  // symbol). Coordinated decision (2026-09-14): every consumer hides
+  // rather than fabricates a value for the null case -- see
+  // pre-session-panel.tsx and price-chart.tsx/gravity-map.tsx.
+  gamma_flip: number | null;
   call_wall: number;
   put_wall: number;
   absolute_gamma_strike: number;
@@ -144,9 +144,9 @@ export type GammaHistoryItem = {
   schema_version: number;
   symbol: string;
   as_of: string;
-  // See GammaResponse.gamma_flip above -- same "genuinely nullable, kept
-  // as number for now" situation.
-  gamma_flip: number;
+  // See GammaResponse.gamma_flip above -- same field, same coordinated
+  // null-handling decision.
+  gamma_flip: number | null;
   call_wall: number;
   put_wall: number;
   absolute_gamma_strike: number;
@@ -179,9 +179,9 @@ export type GammaAggregateResponse = {
   schema_version: number;
   symbol: string;
   as_of: string;
-  // See GammaResponse.gamma_flip above -- same "genuinely nullable, kept
-  // as number for now" situation.
-  gamma_flip: number;
+  // See GammaResponse.gamma_flip above -- same field, same coordinated
+  // null-handling decision.
+  gamma_flip: number | null;
   max_pain: number;
   total_market_gamma: number;
   positive_gamma: number;

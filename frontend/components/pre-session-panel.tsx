@@ -141,18 +141,25 @@ export function PreSessionPanel({ symbol, gamma }: PreSessionPanelProps) {
               </g>
             ))}
 
-            <g aria-label={`Gamma Flip ${profile.gamma_flip}`}>
-              <line
-                className="pre-session-reference flip"
-                x1={PLOT.edgeLeft}
-                y1={y(profile.gamma_flip)}
-                x2={PLOT.edgeRight}
-                y2={y(profile.gamma_flip)}
-              />
-              <text className="pre-session-reference-label flip" x={PLOT.edgeLeft} y={y(profile.gamma_flip) - 6}>
-                Gamma Flip {level.format(profile.gamma_flip)}
-              </text>
-            </g>
+            {/* Coordinated decision (2026-09-14): gamma_flip is genuinely
+                null when no sign crossing was found in range (confirmed
+                live: GOOGL alone hit this 71.6% of the time in a
+                full-session sample) -- hidden entirely rather than
+                fabricating a y(0)-derived line/label position. */}
+            {profile.gamma_flip !== null && (
+              <g aria-label={`Gamma Flip ${profile.gamma_flip}`}>
+                <line
+                  className="pre-session-reference flip"
+                  x1={PLOT.edgeLeft}
+                  y1={y(profile.gamma_flip)}
+                  x2={PLOT.edgeRight}
+                  y2={y(profile.gamma_flip)}
+                />
+                <text className="pre-session-reference-label flip" x={PLOT.edgeLeft} y={y(profile.gamma_flip) - 6}>
+                  Gamma Flip {level.format(profile.gamma_flip)}
+                </text>
+              </g>
+            )}
             <g aria-label={`Max Pain ${profile.max_pain}`}>
               <line
                 className="pre-session-reference pain"
