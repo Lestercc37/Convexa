@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import threading
 import time
 from collections.abc import AsyncIterator, Callable
 from datetime import date, datetime, timedelta
@@ -569,6 +570,17 @@ class ThetaStreamHub:
         self._ws_url = ws_url
         self._rest_client = rest_client
         self._contracts: dict[str, tuple[str, date, ContractType, Decimal]] = {}
+        # register_contract()/has_contract() run from the scheduler's own
+        # worker threads (get_option_chain() is called via asyncio.to_thread,
+        # one call per active symbol, so up to ~15 different OS threads can
+        # write here concurrently) while _reconcile() (its own separate
+        # asyncio.to_thread call) iterates the same dict -- confirmed live,
+        # 2026-09-11 12:32 ET: "RuntimeError: dictionary changed size during
+        # iteration" in _reconcile()'s own `for occ_symbol, ... in
+        # self._contracts.items()`. Guards every access to `_contracts`
+        # below, not just the iteration -- a lock around only the read
+        # wouldn't stop a concurrent write from mutating it mid-iteration.
+        self._contracts_lock = threading.Lock()
         self._cumulative_volume: dict[str, int] = {}
         self._symbols: dict[str, UnderlyingKind] = {}
         self._trade_subscribers: dict[str, list[asyncio.Queue[FlowEvent]]] = {}
@@ -610,14 +622,16 @@ class ThetaStreamHub:
         contract_type: ContractType,
         strike: Decimal,
     ) -> None:
-        self._contracts[occ_symbol] = (root, expiration, contract_type, strike)
+        with self._contracts_lock:
+            self._contracts[occ_symbol] = (root, expiration, contract_type, strike)
         self._cumulative_volume.setdefault(occ_symbol, 0)
 
     def register_symbol(self, symbol: str, kind: UnderlyingKind) -> None:
         self._symbols[symbol.upper()] = kind
 
     def has_contract(self, occ_symbol: str) -> bool:
-        return occ_symbol in self._contracts
+        with self._contracts_lock:
+            return occ_symbol in self._contracts
 
     def cumulative_volume(self, occ_symbol: str) -> int:
         return self._cumulative_volume.get(occ_symbol, 0)
@@ -807,7 +821,15 @@ class ThetaStreamHub:
                 self._active_websocket = None
 
     async def _consume(self, websocket: websockets.ClientConnection) -> None:
-        for root, expiration, contract_type, strike in self._contracts.values():
+        # Same race as _contracts_lock's own comment (__init__) describes --
+        # this runs on the event loop thread, register_contract() can run
+        # concurrently from a scheduler worker thread. The lock's held only
+        # long enough to copy references (list(...).values()), never across
+        # the websocket I/O below, so acquiring it synchronously here never
+        # meaningfully blocks the event loop.
+        with self._contracts_lock:
+            contracts_snapshot = list(self._contracts.values())
+        for root, expiration, contract_type, strike in contracts_snapshot:
             await self._subscribe_option(websocket, root, expiration, contract_type, strike, "TRADE")
             await self._subscribe_option(websocket, root, expiration, contract_type, strike, "QUOTE")
         for symbol, kind in self._symbols.items():
@@ -1180,7 +1202,16 @@ class ThetaStreamHub:
         )
 
     def _reconcile(self) -> None:
-        for occ_symbol, (root, expiration, contract_type, strike) in self._contracts.items():
+        # See _contracts_lock's own comment (__init__) -- snapshot under the
+        # lock, then iterate the snapshot outside it. Runs in its own worker
+        # thread (asyncio.to_thread, see _run_reconcile_loop) and can take a
+        # while (one REST call per contract below) -- holding the lock for
+        # all of that would block register_contract()'s writes from other
+        # scheduler threads for the whole reconcile pass, not just the
+        # instant needed to copy references.
+        with self._contracts_lock:
+            contracts_snapshot = list(self._contracts.items())
+        for occ_symbol, (root, expiration, contract_type, strike) in contracts_snapshot:
             try:
                 response = self._rest_client.get(
                     "/v3/option/history/ohlc",
