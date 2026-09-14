@@ -684,31 +684,105 @@ class ThetaStreamHub:
         return queue
 
     def request_reconnect(self) -> None:
-        """Nudge the single connection to reconnect -- same mechanism the
-        3 separate classes each used to have on themselves, now shared:
-        near-the-money widening (see ThetaDataProvider.get_option_chain())
-        and the data-silence watchdog below both call this as their
-        recovery action.
+        """Nudge the single connection to reconnect -- the data-silence
+        watchdog below's own recovery action, for when the connection
+        itself seems stuck (no message of a given kind for too long
+        during market hours). Near-the-money widening used to call this
+        too (see ThetaDataProvider.get_option_chain()) until 2026-09-14:
+        confirmed live that every call here closes and re-opens the ONE
+        shared connection, interrupting every logical stream for every
+        symbol, not just the one that triggered it -- ~20 reconnects in
+        13 minutes during a volatile open, 10-65% of real trade volume
+        measurably lost per contract (via the existing _reconcile()
+        mechanism). A newly-discovered contract doesn't need the whole
+        connection torn down; see subscribe_new_option_contract() below,
+        which sends a live SUBSCRIBE over the existing connection instead
+        -- confirmed against ThetaData's own docs that this is a
+        supported, designed-for operation, not a workaround.
 
-        Deliberately a reconnect, not a live SUBSCRIBE sent over the
-        existing connection: _connect_and_consume() only ever subscribes
-        once, right after connecting -- teaching it to also accept a live
-        subscribe mid-connection is real additional surface for
-        comparatively little gain, since the existing reconnect loop
-        (_run()) already has robust, tested backoff/retry behavior this
-        reuses as-is.
-
-        Safe to call from any thread: get_option_chain() (one caller)
-        runs in a worker thread via asyncio.to_thread, not the event loop
-        thread that owns `_active_websocket` -- run_coroutine_threadsafe
-        is what makes closing it from there safe. A no-op if the stream
-        was never started (API process's own dormant ThetaDataProvider
-        instance -- see backend/main.py's lifespan) or has no live
-        connection at this exact moment (already mid-reconnect).
+        Safe to call from any thread: the watchdog runs on the event loop
+        itself, but this docstring's history had another (now-removed)
+        caller that ran in a worker thread via asyncio.to_thread --
+        kept thread-safe via run_coroutine_threadsafe regardless, since a
+        future caller could again be off the event loop thread. A no-op
+        if the stream was never started (API process's own dormant
+        ThetaDataProvider instance -- see backend/main.py's lifespan) or
+        has no live connection at this exact moment (already
+        mid-reconnect).
         """
         if self._loop is None or self._active_websocket is None:
             return
         asyncio.run_coroutine_threadsafe(self._active_websocket.close(), self._loop)
+
+    def subscribe_new_option_contract(
+        self, root: str, expiration: date, contract_type: ContractType, strike: Decimal
+    ) -> None:
+        """Live-subscribes one newly-discovered contract's TRADE and QUOTE
+        streams over the ALREADY-OPEN connection -- the root-cause fix
+        (2026-09-14) for the reconnect storm request_reconnect() used to
+        cause here (see that method's own docstring for the live
+        evidence). Every OTHER symbol's subscriptions on this same shared
+        connection stay completely undisturbed; only this one contract's
+        two new streams get added.
+
+        Confirmed against ThetaData's own docs (docs.thetadata.us/
+        Streaming/US-Options/Trade-Stream.html and Quote-Stream.html,
+        identical shape on both): 'The id field should be increased for
+        each new stream request made', plus an explicit 'Unsubscribe'
+        section (flip `add` to false) -- a documented, designed-for
+        incremental protocol, not a connection-setup-only handshake.
+        _subscribe_option() below already sends exactly this shape (its
+        own docstring: 'Exact shape per ThetaData's docs') -- this is the
+        first caller that uses it outside the initial post-connect burst.
+
+        MAX_STREAMS_REACHED (see docs.thetadata.us/Streaming/Verify-
+        Stream-Requests.html) is a real cap on total concurrent
+        subscriptions -- pre-existing regardless of reconnect vs. live-
+        subscribe, not a new risk this introduces. Worth watching if the
+        near-the-money set ever grows unusually large across many
+        symbols at once; not addressed here.
+
+        Safe to call from any thread, same reasoning as
+        request_reconnect(). A no-op if there's no live connection right
+        now -- _consume()'s own initial subscribe burst on the NEXT
+        connection (whenever one next happens, for an unrelated reason)
+        will pick this contract up anyway, since register_contract()
+        (already called by the caller before this) already recorded it
+        in self._contracts.
+        """
+        if self._loop is None or self._active_websocket is None:
+            return
+        asyncio.run_coroutine_threadsafe(
+            self._send_new_contract_subscriptions(root, expiration, contract_type, strike),
+            self._loop,
+        )
+
+    async def _send_new_contract_subscriptions(
+        self, root: str, expiration: date, contract_type: ContractType, strike: Decimal
+    ) -> None:
+        websocket = self._active_websocket
+        if websocket is None:
+            return
+        try:
+            await self._subscribe_option(websocket, root, expiration, contract_type, strike, "TRADE")
+            await self._subscribe_option(websocket, root, expiration, contract_type, strike, "QUOTE")
+        except Exception:
+            # The connection dropped for an unrelated reason between the
+            # check above and this send (a genuine network failure,
+            # handled entirely by _run()'s own independent reconnect
+            # loop) -- that loop's own fresh _consume() will resubscribe
+            # to this contract anyway (already in self._contracts via
+            # register_contract()), so there's nothing to retry here.
+            # Logged, not raised: one contract's live-subscribe failing
+            # must never take down anything else.
+            logger.warning(
+                "Live-subscribe failed for %s %s %s -- will be picked up by the "
+                "next reconnect's own resubscribe burst instead",
+                root,
+                expiration,
+                strike,
+                exc_info=True,
+            )
 
     async def _watch_for_data_silence(self) -> None:
         """Independent of _run()'s own reconnect loop -- runs for this
@@ -1620,7 +1694,7 @@ class ThetaDataProvider:
         # a contract mid-bucket in WhaleAlertsEngine's own state, for a
         # benefit (WS message volume) that isn't the real constraint here
         # (that's REST request concurrency, via theta_request_slots).
-        newly_registered = False
+        newly_registered_contracts: list[tuple[str, date, ContractType, Decimal]] = []
         for entry in chain.entries:
             contract_meta = entry["contract"]
             data = entry["data"][0]
@@ -1648,7 +1722,7 @@ class ThetaDataProvider:
             occ_symbol = _build_occ_symbol(root, chain.expiration, contract_type, strike)
             if not self._hub.has_contract(occ_symbol):
                 self._hub.register_contract(occ_symbol, root, chain.expiration, contract_type, strike)
-                newly_registered = True
+                newly_registered_contracts.append((root, chain.expiration, contract_type, strike))
             open_interest = open_interest_by_key.get((root, strike, right), 0)
             volume = self._hub.cumulative_volume(occ_symbol)
             as_of = _parse_et_timestamp(data["timestamp"])
@@ -1678,9 +1752,16 @@ class ThetaDataProvider:
                 )
             )
 
-        if newly_registered:
-            logger.info("Near-the-money set for %s widened, reconnecting streams", symbol)
-            self._hub.request_reconnect()
+        if newly_registered_contracts:
+            logger.info(
+                "Near-the-money set for %s widened, live-subscribing %d new contract(s)",
+                symbol,
+                len(newly_registered_contracts),
+            )
+            for new_root, new_expiration, new_contract_type, new_strike in newly_registered_contracts:
+                self._hub.subscribe_new_option_contract(
+                    new_root, new_expiration, new_contract_type, new_strike
+                )
 
         if spot_price is None:
             raise RuntimeError(f"ThetaData returned no usable contracts for {symbol}")

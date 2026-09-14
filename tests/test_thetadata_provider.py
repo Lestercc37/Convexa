@@ -311,16 +311,26 @@ class TestNearTheMoneyResubscription:
         assert provider._hub.has_contract(occ_call) is True
         assert provider._hub.has_contract(occ_put) is True
 
-    def test_requests_reconnect_when_a_contract_is_newly_registered(self) -> None:
+    def test_live_subscribes_when_a_contract_is_newly_registered(self) -> None:
+        # Fix (2026-09-14): a newly-registered contract used to force a
+        # full reconnect (request_reconnect()) -- now it live-subscribes
+        # instead, over whatever connection is already open. See
+        # TestLiveSubscribeDoesNotDisturbOtherSymbols for the property
+        # that actually motivated this.
         provider = _provider_with_transport(self._handler())
-        reconnects = []
-        provider._hub.request_reconnect = lambda: reconnects.append(1)
+        subscribed: list[tuple[str, date, ContractType, Decimal]] = []
+        provider._hub.subscribe_new_option_contract = lambda root, expiration, ct, strike: (
+            subscribed.append((root, expiration, ct, strike))
+        )
 
         provider.get_option_chain("SPY")
 
-        assert reconnects == [1]
+        assert subscribed == [
+            ("SPY", date(2026, 9, 18), ContractType.CALL, Decimal("769.00")),
+            ("SPY", date(2026, 9, 18), ContractType.PUT, Decimal("769.00")),
+        ]
 
-    def test_does_not_request_reconnect_when_nothing_new_is_registered(self) -> None:
+    def test_does_not_live_subscribe_when_nothing_new_is_registered(self) -> None:
         provider = _provider_with_transport(self._handler())
         occ_call = _build_occ_symbol("SPY", date(2026, 9, 18), ContractType.CALL, Decimal("769.00"))
         occ_put = _build_occ_symbol("SPY", date(2026, 9, 18), ContractType.PUT, Decimal("769.00"))
@@ -328,12 +338,12 @@ class TestNearTheMoneyResubscription:
             provider._hub.register_contract(
                 occ, "SPY", date(2026, 9, 18), contract_type, Decimal("769.00")
             )
-        reconnects = []
-        provider._hub.request_reconnect = lambda: reconnects.append("reconnect")
+        subscribed: list[object] = []
+        provider._hub.subscribe_new_option_contract = lambda *a: subscribed.append(a)
 
         provider.get_option_chain("SPY")
 
-        assert reconnects == []
+        assert subscribed == []
 
     def test_price_drift_across_scheduler_cycles_widens_the_registered_set_without_dropping_the_old_one(
         self,
@@ -344,8 +354,8 @@ class TestNearTheMoneyResubscription:
         logic itself -- through two "scheduler cycles" with a mocked
         transport, the first at spot=769 and the second (simulating spot
         having drifted) at spot=800, confirming the newly-relevant strike
-        gets registered and reconnected while the original one is *not*
-        dropped (deliberately additive-only, see this class's own
+        gets registered and live-subscribed while the original one is
+        *not* dropped (deliberately additive-only, see this class's own
         docstring and get_option_chain's inline comment for the
         keep-vs-unsubscribe trade-off)."""
         call_count = 0
@@ -371,13 +381,15 @@ class TestNearTheMoneyResubscription:
         provider = _provider_with_transport(handler)
         occ_at_769 = _build_occ_symbol("SPY", date(2026, 9, 18), ContractType.CALL, Decimal("769.00"))
         occ_at_800 = _build_occ_symbol("SPY", date(2026, 9, 18), ContractType.CALL, Decimal("800.00"))
-        reconnects: list[int] = []
-        provider._hub.request_reconnect = lambda: reconnects.append(len(reconnects) + 1)
+        subscribed: list[tuple[str, date, ContractType, Decimal]] = []
+        provider._hub.subscribe_new_option_contract = lambda root, expiration, ct, strike: (
+            subscribed.append((root, expiration, ct, strike))
+        )
 
         provider.get_option_chain("SPY")  # cycle 1: spot=769
         assert provider._hub.has_contract(occ_at_769) is True
         assert provider._hub.has_contract(occ_at_800) is False
-        assert reconnects == [1]
+        assert subscribed == [("SPY", date(2026, 9, 18), ContractType.CALL, Decimal("769.00"))]
 
         call_count = 1
         # NEAR_THE_MONEY_CACHE_TTL_SECONDS (10s) would otherwise serve
@@ -389,7 +401,96 @@ class TestNearTheMoneyResubscription:
 
         assert provider._hub.has_contract(occ_at_800) is True, "new strike must be registered"
         assert provider._hub.has_contract(occ_at_769) is True, "old strike must not be dropped"
-        assert reconnects == [1, 2], "second cycle must reconnect again for the newly-widened set"
+        assert subscribed == [
+            ("SPY", date(2026, 9, 18), ContractType.CALL, Decimal("769.00")),
+            ("SPY", date(2026, 9, 18), ContractType.CALL, Decimal("800.00")),
+        ], "second cycle must live-subscribe the newly-widened strike too"
+
+
+class TestLiveSubscribeDoesNotDisturbOtherSymbols:
+    """The actual property that motivated this fix (2026-09-14): a
+    newly-discovered contract for one symbol must never interrupt any
+    other symbol's streams. In this codebase interruption only ever
+    happens one way -- the shared connection closing -- so proving the
+    connection is never closed here is a complete proof, not a partial
+    one."""
+
+    def _handler(self):
+        def handler(request: httpx.Request) -> httpx.Response:
+            if "greeks/first_order" in str(request.url):
+                return httpx.Response(
+                    200,
+                    json={
+                        "response": [
+                            _first_order_entry("769.00", "CALL"),
+                            _first_order_entry("769.00", "PUT"),
+                        ]
+                    },
+                )
+            if "open_interest" in str(request.url):
+                return httpx.Response(200, json={"response": []})
+            if "interest_rate/history/eod" in str(request.url):
+                return httpx.Response(
+                    200, json={"response": [{"rate": 3.64, "created": "2026-08-31"}]}
+                )
+            if "stock/history/eod" in str(request.url):
+                return httpx.Response(200, json=_daily_bars_response())
+            raise AssertionError(f"unexpected request: {request.url}")
+
+        return handler
+
+    @pytest.mark.asyncio
+    async def test_a_new_contract_for_one_symbol_never_closes_the_shared_connection(
+        self,
+    ) -> None:
+        class _FakeWebsocket:
+            def __init__(self) -> None:
+                self.closed = False
+                self.sent: list[dict[str, object]] = []
+
+            async def close(self) -> None:
+                self.closed = True
+
+            async def send(self, message: str) -> None:
+                self.sent.append(json.loads(message))
+
+        provider = _provider_with_transport(self._handler())
+        fake_websocket = _FakeWebsocket()
+        provider._hub._loop = asyncio.get_running_loop()
+        provider._hub._active_websocket = fake_websocket  # type: ignore[assignment]
+
+        # An unrelated symbol (QQQ) already has a live subscriber on this
+        # same shared connection -- the thing that must stay undisturbed.
+        qqq_queue = provider._hub.subscribe_trade_queue("QQQ")
+
+        provider.get_option_chain("SPY")  # discovers 2 brand-new contracts (CALL + PUT)
+        # subscribe_new_option_contract schedules its sends via
+        # run_coroutine_threadsafe rather than awaiting them directly
+        # (safe to call from the scheduler's worker thread that actually
+        # calls get_option_chain() in production) -- give the loop a
+        # moment to run them.
+        await asyncio.sleep(0.05)
+
+        assert fake_websocket.closed is False, (
+            "the shared connection must never close for a new contract on "
+            "another symbol -- QQQ's own subscription lives on this exact "
+            "connection and would be interrupted by a close"
+        )
+        assert qqq_queue.empty()  # untouched -- nothing was ever sent to it
+
+        # And both new contracts' own TRADE + QUOTE subscriptions really
+        # were sent, live, over that same still-open connection -- 2
+        # contracts (CALL + PUT, both at the same discovered strike) x 2
+        # req_types each = 4 messages.
+        assert len(fake_websocket.sent) == 4
+        sent_req_types = sorted(m["req_type"] for m in fake_websocket.sent)
+        assert sent_req_types == ["QUOTE", "QUOTE", "TRADE", "TRADE"]
+        for message in fake_websocket.sent:
+            assert message["msg_type"] == "STREAM"
+            assert message["sec_type"] == "OPTION"
+            assert message["add"] is True
+            assert message["contract"]["root"] == "SPY"
+            assert message["contract"]["right"] in ("C", "P")
 
 
 class TestExpiredContractFiltering:
@@ -1814,8 +1915,7 @@ class TestStreamHubReconnection:
         assert watchdog_task.cancelled()
 
     def test_request_reconnect_is_a_no_op_before_start(self) -> None:
-        # Near-the-money re-subscription (get_option_chain) and the
-        # data-silence watchdog both call this unconditionally -- must
+        # The data-silence watchdog calls this unconditionally -- must
         # never raise for the API process's own dormant ThetaDataProvider
         # instance (never started, per backend/main.py's lifespan) or
         # before the Worker's own connection has been made for the first
@@ -1846,6 +1946,67 @@ class TestStreamHubReconnection:
         await asyncio.sleep(0.05)
 
         assert fake_websocket.closed is True
+
+    def test_subscribe_new_option_contract_is_a_no_op_before_start(self) -> None:
+        # get_option_chain() calls this unconditionally whenever it
+        # discovers a new contract -- must never raise for the API
+        # process's own dormant ThetaDataProvider instance, or before the
+        # Worker's own connection has been made for the first time.
+        stream = ThetaStreamHub(WS_URL, httpx.Client(base_url=REST_URL))
+        stream.subscribe_new_option_contract(
+            "SPY", date(2026, 9, 18), ContractType.CALL, Decimal("769.00")
+        )  # must not raise
+
+    @pytest.mark.asyncio
+    async def test_subscribe_new_option_contract_does_not_close_the_connection(self) -> None:
+        class _FakeWebsocket:
+            def __init__(self) -> None:
+                self.closed = False
+                self.sent: list[str] = []
+
+            async def close(self) -> None:
+                self.closed = True
+
+            async def send(self, message: str) -> None:
+                self.sent.append(message)
+
+        stream = ThetaStreamHub(WS_URL, httpx.Client(base_url=REST_URL))
+        fake_websocket = _FakeWebsocket()
+        stream._loop = asyncio.get_running_loop()
+        stream._active_websocket = fake_websocket  # type: ignore[assignment]
+
+        stream.subscribe_new_option_contract(
+            "SPY", date(2026, 9, 18), ContractType.CALL, Decimal("769.00")
+        )
+        await asyncio.sleep(0.05)
+
+        assert fake_websocket.closed is False
+        assert len(fake_websocket.sent) == 2  # TRADE + QUOTE
+
+    @pytest.mark.asyncio
+    async def test_subscribe_new_option_contract_survives_a_send_failure(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        # The connection can genuinely die (a real network drop, handled
+        # entirely by _run()'s own independent reconnect loop) between
+        # request_new_option_contract()'s own liveness check and the
+        # actual send -- must log, not raise into the event loop where
+        # nothing would catch it.
+        class _FailingWebsocket:
+            async def send(self, message: str) -> None:
+                raise ConnectionError("simulated connection drop")
+
+        stream = ThetaStreamHub(WS_URL, httpx.Client(base_url=REST_URL))
+        stream._loop = asyncio.get_running_loop()
+        stream._active_websocket = _FailingWebsocket()  # type: ignore[assignment]
+
+        with caplog.at_level(logging.WARNING):
+            stream.subscribe_new_option_contract(
+                "SPY", date(2026, 9, 18), ContractType.CALL, Decimal("769.00")
+            )
+            await asyncio.sleep(0.05)  # must not raise
+
+        assert any("Live-subscribe failed" in record.message for record in caplog.records)
 
 
 class TestStreamHubDataSilenceWatchdog:
