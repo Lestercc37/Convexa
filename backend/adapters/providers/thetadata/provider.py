@@ -489,6 +489,30 @@ class _NearTheMoneyChain:
         self.entries = entries
 
 
+class HistoricalGammaSnapshot:
+    """One symbol's reconstructed 09:35 ET inputs for a PAST trading day
+    -- backfill-only (see get_historical_gamma_snapshot below and
+    backend/scripts/backfill_daily_gamma_reference.py), never used by
+    the live pipeline. `chain` is deliberately returned as a plain
+    OptionChain so the caller can feed it through the exact same
+    IGammaExposureCalculator/IGammaAggregateCalculator the live path
+    uses -- this class stays adapter-only (no cross-adapter import of
+    the mock/ gamma calculators here), matching how ThetaDataProvider
+    stays a pure data source everywhere else.
+
+    `pc_oi_ratio`/`atm_iv` are always the nearest-expiration-only
+    values, mirroring get_underlying_snapshot's own identical
+    approximation -- that method was never touched by PR #132 (the
+    index all-expirations expansion), so this matches its real behavior
+    for SPX/NDX/VIX both before and after that merges, not just today.
+    """
+
+    def __init__(self, chain: OptionChain, pc_oi_ratio: Decimal, atm_iv: Decimal) -> None:
+        self.chain = chain
+        self.pc_oi_ratio = pc_oi_ratio
+        self.atm_iv = atm_iv
+
+
 _QueueEventT = TypeVar("_QueueEventT")
 
 
@@ -1448,7 +1472,9 @@ class ThetaDataProvider:
             )
         return response.json()
 
-    def _get_json_allow_no_data(self, path: str, **params: object) -> dict[str, Any]:
+    def _get_json_allow_no_data(
+        self, path: str, *, timeout: float | None = None, **params: object
+    ) -> dict[str, Any]:
         """Same as `_get_json`, except ThetaData's 472 ("no data found for
         your request") is treated as an empty response instead of a raised
         error. Confirmed live (2026-09 investigation): querying a SPECIFIC
@@ -1461,9 +1487,19 @@ class ThetaDataProvider:
         outcome for one of the two roots on any given expiration — not a
         real failure — so it must not abort the whole combined fetch the
         way `_get_json` correctly does for a genuine error (auth failure,
-        5xx, etc., which still raise here exactly as before)."""
+        5xx, etc., which still raise here exactly as before).
+
+        `timeout` is an explicit per-call override, left unset (client
+        default, 10s) for every existing caller -- added only for
+        history/greeks/first_order (see _fetch_historical_near_the_money_
+        entries), confirmed live to genuinely take 30-40s per call
+        regardless of payload size, which the client's default would
+        abort as a false failure."""
+        request_kwargs: dict[str, Any] = {"params": params}
+        if timeout is not None:
+            request_kwargs["timeout"] = timeout
         with self._request_slots.hold():
-            response = self._client.get(path, params=params)
+            response = self._client.get(path, **request_kwargs)
         if response.status_code == 472:
             return {"response": []}
         if response.status_code != 200:
@@ -2148,6 +2184,280 @@ class ThetaDataProvider:
                 )
             )
         return bars
+
+    def _historical_risk_free_rate(self, as_of: date) -> Decimal:
+        """Backfill-only sibling of _risk_free_rate, scoped to a past
+        date instead of "today" -- same endpoint, same 7-day trailing
+        lookback so a rate is still found if `as_of` itself was a
+        holiday/weekend."""
+        start = as_of - timedelta(days=7)
+        body = self._get_json(
+            "/v3/interest_rate/history/eod",
+            symbol=RATE_SYMBOL,
+            start_date=start.strftime("%Y%m%d"),
+            end_date=as_of.strftime("%Y%m%d"),
+            format="json",
+        )
+        rows = body.get("response", [])
+        if not rows:
+            raise RuntimeError(
+                f"ThetaData interest_rate/history/eod returned no rows for {as_of}"
+            )
+        latest = max(rows, key=lambda row: row["created"])
+        return Decimal(str(latest["rate"])) / Decimal(100)
+
+    def _get_daily_bars_as_of(self, symbol: str, as_of: date, days: int = 20) -> list[DailyBar]:
+        """Backfill-only sibling of get_daily_bars, scoped to a trailing
+        window ENDING at `as_of` instead of "today" -- same endpoint and
+        shape (including the same no-working-futures-endpoint gap, so ES
+        still gets an empty list here, same as live), just a different
+        end date, so a past day's near-the-money width reflects that
+        day's own trailing ATR, not today's."""
+        active = ACTIVE_UNDERLYINGS_BY_SYMBOL.get(symbol)
+        if active is not None and active.kind == UnderlyingKind.FUTURE:
+            return []
+        endpoint = (
+            "/v3/index/history/eod"
+            if active is not None and active.kind == UnderlyingKind.INDEX
+            else "/v3/stock/history/eod"
+        )
+        start = as_of - timedelta(days=days * 2)
+        body = self._get_json(
+            endpoint,
+            symbol=symbol,
+            start_date=start.strftime("%Y%m%d"),
+            end_date=as_of.strftime("%Y%m%d"),
+            format="json",
+        )
+        bars = []
+        for row in body.get("response", [])[-days:]:
+            bar_date = _parse_et_timestamp(row["last_trade"]).date()
+            bars.append(
+                DailyBar(
+                    symbol=symbol,
+                    date=bar_date,
+                    open_price=Decimal(str(row["open"])),
+                    high=Decimal(str(row["high"])),
+                    low=Decimal(str(row["low"])),
+                    close=Decimal(str(row["close"])),
+                )
+            )
+        return bars
+
+    def _fetch_historical_open_interest_all_expirations(
+        self, symbol: str, as_of: date
+    ) -> dict[tuple[str, Decimal, str, date], int]:
+        """Backfill-only historical sibling of
+        _fetch_open_interest_all_expirations -- same (root, strike,
+        right, expiration) key shape and same expiration=* wildcard
+        (confirmed live: the history endpoint supports it too, unlike
+        history/greeks/first_order below), just scoped to `as_of`
+        instead of "now". One real REST call per root, same cost as the
+        live version -- confirmed live, ~1-8s per root."""
+        result: dict[tuple[str, Decimal, str, date], int] = {}
+        for root in _roots_for_symbol(symbol):
+            body = self._get_json_allow_no_data(
+                "/v3/option/history/open_interest",
+                symbol=root,
+                expiration="*",
+                strike_range=NEAR_THE_MONEY_OVERFETCH_STRIKE_RANGE,
+                date=as_of.strftime("%Y-%m-%d"),
+                format="json",
+            )
+            for entry in body.get("response", []):
+                data_points = entry.get("data") or []
+                if not data_points:
+                    continue
+                contract_meta = entry["contract"]
+                key = (
+                    contract_meta["symbol"],
+                    Decimal(str(contract_meta["strike"])),
+                    contract_meta["right"],
+                    date.fromisoformat(contract_meta["expiration"]),
+                )
+                result[key] = int(data_points[0]["open_interest"])
+        return result
+
+    def _fetch_historical_near_the_money_entries(
+        self, root: str, expiration: date, as_of: date
+    ) -> list[dict[str, Any]]:
+        """Backfill-only: one (root, expiration, as_of) snapshot at
+        09:35 ET, matching capture_daily_gamma_reference's own live
+        capture window exactly. Confirmed live this endpoint does NOT
+        support expiration=* with a specific `date` (real error:
+        "Cannot specify '*' for the date") -- unlike the OI history
+        sibling above -- so this is always one real REST call per
+        expiration, never a wildcard across expirations.
+
+        Narrowed to a 1-minute start_time/end_time window: confirmed
+        live that omitting it returns the WHOLE day at ~1-second
+        granularity (a single real call for one expiration, strike_
+        range=100, reached 1.35GB). This endpoint's own per-request
+        latency (30-40s, confirmed live across several real calls) barely
+        changes with a narrower window -- the narrowing is purely to
+        keep the payload sane, not to make the call itself faster; that
+        latency is the real, unavoidable cost per (root, expiration, day)
+        this backfill has to pay, confirmed real via direct testing, not
+        estimated.
+        """
+        body = self._get_json_allow_no_data(
+            "/v3/option/history/greeks/first_order",
+            timeout=60.0,
+            symbol=root,
+            expiration=expiration.strftime("%Y-%m-%d"),
+            strike_range=NEAR_THE_MONEY_OVERFETCH_STRIKE_RANGE,
+            date=as_of.strftime("%Y-%m-%d"),
+            start_time="09:35:00.000",
+            end_time="09:36:00.000",
+            format="json",
+        )
+        entries: list[dict[str, Any]] = []
+        for entry in body.get("response", []):
+            # The very first tick of the window can legitimately be a
+            # stale/zero-filled placeholder row (confirmed live) --
+            # skip to the first real (non-zero underlying_price) point
+            # instead of blindly trusting data[0].
+            data_points = [
+                point
+                for point in entry.get("data") or []
+                if Decimal(str(point.get("underlying_price", 0))) > 0
+            ]
+            if not data_points:
+                continue
+            entries.append({"contract": entry["contract"], "data": [data_points[0]]})
+        return entries
+
+    def get_historical_gamma_snapshot(self, underlying: str, as_of: date) -> HistoricalGammaSnapshot:
+        """Reconstructs one symbol's 09:35 ET Gamma/OI/IV inputs for a
+        past trading day -- backfill-only (see backend/scripts/
+        backfill_daily_gamma_reference.py), deliberately NOT part of
+        IDataProvider, same precedent as get_minute_bars above.
+
+        Index symbols (SPX/NDX/VIX) reconstruct `chain` across every
+        expiration that had recorded open interest that day, matching
+        get_option_chain's own PR #132 methodology for net_gamma --
+        needed so a percentile-rank history is never a mix of two
+        incompatible scales (nearest-only net_gamma is a wholly
+        different order of magnitude from all-expirations net_gamma,
+        confirmed live in the PR #132 benchmark: ~37x more contracts).
+        Every other symbol stays nearest-only, matching get_option_
+        chain's unchanged behavior for them.
+        """
+        symbol = underlying.upper()
+        active = ACTIVE_UNDERLYINGS_BY_SYMBOL.get(symbol)
+        is_index = active is not None and active.kind == UnderlyingKind.INDEX
+
+        open_interest_by_key = self._fetch_historical_open_interest_all_expirations(symbol, as_of)
+        expirations_by_root: dict[str, set[date]] = defaultdict(set)
+        for root, _strike, _right, expiration in open_interest_by_key:
+            expirations_by_root[root].add(expiration)
+
+        target: list[tuple[str, date]] = []
+        if is_index:
+            for root in _roots_for_symbol(symbol):
+                for expiration in sorted(expirations_by_root.get(root, ())):
+                    target.append((root, expiration))
+        else:
+            root = symbol
+            expirations = expirations_by_root.get(root, set())
+            if not expirations:
+                raise RuntimeError(f"No historical open interest found for {symbol} on {as_of}")
+            target.append((root, min(expirations)))
+
+        if not target:
+            raise RuntimeError(f"No historical expirations found for {symbol} on {as_of}")
+
+        entries_by_expiration: dict[date, list[dict[str, Any]]] = defaultdict(list)
+        for root, expiration in target:
+            entries = self._fetch_historical_near_the_money_entries(root, expiration, as_of)
+            entries_by_expiration[expiration].extend(entries)
+        entries_by_expiration = {exp: entries for exp, entries in entries_by_expiration.items() if entries}
+        if not entries_by_expiration:
+            raise RuntimeError(f"No usable historical greeks entries for {symbol} on {as_of}")
+
+        nearest_expiration = min(entries_by_expiration)
+        rate = self._historical_risk_free_rate(as_of)
+        as_of_935 = datetime.combine(as_of, time_of_day(9, 35), tzinfo=EASTERN_TIME)
+
+        # One shared width for the whole reconstruction, not recomputed
+        # per expiration group -- matches _resolve_width's own effective
+        # live behavior (cached per (symbol, day), so in practice a
+        # single width already governs every expiration group on any
+        # given day, cold-cache technicalities aside).
+        daily_bars = self._get_daily_bars_as_of(symbol, as_of)
+        width_spot = Decimal(str(entries_by_expiration[nearest_expiration][0]["data"][0]["underlying_price"]))
+        width = calculate_near_the_money_width(symbol, daily_bars, width_spot)
+
+        contracts: list[OptionContract] = []
+        spot_price: Decimal | None = None
+        ivs: list[Decimal] = []
+        call_oi = 0
+        put_oi = 0
+        for expiration, raw_entries in entries_by_expiration.items():
+            filtered = [
+                entry
+                for entry in raw_entries
+                if abs(Decimal(str(entry["contract"]["strike"])) - width_spot) <= width
+            ]
+            time_to_expiration = _time_to_expiration_years(expiration, as_of_935)
+            for entry in filtered:
+                contract_meta = entry["contract"]
+                data = entry["data"][0]
+                root = contract_meta["symbol"]
+                right = contract_meta["right"]
+                contract_type = ContractType.CALL if right == "CALL" else ContractType.PUT
+                strike = Decimal(str(contract_meta["strike"]))
+                underlying_price = Decimal(str(data["underlying_price"]))
+                spot_price = underlying_price
+                iv = Decimal(str(data["implied_vol"]))
+                bsm = calculate_bsm_greeks(underlying_price, strike, rate, iv, time_to_expiration)
+                open_interest = open_interest_by_key.get((root, strike, right, expiration), 0)
+                occ_symbol = _build_occ_symbol(root, expiration, contract_type, strike)
+                bid = Decimal(str(data["bid"]))
+                ask = Decimal(str(data["ask"]))
+                contracts.append(
+                    OptionContract(
+                        underlying=symbol,
+                        strike=strike,
+                        expiration=expiration,
+                        contract_type=contract_type,
+                        occ_symbol=occ_symbol,
+                        bid=bid,
+                        ask=ask,
+                        last=(bid + ask) / 2,
+                        volume=0,
+                        open_interest=open_interest,
+                        iv=iv,
+                        greeks=OptionGreeks(
+                            delta=Decimal(str(data["delta"])),
+                            gamma=bsm.gamma,
+                            theta=Decimal(str(data["theta"])),
+                            vega=Decimal(str(data["vega"])),
+                            charm=bsm.charm,
+                            vanna=bsm.vanna,
+                        ),
+                    )
+                )
+                if expiration == nearest_expiration:
+                    ivs.append(iv)
+                    if contract_type == ContractType.CALL:
+                        call_oi += open_interest
+                    else:
+                        put_oi += open_interest
+
+        if spot_price is None or not contracts:
+            raise RuntimeError(f"No usable historical contracts for {symbol} on {as_of}")
+
+        atm_iv = sum(ivs, Decimal(0)) / len(ivs) if ivs else Decimal(0)
+        pc_oi_ratio = Decimal(put_oi) / Decimal(call_oi) if call_oi else Decimal(0)
+
+        chain = OptionChain(
+            symbol=symbol,
+            as_of=as_of_935,
+            spot_price=spot_price,
+            contracts=tuple(contracts),
+        )
+        return HistoricalGammaSnapshot(chain=chain, pc_oi_ratio=pc_oi_ratio, atm_iv=atm_iv)
 
     async def stream_trades(self, underlying: str) -> AsyncIterator[FlowEvent]:
         queue = self._hub.subscribe_trade_queue(underlying)
