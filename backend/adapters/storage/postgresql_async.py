@@ -15,6 +15,7 @@ from backend.domain.entities import (
     FlowEvent,
     FlowEventType,
     GammaAggregate,
+    GammaAggregateItem,
     Greeks,
     MarketPrice,
     OptionChain,
@@ -48,15 +49,24 @@ class AsyncPostgreSQLStorage:
     pattern, so nothing blocks that migration when it's approved.
 
     Deliberately not a full `IStorage` implementation otherwise (no
-    `get_latest_chain_snapshot(expiration=...)` filter, no
-    `_gamma_aggregate_items` join) -- `/gamma`/`/market`'s own
-    serializers never read them, and every other write in this codebase
-    still goes through the scheduler's existing sync `PostgreSQLStorage`.
-    Same SQL as the sync methods this mirrors in `postgresql.py` -- kept
-    in sync with those queries by hand, since duplicating a handful of
-    read-only SELECTs was simpler than threading a shared query builder
-    through two different SQLAlchemy execution styles (sync `Session` vs
-    `AsyncSession`).
+    `get_latest_chain_snapshot(expiration=...)` filter), and every other
+    write in this codebase still goes through the scheduler's existing
+    sync `PostgreSQLStorage`. Same SQL as the sync methods this mirrors
+    in `postgresql.py` -- kept in sync with those queries by hand, since
+    duplicating a handful of read-only SELECTs was simpler than
+    threading a shared query builder through two different SQLAlchemy
+    execution styles (sync `Session` vs `AsyncSession`).
+
+    `get_latest_gamma_aggregate` DOES join `gamma_aggregate_items` (see
+    `_gamma_aggregate_items` below) -- confirmed live, 2026-09-15:
+    `closing_dynamics.magnet_strike`/`pin_score` (both read via
+    `/market/{symbol}`, straight off `GammaAggregate.items`) silently
+    depend on it. Without it, `_magnet_strike(())` returns `None` and
+    `calculate_pin_risk_score` short-circuits to only its time
+    component -- `pin_score` still renders a plausible 0-100 number
+    with the other three (OI concentration, proximity, gamma) always
+    zeroed out, no error, no missing-data indicator. Dropping this join
+    was the bug, not a deliberate scope cut.
     """
 
     def __init__(self, session_factory: async_sessionmaker[AsyncSession]) -> None:
@@ -85,11 +95,13 @@ class AsyncPostgreSQLStorage:
                 {"symbol": underlying.upper()},
             )
             row = result.mappings().one_or_none()
-        if row is None:
-            return None
+            if row is None:
+                return None
+            items = await self._gamma_aggregate_items(session, row["underlying_id"], row["time"])
         return GammaAggregate(
             symbol=str(row["symbol"]),
             as_of=row["time"],
+            items=items,
             gamma_flip=(Decimal(row["gamma_flip"]) if row["gamma_flip"] is not None else None),
             call_wall=Decimal(row["call_wall"]),
             put_wall=Decimal(row["put_wall"]),
@@ -105,6 +117,39 @@ class AsyncPostgreSQLStorage:
             positive_gamma=Decimal(row["positive_gamma"]),
             negative_gamma=Decimal(row["negative_gamma"]),
             peak_gamma_value=Decimal(row["peak_gamma_value"]),
+        )
+
+    async def _gamma_aggregate_items(
+        self, session: AsyncSession, underlying_id: int, time: datetime
+    ) -> tuple[GammaAggregateItem, ...]:
+        rows = (
+            await session.execute(
+                text(
+                    """
+                    SELECT strike, total_gamma_exposure, call_gamma_exposure,
+                           put_gamma_exposure, net_gamma, contract_count,
+                           absolute_gamma, open_interest, volume
+                    FROM gamma_aggregate_items
+                    WHERE underlying_id = :underlying_id AND time = :time
+                    ORDER BY strike
+                    """
+                ),
+                {"underlying_id": underlying_id, "time": time},
+            )
+        ).mappings()
+        return tuple(
+            GammaAggregateItem(
+                strike=Decimal(row["strike"]),
+                total_gamma_exposure=Decimal(row["total_gamma_exposure"]),
+                call_gamma_exposure=Decimal(row["call_gamma_exposure"]),
+                put_gamma_exposure=Decimal(row["put_gamma_exposure"]),
+                net_gamma=Decimal(row["net_gamma"]),
+                contract_count=int(row["contract_count"]),
+                absolute_gamma=Decimal(row["absolute_gamma"]),
+                open_interest=int(row["open_interest"]),
+                volume=int(row["volume"]),
+            )
+            for row in rows
         )
 
     async def get_latest_price(self, underlying: str) -> MarketPrice | None:
