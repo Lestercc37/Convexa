@@ -5,18 +5,21 @@ import { getAlerts, getGammaProfile } from "@/lib/api";
 import { describeError } from "@/lib/i18n/describe-error";
 import { useLanguage } from "@/lib/i18n/language-context";
 import { POLLING_INTERVAL_MS } from "@/lib/polling";
-import type { GammaAggregateItem, GammaAggregateResponse, WhaleAlert } from "@/lib/types";
+import type { GammaAggregateItem, GammaAggregateResponse, GammaResponse, WhaleAlert } from "@/lib/types";
 
-type ChartSecondaryPanelProps = { symbol: string; spotPrice: number };
+type ChartSecondaryPanelProps = { symbol: string; spotPrice: number; gamma: GammaResponse };
 type SecondaryView = "gex" | "flow";
+type NetGexColorClass = "positive" | "negative" | "zero";
 
-// SpotGamma-style vertical profile: strike on the X axis, exposure
-// magnitude on the Y axis, calls above the zero line and puts below it
-// (call_gamma_exposure/put_gamma_exposure already carry that sign —
-// dealer positioning convention baked in at calculation time, see
-// backend/adapters/providers/mock/gamma_exposure.py — no sign-flip
-// needed here). `labelY` sits below `bottom` so strike labels never
-// overlap a put bar reaching the floor of the plot.
+// Net GEX profile: one bar per strike, the strike's net_gamma (already
+// signed -- call_gamma_exposure + put_gamma_exposure with dealer
+// positioning convention baked in at calculation time, see
+// backend/adapters/providers/mock/gamma_aggregate.py) rising above the
+// zero line when positive and falling below it when negative. Replaces
+// the earlier two-bar (calls above/puts below) design -- Net GEX is the
+// visible value now, not a derived afterthought; Call/Put GEX still
+// live in the per-strike tooltip below. `labelY` sits below `bottom` so
+// strike labels never overlap a bar reaching the floor of the plot.
 const GEX_PLOT = { left: 30, right: 740, top: 8, bottom: 74, labelY: 92 };
 // A non-zero exposure always stays visually present even when the
 // opposite side completely dominates the shared scale (see gexY below)
@@ -30,6 +33,8 @@ const GEX_LABEL_GAP = 6;
 const FLOW_PLOT = { top: 10, bottom: 80, left: 20, right: 740 };
 
 const level = new Intl.NumberFormat("en-US", { maximumFractionDigits: 2 });
+
+type GexLevel = { key: string; label: string; value: number; className: string };
 
 // Same fix as alerts-panel.tsx's own alertKey() -- contract+timestamp
 // alone collides whenever a single reading trips both a magnitude
@@ -46,7 +51,45 @@ function scale(value: number, minimum: number, maximum: number, start: number, e
   return start + ((value - minimum) / (maximum - minimum)) * (end - start);
 }
 
-export function ChartSecondaryPanel({ symbol, spotPrice }: ChartSecondaryPanelProps) {
+function netGexColorClass(netGamma: number): NetGexColorClass {
+  if (netGamma > 0) return "positive";
+  if (netGamma < 0) return "negative";
+  return "zero";
+}
+
+// Backend structural levels only -- never invented or approximated on
+// the frontend. Call Wall/Put Wall/Absolute Gamma Strike/Max Pain/Gamma
+// Flip all come straight off the same GammaResponse Dashboard already
+// polls for the rest of the page (price-chart.tsx, pre-session-panel.tsx),
+// no parallel fetch. Magnet Strike is deliberately absent as its own
+// entry: confirmed (calculate_closing_dynamics.py's `_magnet_strike` vs.
+// FakeGammaAggregateCalculator's `absolute_gamma_strike`, both
+// `max(items, key=lambda i: abs(i.net_gamma))`) to be the exact same
+// value under a different provider name -- one line covers both labels
+// instead of a second, redundant one at an identical position.
+function gexLevels(gamma: GammaResponse): GexLevel[] {
+  const levels: GexLevel[] = [
+    { key: "call-wall", label: "Call Wall", value: gamma.call_wall, className: "call-wall" },
+    { key: "put-wall", label: "Put Wall", value: gamma.put_wall, className: "put-wall" },
+    {
+      key: "abs-gamma",
+      label: "Abs. Gamma / Magnet",
+      value: gamma.absolute_gamma_strike,
+      className: "abs-gamma",
+    },
+    { key: "max-pain", label: "Max Pain", value: gamma.max_pain, className: "max-pain" },
+  ];
+  // See GammaResponse.gamma_flip in lib/types.ts -- genuinely nullable
+  // when no sign crossing was found in range; hidden rather than
+  // fabricated, same coordinated decision as price-chart.tsx and
+  // pre-session-panel.tsx.
+  if (gamma.gamma_flip !== null) {
+    levels.push({ key: "gamma-flip", label: "Gamma Flip", value: gamma.gamma_flip, className: "gamma-flip" });
+  }
+  return levels;
+}
+
+export function ChartSecondaryPanel({ symbol, spotPrice, gamma }: ChartSecondaryPanelProps) {
   const { t } = useLanguage();
   const [view, setView] = useState<SecondaryView>("gex");
   const [profile, setProfile] = useState<GammaAggregateResponse | null>(null);
@@ -132,14 +175,15 @@ export function ChartSecondaryPanel({ symbol, spotPrice }: ChartSecondaryPanelPr
     : 0;
 
   // One shared linear scale for both directions (not independently
-  // normalized per side) — if calls dominate 10x over puts, calls
-  // genuinely occupy ~91% of the vertical space and puts ~9%, truthfully
-  // representing the imbalance instead of making both sides look equally
-  // tall. GEX_MIN_BAR_HEIGHT below is what keeps the dominated side from
+  // normalized per side) — if the most net-positive strike dominates
+  // 10x over the most net-negative one, it genuinely occupies ~91% of
+  // the vertical space and the other ~9%, truthfully representing the
+  // imbalance instead of making both sides look equally tall.
+  // GEX_MIN_BAR_HEIGHT below is what keeps the dominated side from
   // visually disappearing.
-  const gexMaxCall = Math.max(0, ...gexItems.map((item) => item.call_gamma_exposure));
-  const gexMinPut = Math.min(0, ...gexItems.map((item) => item.put_gamma_exposure));
-  const gexY = (value: number) => scale(value, gexMinPut, gexMaxCall, GEX_PLOT.bottom, GEX_PLOT.top);
+  const gexMaxNet = Math.max(0, ...gexItems.map((item) => item.net_gamma));
+  const gexMinNet = Math.min(0, ...gexItems.map((item) => item.net_gamma));
+  const gexY = (value: number) => scale(value, gexMinNet, gexMaxNet, GEX_PLOT.bottom, GEX_PLOT.top);
   const gexZeroY = gexY(0);
 
   function gexBarRect(value: number): { y: number; height: number } {
@@ -255,6 +299,7 @@ export function ChartSecondaryPanel({ symbol, spotPrice }: ChartSecondaryPanelPr
             {describeError(profileError, t)}
           </p>
         ) : profile && gexItems.length ? (
+          <>
           <svg
             className="secondary-gex-chart"
             viewBox="0 0 760 100"
@@ -268,28 +313,38 @@ export function ChartSecondaryPanel({ symbol, spotPrice }: ChartSecondaryPanelPr
               x2={GEX_PLOT.right}
               y2={gexZeroY}
             />
+            {gexLevels(gamma).map((lvl) => {
+              const x = gexX(lvl.value);
+              return (
+                <g key={lvl.key} aria-label={`${lvl.label} ${level.format(lvl.value)}`}>
+                  <title>{`${lvl.label}: ${level.format(lvl.value)}`}</title>
+                  <line
+                    className={`secondary-gex-level ${lvl.className}`}
+                    x1={x}
+                    y1={GEX_PLOT.top}
+                    x2={x}
+                    y2={GEX_PLOT.bottom}
+                  />
+                </g>
+              );
+            })}
             {gexItems.map((item, index) => {
-              const callRect = gexBarRect(item.call_gamma_exposure);
-              const putRect = gexBarRect(item.put_gamma_exposure);
+              const netRect = gexBarRect(item.net_gamma);
               const x = gexX(item.strike) - gexBarWidth / 2;
               // Bars always render for every strike — only the text
               // label is thinned, never the data itself.
               const showLabel = gexShowLabel(index);
               return (
                 <g key={item.strike} aria-label={`Strike ${item.strike}`}>
+                  <title>
+                    {`Strike ${level.format(item.strike)} — Call GEX: ${level.format(item.call_gamma_exposure)} · Put GEX: ${level.format(item.put_gamma_exposure)} · Net GEX: ${level.format(item.net_gamma)}`}
+                  </title>
                   <rect
-                    className="secondary-gex-bar call"
+                    className={`secondary-gex-bar ${netGexColorClass(item.net_gamma)}`}
                     x={x}
-                    y={callRect.y}
+                    y={netRect.y}
                     width={gexBarWidth}
-                    height={callRect.height}
-                  />
-                  <rect
-                    className="secondary-gex-bar put"
-                    x={x}
-                    y={putRect.y}
-                    width={gexBarWidth}
-                    height={putRect.height}
+                    height={netRect.height}
                   />
                   {showLabel && (
                     <text
@@ -316,6 +371,14 @@ export function ChartSecondaryPanel({ symbol, spotPrice }: ChartSecondaryPanelPr
               </text>
             </g>
           </svg>
+          <div className="secondary-gex-levels-legend" aria-label={t.chartSecondaryPanel.gexLevelsLegendAriaLabel}>
+            {gexLevels(gamma).map((lvl) => (
+              <span key={lvl.key}>
+                <i className={`legend-dot ${lvl.className}`} /> {lvl.label}: {level.format(lvl.value)}
+              </span>
+            ))}
+          </div>
+          </>
         ) : profile ? (
           <p className="chart-secondary-status">{t.chartSecondaryPanel.gexNoBreakdown}</p>
         ) : (

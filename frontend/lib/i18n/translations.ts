@@ -61,6 +61,7 @@ export type Translations = {
     gexSpotPriceAriaLabel: (price: string) => string;
     gexLoading: string;
     gexNoBreakdown: string;
+    gexLevelsLegendAriaLabel: string;
     flowChartAriaLabel: (symbol: string) => string;
     flowLoading: string;
     flowEmpty: string;

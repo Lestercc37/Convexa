@@ -253,17 +253,38 @@ button, select { font: inherit; }
 
 .secondary-gex-chart { flex: 1 1 auto; width: 100%; min-height: 0; }
 .secondary-gex-zero { stroke: var(--tv-border); stroke-width: 1.5; }
-/* Same buy/sell color pair Whale Alerts already uses (--calm/--risk),
-   consistent with pre-session-panel.tsx's own Calls/Puts bars. */
-.secondary-gex-bar.call { fill: var(--calm); }
-.secondary-gex-bar.put { fill: var(--risk); }
+/* Net GEX bar: one per strike, colored by the sign of net_gamma itself
+   (not a call/put pair anymore) -- same calm/risk color pair the rest
+   of the dashboard already uses for bullish/bearish. `.zero` only ever
+   paints a zero-height bar (see gexBarRect in chart-secondary-panel.tsx)
+   but still gets a deliberate, testable class rather than falling
+   through unstyled. */
+.secondary-gex-bar.positive { fill: var(--calm); }
+.secondary-gex-bar.negative { fill: var(--risk); }
+.secondary-gex-bar.zero { fill: var(--tv-text-dim); }
 .secondary-gex-strike-label { fill: var(--tv-text-dim); font-size: 11px; text-anchor: middle; }
-/* Same accent used for Absolute Gamma / Max Pain reference lines
-   elsewhere on the dashboard (price-chart.tsx, pre-session-panel.tsx) —
-   a "this is a live reference marker" color, distinct from the calm/
-   risk pair the bars themselves use. */
+/* Same accent used for the live spot-price reference marker elsewhere
+   on the dashboard (price-chart.tsx, pre-session-panel.tsx) — distinct
+   from the structural (backend-calculated) levels below. */
 .secondary-gex-spot { stroke: var(--accent); stroke-width: 1.5; stroke-dasharray: 3 3; }
 .secondary-gex-spot-label { fill: var(--accent); font-size: 11px; font-weight: 700; text-anchor: middle; }
+/* Structural levels (Call Wall/Put Wall/Abs. Gamma/Max Pain/Gamma Flip)
+   -- dashed like pre-session-panel.tsx's own reference lines, colored
+   distinctly from the spot marker's --accent and from each other so
+   none collide visually. */
+.secondary-gex-level { stroke-width: 1.5; stroke-dasharray: 4 4; }
+.secondary-gex-level.call-wall { stroke: var(--calm); }
+.secondary-gex-level.put-wall { stroke: var(--risk); }
+.secondary-gex-level.gamma-flip { stroke: var(--warning); }
+.secondary-gex-level.abs-gamma { stroke: var(--atr); }
+.secondary-gex-level.max-pain { stroke: var(--tv-text); }
+.secondary-gex-levels-legend { display: flex; flex-wrap: wrap; justify-content: center; gap: 6px 14px; margin-top: 6px; color: var(--tv-text-dim); font-size: 0.68rem; }
+.secondary-gex-levels-legend span { display: inline-flex; align-items: center; gap: 5px; }
+.legend-dot.call-wall { background: var(--calm); }
+.legend-dot.put-wall { background: var(--risk); }
+.legend-dot.gamma-flip { background: var(--warning); }
+.legend-dot.abs-gamma { background: var(--atr); }
+.legend-dot.max-pain { background: var(--tv-text); }
 
 .secondary-flow-chart { flex: 1 1 auto; width: 100%; min-height: 0; }
 .secondary-flow-zero { stroke: var(--tv-border); stroke-width: 1; stroke-dasharray: 4 4; }
