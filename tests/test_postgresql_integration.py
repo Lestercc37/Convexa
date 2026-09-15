@@ -40,6 +40,7 @@ from backend.domain.entities import (
     WhaleThreshold,
 )
 from backend.domain.underlyings import ACTIVE_UNDERLYINGS
+from backend.domain.use_cases import calculate_pin_risk_score
 from backend.domain.use_cases.flow import SymbolFlowPressure, WhaleAlert, WhaleAlertType
 from backend.infrastructure.database.engine import create_engine, create_sync_engine
 from backend.infrastructure.database.session import create_session_factory, create_sync_session_factory
@@ -436,6 +437,86 @@ async def test_async_postgresql_storage_reads_what_the_sync_storage_wrote(
             symbol, now - timedelta(seconds=1), now + timedelta(seconds=1)
         )
         assert history == [price]
+    finally:
+        await async_engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_async_postgresql_storage_gamma_aggregate_includes_items_not_just_scalars(
+    postgresql_storage: tuple[PostgreSQLStorage, Engine, str],
+) -> None:
+    """Regression for the 2026-09-15 production bug: AsyncPostgreSQLStorage
+    .get_latest_gamma_aggregate() used to build GammaAggregate from only
+    the gamma_aggregates row -- never querying gamma_aggregate_items the
+    way PostgreSQLStorage's own get_latest_gamma_aggregate does -- so
+    `items` silently fell back to the dataclass's empty-tuple default.
+
+    test_async_postgresql_storage_reads_what_the_sync_storage_wrote above
+    never caught this: its own `gamma` fixture also leaves `items` at
+    that same empty default, so `loaded == gamma` passed whether or not
+    the bug was present. This one uses a real, non-empty breakdown (same
+    shape as test_gamma_aggregate_round_trip_against_postgresql's sync
+    equivalent) and, critically, feeds the *loaded* items into
+    calculate_pin_risk_score -- the actual downstream consumer
+    (closing_dynamics.magnet_strike/pin_score, read live via
+    /market/{symbol}) that was silently degrading to its time-only
+    fallback (magnet_strike=None, 75% of the score's weight dropped) in
+    production, with no error and no missing-data indicator.
+    """
+    sync_storage, _, symbol = postgresql_storage
+    now = datetime.now(timezone.utc)
+    aggregate = GammaAggregate(
+        symbol=symbol,
+        as_of=now,
+        items=(
+            GammaAggregateItem(
+                strike=Decimal("545"),
+                total_gamma_exposure=Decimal("390"),
+                call_gamma_exposure=Decimal("240"),
+                put_gamma_exposure=Decimal("-150"),
+                net_gamma=Decimal("90"),
+                contract_count=2,
+                absolute_gamma=Decimal("90"),
+                open_interest=14000,
+                volume=6800,
+            ),
+            GammaAggregateItem(
+                strike=Decimal("550"),
+                total_gamma_exposure=Decimal("200"),
+                call_gamma_exposure=Decimal("120"),
+                put_gamma_exposure=Decimal("-80"),
+                net_gamma=Decimal("40"),
+                contract_count=3,
+                absolute_gamma=Decimal("40"),
+                open_interest=9000,
+                volume=4200,
+            ),
+        ),
+        net_gamma=Decimal("130"),
+    )
+    sync_storage.save_gamma_aggregate(aggregate)
+
+    async_engine = create_engine(_require_test_database_url())
+    try:
+        async_storage = AsyncPostgreSQLStorage(create_session_factory(async_engine))
+        loaded = await async_storage.get_latest_gamma_aggregate(symbol)
+
+        assert loaded is not None
+        assert loaded.items == aggregate.items
+
+        score, magnet_strike = calculate_pin_risk_score(
+            loaded.items, price=Decimal("545"), time_to_close_pct=Decimal("40")
+        )
+        # The bug's exact signature: items=() forces magnet_strike=None
+        # and the score down to just the 25%-weighted time component
+        # (15, at time_to_close_pct=40 -- see
+        # test_pin_risk_score_without_a_strike_breakdown_only_scores_time_remaining
+        # in test_closing_dynamics.py for that fallback in isolation).
+        # With items correctly loaded, strike 545 (the larger
+        # |net_gamma|) must come back as the real magnet, and the score
+        # must exceed the time-only floor.
+        assert magnet_strike == Decimal("545")
+        assert score > Decimal("15")
     finally:
         await async_engine.dispose()
 
