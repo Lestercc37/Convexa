@@ -403,6 +403,7 @@ export function Dashboard() {
                     key={`chart-secondary-${symbol}`}
                     symbol={symbol}
                     spotPrice={market.price}
+                    gamma={gamma}
                   />
                 </>
               ) : (

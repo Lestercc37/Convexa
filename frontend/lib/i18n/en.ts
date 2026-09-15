@@ -69,6 +69,7 @@ export const en: Translations = {
     gexSpotPriceAriaLabel: (price) => `Spot price: ${price}`,
     gexLoading: "Loading GEX by strike…",
     gexNoBreakdown: "No per-strike breakdown available.",
+    gexLevelsLegendAriaLabel: "GEX structural levels",
     flowChartAriaLabel: (symbol) => `Accumulated Whale Alerts flow for ${symbol}`,
     flowLoading: "Loading Whale Alerts flow…",
     flowEmpty: "No alerts yet this session.",
