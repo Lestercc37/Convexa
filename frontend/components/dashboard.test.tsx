@@ -668,20 +668,20 @@ describe("Dashboard", () => {
     expect(screen.queryByText("Guía de Interpretación de los Motores")).not.toBeInTheDocument();
   });
 
-  it("defaults to the 5m timeframe, not 1m, since the chart always shows the full session (regression)", async () => {
-    // A full day is 390 1-minute candles -- confirmed live, 2026-09-17,
-    // that at the center column's real width this renders candle
-    // bodies as unreadable sub-pixel hairlines even at exact fit. 5m
-    // (78 candles) is the default that's actually legible without the
-    // user having to do anything.
+  it("defaults to the 1m timeframe (regression)", async () => {
+    // Lester's explicit call: the default stays 1-minute candles, not
+    // 5m -- PriceChart's own minBarSpacing is the structural guard
+    // against unreadable compressed candles, not a change of default
+    // timeframe. Manually switching to 5m/15m/1h must still work
+    // exactly as before (see the test below).
     renderWithLanguage(<Dashboard />);
     await screen.findByLabelText("Chart de velas para SPY");
 
     const oneMinuteButton = screen.getByRole("button", { name: "1m" });
     const fiveMinuteButton = screen.getByRole("button", { name: "5m" });
-    expect(fiveMinuteButton).toHaveAttribute("aria-pressed", "true");
-    expect(oneMinuteButton).toHaveAttribute("aria-pressed", "false");
-    expect(screen.getByText("SPY · Velas de 5 minutos")).toBeInTheDocument();
+    expect(oneMinuteButton).toHaveAttribute("aria-pressed", "true");
+    expect(fiveMinuteButton).toHaveAttribute("aria-pressed", "false");
+    expect(screen.getByText("SPY · Velas de 1 minuto")).toBeInTheDocument();
   });
 
   it("re-renders the chart with aggregated candles when a timeframe button is clicked", async () => {
@@ -691,15 +691,15 @@ describe("Dashboard", () => {
 
     const oneMinuteButton = screen.getByRole("button", { name: "1m" });
     const fiveMinuteButton = screen.getByRole("button", { name: "5m" });
-    expect(fiveMinuteButton).toHaveAttribute("aria-pressed", "true");
-    expect(oneMinuteButton).toHaveAttribute("aria-pressed", "false");
-    expect(screen.getByText("SPY · Velas de 5 minutos")).toBeInTheDocument();
-
-    await user.click(oneMinuteButton);
-
     expect(oneMinuteButton).toHaveAttribute("aria-pressed", "true");
     expect(fiveMinuteButton).toHaveAttribute("aria-pressed", "false");
     expect(screen.getByText("SPY · Velas de 1 minuto")).toBeInTheDocument();
+
+    await user.click(fiveMinuteButton);
+
+    expect(fiveMinuteButton).toHaveAttribute("aria-pressed", "true");
+    expect(oneMinuteButton).toHaveAttribute("aria-pressed", "false");
+    expect(screen.getByText("SPY · Velas de 5 minutos")).toBeInTheDocument();
   });
 
   describe("resizable main panels", () => {
