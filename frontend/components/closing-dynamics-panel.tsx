@@ -4,6 +4,14 @@ import type { ClosingDynamics } from "@/lib/types";
 
 type ClosingDynamicsPanelProps = {
   closingDynamics?: ClosingDynamics;
+  // Only needed to label Magnet Strike's distance-to-price note below —
+  // confirmed live, 2026-09-16: showing the bare strike next to the
+  // live price elsewhere on the dashboard let a reader do that
+  // subtraction themselves and misread the result as "expected move"
+  // instead of "distance to a reference level". Showing the distance
+  // ourselves, explicitly labeled, closes that gap instead of leaving
+  // it to be inferred.
+  spotPrice?: number;
 };
 
 // Last ~5% of the session (~20 of the ~390 minute session) — a purely
@@ -51,7 +59,7 @@ function regimeTone(
   return "neutral";
 }
 
-export function ClosingDynamicsPanel({ closingDynamics }: ClosingDynamicsPanelProps) {
+export function ClosingDynamicsPanel({ closingDynamics, spotPrice }: ClosingDynamicsPanelProps) {
   const { t } = useLanguage();
   // Conditional by design, not a toggle (dashboard-spec.md section 9): the
   // panel is absent outside the closing window, no empty state, no
@@ -93,6 +101,19 @@ export function ClosingDynamicsPanel({ closingDynamics }: ClosingDynamicsPanelPr
           {magnet_strike === null ? "—" : level.format(magnet_strike)}
         </strong>
       </div>
+      {/* Visible by default, not hover-only -- the bare number alone is
+          exactly what caused a real misreading (magnet strike read as
+          "expected move" once mentally diffed against the live price
+          shown elsewhere). A title attribute here too, for anyone who
+          still hovers, but the point is this must not depend on that. */}
+      <p className="closing-dynamics-note" title={t.closingDynamicsPanel.magnetStrikeTooltip}>
+        {t.closingDynamicsPanel.magnetStrikeTooltip}
+      </p>
+      {magnet_strike !== null && spotPrice !== undefined && (
+        <p className="closing-dynamics-note">
+          {t.closingDynamicsPanel.magnetStrikeDistance(magnet_strike - spotPrice)}
+        </p>
+      )}
 
       <p className={`closing-dynamics-regime ${regimeTone(charm_regime)}`}>
         {charmRegimeLabel(charm_regime, t)}
