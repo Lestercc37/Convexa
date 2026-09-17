@@ -84,6 +84,8 @@ export type Translations = {
     eyebrow: string;
     pinRiskScoreLabel: string;
     magnetStrikeLabel: string;
+    magnetStrikeTooltip: string;
+    magnetStrikeDistance: (distancePoints: number) => string;
     charmTimeDecayBuy: string;
     charmTimeDecaySell: string;
     charmNeutral: string;

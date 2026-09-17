@@ -508,7 +508,7 @@ export function Dashboard() {
                   interpretation — conditional by design (dashboard-spec.md
                   section 9), not a toggle, so it renders nothing outside the
                   closing window. */}
-              <ClosingDynamicsPanel closingDynamics={market.closing_dynamics} />
+              <ClosingDynamicsPanel closingDynamics={market.closing_dynamics} spotPrice={market.price} />
               <ExpectedMoveWidget key={`expected-move-${symbol}`} expectedMove={market.expected_move} />
               <VolatilitySmile
                 key={`volatility-smile-${symbol}`}

@@ -94,6 +94,12 @@ export const es: Translations = {
     eyebrow: "Dinámica de cierre",
     pinRiskScoreLabel: "Pin Risk Score",
     magnetStrikeLabel: "Strike imán",
+    magnetStrikeTooltip:
+      "Nivel de precio de referencia (mayor concentración de gamma) — no es una predicción de cuánto se moverá el precio.",
+    magnetStrikeDistance: (distancePoints) =>
+      distancePoints === 0
+        ? "El precio actual ya está en el strike imán"
+        : `${Math.abs(distancePoints).toFixed(2)} pts ${distancePoints > 0 ? "por encima" : "por debajo"} del precio actual`,
     charmTimeDecayBuy: "El paso del tiempo empuja a los dealers a comprar",
     charmTimeDecaySell: "El paso del tiempo empuja a los dealers a vender",
     charmNeutral: "Neutral — sin presión direccional por paso del tiempo",

@@ -92,6 +92,12 @@ export const en: Translations = {
     eyebrow: "Closing dynamics",
     pinRiskScoreLabel: "Pin Risk Score",
     magnetStrikeLabel: "Magnet strike",
+    magnetStrikeTooltip:
+      "A reference price level (highest gamma concentration) — not a prediction of how far the price will move.",
+    magnetStrikeDistance: (distancePoints) =>
+      distancePoints === 0
+        ? "Current price is already at the magnet strike"
+        : `${Math.abs(distancePoints).toFixed(2)} pts ${distancePoints > 0 ? "above" : "below"} the current price`,
     charmTimeDecayBuy: "Time decay is pushing dealers to buy",
     charmTimeDecaySell: "Time decay is pushing dealers to sell",
     charmNeutral: "Neutral — no directional pressure from time decay",
