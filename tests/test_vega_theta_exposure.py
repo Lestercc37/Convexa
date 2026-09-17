@@ -8,6 +8,7 @@ from backend.adapters.providers.mock.gamma_exposure import FakeGammaExposureCalc
 from backend.adapters.providers.mock.gamma_flip import FakeGammaFlipCalculator
 from backend.adapters.providers.mock.max_pain import FakeMaxPainCalculator
 from backend.adapters.providers.mock.walls import FakeWallCalculator
+from backend.adapters.providers.thetadata.greeks import PassthroughGreeksCalculator
 from backend.adapters.storage.memory import InMemoryStorage
 from backend.domain.entities import ContractType, Greeks, OptionChain, OptionContract
 from backend.domain.use_cases import (
@@ -20,20 +21,13 @@ from backend.domain.use_cases import (
 )
 
 
-class PreservingGreeksCalculator:
-    """Keep the hand-built Greeks unchanged for the exposure test."""
-
-    def calculate(self, chain: OptionChain) -> OptionChain:
-        return chain
-
-
 def test_orchestrator_sums_vanna_exposure_from_hand_built_chain() -> None:
     storage = InMemoryStorage()
     chain = _known_chain()
     storage.save_chain_snapshot(chain)
     orchestrator = CalculateGammaExposureOrchestrator(
         storage=storage,
-        greeks=CalculateGreeksUseCase(PreservingGreeksCalculator()),
+        greeks=CalculateGreeksUseCase(PassthroughGreeksCalculator()),
         aggregate=CalculateGammaAggregateUseCase(
             FakeGammaExposureCalculator(), FakeGammaAggregateCalculator()
         ),
@@ -77,7 +71,7 @@ def test_delta_exposure_keeps_the_call_and_put_signs_from_the_real_quote() -> No
     storage.save_chain_snapshot(chain)
     orchestrator = CalculateGammaExposureOrchestrator(
         storage=storage,
-        greeks=CalculateGreeksUseCase(PreservingGreeksCalculator()),
+        greeks=CalculateGreeksUseCase(PassthroughGreeksCalculator()),
         aggregate=CalculateGammaAggregateUseCase(
             FakeGammaExposureCalculator(), FakeGammaAggregateCalculator()
         ),

@@ -15,6 +15,7 @@ from backend.adapters.providers.mock.gamma_flip import FakeGammaFlipCalculator
 from backend.adapters.providers.mock.max_pain import FakeMaxPainCalculator
 from backend.adapters.providers.mock.walls import FakeWallCalculator
 from backend.adapters.providers.thetadata import ThetaDataProvider
+from backend.adapters.providers.thetadata.greeks import PassthroughGreeksCalculator
 from backend.adapters.providers.thetadata.provider import THETADATA_MAX_CONCURRENT_REQUESTS
 from backend.adapters.providers.thetadata.request_slots import build_theta_request_slots
 from backend.adapters.storage.memory import InMemoryStorage
@@ -170,7 +171,24 @@ def build_container() -> Container:
         if settings.data_provider == "thetadata"
         else MockDataProvider()
     )
-    greeks_calculator = FakeGreeksCalculator()
+    # Same branch as market_data_provider above -- ThetaDataProvider
+    # already attaches real Greeks to every OptionContract it returns
+    # (real ThetaData delta/theta/vega, BSM gamma/vanna/charm with real
+    # IV -- see that provider's own comments), so there's nothing left
+    # for a "calculator" to do downstream of it. FakeGreeksCalculator
+    # stays the mock-only path: MockDataProvider's own contracts carry
+    # fixed placeholder Greeks that don't vary by moneyness, and
+    # FakeGreeksCalculator's whole job is making mock data distinguishable
+    # across strikes for architecture validation -- confirmed live,
+    # 2026-09-17, that wiring it unconditionally here silently overwrote
+    # ThetaDataProvider's real Greeks with synthetic ones for every
+    # derived metric (GEX, DEX, VEX, TEX, Net GEX, walls, Gamma Flip,
+    # Max Pain), all the way to what the Dashboard actually shows.
+    greeks_calculator: IGreeksCalculator = (
+        PassthroughGreeksCalculator()
+        if settings.data_provider == "thetadata"
+        else FakeGreeksCalculator()
+    )
     gamma_exposure_calculator = FakeGammaExposureCalculator()
     gamma_aggregate_calculator = FakeGammaAggregateCalculator()
     gamma_flip_calculator = FakeGammaFlipCalculator()

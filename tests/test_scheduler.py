@@ -10,12 +10,12 @@ from datetime import time as dtime
 import httpx
 import pytest
 
-from backend.adapters.providers.mock.fake import FakeGreeksCalculator
 from backend.adapters.providers.mock.gamma_aggregate import FakeGammaAggregateCalculator
 from backend.adapters.providers.mock.gamma_exposure import FakeGammaExposureCalculator
 from backend.adapters.providers.mock.gamma_flip import FakeGammaFlipCalculator
 from backend.adapters.providers.mock.max_pain import FakeMaxPainCalculator
 from backend.adapters.providers.mock.walls import FakeWallCalculator
+from backend.adapters.providers.thetadata.greeks import PassthroughGreeksCalculator
 from backend.adapters.providers.thetadata.provider import (
     THETADATA_MAX_CONCURRENT_REQUESTS,
     ThetaDataProvider,
@@ -321,7 +321,12 @@ def _real_refresh_use_case_with_transport(handler) -> RefreshUnderlyingSnapshotU
     (mocked HTTP transport, real threading.Semaphore) and real calculators
     — everything the scheduler actually drives per symbol, so a test using
     this exercises the genuine REST concurrency chokepoint, not a stub
-    that bypasses it."""
+    that bypasses it. PassthroughGreeksCalculator, not FakeGreeksCalculator
+    -- ThetaDataProvider already attaches real Greeks to every contract
+    (see container.py's own comment on this same branch), and this helper
+    should mirror that real wiring, not the mock-only path, even though
+    this file's own assertions only check REST concurrency, never a
+    Greeks-derived value."""
     provider = ThetaDataProvider("http://thetaterminal.test", "ws://thetaterminal.test/v1/events")
     provider._client = httpx.Client(
         base_url="http://thetaterminal.test", transport=httpx.MockTransport(handler)
@@ -329,7 +334,7 @@ def _real_refresh_use_case_with_transport(handler) -> RefreshUnderlyingSnapshotU
     storage = InMemoryStorage()
     orchestrator = CalculateGammaExposureOrchestrator(
         storage=storage,
-        greeks=CalculateGreeksUseCase(FakeGreeksCalculator()),
+        greeks=CalculateGreeksUseCase(PassthroughGreeksCalculator()),
         aggregate=CalculateGammaAggregateUseCase(
             FakeGammaExposureCalculator(), FakeGammaAggregateCalculator()
         ),
