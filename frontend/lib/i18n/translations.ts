@@ -45,6 +45,7 @@ export type Translations = {
     vwapAnchoredLabel: string;
     vwapNotApplicableLabel: string;
     atrRangeLabel: string;
+    streamFallbackLabel: string;
     drawingToolsAriaLabel: string;
     drawingToolsLegend: string;
     trendlineButton: string;

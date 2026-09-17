@@ -257,6 +257,77 @@ describe("PriceChart", () => {
     vi.useRealTimers();
   });
 
+  it("re-fits the visible range once the async session history seed lands, not just at chart creation (regression)", () => {
+    // The mount effect's own fitContent() call only ever sees whatever
+    // sliver of `candles` exists synchronously at first render --
+    // dashboard.tsx seeds the real session history asynchronously right
+    // after mount (seedThenPoll), so every remount showed abnormally wide
+    // candles until the user manually adjusted the range (confirmed
+    // live, 2026-09-17).
+    const { rerender } = renderWithLanguage(
+      <PriceChart
+        symbol="SPY"
+        gamma={gamma}
+        candles={[{ time: 1_785_763_800, open: 500, high: 501, low: 499, close: 500.5 }]}
+      />,
+    );
+    expect(chartMocks.fitContent).toHaveBeenCalledTimes(1);
+
+    // The real session history lands all at once -- a bulk seed (a jump
+    // of more than one candle), not a single live tick appending its
+    // own new bar.
+    rerender(
+      <PriceChart
+        symbol="SPY"
+        gamma={gamma}
+        candles={[
+          { time: 1_785_763_800, open: 500, high: 501, low: 499, close: 500.5 },
+          { time: 1_785_763_860, open: 500.5, high: 502, low: 500, close: 501.5 },
+          { time: 1_785_763_920, open: 501.5, high: 503, low: 501, close: 502.5 },
+          { time: 1_785_763_980, open: 502.5, high: 504, low: 502, close: 503.5 },
+          { time: 1_785_764_040, open: 503.5, high: 505, low: 503, close: 504.5 },
+        ]}
+      />,
+    );
+    expect(chartMocks.fitContent).toHaveBeenCalledTimes(2);
+
+    // One further live tick/poll appending a single new candle should
+    // not trigger another re-fit -- only the one-time bulk-seed
+    // transition does, so the user's own pan/zoom afterward isn't
+    // fought on every 30s poll.
+    rerender(
+      <PriceChart
+        symbol="SPY"
+        gamma={gamma}
+        candles={[
+          { time: 1_785_763_800, open: 500, high: 501, low: 499, close: 500.5 },
+          { time: 1_785_763_860, open: 500.5, high: 502, low: 500, close: 501.5 },
+          { time: 1_785_763_920, open: 501.5, high: 503, low: 501, close: 502.5 },
+          { time: 1_785_763_980, open: 502.5, high: 504, low: 502, close: 503.5 },
+          { time: 1_785_764_040, open: 503.5, high: 505, low: 503, close: 504.5 },
+          { time: 1_785_764_100, open: 504.5, high: 506, low: 504, close: 505.5 },
+        ]}
+      />,
+    );
+    expect(chartMocks.fitContent).toHaveBeenCalledTimes(2);
+  });
+
+  it("shows a subtle indicator next to the live pill only while the real-time stream is in fallback mode (regression)", () => {
+    // Confirmed live, 2026-09-17: repeated backend restarts that week
+    // silently killed long-open tabs' WebSocket with no visible sign of
+    // it -- this indicator is that sign, next to the always-on "En vivo"
+    // pill it doesn't replace (the 30s poll behind it never stopped).
+    const { rerender } = renderWithLanguage(
+      <PriceChart symbol="SPY" gamma={gamma} candles={[]} streamStatus="connected" />,
+    );
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+
+    rerender(<PriceChart symbol="SPY" gamma={gamma} candles={[]} streamStatus="fallback" />);
+    expect(
+      screen.getByRole("status", { name: "Conexión en tiempo real perdida — actualizando cada 30s" }),
+    ).toBeInTheDocument();
+  });
+
   it("formats axis tick marks in Eastern time, not the UTC digits lightweight-charts uses by default (regression)", () => {
     // lightweight-charts formats every tick mark from the *UTC* digits of
     // the given epoch second (confirmed by reading its own source) --

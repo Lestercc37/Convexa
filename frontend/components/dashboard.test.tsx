@@ -481,6 +481,7 @@ describe("Dashboard", () => {
       expect(marketPriceStreamMocks.connectMarketPriceStream).toHaveBeenCalledWith(
         "SPY",
         expect.any(Function),
+        expect.any(Function),
       ),
     );
 
@@ -490,6 +491,7 @@ describe("Dashboard", () => {
     await waitFor(() =>
       expect(marketPriceStreamMocks.connectMarketPriceStream).toHaveBeenCalledWith(
         "GOOGL",
+        expect.any(Function),
         expect.any(Function),
       ),
     );

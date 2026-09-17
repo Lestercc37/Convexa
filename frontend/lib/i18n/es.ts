@@ -53,6 +53,7 @@ export const es: Translations = {
     vwapAnchoredLabel: "VWAP Anclado",
     vwapNotApplicableLabel: "VWAP Anclado: no disponible para índices",
     atrRangeLabel: "Rango ATR",
+    streamFallbackLabel: "Conexión en tiempo real perdida — actualizando cada 30s",
     drawingToolsAriaLabel: "Herramientas de dibujo",
     drawingToolsLegend: "Dibujo:",
     trendlineButton: "Línea de tendencia",
