@@ -135,7 +135,19 @@ export function Dashboard() {
   // request failed.
   const [error, setError] = useState<unknown>(null);
   const [showEnginesGuide, setShowEnginesGuide] = useState(false);
-  const [timeframe, setTimeframe] = useState<Timeframe>("1m");
+  // "5m", not "1m" -- the chart always shows the full session by
+  // default (there's no separate "zoomed in" vs "whole day" view), and
+  // a full day is 390 1-minute candles. At the center column's real
+  // width (confirmed live, 2026-09-17: ~720px net of the price scale,
+  // at the sidebar's default size) that's ~1.85px/candle even at exact
+  // fit -- already below where a candle's body renders as anything but
+  // an unreadable vertical hairline (see PriceChart's own
+  // minBarSpacing comment for the structural floor that guards against
+  // this regardless of timeframe). 5m (78 candles) comfortably clears
+  // that at the same width without needing any zoom at all, and is the
+  // more commonly useful default for glancing at a whole session
+  // anyway. The user can still switch to 1m for a closer look.
+  const [timeframe, setTimeframe] = useState<Timeframe>("5m");
   const candles = useMemo(() => aggregateMinuteCandles(pricePoints), [pricePoints]);
   const displayedCandles = useMemo(
     () => aggregateCandles(candles, timeframe),

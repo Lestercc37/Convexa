@@ -183,6 +183,43 @@ describe("PriceChart", () => {
     vi.useRealTimers();
   });
 
+  it("never lets bar spacing compress below 3px, even zoomed out to a full day (regression)", () => {
+    // A full day is 390 1-minute candles -- confirmed live, 2026-09-17,
+    // that at the chart's real width this is ~1.85px/candle even at
+    // exact fit, well below the library's own default floor
+    // (minBarSpacing: 0.5px, confirmed in its own type definitions) --
+    // low enough that a candle's body renders as an unreadable
+    // anti-aliased hairline fused with its own wick. 3px is the
+    // structural floor: beyond it the user scrolls horizontally
+    // instead of the chart silently degrading into unreadable lines.
+    renderWithLanguage(<PriceChart symbol="SPY" gamma={gamma} candles={candlesWithRange} />);
+
+    const chartOptions = chartMocks.createChart.mock.calls.at(-1)![1];
+    expect(chartOptions.timeScale.minBarSpacing).toBe(3);
+  });
+
+  it("disables manual price-axis drag, but not time-axis drag, from the moment the chart is created (regression)", () => {
+    // Dragging the price axis is how Lightweight Charts takes a price
+    // scale out of autoScale mode (confirmed via its own
+    // axisDoubleClickReset option, which only makes sense if a drag can
+    // leave that state) -- and once autoScale is off,
+    // autoscaleInfoProvider (mergePriceRange, the only thing keeping
+    // Gamma Flip/Call Wall/Put Wall/ATR bands inside the visible range)
+    // stops being consulted, so those levels progressively fall outside
+    // the range as the user keeps dragging. Disabling just the price
+    // axis's own drag closes the gap without touching horizontal
+    // pan/zoom on the time axis.
+    renderWithLanguage(<PriceChart symbol="SPY" gamma={gamma} candles={candlesWithRange} />);
+
+    const chartOptions = chartMocks.createChart.mock.calls.at(-1)![1];
+    expect(chartOptions.handleScale).toEqual({
+      mouseWheel: true,
+      pinch: true,
+      axisPressedMouseMove: { time: true, price: false },
+      axisDoubleClickReset: true,
+    });
+  });
+
   it("recovers via a full setData() resync instead of crashing when update() rejects the latest candle (regression)", () => {
     // lightweight-charts throws "Cannot update oldest data" if update()'s
     // new bar time ever regresses behind what the series already has --
@@ -930,9 +967,19 @@ describe("PriceChart trendline drawing", () => {
 
     await user.click(drawButton);
     expect(drawButton).toHaveAttribute("aria-pressed", "false");
+    // Re-enabling must restore the same price-axis-drag restriction the
+    // chart was created with, not a bare `true` -- otherwise toggling
+    // draw mode off would silently re-open the exact gap
+    // minBarSpacing/axisPressedMouseMove.price were set to close (see
+    // createChart's own comment on both).
     expect(chartMocks.applyOptions).toHaveBeenLastCalledWith({
       handleScroll: true,
-      handleScale: true,
+      handleScale: {
+        mouseWheel: true,
+        pinch: true,
+        axisPressedMouseMove: { time: true, price: false },
+        axisDoubleClickReset: true,
+      },
     });
   });
 

@@ -353,8 +353,42 @@ export function PriceChart({
         vertLines: { color: "rgba(42, 46, 57, 0.6)" },
         horzLines: { color: "rgba(42, 46, 57, 0.6)" },
       },
-      timeScale: { timeVisible: true, secondsVisible: false, tickMarkFormatter },
+      // minBarSpacing: 3 -- the library's own default floor is 0.5px
+      // (confirmed in its own type definitions), which it will happily
+      // compress down to when fitting a full day's worth of 1-minute
+      // candles (390) into a realistic chart width (~720px net of the
+      // price scale at the sidebar's default size -- confirmed live,
+      // 2026-09-17): at that width a full day is ~1.85px/candle even at
+      // exact fit, already below where a candlestick's body renders as
+      // anything but an anti-aliased vertical hairline fused with its
+      // own wick. 3px keeps every candle's body visibly distinct from
+      // its wick; beyond that the user scrolls horizontally instead of
+      // the chart silently degrading into unreadable lines.
+      timeScale: {
+        timeVisible: true,
+        secondsVisible: false,
+        tickMarkFormatter,
+        minBarSpacing: 3,
+      },
       rightPriceScale: { borderColor: "#2A2E39" },
+      // axisPressedMouseMove.price: false -- dragging the price axis is
+      // how Lightweight Charts takes a price scale out of autoScale
+      // mode (confirmed via its own axisDoubleClickReset option, which
+      // only makes sense if a drag can leave that state) -- and once
+      // autoScale is off, autoscaleInfoProvider below (mergePriceRange,
+      // which is the only thing keeping Gamma Flip/Call Wall/Put Wall/
+      // ATR bands inside the visible range in the first place) stops
+      // being consulted at all. Confirmed live, 2026-09-17: this is the
+      // same class of gap that comment already flagged for the
+      // few-candles case, just triggered by manual price-axis drag
+      // instead. Time-axis drag (panning/zooming the chart
+      // horizontally) is untouched -- only the price axis is affected.
+      handleScale: {
+        mouseWheel: true,
+        pinch: true,
+        axisPressedMouseMove: { time: true, price: false },
+        axisDoubleClickReset: true,
+      },
     });
     // TradingView-native candle colors — never the Convexa brand pair above,
     // which is reserved for what Convexa itself calculates (Gamma levels).
@@ -456,8 +490,23 @@ export function PriceChart({
   // Drawing a line by dragging conflicts with the chart's own default
   // click-drag gesture (panning) — disable pan/zoom for the duration of draw
   // mode instead of trying to make both interpret the same mouse events.
+  // The "re-enabled" shape below must match the initial createChart()
+  // options above (price-axis drag disabled, everything else on) --
+  // this effect runs after mount too, so leaving it as a bare `true`
+  // would briefly (and then permanently, once drawMode toggles) re-open
+  // the exact price-axis-drag gap those options were set to close.
   useEffect(() => {
-    chartRef.current?.applyOptions({ handleScroll: !drawMode, handleScale: !drawMode });
+    chartRef.current?.applyOptions({
+      handleScroll: !drawMode,
+      handleScale: drawMode
+        ? false
+        : {
+            mouseWheel: true,
+            pinch: true,
+            axisPressedMouseMove: { time: true, price: false },
+            axisDoubleClickReset: true,
+          },
+    });
   }, [drawMode]);
 
   useEffect(() => {

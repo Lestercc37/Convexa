@@ -668,6 +668,22 @@ describe("Dashboard", () => {
     expect(screen.queryByText("Guía de Interpretación de los Motores")).not.toBeInTheDocument();
   });
 
+  it("defaults to the 5m timeframe, not 1m, since the chart always shows the full session (regression)", async () => {
+    // A full day is 390 1-minute candles -- confirmed live, 2026-09-17,
+    // that at the center column's real width this renders candle
+    // bodies as unreadable sub-pixel hairlines even at exact fit. 5m
+    // (78 candles) is the default that's actually legible without the
+    // user having to do anything.
+    renderWithLanguage(<Dashboard />);
+    await screen.findByLabelText("Chart de velas para SPY");
+
+    const oneMinuteButton = screen.getByRole("button", { name: "1m" });
+    const fiveMinuteButton = screen.getByRole("button", { name: "5m" });
+    expect(fiveMinuteButton).toHaveAttribute("aria-pressed", "true");
+    expect(oneMinuteButton).toHaveAttribute("aria-pressed", "false");
+    expect(screen.getByText("SPY · Velas de 5 minutos")).toBeInTheDocument();
+  });
+
   it("re-renders the chart with aggregated candles when a timeframe button is clicked", async () => {
     const user = userEvent.setup();
     renderWithLanguage(<Dashboard />);
@@ -675,15 +691,15 @@ describe("Dashboard", () => {
 
     const oneMinuteButton = screen.getByRole("button", { name: "1m" });
     const fiveMinuteButton = screen.getByRole("button", { name: "5m" });
-    expect(oneMinuteButton).toHaveAttribute("aria-pressed", "true");
-    expect(fiveMinuteButton).toHaveAttribute("aria-pressed", "false");
-    expect(screen.getByText("SPY · Velas de 1 minuto")).toBeInTheDocument();
-
-    await user.click(fiveMinuteButton);
-
     expect(fiveMinuteButton).toHaveAttribute("aria-pressed", "true");
     expect(oneMinuteButton).toHaveAttribute("aria-pressed", "false");
     expect(screen.getByText("SPY · Velas de 5 minutos")).toBeInTheDocument();
+
+    await user.click(oneMinuteButton);
+
+    expect(oneMinuteButton).toHaveAttribute("aria-pressed", "true");
+    expect(fiveMinuteButton).toHaveAttribute("aria-pressed", "false");
+    expect(screen.getByText("SPY · Velas de 1 minuto")).toBeInTheDocument();
   });
 
   describe("resizable main panels", () => {
