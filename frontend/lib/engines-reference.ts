@@ -30,6 +30,7 @@ export const ENGINES_REFERENCE: EngineReferenceEntry[] = [
   { id: "absoluteGammaStrike", classification: "standard" },
   { id: "callPutWalls", classification: "standard" },
   { id: "maxPain", classification: "standard" },
+  { id: "deltaExposure", classification: "standard" },
   { id: "vegaExposure", classification: "standard" },
   { id: "thetaExposure", classification: "standard" },
   {

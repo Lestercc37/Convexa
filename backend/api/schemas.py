@@ -266,6 +266,7 @@ class GammaSummaryResponse(BaseModel):
     theta_exposure: Number = Field(examples=[-420000])
     charm_exposure: Number = Field(examples=[125000])
     vanna_exposure: Number = Field(examples=[250000])
+    delta_exposure: Number = Field(examples=[3200000])
     dealer_position: Literal["long_gamma", "short_gamma"]
 
 

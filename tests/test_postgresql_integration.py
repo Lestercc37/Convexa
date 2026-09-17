@@ -162,6 +162,7 @@ def test_gamma_aggregate_round_trip_against_postgresql(
         theta_exposure=Decimal("-420000"),
         charm_exposure=Decimal("125000"),
         vanna_exposure=Decimal("250000"),
+        delta_exposure=Decimal("3200000"),
         absolute_gamma_strike=Decimal("550"),
         # Deliberately non-zero and each distinct from the others and
         # from every other field above -- these 4 used to silently come

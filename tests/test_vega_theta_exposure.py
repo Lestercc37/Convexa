@@ -48,7 +48,51 @@ def test_orchestrator_sums_vanna_exposure_from_hand_built_chain() -> None:
     assert result.theta_exposure == Decimal(-500)
     assert result.charm_exposure == Decimal(10)
     assert result.vanna_exposure == Decimal(27500)
+    # Delta Exposure (DEX): same Sigma(greek x OI x 100) pattern as the
+    # other four, no call/put sign flip applied -- delta's own sign
+    # already does that job (0.50 call, -0.30 put below).
+    # (0.50 * 10 * 100) + (-0.30 * 20 * 100) = 500 - 600 = -100.
+    assert result.delta_exposure == Decimal(-100)
     assert storage.get_latest_gamma_aggregate("SPY") == result
+
+
+def test_delta_exposure_keeps_the_call_and_put_signs_from_the_real_quote() -> None:
+    """DEX must never apply an extra dealer-style +1 call/-1 put flip
+    (that convention belongs only to dealer_gamma_exposure, a separate
+    calculation) -- a call's positive delta and a put's negative delta
+    must each contribute with their own real sign, unmodified."""
+    storage = InMemoryStorage()
+    as_of = datetime(2026, 1, 15, 14, 30, tzinfo=UTC)
+    contracts = (
+        _contract(
+            "SPY260220C00540000", ContractType.CALL, Decimal(540), 10,
+            "0.20", "-0.10", "0.05", "0.01", delta="0.60",
+        ),
+        _contract(
+            "SPY260220P00560000", ContractType.PUT, Decimal(560), 10,
+            "0.30", "-0.20", "-0.02", "0.02", delta="-0.60",
+        ),
+    )
+    chain = OptionChain(symbol="SPY", as_of=as_of, spot_price=Decimal(550), contracts=contracts)
+    storage.save_chain_snapshot(chain)
+    orchestrator = CalculateGammaExposureOrchestrator(
+        storage=storage,
+        greeks=CalculateGreeksUseCase(PreservingGreeksCalculator()),
+        aggregate=CalculateGammaAggregateUseCase(
+            FakeGammaExposureCalculator(), FakeGammaAggregateCalculator()
+        ),
+        gamma_flip=CalculateGammaFlipUseCase(FakeGammaFlipCalculator()),
+        walls=CalculateWallsUseCase(FakeWallCalculator()),
+        max_pain=CalculateMaxPainUseCase(FakeMaxPainCalculator()),
+    )
+
+    result = orchestrator.execute("SPY")
+
+    # Same open interest (10) and same delta magnitude (0.60) on each
+    # side, opposite real signs -- they must cancel exactly to zero, not
+    # double up as +1200 (which an extra dealer-style flip on top of an
+    # already-signed delta would produce).
+    assert result.delta_exposure == Decimal(0)
 
 
 def _known_chain() -> OptionChain:
@@ -63,6 +107,7 @@ def _known_chain() -> OptionChain:
             "-0.10",
             "0.05",
             "0.01",
+            delta="0.50",
         ),
         _contract(
             "SPY260220P00560000",
@@ -73,6 +118,7 @@ def _known_chain() -> OptionChain:
             "-0.20",
             "-0.02",
             "0.02",
+            delta="-0.30",
         ),
     )
     return OptionChain(
@@ -92,6 +138,7 @@ def _contract(
     theta: str,
     charm: str,
     vanna: str,
+    delta: str = "0.50",
 ) -> OptionContract:
     return OptionContract(
         underlying="SPY",
@@ -106,7 +153,7 @@ def _contract(
         open_interest=open_interest,
         iv=Decimal("0.20"),
         greeks=Greeks(
-            delta=Decimal("0.50"),
+            delta=Decimal(delta),
             gamma=Decimal("0.01"),
             theta=Decimal(theta),
             vega=Decimal(vega),

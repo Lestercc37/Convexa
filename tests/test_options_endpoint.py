@@ -61,6 +61,7 @@ def test_internal_trigger_persists_consolidated_gamma_for_public_get() -> None:
         "theta_exposure",
         "charm_exposure",
         "vanna_exposure",
+        "delta_exposure",
     } <= payload.keys()
     assert payload["dealer_position"] in {"long_gamma", "short_gamma"}
     assert stored is not None
