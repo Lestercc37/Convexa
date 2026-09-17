@@ -442,11 +442,18 @@ button, select { font: inherit; }
 .tv-language-toggle button[aria-pressed="true"] { background: var(--tv-panel-raised); color: var(--tv-text); }
 
 .screener-panel { padding: 12px 14px; }
+/* QuickScreener moved out of .tv-sidebar into its own top-level view
+   (dashboard.tsx's "scanner" view) -- fills .tv-center the same way
+   .price-chart-panel/.chart-secondary-panel already do for the "live"
+   view, instead of sitting at its natural content height with blank
+   space below it. */
+.tv-center .screener-panel { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
 .screener-heading { align-items: start; flex-direction: column; gap: 8px; }
 .screener-preset-row { display: flex; align-items: flex-end; gap: 8px; width: 100%; }
 .preset-control { display: flex; flex-direction: column; gap: 4px; flex: 1 1 auto; color: var(--tv-text-dim); font-size: 0.68rem; }
 .preset-control select { border: 1px solid var(--tv-border); border-radius: 6px; background: var(--tv-panel-raised); color: var(--tv-text); padding: 6px 8px; }
 .screener-table-wrap { margin-top: 12px; overflow-x: auto; }
+.tv-center .screener-table-wrap { flex: 1 1 auto; min-height: 0; overflow-y: auto; }
 .screener-table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; font-size: 0.76rem; }
 .screener-table th, .screener-table td { padding: 7px 8px; border-bottom: 1px solid var(--tv-border); text-align: right; white-space: nowrap; }
 .screener-table th:first-child, .screener-table td:first-child { padding-left: 0; text-align: left; }
@@ -658,6 +665,30 @@ button, select { font: inherit; }
 .engines-guide-badge.proprietary { background: rgba(243, 201, 105, 0.15); color: var(--warning); }
 .engines-guide-card-description { margin: 6px 0 0; color: var(--tv-text-dim); font-size: 0.78rem; line-height: 1.5; }
 .engines-guide-card-citation { margin: 6px 0 0; color: var(--tv-text-dim); font-size: 0.68rem; font-style: italic; }
+
+/* Only above the narrow breakpoint below: .tv-sidebar there is a
+   genuine fixed-height (height: 100%) flex column with overflow-y: auto
+   (see its own comment) -- the only context "grow into leftover space"
+   means anything. Below the breakpoint .tv-sidebar switches to
+   height: auto / flex: 0 0 auto (see that block), where there's no
+   fixed-height column to have leftover space in the first place, so
+   this stays scoped out rather than asking a flex-grow item to behave
+   inside a container whose own size depends on that same item. */
+@media (min-width: 961px) {
+  /* QuickScreener moving out of .tv-sidebar into its own view
+     (dashboard.tsx) left this as the last panel in the column with
+     nothing behind it to fill the space that vacated, a blank gap below
+     it whenever the rest of the sidebar's content was shorter than the
+     column's own fixed height. Grows to fill it; shrink stays disabled
+     (flex: 1 0, not 1 1) so a data-heavy day where the sidebar's other
+     panels already overflow the column doesn't instead squeeze this one
+     down to a sliver -- .tv-sidebar's own overflow-y: auto already
+     handles that case by scrolling, exactly as it did before this
+     existed. Deliberately not display: flex internally -- the chart
+     stays in normal block flow rather than being stretched to fill the
+     grown panel, which needlessly turns the SVG itself into a flex item. */
+  .smile-panel { flex: 1 0 auto; min-height: 0; }
+}
 
 @media (max-width: 960px) {
   /* Natural page scroll on narrow viewports — .tv-body reflows to a
