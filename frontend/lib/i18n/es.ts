@@ -224,6 +224,11 @@ export const es: Translations = {
         description:
           "El strike donde expiraría la menor cantidad de valor total de opciones — teoría de precio de cierre. Gana peso conforme se acerca el cierre de sesión, y aparece en Preparación Pre-Sesión y Dinámica de Cierre.",
       },
+      deltaExposure: {
+        name: "Delta Exposure",
+        description:
+          "Exposición direccional agregada — mismo patrón que GEX (Delta × Open Interest × 100). A diferencia de gamma/vanna/charm (calculados vía Black-Scholes-Merton), delta es un valor real cotizado directamente por ThetaData, con su propio signo (positivo en calls, negativo en puts) — no se aplica ningún ajuste de signo adicional.",
+      },
       vegaExposure: {
         name: "Vega Exposure",
         description:

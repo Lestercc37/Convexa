@@ -63,6 +63,7 @@ Tabla oficial para el histórico de la entidad de dominio `GammaAggregate` (Doma
 | theta_exposure | numeric | Σ(Theta × OI × 100) |
 | charm_exposure | numeric | Σ(Charm × OI × 100) |
 | vanna_exposure | numeric | Σ(Vanna × OI × 100 × spot) |
+| delta_exposure | numeric | Σ(Delta × OI × 100) — Delta es un valor real cotizado por ThetaData (no BSM), sin ajuste de signo call/put adicional |
 | peak_gamma_strike | numeric | Absolute Gamma / Peak Gamma Strike |
 
 `dealer_position` (`long_gamma`/`short_gamma`) **no es columna** — es una métrica derivada dentro de `GammaAggregate` a partir del signo de `net_gamma`, tanto en la API como en cualquier consumidor. `GammaExposure[]` nunca se persiste y nunca llega a `IStorage`; solo `GammaAggregate` se almacena en `gamma_aggregates`. `dealer_bias` y demás métricas agregadas se agregan a esta tabla solo cuando el modelo oficial del Gamma Engine las defina.

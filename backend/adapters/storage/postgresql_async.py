@@ -81,7 +81,7 @@ class AsyncPostgreSQLStorage:
                            g.put_wall, g.max_pain, g.net_gamma,
                            g.dealer_gamma_notional, g.vega_exposure,
                            g.theta_exposure, g.charm_exposure,
-                           g.vanna_exposure,
+                           g.vanna_exposure, g.delta_exposure,
                            g.absolute_gamma_strike,
                            g.total_market_gamma, g.positive_gamma, g.negative_gamma,
                            g.peak_gamma_value
@@ -112,6 +112,7 @@ class AsyncPostgreSQLStorage:
             theta_exposure=Decimal(row["theta_exposure"]),
             charm_exposure=Decimal(row["charm_exposure"]),
             vanna_exposure=Decimal(row["vanna_exposure"]),
+            delta_exposure=Decimal(row["delta_exposure"]),
             absolute_gamma_strike=Decimal(row["absolute_gamma_strike"]),
             total_market_gamma=Decimal(row["total_market_gamma"]),
             positive_gamma=Decimal(row["positive_gamma"]),

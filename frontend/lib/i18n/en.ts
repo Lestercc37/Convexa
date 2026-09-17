@@ -221,6 +221,11 @@ export const en: Translations = {
         description:
           "The strike where the least total option value would expire — a closing-price theory. It gains weight as the session close approaches, and appears in Pre-Session Preparation and Closing Dynamics.",
       },
+      deltaExposure: {
+        name: "Delta Exposure",
+        description:
+          "Aggregate directional exposure — same pattern as GEX (Delta × Open Interest × 100). Unlike gamma/vanna/charm (computed via Black-Scholes-Merton), delta is a real value quoted directly by ThetaData, carrying its own sign (positive for calls, negative for puts) — no additional sign convention is applied.",
+      },
       vegaExposure: {
         name: "Vega Exposure",
         description:

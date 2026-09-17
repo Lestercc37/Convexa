@@ -193,6 +193,7 @@ def gamma_response(
         "theta_exposure": _num(gamma.theta_exposure),
         "charm_exposure": _num(gamma.charm_exposure),
         "vanna_exposure": _num(gamma.vanna_exposure),
+        "delta_exposure": _num(gamma.delta_exposure),
         "dealer_position": gamma.dealer_position,
     }
     if derived_metrics is not None:

@@ -357,6 +357,7 @@ button, select { font: inherit; }
 
 .exposure-panel { padding: 12px 14px; }
 .exposure-row { display: flex; gap: 16px; }
+.exposure-row + .exposure-row { margin-top: 10px; }
 .exposure-label { display: block; color: var(--tv-text-dim); font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.05em; }
 .exposure-value { display: block; margin-top: 6px; color: var(--tv-text); font-size: 1.05rem; }
 

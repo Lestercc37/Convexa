@@ -99,6 +99,23 @@ class CalculateGammaExposureOrchestrator:
             ),
             Decimal(0),
         )
+        # No call/put sign flip, same as Vega/Theta/Charm/Vanna above --
+        # unlike dealer_gamma_exposure's own +1 call/-1 put convention
+        # (FakeGammaExposureCalculator, a separate calculation feeding
+        # only Max Pain/Absolute Gamma/Walls), delta already carries its
+        # own real sign here (a genuine ThetaData quote, not BSM-derived
+        # like gamma/vanna/charm -- see calculate_bsm_greeks.py's own
+        # docstring on which greeks are quoted vs. computed): positive
+        # for calls, negative for puts. Summing it raw already nets
+        # long/short directional exposure correctly, with no extra
+        # convention to invent.
+        delta_exposure = sum(
+            (
+                contract.greeks.delta * Decimal(contract.open_interest) * contract_multiplier
+                for contract in enriched_chain.contracts
+            ),
+            Decimal(0),
+        )
 
         result = replace(
             aggregate,
@@ -121,6 +138,7 @@ class CalculateGammaExposureOrchestrator:
             theta_exposure=theta_exposure,
             charm_exposure=charm_exposure,
             vanna_exposure=vanna_exposure,
+            delta_exposure=delta_exposure,
         )
         self._storage.save_gamma_aggregate(result)
         return result

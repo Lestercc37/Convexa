@@ -27,6 +27,7 @@ const gamma: GammaResponse = {
   theta_exposure: 3,
   charm_exposure: 4,
   vanna_exposure: 5,
+  delta_exposure: 6,
   dealer_position: "long_gamma",
   derived_metrics: derivedMetricsFixture,
 };

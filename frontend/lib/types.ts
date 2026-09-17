@@ -136,6 +136,7 @@ export type GammaResponse = {
   theta_exposure: number;
   charm_exposure: number;
   vanna_exposure: number;
+  delta_exposure: number;
   dealer_position: "long_gamma" | "short_gamma";
   derived_metrics: DerivedMetrics;
 };
@@ -156,6 +157,7 @@ export type GammaHistoryItem = {
   theta_exposure: number;
   charm_exposure: number;
   vanna_exposure: number;
+  delta_exposure: number;
   dealer_position: "long_gamma" | "short_gamma";
 };
 

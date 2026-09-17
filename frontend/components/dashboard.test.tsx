@@ -171,6 +171,7 @@ function gammaFor(symbol: string) {
     theta_exposure: 3,
     charm_exposure: 12_500,
     vanna_exposure: -8_300,
+    delta_exposure: 45_000,
     dealer_position: "long_gamma" as const,
     derived_metrics: derivedMetricsFixture,
   };
@@ -296,6 +297,26 @@ describe("Dashboard", () => {
     expect(duplicateKeyWarnings).toEqual([]);
 
     consoleError.mockRestore();
+  });
+
+  it("renders Delta, Vega, Theta, Charm and Vanna Exposure cards in the exposure panel", async () => {
+    // Delta Exposure is new (2026-09-16); Vega/Theta were already
+    // computed on the backend but never had a visible card before this
+    // -- this closes that gap alongside the new metric. Values come
+    // straight from gammaFor("SPY") above: vega=2, theta=3, charm=12500,
+    // vanna=-8300, delta=45000.
+    renderWithLanguage(<Dashboard />);
+
+    await screen.findByLabelText("Chart de velas para SPY");
+
+    expect(screen.getByText("Delta Exposure")).toBeInTheDocument();
+    expect(screen.getByText("45K")).toBeInTheDocument();
+    expect(screen.getByText("Vega Exposure")).toBeInTheDocument();
+    expect(screen.getByText("Theta Exposure")).toBeInTheDocument();
+    expect(screen.getByText("Charm Exposure")).toBeInTheDocument();
+    expect(screen.getByText("12.5K")).toBeInTheDocument();
+    expect(screen.getByText("Vanna Exposure")).toBeInTheDocument();
+    expect(screen.getByText("-8.3K")).toBeInTheDocument();
   });
 
   it("renders the GEX/Whale Alerts flow panel below the price chart, in the live view", async () => {

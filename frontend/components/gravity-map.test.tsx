@@ -30,6 +30,7 @@ function gamma(absoluteGammaStrike: number): GammaResponse {
     theta_exposure: 3,
     charm_exposure: 4,
     vanna_exposure: 5,
+    delta_exposure: 6,
     dealer_position: "short_gamma",
     derived_metrics: derivedMetricsFixture,
   };

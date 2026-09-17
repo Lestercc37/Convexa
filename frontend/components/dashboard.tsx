@@ -421,11 +421,33 @@ export function Dashboard() {
                 <p className="eyebrow">{t.dashboard.aggregatedGreeksEyebrow}</p>
                 <div className="exposure-row">
                   <div>
+                    <span className="exposure-label">Delta Exposure</span>
+                    <strong className="exposure-value">
+                      {EXPOSURE_FORMAT.format(gamma.delta_exposure)}
+                    </strong>
+                  </div>
+                  <div>
+                    <span className="exposure-label">Vega Exposure</span>
+                    <strong className="exposure-value">
+                      {EXPOSURE_FORMAT.format(gamma.vega_exposure)}
+                    </strong>
+                  </div>
+                </div>
+                <div className="exposure-row">
+                  <div>
+                    <span className="exposure-label">Theta Exposure</span>
+                    <strong className="exposure-value">
+                      {EXPOSURE_FORMAT.format(gamma.theta_exposure)}
+                    </strong>
+                  </div>
+                  <div>
                     <span className="exposure-label">Charm Exposure</span>
                     <strong className="exposure-value">
                       {EXPOSURE_FORMAT.format(gamma.charm_exposure)}
                     </strong>
                   </div>
+                </div>
+                <div className="exposure-row">
                   <div>
                     <span className="exposure-label">Vanna Exposure</span>
                     <strong className="exposure-value">
