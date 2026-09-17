@@ -44,6 +44,7 @@ export type Translations = {
     overlaysLegend: string;
     vwapAnchoredLabel: string;
     atrRangeLabel: string;
+    streamFallbackLabel: string;
     drawingToolsAriaLabel: string;
     drawingToolsLegend: string;
     trendlineButton: string;

@@ -18,6 +18,7 @@ import {
 import { getGammaHistory } from "@/lib/api";
 import type { MinuteCandle, Timeframe, VwapPoint } from "@/lib/candles";
 import { useLanguage } from "@/lib/i18n/language-context";
+import type { MarketPriceStreamStatus } from "@/lib/market-price-stream";
 import { EASTERN_TIME_ZONE, mostRecentSessionRange } from "@/lib/market-session";
 import type { AtrRange, GammaHistoryItem, GammaResponse } from "@/lib/types";
 import { LEVEL_MERGE_THRESHOLD } from "./gravity-map";
@@ -30,6 +31,7 @@ type PriceChartProps = {
   vwapPoints?: VwapPoint[];
   atrRange?: AtrRange;
   timeframe?: Timeframe;
+  streamStatus?: MarketPriceStreamStatus;
 };
 
 type GammaLevel = {
@@ -279,6 +281,7 @@ export function PriceChart({
   vwapPoints = [],
   atrRange,
   timeframe = "1m",
+  streamStatus = "connected",
 }: PriceChartProps) {
   const { t } = useLanguage();
   const containerRef = useRef<HTMLDivElement>(null);
@@ -288,6 +291,12 @@ export function PriceChart({
   const dragStartRef = useRef<TrendlinePoint | null>(null);
   const initialCandlesRef = useRef(candles);
   const recomputeBandRectsRef = useRef<() => void>(() => {});
+  // Tracks candle count across renders so the [candles] effect below can
+  // tell "the async session-history seed just landed" (a large jump)
+  // apart from "one more live tick/poll appended a candle" (a jump of
+  // at most 1) -- see that effect's own comment for why this matters.
+  const previousCandleCountRef = useRef(candles.length);
+  const hasRefitAfterSeedRef = useRef(false);
   // Computed once per mount (the whole component remounts on symbol
   // change via its `key`, so a new session's open is picked up then) --
   // see withSessionOpenAnchor for why this only anchors the left edge.
@@ -387,6 +396,8 @@ export function PriceChart({
   }, []);
 
   useEffect(() => {
+    const previousCandleCount = previousCandleCountRef.current;
+    previousCandleCountRef.current = candles.length;
     const latest = candles.at(-1);
     const series = seriesRef.current;
     if (!latest || !series) return;
@@ -410,6 +421,20 @@ export function PriceChart({
       // for good going forward.
       console.warn("PriceChart: series.update() rejected the latest candle, resyncing via setData()", error);
       series.setData(withSessionOpenAnchor(candles, sessionOpenSecondsRef.current));
+    }
+    // The mount effect's fitContent() call above only ever saw whatever
+    // sliver of `candles` existed synchronously at first render --
+    // dashboard.tsx seeds the real session history asynchronously right
+    // after mount (seedThenPoll), so that call fit to near-nothing and
+    // was never re-run once the real history landed, leaving every
+    // remount showing abnormally wide candles until the user manually
+    // adjusted the visible range (confirmed live, 2026-09-17). A jump of
+    // more than one candle at once means a bulk seed just landed, not a
+    // single live tick/poll appending its own new bar -- re-fit exactly
+    // once for that transition, not on every subsequent live update.
+    if (!hasRefitAfterSeedRef.current && candles.length - previousCandleCount > 1) {
+      hasRefitAfterSeedRef.current = true;
+      chartRef.current?.timeScale().fitContent();
     }
   }, [candles]);
 
@@ -715,6 +740,14 @@ export function PriceChart({
           </fieldset>
           <RegimeCompactBadge gamma={gamma} />
           <span className="mode-pill">{t.dashboard.liveButton}</span>
+          {streamStatus === "fallback" && (
+            <span
+              className="stream-fallback-indicator"
+              role="status"
+              title={t.priceChart.streamFallbackLabel}
+              aria-label={t.priceChart.streamFallbackLabel}
+            />
+          )}
         </div>
       </div>
       <div className="price-chart-frame">

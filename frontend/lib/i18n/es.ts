@@ -52,6 +52,7 @@ export const es: Translations = {
     overlaysLegend: "Overlays:",
     vwapAnchoredLabel: "VWAP Anclado",
     atrRangeLabel: "Rango ATR",
+    streamFallbackLabel: "Conexión en tiempo real perdida — actualizando cada 30s",
     drawingToolsAriaLabel: "Herramientas de dibujo",
     drawingToolsLegend: "Dibujo:",
     trendlineButton: "Línea de tendencia",

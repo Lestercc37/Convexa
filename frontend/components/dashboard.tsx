@@ -14,7 +14,10 @@ import {
 import { describeError } from "@/lib/i18n/describe-error";
 import { useLanguage, type Language } from "@/lib/i18n/language-context";
 import { isWithinTheMostRecentSession } from "@/lib/market-session";
-import { connectMarketPriceStream } from "@/lib/market-price-stream";
+import {
+  connectMarketPriceStream,
+  type MarketPriceStreamStatus,
+} from "@/lib/market-price-stream";
 import { POLLING_INTERVAL_MS } from "@/lib/polling";
 import type { GammaResponse, MarketResponse, Underlying } from "@/lib/types";
 import { AlertsPanel } from "./alerts-panel";
@@ -255,16 +258,29 @@ export function Dashboard() {
   // tick appends to pricePoints exactly like the poll's own append
   // does, so it flows through the same aggregateMinuteCandles ->
   // PriceChart pipeline and updates the in-progress candle immediately
-  // instead of waiting for the next 30s cycle.
+  // instead of waiting for the next 30s cycle. Starts as "fallback",
+  // not "connected" -- there's no live tick yet at this point, and the
+  // stream itself now reconnects with backoff instead of going quiet
+  // forever on the first drop (market-price-stream.ts's own comment).
+  // Not reset synchronously on symbol change: connectMarketPriceStream's
+  // onStatusChange always fires from the new WebSocket's own async
+  // onopen/onclose, never synchronously within this effect, so the
+  // previous symbol's status is naturally overwritten the moment the
+  // new connection attempt resolves either way.
+  const [streamStatus, setStreamStatus] = useState<MarketPriceStreamStatus>("fallback");
   useEffect(() => {
     if (!symbol) return;
-    const disconnect = connectMarketPriceStream(symbol, (tick) => {
-      if (!isWithinTheMostRecentSession(Date.parse(tick.as_of))) return;
-      setPricePoints((current) => [
-        ...current,
-        { timestamp: tick.as_of, price: Number(tick.price) },
-      ]);
-    });
+    const disconnect = connectMarketPriceStream(
+      symbol,
+      (tick) => {
+        if (!isWithinTheMostRecentSession(Date.parse(tick.as_of))) return;
+        setPricePoints((current) => [
+          ...current,
+          { timestamp: tick.as_of, price: Number(tick.price) },
+        ]);
+      },
+      setStreamStatus,
+    );
     return disconnect;
   }, [symbol]);
 
@@ -398,6 +414,7 @@ export function Dashboard() {
                     vwapPoints={vwapPoints}
                     atrRange={market.atr_range}
                     timeframe={timeframe}
+                    streamStatus={streamStatus}
                   />
                   <ChartSecondaryPanel
                     key={`chart-secondary-${symbol}`}
