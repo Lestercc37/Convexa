@@ -28,6 +28,7 @@ type PriceChartProps = {
   candles: MinuteCandle[];
   gamma: GammaResponse;
   vwapPoints?: VwapPoint[];
+  vwapNotApplicable?: boolean;
   atrRange?: AtrRange;
   timeframe?: Timeframe;
 };
@@ -277,6 +278,7 @@ export function PriceChart({
   candles,
   gamma,
   vwapPoints = [],
+  vwapNotApplicable = false,
   atrRange,
   timeframe = "1m",
 }: PriceChartProps) {
@@ -676,13 +678,19 @@ export function PriceChart({
           </fieldset>
           <fieldset className="overlay-toggles" aria-label={t.priceChart.overlaysAriaLabel}>
             <legend>{t.priceChart.overlaysLegend}</legend>
-            <label className="chart-toggle">
+            <label
+              className="chart-toggle"
+              title={vwapNotApplicable ? t.priceChart.vwapNotApplicableLabel : undefined}
+            >
               <input
                 type="checkbox"
-                checked={showVwap}
+                checked={!vwapNotApplicable && showVwap}
+                disabled={vwapNotApplicable}
                 onChange={(event) => setShowVwap(event.target.checked)}
               />
-              {t.priceChart.vwapAnchoredLabel}
+              {vwapNotApplicable
+                ? t.priceChart.vwapNotApplicableLabel
+                : t.priceChart.vwapAnchoredLabel}
             </label>
             <label className="chart-toggle">
               <input

@@ -280,6 +280,7 @@ def market_response(snapshot: MarketSnapshot) -> dict[str, Any]:
             "provisional": anchored_vwap.provisional,
             "anchor_time": _dt(anchored_vwap.anchor_time),
             "sample_count": anchored_vwap.sample_count,
+            "not_applicable": anchored_vwap.not_applicable,
         },
         "atr_range": {
             "atr": _optional_num(atr_range.atr),
@@ -309,6 +310,17 @@ def price_history_response(symbol: str, points: list[MarketPrice]) -> dict[str, 
         "schema_version": SCHEMA_VERSION,
         "symbol": symbol.upper(),
         "points": [{"timestamp": _dt(point.as_of), "price": _num(point.price)} for point in points],
+    }
+
+
+def vwap_history_response(
+    symbol: str, series: list[tuple[datetime, Decimal]], not_applicable: bool
+) -> dict[str, Any]:
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "symbol": symbol.upper(),
+        "not_applicable": not_applicable,
+        "points": [{"timestamp": _dt(timestamp), "value": _num(value)} for timestamp, value in series],
     }
 
 

@@ -3,7 +3,7 @@
 import Image from "next/image";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Group, Panel, Separator, useDefaultLayout } from "react-resizable-panels";
-import { getGamma, getMarket, getMarketPriceHistory, getUnderlyings } from "@/lib/api";
+import { getGamma, getMarket, getMarketPriceHistory, getUnderlyings, getVwapHistory } from "@/lib/api";
 import {
   aggregateCandles,
   aggregateMinuteCandles,
@@ -124,6 +124,7 @@ export function Dashboard() {
   const [market, setMarket] = useState<MarketResponse | null>(null);
   const [pricePoints, setPricePoints] = useState<PricePoint[]>([]);
   const [vwapPoints, setVwapPoints] = useState<VwapPoint[]>([]);
+  const [vwapNotApplicable, setVwapNotApplicable] = useState(false);
   // Stores the raw error, not a pre-translated string — translating at
   // render time (via `describeError(error, t)` below) means the message
   // stays correct if the user switches language while it's on screen,
@@ -239,6 +240,24 @@ export function Dashboard() {
         }
       }
       if (controller.signal.aborted) return;
+      // Same seed-from-history pattern as pricePoints above -- fixes VWAP
+      // resetting to empty (and restarting its climb from the very next
+      // poll) every time the symbol is switched away and back, instead of
+      // keeping the session-so-far line it already had (Lester's report,
+      // 2026-09-17).
+      try {
+        const vwapHistory = await getVwapHistory(symbol, controller.signal);
+        if (controller.signal.aborted) return;
+        setVwapNotApplicable(vwapHistory.not_applicable);
+        setVwapPoints(
+          vwapHistory.points.map((point) => ({ timestamp: point.timestamp, value: point.value })),
+        );
+      } catch (reason: unknown) {
+        if (!controller.signal.aborted) {
+          setError(reason);
+        }
+      }
+      if (controller.signal.aborted) return;
       void refresh(symbol, controller.signal);
       interval = window.setInterval(() => void refresh(symbol), POLLING_INTERVAL_MS);
     };
@@ -289,6 +308,7 @@ export function Dashboard() {
                 setMarket(null);
                 setPricePoints([]);
                 setVwapPoints([]);
+                setVwapNotApplicable(false);
                 setSymbol(event.target.value);
               }}
               disabled={!underlyings.length}
@@ -396,6 +416,7 @@ export function Dashboard() {
                     candles={displayedCandles}
                     gamma={gamma}
                     vwapPoints={vwapPoints}
+                    vwapNotApplicable={vwapNotApplicable}
                     atrRange={market.atr_range}
                     timeframe={timeframe}
                   />

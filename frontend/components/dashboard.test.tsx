@@ -15,6 +15,7 @@ const apiMocks = vi.hoisted(() => ({
   getOptionChain: vi.fn(),
   getScreenerPreset: vi.fn(),
   getUnderlyings: vi.fn(),
+  getVwapHistory: vi.fn(),
   getWhaleThresholds: vi.fn(),
   updateWhaleThreshold: vi.fn(),
 }));
@@ -192,6 +193,7 @@ function marketFor(symbol: string) {
       provisional: false,
       anchor_time: "2026-08-03T13:30:00Z",
       sample_count: 3,
+      not_applicable: false,
     },
     atr_range: {
       atr: 5,
@@ -220,6 +222,9 @@ beforeEach(() => {
   apiMocks.getMarket.mockImplementation((symbol: string) => Promise.resolve(marketFor(symbol)));
   apiMocks.getMarketPriceHistory.mockImplementation((symbol: string) =>
     Promise.resolve({ schema_version: 1, symbol, points: [] }),
+  );
+  apiMocks.getVwapHistory.mockImplementation((symbol: string) =>
+    Promise.resolve({ schema_version: 1, symbol, not_applicable: false, points: [] }),
   );
   apiMocks.getOptionChain.mockResolvedValue({
     schema_version: 1,
@@ -405,6 +410,59 @@ describe("Dashboard", () => {
         expect.any(AbortSignal),
       ),
     );
+  });
+
+  it("seeds vwapPoints from the vwap-history endpoint before polling starts, per symbol (regression)", async () => {
+    // Same regression class as pricePoints above: VWAP used to reset to
+    // empty on every symbol switch and only ever rebuild from live 30s
+    // polls, even though the backend already had the whole session's
+    // Anchored VWAP series persisted -- GET /market/{symbol}/vwap-history
+    // exposes that, and this seeds vwapPoints with it before the first
+    // live poll runs (Lester's report, 2026-09-17).
+    apiMocks.getVwapHistory.mockImplementation((symbol: string) =>
+      Promise.resolve({
+        schema_version: 1,
+        symbol,
+        not_applicable: false,
+        points: [
+          { timestamp: "2026-08-03T13:30:00Z", value: 548 },
+          { timestamp: "2026-08-03T13:31:00Z", value: 548.5 },
+        ],
+      }),
+    );
+
+    renderWithLanguage(<Dashboard />);
+    await screen.findByLabelText("Chart de velas para SPY");
+
+    await waitFor(() =>
+      expect(apiMocks.getVwapHistory).toHaveBeenCalledWith("SPY", expect.any(AbortSignal)),
+    );
+
+    const user = userEvent.setup();
+    await user.selectOptions(screen.getByRole("combobox", { name: "Subyacente" }), "GOOGL");
+    await screen.findByLabelText("Chart de velas para GOOGL");
+
+    await waitFor(() =>
+      expect(apiMocks.getVwapHistory).toHaveBeenCalledWith("GOOGL", expect.any(AbortSignal)),
+    );
+  });
+
+  it("marks Anchored VWAP as not available for pure indices instead of leaving it provisional forever (regression)", async () => {
+    // SPX-style symbols always report volume=0 -- Anchored VWAP is
+    // structurally, not temporarily, not_applicable for them (see
+    // AnchoredVwap's own docstring). The overlay toggle should say so
+    // explicitly instead of staying in an endless "provisional" state
+    // that misleadingly implies data could still arrive.
+    apiMocks.getVwapHistory.mockImplementation((symbol: string) =>
+      Promise.resolve({ schema_version: 1, symbol, not_applicable: true, points: [] }),
+    );
+
+    renderWithLanguage(<Dashboard />);
+    await screen.findByLabelText("Chart de velas para SPY");
+
+    expect(
+      await screen.findByText("VWAP Anclado: no disponible para índices"),
+    ).toBeInTheDocument();
   });
 
   it("connects the real-time price stream for the active symbol, and reconnects it on switch (regression)", async () => {

@@ -804,12 +804,25 @@ class AnchoredVwap:
 
     A read-only projection over already-persisted `market_snapshots`
     (see `calculate_anchored_vwap`) — never persisted itself.
+
+    `not_applicable` is a genuinely different outcome from
+    `provisional`: `provisional=True` means "not enough volume yet,
+    but it could still show up" (a real equity/ETF early in the
+    session), while `not_applicable=True` means "this will never
+    compute, structurally" -- confirmed live, 2026-09-17: pure indices
+    (SPX/NDX/VIX) always report volume=0 from ThetaData's
+    /v3/index/snapshot/ohlc (an index has no share volume of its own,
+    only its component stocks do), so volume-weighted VWAP can never
+    have a real denominator for them, not just "not yet". Conflating
+    the two into a single ever-provisional flag would show "still
+    accumulating" forever for a metric that will never arrive.
     """
 
     value: Decimal | None
     provisional: bool
     anchor_time: datetime
     sample_count: int
+    not_applicable: bool = False
 
     def __post_init__(self) -> None:
         if self.value is not None:

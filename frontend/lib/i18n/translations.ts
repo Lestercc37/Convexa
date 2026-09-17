@@ -43,6 +43,7 @@ export type Translations = {
     overlaysAriaLabel: string;
     overlaysLegend: string;
     vwapAnchoredLabel: string;
+    vwapNotApplicableLabel: string;
     atrRangeLabel: string;
     drawingToolsAriaLabel: string;
     drawingToolsLegend: string;

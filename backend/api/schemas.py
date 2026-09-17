@@ -33,6 +33,7 @@ class AnchoredVwapResponse(BaseModel):
     provisional: bool
     anchor_time: str = Field(examples=["2026-01-15T14:30:00Z"])
     sample_count: int = Field(examples=[42])
+    not_applicable: bool = False
 
 
 class AtrRangeResponse(BaseModel):
@@ -86,6 +87,21 @@ class PriceHistoryResponse(BaseModel):
     schema_version: int = Field(examples=[1])
     symbol: str = Field(examples=["SPY"])
     points: list[PricePointResponse]
+
+
+class VwapPointResponse(BaseModel):
+    timestamp: str = Field(examples=["2026-01-15T14:30:00Z"])
+    value: Number = Field(examples=[552.10])
+
+
+class VwapHistoryResponse(BaseModel):
+    schema_version: int = Field(examples=[1])
+    symbol: str = Field(examples=["SPY"])
+    not_applicable: bool = Field(
+        examples=[False],
+        description="True for pure indices (SPX/NDX/VIX) -- see AnchoredVwap's own docstring.",
+    )
+    points: list[VwapPointResponse]
 
 
 class OptionContractResponse(BaseModel):

@@ -11,6 +11,7 @@ import type {
   ScreenerPresetSettingsListResponse,
   ScreenerPresetSettingsUpdate,
   UnderlyingsResponse,
+  VwapHistoryResponse,
   WhaleAlertsResponse,
   WhaleThreshold,
   WhaleThresholdsResponse,
@@ -80,6 +81,13 @@ export function getMarket(symbol: string, signal?: AbortSignal) {
 export function getMarketPriceHistory(symbol: string, signal?: AbortSignal) {
   return getJson<MarketPriceHistoryResponse>(
     `/market/${encodeURIComponent(symbol)}/history`,
+    signal,
+  );
+}
+
+export function getVwapHistory(symbol: string, signal?: AbortSignal) {
+  return getJson<VwapHistoryResponse>(
+    `/market/${encodeURIComponent(symbol)}/vwap-history`,
     signal,
   );
 }

@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 from datetime import date, datetime, timezone
+from decimal import Decimal
 
-from backend.domain.entities import MarketSnapshot, OptionChain
+from backend.domain.entities import MarketSnapshot, OptionChain, UnderlyingKind
 from backend.domain.ports import IAsyncMarketReadStorage, IDataProvider, IStorage
+from backend.domain.underlyings import ACTIVE_UNDERLYINGS_BY_SYMBOL
 from backend.domain.use_cases.calculate_anchored_vwap import (
     calculate_anchored_vwap,
+    calculate_anchored_vwap_series,
     calculate_session_open,
 )
 from backend.domain.use_cases.calculate_atr_range import REQUIRED_DAILY_BARS, calculate_atr_range
@@ -17,6 +20,14 @@ from backend.domain.use_cases.calculate_expected_move import (
 from backend.domain.use_cases.errors import NotFoundError
 from backend.domain.use_cases.flow import SymbolFlowPressure
 from backend.domain.use_cases.market_hours import is_market_open
+
+
+def _is_pure_index(underlying: str) -> bool:
+    """True for SPX/NDX/VIX-style pure indices -- see AnchoredVwap's own
+    docstring for why Anchored VWAP is structurally not_applicable for
+    these, not just provisional."""
+    active = ACTIVE_UNDERLYINGS_BY_SYMBOL.get(underlying.upper())
+    return active is not None and active.kind == UnderlyingKind.INDEX
 
 DEFAULT_FRESHNESS_SECONDS = 60
 
@@ -88,7 +99,9 @@ def build_market_snapshot(storage: IStorage, underlying: str) -> MarketSnapshot:
         volume=price.volume,
         gamma=gamma,
         expected_move=calculate_expected_move(chain, price.as_of),
-        anchored_vwap=calculate_anchored_vwap(price_history, price.as_of),
+        anchored_vwap=calculate_anchored_vwap(
+            price_history, price.as_of, not_applicable=_is_pure_index(underlying)
+        ),
         atr_range=calculate_atr_range(daily_bars, price_history),
         closing_dynamics=calculate_closing_dynamics(gamma, price.price, time_to_close_pct),
         recent_flow=tuple(storage.get_recent_flow(underlying)),
@@ -123,8 +136,32 @@ async def build_market_snapshot_async(
         volume=price.volume,
         gamma=gamma,
         expected_move=calculate_expected_move(chain, price.as_of),
-        anchored_vwap=calculate_anchored_vwap(price_history, price.as_of),
+        anchored_vwap=calculate_anchored_vwap(
+            price_history, price.as_of, not_applicable=_is_pure_index(underlying)
+        ),
         atr_range=calculate_atr_range(daily_bars, price_history),
         closing_dynamics=calculate_closing_dynamics(gamma, price.price, time_to_close_pct),
         recent_flow=tuple(await storage.get_recent_flow(underlying)),
     )
+
+
+async def get_vwap_history_async(
+    storage: IAsyncMarketReadStorage, underlying: str
+) -> tuple[list[tuple[datetime, Decimal]], bool]:
+    """(series, not_applicable) for GET /market/{symbol}/vwap-history --
+    lets the frontend seed the VWAP line on mount/symbol-change the same
+    way GET /market/{symbol}/history already seeds candles (see that
+    route's own docstring), instead of vwapPoints starting empty and
+    rebuilding one point per 30s poll every time the component remounts.
+
+    Same not_applicable rule and the exact same calculate_anchored_vwap_series
+    formula build_market_snapshot_async uses for the single current
+    value -- this is that same series, not a second implementation.
+    Permissive like get_price_history's own route: no readings yet
+    (or not_applicable) just means an empty series, never an error.
+    """
+    if _is_pure_index(underlying):
+        return [], True
+    now = datetime.now(timezone.utc)
+    price_history = await storage.get_price_history(underlying, calculate_session_open(now), now)
+    return calculate_anchored_vwap_series(price_history, now), False
