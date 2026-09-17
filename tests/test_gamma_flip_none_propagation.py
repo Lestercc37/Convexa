@@ -21,6 +21,7 @@ from backend.adapters.providers.mock.gamma_flip import FakeGammaFlipCalculator
 from backend.adapters.providers.mock.max_pain import FakeMaxPainCalculator
 from backend.adapters.providers.mock.provider import MockDataProvider
 from backend.adapters.providers.mock.walls import FakeWallCalculator
+from backend.adapters.providers.thetadata.greeks import PassthroughGreeksCalculator
 from backend.adapters.storage.memory import InMemoryStorage
 from backend.domain.entities import (
     ContractType,
@@ -41,11 +42,6 @@ from backend.domain.use_cases import (
 )
 from backend.domain.use_cases.calculate_derived_metrics import agreement_component
 from backend.main import app
-
-
-class _PreservingGreeksCalculator:
-    def calculate(self, chain: OptionChain) -> OptionChain:
-        return chain
 
 
 def _contract(occ_symbol: str, contract_type: ContractType, strike: Decimal, gamma: str) -> OptionContract:
@@ -75,7 +71,7 @@ def _contract(occ_symbol: str, contract_type: ContractType, strike: Decimal, gam
 def _orchestrator(storage: InMemoryStorage) -> CalculateGammaExposureOrchestrator:
     return CalculateGammaExposureOrchestrator(
         storage=storage,
-        greeks=CalculateGreeksUseCase(_PreservingGreeksCalculator()),
+        greeks=CalculateGreeksUseCase(PassthroughGreeksCalculator()),
         aggregate=CalculateGammaAggregateUseCase(
             FakeGammaExposureCalculator(), FakeGammaAggregateCalculator()
         ),
