@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { getOptionChain } from "@/lib/api";
 import { describeError } from "@/lib/i18n/describe-error";
 import { useLanguage, type Language } from "@/lib/i18n/language-context";
+import { POLLING_INTERVAL_MS } from "@/lib/polling";
 import type { OptionChainResponse, OptionContract } from "@/lib/types";
 
 type VolatilitySmileProps = {
@@ -65,17 +66,30 @@ export function VolatilitySmile({ symbol, marketPrice }: VolatilitySmileProps) {
   useEffect(() => {
     if (!selectedExpiration) return;
     const controller = new AbortController();
-    getOptionChain(symbol, selectedExpiration, controller.signal)
-      .then((response) => {
-        setChain(response);
-        setError(null);
-      })
-      .catch((reason: unknown) => {
-        if (!controller.signal.aborted) {
-          setError(reason);
-        }
-      });
-    return () => controller.abort();
+    // Polled like every other live panel on the dashboard (dashboard.tsx's
+    // own 30s refresh) instead of fetching once and going stale until the
+    // user changes symbol/expiration -- confirmed live, 2026-09-17: IV per
+    // contract moves within a session same as everything else derived from
+    // the option chain, so a smile frozen at mount time drifted from the
+    // real market within minutes.
+    const loadChain = () => {
+      getOptionChain(symbol, selectedExpiration, controller.signal)
+        .then((response) => {
+          setChain(response);
+          setError(null);
+        })
+        .catch((reason: unknown) => {
+          if (!controller.signal.aborted) {
+            setError(reason);
+          }
+        });
+    };
+    loadChain();
+    const interval = window.setInterval(loadChain, POLLING_INTERVAL_MS);
+    return () => {
+      controller.abort();
+      window.clearInterval(interval);
+    };
   }, [selectedExpiration, symbol]);
 
   const contracts = useMemo(() => chain?.contracts ?? [], [chain]);
@@ -138,20 +152,25 @@ export function VolatilitySmile({ symbol, marketPrice }: VolatilitySmileProps) {
                 <text className="smile-atm-label" x={x(plot.atmStrike)} y={PLOT.top + 12}>ATM {plot.atmStrike}</text>
               </g>
             )}
-            {contracts.map((contract) => (
-              <circle
-                key={contract.occ_symbol}
-                className={`smile-point ${contract.type}`}
-                cx={x(contract.strike)}
-                cy={y(contract.iv)}
-                r="5"
-                aria-label={t.volatilitySmile.pointAriaLabel(
-                  contract.type,
-                  contract.strike,
-                  (contract.iv * 100).toFixed(2),
-                )}
-              />
-            ))}
+            {contracts.map((contract) => {
+              const label = t.volatilitySmile.pointAriaLabel(
+                contract.type,
+                contract.strike,
+                (contract.iv * 100).toFixed(2),
+              );
+              return (
+                <circle
+                  key={contract.occ_symbol}
+                  className={`smile-point ${contract.type}`}
+                  cx={x(contract.strike)}
+                  cy={y(contract.iv)}
+                  r="5"
+                  aria-label={label}
+                >
+                  <title>{label}</title>
+                </circle>
+              );
+            })}
             <text className="smile-axis-label" x={(PLOT.left + PLOT.right) / 2} y="274">Strike</text>
             <text className="smile-axis-label" x="14" y={(PLOT.top + PLOT.bottom) / 2} transform={`rotate(-90 14 ${(PLOT.top + PLOT.bottom) / 2})`}>IV</text>
           </svg>

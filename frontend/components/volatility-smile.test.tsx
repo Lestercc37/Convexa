@@ -94,6 +94,30 @@ describe("VolatilitySmile", () => {
     expect(await screen.findByLabelText("call strike 550, IV 20.00%")).toBeInTheDocument();
     expect(screen.queryByLabelText("call strike 545, IV 22.00%")).not.toBeInTheDocument();
   });
+
+  it("re-polls the option chain every 30s instead of freezing at the value fetched on mount (regression)", async () => {
+    // Confirmed live, 2026-09-17: IV per contract moves within a session
+    // the same as everything else derived from the option chain, but this
+    // panel only ever fetched once per symbol/expiration change -- same
+    // 30s cadence as dashboard.tsx's own live refresh (polling.ts's
+    // POLLING_INTERVAL_MS), not a new one invented for this panel.
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    renderWithLanguage(<VolatilitySmile symbol="SPY" marketPrice={551} />);
+
+    await vi.waitFor(() => expect(apiMocks.getOptionChain).toHaveBeenCalledTimes(2));
+
+    await vi.advanceTimersByTimeAsync(30_000);
+    await vi.waitFor(() => expect(apiMocks.getOptionChain).toHaveBeenCalledTimes(3));
+
+    vi.useRealTimers();
+  });
+
+  it("gives each IV point a hover tooltip with the same text as its aria-label (regression)", async () => {
+    renderWithLanguage(<VolatilitySmile symbol="SPY" marketPrice={551} />);
+
+    const point = await screen.findByLabelText("call strike 545, IV 22.00%");
+    expect(point.querySelector("title")).toHaveTextContent("call strike 545, IV 22.00%");
+  });
 });
 
 function withinOptions(selector: HTMLElement): string[] {
