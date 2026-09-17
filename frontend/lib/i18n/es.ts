@@ -51,6 +51,7 @@ export const es: Translations = {
     overlaysAriaLabel: "Overlays",
     overlaysLegend: "Overlays:",
     vwapAnchoredLabel: "VWAP Anclado",
+    vwapNotApplicableLabel: "VWAP Anclado: no disponible para índices",
     atrRangeLabel: "Rango ATR",
     drawingToolsAriaLabel: "Herramientas de dibujo",
     drawingToolsLegend: "Dibujo:",

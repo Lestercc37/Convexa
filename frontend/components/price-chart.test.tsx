@@ -665,6 +665,23 @@ describe("PriceChart", () => {
     expect(container.querySelector(".atr-band-inner")).toBeNull();
   });
 
+  it("shows the VWAP overlay as not available, disabled, instead of a checkbox for pure indices (regression)", () => {
+    // Anchored VWAP is structurally not_applicable for pure indices
+    // (SPX/NDX/VIX) -- see AnchoredVwap's own docstring. The toggle
+    // should say so explicitly instead of offering a checkbox for an
+    // overlay that will never have data.
+    renderWithLanguage(
+      <PriceChart symbol="SPX" gamma={gamma} candles={candlesWithRange} vwapNotApplicable />,
+    );
+
+    const checkbox = screen.getByRole("checkbox", {
+      name: "VWAP Anclado: no disponible para índices",
+    });
+    expect(checkbox).toBeDisabled();
+    expect(checkbox).not.toBeChecked();
+    expect(screen.queryByRole("checkbox", { name: "VWAP Anclado" })).not.toBeInTheDocument();
+  });
+
   it("lets the library own resizing via autoSize instead of a hand-rolled ResizeObserver", () => {
     renderWithLanguage(<PriceChart symbol="SPY" gamma={gamma} candles={[]} />);
 

@@ -214,6 +214,13 @@ export type MarketPriceHistoryResponse = {
   points: { timestamp: string; price: number }[];
 };
 
+export type VwapHistoryResponse = {
+  schema_version: number;
+  symbol: string;
+  not_applicable: boolean;
+  points: { timestamp: string; value: number }[];
+};
+
 export type ExpectedMove = {
   implied_1sd_dollars: number;
   implied_1sd_pct: number;
@@ -229,6 +236,7 @@ export type AnchoredVwap = {
   provisional: boolean;
   anchor_time: string;
   sample_count: number;
+  not_applicable: boolean;
 };
 
 export type AtrRange = {
