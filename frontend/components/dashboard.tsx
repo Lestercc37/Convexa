@@ -119,7 +119,7 @@ export function Dashboard() {
   const isNarrowLayout = useIsNarrowLayout();
   const [underlyings, setUnderlyings] = useState<Underlying[]>([]);
   const [symbol, setSymbol] = useState("");
-  const [view, setView] = useState<"live" | "pre-session">("live");
+  const [view, setView] = useState<"live" | "pre-session" | "scanner">("live");
   const [gamma, setGamma] = useState<GammaResponse | null>(null);
   const [market, setMarket] = useState<MarketResponse | null>(null);
   const [pricePoints, setPricePoints] = useState<PricePoint[]>([]);
@@ -358,6 +358,13 @@ export function Dashboard() {
           >
             {t.dashboard.preSessionButton}
           </button>
+          <button
+            type="button"
+            aria-pressed={view === "scanner"}
+            onClick={() => setView("scanner")}
+          >
+            {t.dashboard.scannerButton}
+          </button>
         </div>
         <div className="tv-topbar-right">
           <button
@@ -406,8 +413,10 @@ export function Dashboard() {
                     gamma={gamma}
                   />
                 </>
-              ) : (
+              ) : view === "pre-session" ? (
                 <PreSessionPanel key={`pre-session-${symbol}`} symbol={symbol} gamma={gamma} />
+              ) : (
+                <QuickScreener />
               )}
             </div>
           );
@@ -468,7 +477,6 @@ export function Dashboard() {
                 symbol={symbol}
                 marketPrice={market.price}
               />
-              <QuickScreener />
             </aside>
           );
 

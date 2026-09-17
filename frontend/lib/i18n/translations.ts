@@ -13,6 +13,7 @@ export type Translations = {
     viewGroupAriaLabel: string;
     liveButton: string;
     preSessionButton: string;
+    scannerButton: string;
     exposureGroupAriaLabel: string;
     aggregatedGreeksEyebrow: string;
     loadingRegime: string;

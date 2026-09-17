@@ -15,6 +15,7 @@ export const es: Translations = {
     viewGroupAriaLabel: "Vista",
     liveButton: "En vivo",
     preSessionButton: "Pre-Sesión",
+    scannerButton: "Escáner Rápido",
     exposureGroupAriaLabel: "Charm y Vanna Exposure",
     aggregatedGreeksEyebrow: "Griegas agregadas",
     loadingRegime: "Cargando régimen y niveles…",

@@ -460,6 +460,27 @@ describe("Dashboard", () => {
     expect(await screen.findByLabelText("Chart de velas para SPY")).toBeInTheDocument();
   });
 
+  it("moves Quick Scanner into its own view, following the same toggle pattern as Pre-Sesión (regression)", async () => {
+    // Quick Scanner used to live permanently in the metrics sidebar --
+    // this moves it to a third top-level view, same button-group pattern
+    // already used for live/pre-session, instead of always taking up
+    // sidebar space regardless of whether the user is looking at it.
+    const user = userEvent.setup();
+    renderWithLanguage(<Dashboard />);
+    await screen.findByLabelText("Chart de velas para SPY");
+
+    expect(screen.queryByRole("heading", { name: "Escáner Rápido" })).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Escáner Rápido" }));
+
+    expect(await screen.findByRole("heading", { name: "Escáner Rápido" })).toBeInTheDocument();
+    expect(screen.queryByLabelText("Chart de velas para SPY")).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "En vivo" }));
+    expect(await screen.findByLabelText("Chart de velas para SPY")).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Escáner Rápido" })).not.toBeInTheDocument();
+  });
+
   it("switches the whole UI to English via the language switcher, across several components", async () => {
     const user = userEvent.setup();
     renderWithLanguage(<Dashboard />);

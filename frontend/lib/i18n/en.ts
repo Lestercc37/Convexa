@@ -15,6 +15,7 @@ export const en: Translations = {
     viewGroupAriaLabel: "View",
     liveButton: "Live",
     preSessionButton: "Pre-Session",
+    scannerButton: "Quick Scanner",
     exposureGroupAriaLabel: "Charm and Vanna Exposure",
     aggregatedGreeksEyebrow: "Aggregated Greeks",
     loadingRegime: "Loading regime and levels…",
