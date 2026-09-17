@@ -6,6 +6,7 @@ from decimal import Decimal
 from backend.domain.entities import MarketPrice
 from backend.domain.use_cases.calculate_anchored_vwap import (
     calculate_anchored_vwap,
+    calculate_anchored_vwap_series,
     calculate_session_open,
 )
 
@@ -103,3 +104,56 @@ def test_anchored_vwap_clamps_negative_volume_delta_from_session_rollover() -> N
     # (550*1000 + 560*0 + 540*1000) / (1000+0+1000) = 1,090,000 / 2,000 = 545
     assert result.value == Decimal(545)
     assert result.sample_count == 3
+
+
+def test_anchored_vwap_not_applicable_for_pure_indices_regardless_of_readings() -> None:
+    # A pure index (SPX/NDX/VIX) always reports volume=0 from ThetaData's
+    # own index snapshot endpoint -- structurally never computable, not
+    # just "not enough data yet". not_applicable must win over whatever
+    # readings are passed, and must not look like provisional=True
+    # (which would read as "still accumulating" for something that will
+    # never arrive).
+    readings = [_reading(5, "7500", 800), _reading(10, "7510", 1200)]
+    as_of = SESSION_OPEN_UTC + timedelta(minutes=10)
+
+    result = calculate_anchored_vwap(readings, as_of, not_applicable=True)
+
+    assert result.value is None
+    assert result.provisional is False
+    assert result.not_applicable is True
+    assert result.sample_count == 0
+
+
+def test_anchored_vwap_applicable_by_default() -> None:
+    result = calculate_anchored_vwap([], SESSION_OPEN_UTC)
+
+    assert result.not_applicable is False
+
+
+def test_anchored_vwap_series_has_one_point_per_reading_once_volume_weighting_is_possible() -> None:
+    readings = [
+        _reading(5, "550", 800),
+        _reading(10, "560", 1000),
+        _reading(15, "540", 2000),
+    ]
+    as_of = SESSION_OPEN_UTC + timedelta(minutes=15)
+
+    series = calculate_anchored_vwap_series(readings, as_of)
+
+    assert [t for t, _ in series] == [r.as_of for r in readings]
+    # Last point must match calculate_anchored_vwap's own answer for the
+    # same inputs -- same formula, same series, just the last vs. all.
+    assert series[-1][1] == calculate_anchored_vwap(readings, as_of).value
+
+
+def test_anchored_vwap_series_emits_no_point_while_volume_is_still_zero() -> None:
+    readings = [_reading(0, "550", 0), _reading(5, "555", 0), _reading(10, "560", 100)]
+    as_of = SESSION_OPEN_UTC + timedelta(minutes=10)
+
+    series = calculate_anchored_vwap_series(readings, as_of)
+
+    # The first two readings contribute zero interval volume (baseline
+    # then still zero) -- no point fabricated for either; only the third
+    # reading, where volume finally turns positive, produces one.
+    assert len(series) == 1
+    assert series[0][0] == readings[2].as_of

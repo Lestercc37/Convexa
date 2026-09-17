@@ -64,6 +64,7 @@ from backend.domain.use_cases.read_models import (
     get_flow,
     get_option_chain,
     get_symbol_flow_pressure_async,
+    get_vwap_history_async,
 )
 from backend.domain.use_cases.refresh_snapshot import RefreshUnderlyingSnapshotUseCase
 from backend.domain.use_cases.screener_presets import (
@@ -127,6 +128,7 @@ __all__ = [
     "get_option_chain",
     "get_screener_preset",
     "get_symbol_flow_pressure_async",
+    "get_vwap_history_async",
     "is_market_open",
     "standard_normal_cdf",
 ]
