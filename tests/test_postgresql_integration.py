@@ -120,6 +120,48 @@ def test_option_chain_round_trip_against_postgresql(
     assert loaded.contracts == source.contracts
 
 
+def test_get_latest_chain_snapshot_ignores_fresher_narrow_write_for_index_against_postgresql(
+    postgresql_storage: tuple[PostgreSQLStorage, Engine, str],
+) -> None:
+    """Confirmed live, 2026-09-18: SPX reporting price above gamma_flip
+    while still showing short_gamma (net_gamma -20B to -32B), and ~1-in-5
+    cycles collapsing to gamma_flip=null/walls=0. Root cause: an unscoped
+    ("give me whatever's latest") read picked up the option chain viewer's
+    narrow single-expiration write over the scheduler's full multi-
+    expiration one, just because it landed with a fresher timestamp -- see
+    PostgreSQLStorage.get_latest_chain_snapshot's own comment. Uses the
+    real symbol "SPX" (not the fixture's random one) because the guard is
+    keyed off underlyings.kind = 'index', which only real registered
+    symbols have -- cleaned up explicitly since the fixture's own teardown
+    targets its random symbol, not this one."""
+    storage, engine, _ = postgresql_storage
+    try:
+        near = MockDataProvider().get_option_chain("SPX")
+        far = MockDataProvider().get_option_chain("SPX", date(2026, 3, 20))
+        full = replace(near, contracts=near.contracts + far.contracts)
+        storage.save_chain_snapshot(full)
+
+        # Lands *after* the full write -- exactly the ordering that broke
+        # SPX live: a fresher timestamp from a single-expiration fetch (the
+        # chain viewer) shadowing the scheduler's own full fetch.
+        narrow = replace(near, as_of=full.as_of + timedelta(minutes=1))
+        storage.save_chain_snapshot(narrow)
+
+        latest = storage.get_latest_chain_snapshot("SPX")
+
+        assert latest is not None
+        assert latest.as_of == full.as_of
+        assert len({contract.expiration for contract in latest.contracts}) > 1
+
+        # The option chain viewer (GET /chain/SPX?expiration=...) must keep
+        # working unchanged -- this guard only applies to the unscoped read.
+        single = storage.get_latest_chain_snapshot("SPX", expiration=narrow.contracts[0].expiration)
+        assert single is not None
+        assert single.as_of == narrow.as_of
+    finally:
+        _delete_test_option_chain_data(engine, "SPX")
+
+
 def test_gamma_aggregate_round_trip_against_postgresql(
     postgresql_storage: tuple[PostgreSQLStorage, Engine, str],
 ) -> None:
@@ -440,6 +482,39 @@ async def test_async_postgresql_storage_reads_what_the_sync_storage_wrote(
         assert history == [price]
     finally:
         await async_engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_async_postgresql_storage_ignores_fresher_narrow_write_for_index(
+    postgresql_storage: tuple[PostgreSQLStorage, Engine, str],
+) -> None:
+    """Async twin of
+    test_get_latest_chain_snapshot_ignores_fresher_narrow_write_for_index_against_postgresql
+    -- AsyncPostgreSQLStorage.get_latest_chain_snapshot backs /market/{symbol}
+    (calculate_expected_move/atm_iv) as well as /gamma/{symbol}, and is
+    hand-written SQL that has to carry the same guard independently (see
+    its own docstring: "Deliberately not a full IStorage implementation")."""
+    storage, engine, _ = postgresql_storage
+    try:
+        near = MockDataProvider().get_option_chain("SPX")
+        far = MockDataProvider().get_option_chain("SPX", date(2026, 3, 20))
+        full = replace(near, contracts=near.contracts + far.contracts)
+        storage.save_chain_snapshot(full)
+        narrow = replace(near, as_of=full.as_of + timedelta(minutes=1))
+        storage.save_chain_snapshot(narrow)
+
+        async_engine = create_engine(_require_test_database_url())
+        try:
+            async_storage = AsyncPostgreSQLStorage(create_session_factory(async_engine))
+            latest = await async_storage.get_latest_chain_snapshot("SPX")
+        finally:
+            await async_engine.dispose()
+
+        assert latest is not None
+        assert latest.as_of == full.as_of
+        assert len({contract.expiration for contract in latest.contracts}) > 1
+    finally:
+        _delete_test_option_chain_data(engine, "SPX")
 
 
 @pytest.mark.asyncio
@@ -927,6 +1002,37 @@ async def test_async_postgres_theta_request_slots_never_double_acquires_under_re
         _release_any_slots_held_by(sync_engine, holder_prefix)
         sync_engine.dispose()
         await async_engine.dispose()
+
+
+def _delete_test_option_chain_data(engine: Engine, symbol: str) -> None:
+    """Same option-chain cleanup as `_delete_test_data`, but never deletes
+    the `underlyings` row itself -- unlike that function's random per-test
+    symbol, the narrow-write regression tests above use a real, always-
+    seeded symbol ("SPX") that other tests (e.g.
+    test_active_underlyings_are_seeded_in_postgresql) expect to keep
+    existing for the lifetime of the test database."""
+    with engine.begin() as connection:
+        underlying_id = connection.execute(
+            text("SELECT id FROM underlyings WHERE symbol = :symbol"),
+            {"symbol": symbol},
+        ).scalar_one_or_none()
+        if underlying_id is None:
+            return
+        connection.execute(
+            text(
+                """
+                DELETE FROM option_chain_snapshots
+                WHERE contract_id IN (
+                    SELECT id FROM option_contracts WHERE underlying_id = :id
+                )
+                """
+            ),
+            {"id": underlying_id},
+        )
+        connection.execute(
+            text("DELETE FROM option_contracts WHERE underlying_id = :id"),
+            {"id": underlying_id},
+        )
 
 
 def _delete_test_data(engine: Engine, symbol: str) -> None:

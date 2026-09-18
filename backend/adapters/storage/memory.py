@@ -15,6 +15,7 @@ from backend.domain.entities import (
     ScreenerPreset,
     ScreenerPresetSettings,
     Underlying,
+    UnderlyingKind,
     WhaleThreshold,
 )
 from backend.domain.underlyings import ACTIVE_UNDERLYINGS
@@ -88,6 +89,18 @@ class InMemoryStorage:
                 for c in chains
                 if any(contract.expiration == expiration for contract in c.contracts)
             ]
+        else:
+            # Mirrors PostgreSQLStorage.get_latest_chain_snapshot's own
+            # guard: an unscoped read for an index can otherwise pick up a
+            # narrow single-expiration chain (the option chain viewer) over
+            # the scheduler's full multi-expiration one just because it was
+            # saved more recently. See that method's comment for the live
+            # incident this fixes (SPX, 2026-09-18).
+            active = self._underlyings.get(underlying.upper())
+            if active is not None and active.kind == UnderlyingKind.INDEX:
+                chains = [
+                    c for c in chains if len({contract.expiration for contract in c.contracts}) > 1
+                ]
         return max(chains, key=lambda chain: chain.as_of, default=None)
 
     def save_gamma_aggregate(self, gamma: GammaAggregate) -> None:

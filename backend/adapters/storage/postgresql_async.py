@@ -207,16 +207,34 @@ class AsyncPostgreSQLStorage:
         ]
 
     async def get_latest_chain_snapshot(self, underlying: str) -> OptionChain | None:
+        # This method never takes an `expiration` (see the class docstring --
+        # deliberately not a full IStorage implementation), so it is always
+        # the "unscoped" read. For an index, that can collide with the
+        # scheduler's full multi-expiration write and a narrower single-
+        # expiration write from the option chain viewer landing at a
+        # fresher `time` -- same guard, same root cause, as
+        # PostgreSQLStorage.get_latest_chain_snapshot's own comment
+        # (confirmed live, 2026-09-18: SPX price above gamma_flip while
+        # still reporting short_gamma, and calculate_expected_move's
+        # atm_iv/expected_move for /market/{symbol} reading the same
+        # corrupted narrow chain via read_models.build_market_snapshot_async).
+        active = ACTIVE_UNDERLYINGS_BY_SYMBOL.get(underlying.upper())
+        is_index = active is not None and active.kind == UnderlyingKind.INDEX
+        multi_expiration_guard = "HAVING COUNT(DISTINCT oc.expiration) > 1" if is_index else ""
         async with self.session_factory() as session:
             result = await session.execute(
                 text(
-                    """
+                    f"""
                     WITH latest AS (
-                        SELECT MAX(s.time) AS time
+                        SELECT s.time
                         FROM option_chain_snapshots AS s
                         JOIN option_contracts AS oc ON oc.id = s.contract_id
                         JOIN underlyings AS u ON u.id = oc.underlying_id
                         WHERE u.symbol = :symbol
+                        GROUP BY s.time
+                        {multi_expiration_guard}
+                        ORDER BY s.time DESC
+                        LIMIT 1
                     )
                     SELECT
                         s.time, s.spot_price, oc.strike, oc.expiration,

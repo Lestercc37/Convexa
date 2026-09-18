@@ -1,3 +1,4 @@
+from dataclasses import replace
 from datetime import date, timedelta
 from decimal import Decimal
 
@@ -105,6 +106,53 @@ def test_calculate_gamma_exposure_orchestrates_and_persists() -> None:
     assert result.call_wall > 0
     assert result.put_wall > 0
     assert result.max_pain > 0
+
+
+def test_get_latest_chain_snapshot_ignores_a_fresher_narrow_write_for_indices() -> None:
+    # Confirmed live, 2026-09-18: SPX reporting price above gamma_flip
+    # while still showing short_gamma (net_gamma -20B to -32B), and ~1-in-5
+    # cycles collapsing to gamma_flip=null/walls=0. Root cause: an unscoped
+    # ("give me whatever's latest") read picked up the option chain
+    # viewer's narrow single-expiration write over the scheduler's full
+    # multi-expiration one, just because it landed with a fresher
+    # timestamp -- see PostgreSQLStorage.get_latest_chain_snapshot's own
+    # comment for the full mechanism. This is the storage-layer regression
+    # test for that fix, independent of the gamma math itself (already
+    # covered by test_calculate_gamma_exposure_orchestrates_and_persists).
+    storage = InMemoryStorage()
+    near = MockDataProvider().get_option_chain("SPX")
+    far = MockDataProvider().get_option_chain("SPX", date(2026, 3, 20))
+    full = replace(near, contracts=near.contracts + far.contracts)
+    storage.save_chain_snapshot(full)
+
+    # The narrow write lands *after* the full one -- exactly the ordering
+    # that broke SPX live: a fresher timestamp from a single-expiration
+    # fetch (the chain viewer) shadowing the scheduler's own full fetch.
+    narrow = replace(near, as_of=full.as_of + timedelta(minutes=1))
+    storage.save_chain_snapshot(narrow)
+
+    latest = storage.get_latest_chain_snapshot("SPX")
+
+    assert latest is full
+    assert len({contract.expiration for contract in latest.contracts}) > 1
+
+
+def test_get_latest_chain_snapshot_still_serves_a_single_expiration_on_explicit_request() -> None:
+    # Requirement: the option chain viewer (GET /chain/SPX?expiration=...)
+    # must keep working unchanged -- this fix only guards the *unscoped*
+    # read the gamma orchestrator makes, never a request for one specific
+    # expiration.
+    storage = InMemoryStorage()
+    near = MockDataProvider().get_option_chain("SPX")
+    far = MockDataProvider().get_option_chain("SPX", date(2026, 3, 20))
+    full = replace(near, contracts=near.contracts + far.contracts)
+    storage.save_chain_snapshot(full)
+    narrow = replace(near, as_of=full.as_of + timedelta(minutes=1))
+    storage.save_chain_snapshot(narrow)
+
+    latest = storage.get_latest_chain_snapshot("SPX", expiration=narrow.contracts[0].expiration)
+
+    assert latest is narrow
 
 
 def test_gamma_aggregate_items_round_trip_in_memory() -> None:

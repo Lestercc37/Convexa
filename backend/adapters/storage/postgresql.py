@@ -252,15 +252,45 @@ class PostgreSQLStorage:
         self, underlying: str, expiration: date | None = None
     ) -> OptionChain | None:
         expiration_filter = "AND oc.expiration = :expiration" if expiration else ""
+        # An unscoped ("give me whatever's latest") read for an index can
+        # collide with two structurally different write shapes sharing this
+        # table: the scheduler's full multi-expiration fetch (Gamma
+        # Aggregate's real input, CalculateGammaExposureOrchestrator) and a
+        # narrow single-expiration fetch from the option chain viewer
+        # (LoadOptionChainUseCase, itself always called with an explicit
+        # `expiration` -- see the `expiration_filter` branch below, which
+        # this guard never touches). If the narrow write lands with a
+        # fresher `time` than the last full one, a plain MAX(s.time) would
+        # silently hand the orchestrator a tiny, unrepresentative slice of
+        # the book instead of the full chain -- confirmed live, 2026-09-18:
+        # SPX showing price above gamma_flip while still reporting
+        # short_gamma with net_gamma in the -20B to -32B range, and ~1-in-5
+        # cycles collapsing to gamma_flip=null/walls=0 when that slice also
+        # had degenerate IV. Requiring >1 distinct expiration only when this
+        # call is itself unscoped keeps a genuinely single-expiration
+        # equity/ETF's own latest snapshot (always exactly 1 expiration,
+        # even when queried unscoped) working exactly as before -- the two
+        # write shapes only exist for indices in the first place.
+        active = ACTIVE_UNDERLYINGS_BY_SYMBOL.get(underlying.upper())
+        is_index = active is not None and active.kind == UnderlyingKind.INDEX
+        multi_expiration_guard = (
+            "HAVING COUNT(DISTINCT oc.expiration) > 1"
+            if expiration is None and is_index
+            else ""
+        )
         statement = text(
             f"""
             WITH latest AS (
-                SELECT MAX(s.time) AS time
+                SELECT s.time
                 FROM option_chain_snapshots AS s
                 JOIN option_contracts AS oc ON oc.id = s.contract_id
                 JOIN underlyings AS u ON u.id = oc.underlying_id
                 WHERE u.symbol = :symbol
                 {expiration_filter}
+                GROUP BY s.time
+                {multi_expiration_guard}
+                ORDER BY s.time DESC
+                LIMIT 1
             )
             SELECT
                 s.time, s.spot_price, oc.strike, oc.expiration,
