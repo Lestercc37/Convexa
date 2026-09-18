@@ -103,6 +103,16 @@ def _provider_with_transport(transport_handler) -> ThetaDataProvider:
     return provider
 
 
+def _safe_future_expirations() -> tuple[date, date, date]:
+    """Three distinct dates guaranteed to clear _nearest_expiration_cutoff
+    against real "now", regardless of what day/time the suite actually
+    runs on -- a fixed calendar date embedded in test data goes stale the
+    moment real wall-clock time passes it (see this class's own comment
+    on the tests that use this)."""
+    today = datetime.now(EASTERN_TIME).date()
+    return today + timedelta(days=14), today + timedelta(days=28), today + timedelta(days=90)
+
+
 class TestHelpers:
     def test_build_occ_symbol_matches_mock_provider_pattern(self) -> None:
         occ = _build_occ_symbol("SPY", date(2026, 9, 18), ContractType.CALL, Decimal(770))
@@ -221,16 +231,65 @@ class TestGetOptionChain:
         assert call.greeks.vanna == put.greeks.vanna
         assert call.greeks.charm == put.greeks.charm
 
-    def test_picks_the_nearest_of_several_returned_expirations(self) -> None:
+    def test_registers_streaming_contracts_for_only_the_nearest_of_several_expirations(self) -> None:
+        # Streaming registration (Whale Alerts Trade/Quote subscriptions)
+        # must stay nearest-only even now that Gamma Aggregate spans every
+        # expiration for every symbol (see the test right below) --
+        # structurally guaranteed by _register_streaming_contracts always
+        # taking a single _NearTheMoneyChain, never the all-expirations
+        # tuple (see that method's own docstring).
+        #
+        # Expirations computed relative to real "now", not hardcoded --
+        # _nearest_expiration_cutoff (see TestNearestExpirationCutoff)
+        # excludes anything before today once the market's closed for the
+        # day, so a fixed past-tense date here would go stale and start
+        # raising "no unexpired near-the-money contracts" the moment real
+        # wall-clock time crossed it, unrelated to anything this test
+        # actually checks.
+        near, mid, far = _safe_future_expirations()
         def handler(request: httpx.Request) -> httpx.Response:
             if "greeks/first_order" in str(request.url):
                 return httpx.Response(
                     200,
                     json={
                         "response": [
-                            _first_order_entry("769.00", "CALL", expiration="2026-10-16"),
-                            _first_order_entry("769.00", "CALL", expiration="2026-09-18"),
-                            _first_order_entry("769.00", "CALL", expiration="2026-12-18"),
+                            _first_order_entry("769.00", "CALL", expiration=mid.isoformat()),
+                            _first_order_entry("769.00", "CALL", expiration=near.isoformat()),
+                            _first_order_entry("769.00", "CALL", expiration=far.isoformat()),
+                        ]
+                    },
+                )
+            if "open_interest" in str(request.url):
+                return httpx.Response(200, json={"response": []})
+            if "interest_rate/history/eod" in str(request.url):
+                return httpx.Response(
+                    200, json={"response": [{"rate": 3.64, "created": "2026-08-31"}]}
+                )
+            if "stock/history/eod" in str(request.url):
+                return httpx.Response(200, json=_daily_bars_response())
+            raise AssertionError(f"unexpected request: {request.url}")
+
+        provider = _provider_with_transport(handler)
+        provider.get_option_chain("SPY")
+
+        assert provider._hub.contract_count() == 1
+
+    def test_gamma_calc_chain_spans_every_returned_expiration_for_any_symbol(self) -> None:
+        # Confirmed live 2026-09-18: this was index-only (SPX/NDX/VIX)
+        # until the same ~1.9%-of-real-OI measurement that justified that
+        # was run against every other symbol too (81-97% equally
+        # excluded) -- SPY here is a plain equity/ETF, not an index, and
+        # must now behave identically to SPX/NDX/VIX did before this.
+        near, mid, far = _safe_future_expirations()
+        def handler(request: httpx.Request) -> httpx.Response:
+            if "greeks/first_order" in str(request.url):
+                return httpx.Response(
+                    200,
+                    json={
+                        "response": [
+                            _first_order_entry("769.00", "CALL", expiration=mid.isoformat()),
+                            _first_order_entry("769.00", "CALL", expiration=near.isoformat()),
+                            _first_order_entry("769.00", "CALL", expiration=far.isoformat()),
                         ]
                     },
                 )
@@ -247,8 +306,45 @@ class TestGetOptionChain:
         provider = _provider_with_transport(handler)
         chain = provider.get_option_chain("SPY")
 
+        expirations = sorted({contract.expiration for contract in chain.contracts})
+        assert expirations == sorted([near, mid, far])
+
+    def test_an_explicit_expiration_request_still_returns_only_that_expiration(self) -> None:
+        # The option chain viewer/weeklies API (LoadOptionChainUseCase)
+        # must be completely unaffected by the all-expirations expansion
+        # above -- gated on `expiration is None`, never on symbol identity.
+        def handler(request: httpx.Request) -> httpx.Response:
+            if "greeks/first_order" in str(request.url):
+                params = request.url.params
+                if params.get("expiration") == "*":
+                    return httpx.Response(
+                        200,
+                        json={
+                            "response": [
+                                _first_order_entry("769.00", "CALL", expiration="2026-10-16"),
+                                _first_order_entry("769.00", "CALL", expiration="2026-09-18"),
+                            ]
+                        },
+                    )
+                return httpx.Response(
+                    200,
+                    json={"response": [_first_order_entry("769.00", "CALL", expiration="2026-10-16")]},
+                )
+            if "open_interest" in str(request.url):
+                return httpx.Response(200, json={"response": []})
+            if "interest_rate/history/eod" in str(request.url):
+                return httpx.Response(
+                    200, json={"response": [{"rate": 3.64, "created": "2026-08-31"}]}
+                )
+            if "stock/history/eod" in str(request.url):
+                return httpx.Response(200, json=_daily_bars_response())
+            raise AssertionError(f"unexpected request: {request.url}")
+
+        provider = _provider_with_transport(handler)
+        chain = provider.get_option_chain("SPY", expiration=date(2026, 10, 16))
+
         assert len(chain.contracts) == 1
-        assert chain.contracts[0].expiration == date(2026, 9, 18)
+        assert chain.contracts[0].expiration == date(2026, 10, 16)
 
     def test_raises_when_thetadata_returns_no_contracts(self) -> None:
         def handler(request: httpx.Request) -> httpx.Response:

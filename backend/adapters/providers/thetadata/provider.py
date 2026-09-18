@@ -1402,8 +1402,8 @@ class ThetaDataProvider:
         self._open_interest_cache: dict[
             tuple[str, date], tuple[float, dict[tuple[Decimal, str], int]]
         ] = {}
-        # All-expirations siblings of the two caches above -- index-only
-        # source for Gamma Aggregate/Max Pain/Absolute Gamma Strike (see
+        # All-expirations siblings of the two caches above -- source for
+        # Gamma Aggregate/Max Pain/Absolute Gamma Strike, every symbol (see
         # _fetch_near_the_money_entries_all/_fetch_open_interest_all_
         # expirations). Same TTLs, kept as separate dicts rather than
         # widening the existing keys/value shapes above, since those two
@@ -1606,8 +1606,8 @@ class ThetaDataProvider:
             #
             # But "today" alone isn't enough once the market has actually
             # closed -- see _nearest_expiration_cutoff. Shared with
-            # _fetch_near_the_money_all_expirations (index-only,
-            # all-expirations Gamma/Max Pain source) via
+            # _fetch_near_the_money_all_expirations (the all-expirations
+            # Gamma/Max Pain source, every symbol) via
             # _fetch_near_the_money_entries_all so a get_option_chain()
             # call needing both this nearest-only view and the
             # all-expirations one makes exactly one real wildcard REST
@@ -1638,8 +1638,8 @@ class ThetaDataProvider:
         never served from a stale cache read of its own, so a widened
         or drifted chain on this cycle is never masked by last cycle's
         cached result. The cache written here exists purely so a
-        same-cycle call to _fetch_near_the_money_all_expirations
-        (index-only Gamma/Max Pain source) can reuse it instead of
+        same-cycle call to _fetch_near_the_money_all_expirations (the
+        Gamma/Max Pain source, every symbol) can reuse it instead of
         issuing a second real REST call -- see that method's own
         docstring."""
         cache_key = symbol
@@ -1657,13 +1657,15 @@ class ThetaDataProvider:
         return unexpired_entries
 
     def _fetch_near_the_money_all_expirations(self, symbol: str) -> tuple[_NearTheMoneyChain, ...]:
-        """All unexpired expirations' near-the-money chains -- index-only
-        (SPX/NDX/VIX) source for Gamma Aggregate/Max Pain/Absolute Gamma
-        Strike. Confirmed live (2026-09-14): the single nearest
-        expiration Convexa used before this held only ~1.9% of SPX's
-        real total open interest, versus the all-expirations methodology
-        SpotGamma (a primary industry source) documents using. Deliberately
-        NOT used for streaming registration -- see
+        """All unexpired expirations' near-the-money chains -- source for
+        Gamma Aggregate/Max Pain/Absolute Gamma Strike, for every symbol.
+        Originally index-only (SPX/NDX/VIX): confirmed live (2026-09-14)
+        the single nearest expiration held only ~1.9% of SPX's real total
+        open interest, versus the all-expirations methodology SpotGamma (a
+        primary industry source) documents using. Extended to every other
+        symbol 2026-09-18 once the same measurement was run against them
+        (81-97% of their own real open interest was equally excluded).
+        Deliberately NOT used for streaming registration -- see
         ThetaDataProvider._register_streaming_contracts, which only ever
         takes a single nearest-only _NearTheMoneyChain.
 
@@ -1755,13 +1757,14 @@ class ThetaDataProvider:
     def _fetch_open_interest_all_expirations(
         self, symbol: str
     ) -> dict[tuple[str, Decimal, str, date], int]:
-        """All-expirations open interest -- index-only Gamma Aggregate/Max
-        Pain/Absolute Gamma Strike source. Keyed by (root, strike, right,
-        expiration), not just (root, strike, right) like the single-
-        expiration _fetch_open_interest above: that 3-part key would
-        collide across the 40+ real unexpired expirations SPX/NDX/VIX
-        carry, silently overwriting one expiration's open interest with
-        another's at the same strike/right.
+        """All-expirations open interest -- Gamma Aggregate/Max Pain/
+        Absolute Gamma Strike source, for every symbol. Keyed by (root,
+        strike, right, expiration), not just (root, strike, right) like
+        the single-expiration _fetch_open_interest above: that 3-part key
+        would collide across the 20-40+ real unexpired expirations a
+        symbol can carry (SPX/NDX/VIX see 40+; the individual equities/
+        ETFs typically see 20-35), silently overwriting one expiration's
+        open interest with another's at the same strike/right.
 
         Uses expiration=* (confirmed live: the open-interest snapshot
         endpoint supports the same wildcard _fetch_near_the_money_all_
@@ -1910,27 +1913,38 @@ class ThetaDataProvider:
         self._register_streaming_contracts(symbol, streaming_chain)
 
         # gamma_calc_chains feeds Gamma Aggregate/Max Pain/Absolute Gamma
-        # Strike only -- all unexpired expirations for index symbols
-        # (SPX/NDX/VIX), confirmed live 2026-09-14 that the nearest
-        # expiration alone holds only ~1.9% of SPX's real open interest
-        # (SpotGamma, a primary industry source, documents summing
-        # "across every strike and expiration"). Every other symbol
-        # (the 12 equities/ETFs + ES) keeps today's exact nearest-only
-        # behavior, just reusing streaming_chain -- zero extra fetches,
-        # zero behavior change.
+        # Strike -- all unexpired expirations, for every symbol. Originally
+        # index-only (SPX/NDX/VIX, confirmed live 2026-09-14 the nearest
+        # expiration alone held only ~1.9% of SPX's real open interest --
+        # SpotGamma, a primary industry source, documents summing "across
+        # every strike and expiration"). Extended to every other symbol
+        # (the 12 equities/ETFs + ES) once the same measurement was run
+        # against them: 81-97% of *their* real open interest was equally
+        # excluded (e.g. SPY/QQQ ~97%, the individual names ~82-84%,
+        # confirmed live 2026-09-18) -- the original index-only gate had
+        # no principled reason to stop at indices, it just hadn't been
+        # measured for anything else yet. `_fetch_near_the_money` above
+        # already fetches with expiration="*" for every symbol when called
+        # unscoped (line ~1574), so this costs no additional REST call on
+        # the greeks side -- _fetch_near_the_money_all_expirations reuses
+        # that same wildcard response via _near_the_money_all_raw_cache.
+        # The one real new cost is the open-interest side: one wildcard
+        # OI fetch per root instead of one single-expiration OI fetch --
+        # same call count, larger response and more contracts to run BSM
+        # on per cycle. See UnderlyingRefreshScheduler's own docstring for
+        # why that's a cycle-timing question, not a ThetaData rate-limit
+        # one (THETADATA_MAX_CONCURRENT_REQUESTS gates concurrent requests,
+        # not request count, and request count is essentially unchanged).
         #
-        # Gated on `expiration is None` too, not just index-ness: a
-        # caller that asked for one specific expiration (the option
-        # chain viewer/weeklies API, via LoadOptionChainUseCase) wants
-        # exactly that expiration's contracts back, same as for every
-        # other symbol -- never silently widened to every expiration
-        # just because the underlying happens to be an index. Only the
-        # scheduler's own no-expiration call (RefreshUnderlyingSnapshot
-        # UseCase -> Gamma Aggregate/Max Pain/Absolute Gamma Strike) ever
-        # triggers the expansion.
-        active = ACTIVE_UNDERLYINGS_BY_SYMBOL.get(symbol)
-        is_index = active is not None and active.kind == UnderlyingKind.INDEX
-        if expiration is None and is_index:
+        # Still gated on `expiration is None`: a caller that asked for one
+        # specific expiration (the option chain viewer/weeklies API, via
+        # LoadOptionChainUseCase) wants exactly that expiration's contracts
+        # back, for every symbol -- never silently widened just because an
+        # unscoped call happens to also exist for the same underlying.
+        # Only the scheduler's own no-expiration call
+        # (RefreshUnderlyingSnapshotUseCase -> Gamma Aggregate/Max Pain/
+        # Absolute Gamma Strike) ever triggers the expansion.
+        if expiration is None:
             gamma_calc_chains = self._fetch_near_the_money_all_expirations(symbol)
             open_interest_by_key = self._fetch_open_interest_all_expirations(symbol)
         else:
