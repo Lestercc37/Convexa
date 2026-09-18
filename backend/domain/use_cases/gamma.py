@@ -64,7 +64,7 @@ class CalculateGammaExposureOrchestrator:
 
         enriched_chain = self._greeks.execute(chain)
         aggregate = self._aggregate.execute(enriched_chain)
-        gamma_flip = self._gamma_flip.execute(aggregate)
+        gamma_flip = self._gamma_flip.execute(aggregate, enriched_chain.spot_price)
         walls = self._walls.execute(aggregate)
         max_pain = self._max_pain.execute(enriched_chain)
         contract_multiplier = Decimal(100)

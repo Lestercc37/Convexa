@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import date, datetime
+from decimal import Decimal
 from typing import TYPE_CHECKING, AsyncIterator, Protocol
 
 if TYPE_CHECKING:
@@ -83,7 +84,7 @@ class IGammaAggregateCalculator(Protocol):
 
 
 class IGammaFlipCalculator(Protocol):
-    def calculate(self, aggregate: GammaAggregate) -> GammaFlip: ...
+    def calculate(self, aggregate: GammaAggregate, spot_price: Decimal) -> GammaFlip: ...
 
 
 class IWallCalculator(Protocol):
