@@ -1,4 +1,5 @@
-from datetime import UTC, datetime, timedelta
+from dataclasses import replace
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 
 import pytest
@@ -55,7 +56,20 @@ def test_market_endpoint_marks_anchored_vwap_not_applicable_for_pure_indices() -
                 net_gamma=Decimal(100),
             )
         )
-        storage.save_chain_snapshot(MockDataProvider().get_option_chain("SPX"))
+        # get_latest_chain_snapshot's unscoped read now requires an index's
+        # latest batch to span >1 expiration (see PostgreSQLStorage.
+        # get_latest_chain_snapshot's own comment) -- a single expiration
+        # would (correctly) be rejected as the option-chain-viewer's narrow
+        # write shape, not a real full scheduler fetch. Combined into one
+        # OptionChain (not two separate save_chain_snapshot calls): the
+        # in-memory storage keeps each save as its own whole-object list
+        # entry rather than flattening to rows like PostgreSQL, so two
+        # single-expiration saves would stay two single-expiration entries,
+        # never merging into one multi-expiration batch the way two
+        # same-timestamp Postgres writes do.
+        near = MockDataProvider().get_option_chain("SPX")
+        far = MockDataProvider().get_option_chain("SPX", date(2026, 3, 20))
+        storage.save_chain_snapshot(replace(near, contracts=near.contracts + far.contracts))
         response = client.get("/api/v1/market/SPX")
 
     assert response.status_code == 200
