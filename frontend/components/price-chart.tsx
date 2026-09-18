@@ -299,6 +299,10 @@ export function PriceChart({
   // at most 1) -- see that effect's own comment for why this matters.
   const previousCandleCountRef = useRef(candles.length);
   const hasRefitAfterSeedRef = useRef(false);
+  // A *second*, independent one-shot re-fit trigger alongside the one
+  // above -- see the mount effect's handleSizeChange for why a candle-
+  // count jump alone isn't enough to catch every case.
+  const hasRefitAfterRealSizeRef = useRef(false);
   // Computed once per mount (the whole component remounts on symbol
   // change via its `key`, so a new session's open is picked up then) --
   // see withSessionOpenAnchor for why this only anchors the left edge.
@@ -385,7 +389,27 @@ export function PriceChart({
     });
     trendlineSeriesRef.current = trendlineSeries;
 
-    const handleSizeChange = () => recomputeBandRectsRef.current();
+    const handleSizeChange = (width: number) => {
+      recomputeBandRectsRef.current();
+      // `autoSize`'s internal ResizeObserver (see the option's own comment
+      // above) can report the container's real pixel width well after
+      // this effect's own synchronous fitContent() call already ran
+      // against a zero/fallback width -- confirmed live, 2026-09-17: for
+      // fast-loading symbols (AAPL, SPY) the full day's candles are
+      // already present at first render, so the jump-detection re-fit in
+      // the [candles] effect below never fires (there's no "empty then
+      // jump" transition to catch) and that first, too-early fitContent()
+      // call was the only one ever made -- silently producing a null
+      // logical range and abnormally wide candles. Re-fit exactly once,
+      // the first time a real (nonzero) width is actually reported,
+      // regardless of whether the jump-based re-fit ever fires too; a
+      // later, unrelated resize (window resize, sidebar toggle) must not
+      // keep re-fitting and fighting the user's own pan/zoom.
+      if (!hasRefitAfterRealSizeRef.current && width > 0) {
+        hasRefitAfterRealSizeRef.current = true;
+        chart.timeScale().fitContent();
+      }
+    };
     chart.timeScale().subscribeSizeChange(handleSizeChange);
 
     return () => {
@@ -434,6 +458,10 @@ export function PriceChart({
     // more than one candle at once means a bulk seed just landed, not a
     // single live tick/poll appending its own new bar -- re-fit exactly
     // once for that transition, not on every subsequent live update.
+    // This is a *separate* trigger from handleSizeChange's own re-fit
+    // above -- a symbol whose full history is already present at first
+    // render never has a jump for this to catch (see that handler's
+    // comment), so both must exist independently to cover every case.
     if (!hasRefitAfterSeedRef.current && candles.length - previousCandleCount > 1) {
       hasRefitAfterSeedRef.current = true;
       chartRef.current?.timeScale().fitContent();

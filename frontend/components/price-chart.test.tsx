@@ -312,6 +312,41 @@ describe("PriceChart", () => {
     expect(chartMocks.fitContent).toHaveBeenCalledTimes(2);
   });
 
+  it("re-fits the visible range once the container reports its real size, even when the full day's candles were already present at first render (regression)", () => {
+    // AAPL/SPY confirmed live, 2026-09-17: their history endpoint can
+    // resolve fast enough that `candles` already holds the full trading
+    // day on the very first render -- unlike the test above, there is no
+    // "empty then jump" transition for the candle-count heuristic to
+    // catch (previousCandleCount and candles.length stay identical
+    // across renders). The remaining, separate race is the container's
+    // own flex-computed size: autoSize's internal ResizeObserver can
+    // report the real width well after the mount effect's own,
+    // synchronous fitContent() call already ran against a zero/fallback
+    // width, so a second, independent re-fit keyed off subscribeSizeChange
+    // is the only thing that catches this case.
+    const fullDay: MinuteCandle[] = Array.from({ length: 385 }, (_, i) => ({
+      time: 1_785_763_800 + i * 60,
+      open: 500,
+      high: 501,
+      low: 499,
+      close: 500.5,
+    }));
+
+    renderWithLanguage(<PriceChart symbol="AAPL" gamma={gamma} candles={fullDay} />);
+    expect(chartMocks.fitContent).toHaveBeenCalledTimes(1);
+
+    const sizeChangeHandler = chartMocks.subscribeSizeChange.mock.calls.at(-1)?.[0];
+    expect(sizeChangeHandler).toBeTypeOf("function");
+    act(() => sizeChangeHandler(800, 420));
+
+    expect(chartMocks.fitContent).toHaveBeenCalledTimes(2);
+
+    // A later, unrelated resize (window resize, sidebar toggle) must not
+    // keep re-fitting and fighting the user's own pan/zoom afterward.
+    act(() => sizeChangeHandler(900, 420));
+    expect(chartMocks.fitContent).toHaveBeenCalledTimes(2);
+  });
+
   it("shows a subtle indicator next to the live pill only while the real-time stream is in fallback mode (regression)", () => {
     // Confirmed live, 2026-09-17: repeated backend restarts that week
     // silently killed long-open tabs' WebSocket with no visible sign of
