@@ -16,7 +16,7 @@ import {
   type UTCTimestamp,
 } from "lightweight-charts";
 import { getGammaHistory } from "@/lib/api";
-import type { MinuteCandle, Timeframe, VwapPoint } from "@/lib/candles";
+import { aggregateMinuteVwapPoints, type MinuteCandle, type Timeframe, type VwapPoint } from "@/lib/candles";
 import { useLanguage } from "@/lib/i18n/language-context";
 import type { MarketPriceStreamStatus } from "@/lib/market-price-stream";
 import { EASTERN_TIME_ZONE, mostRecentSessionRange } from "@/lib/market-session";
@@ -653,14 +653,21 @@ export function PriceChart({
       priceLineVisible: false,
       lastValueVisible: true,
     });
+    // Raw VWAP points arrive at poll/tick resolution (a point every few
+    // seconds) -- feeding that directly to a LineSeries sharing this
+    // chart's timeScale with the 1-minute candlestick series inflates the
+    // shared logical-index space by roughly the ratio of the two
+    // resolutions, which silently breaks fitContent() for the whole chart:
+    // confirmed live, 2026-09-18, AAPL/SPY collapsing to showing only the
+    // most recent ~15-60 minutes of an otherwise-complete day. Downsampled
+    // here, not upstream in dashboard.tsx, so this component can't
+    // regress this again regardless of what a future caller passes it.
     line.setData(
       dedupeAscendingByTime(
-        [...vwapPoints]
-          .sort((left, right) => Date.parse(left.timestamp) - Date.parse(right.timestamp))
-          .map((point) => ({
-            time: Math.floor(Date.parse(point.timestamp) / 1000) as UTCTimestamp,
-            value: point.value,
-          })),
+        aggregateMinuteVwapPoints(vwapPoints).map((point) => ({
+          time: Math.floor(Date.parse(point.timestamp) / 1000) as UTCTimestamp,
+          value: point.value,
+        })),
       ),
     );
     return () => {

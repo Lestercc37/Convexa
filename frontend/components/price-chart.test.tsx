@@ -660,6 +660,43 @@ describe("PriceChart", () => {
     expect(inner?.style.height).toBe("20px");
   });
 
+  it("downsamples VWAP points to 1-per-minute before drawing them, so they can't re-inflate fitContent()'s logical range (regression, 2026-09-18)", () => {
+    // Real VWAP arrives at raw tick/poll resolution -- several points
+    // within the same minute, not one per minute like the candlestick
+    // series. Confirmed live: feeding that raw resolution to a LineSeries
+    // sharing this chart's timeScale with the 1-minute candles inflated
+    // the shared logical-index space enough that fitContent() collapsed
+    // AAPL/SPY to showing only the most recent ~15-60 minutes of an
+    // otherwise-complete trading day, even though the candles themselves
+    // were never truncated. A VWAP series fed at the exact same 1-per-
+    // minute density as `candlesWithRange` (minutes at :00 and :01) can't
+    // reproduce that inflation -- both series then occupy the same
+    // logical time-grid footprint.
+    const rawVwapPoints = [
+      // 5 raw points inside minute 1 (13:30) -- last one (549.9) must win.
+      { timestamp: "2026-08-03T13:30:00.000Z", value: 549.1 },
+      { timestamp: "2026-08-03T13:30:12.000Z", value: 549.3 },
+      { timestamp: "2026-08-03T13:30:27.000Z", value: 549.6 },
+      { timestamp: "2026-08-03T13:30:41.000Z", value: 549.8 },
+      { timestamp: "2026-08-03T13:30:55.000Z", value: 549.9 },
+      // 3 raw points inside minute 2 (13:31) -- last one (550.5) must win.
+      { timestamp: "2026-08-03T13:31:05.000Z", value: 550.1 },
+      { timestamp: "2026-08-03T13:31:30.000Z", value: 550.3 },
+      { timestamp: "2026-08-03T13:31:58.000Z", value: 550.5 },
+    ];
+
+    renderWithLanguage(
+      <PriceChart symbol="SPY" gamma={gamma} candles={candlesWithRange} vwapPoints={rawVwapPoints} />,
+    );
+
+    // One point per minute out of 8 raw ticks in -- the same density and
+    // the exact same two time-grid positions as candlesWithRange itself.
+    expect(chartMocks.lineSetData).toHaveBeenCalledWith([
+      { time: 1_785_763_800, value: 549.9 },
+      { time: 1_785_763_860, value: 550.5 },
+    ]);
+  });
+
   it("hides ATR bands when the visible candles have zero price range (regression for #59)", () => {
     // With only a single flat O=H=L=C candle (the state right after mount,
     // before a second live poll lands), Lightweight Charts' own vertical
