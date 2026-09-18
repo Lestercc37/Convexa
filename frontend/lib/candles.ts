@@ -62,6 +62,37 @@ export function aggregateCandles(candles: MinuteCandle[], timeframe: Timeframe):
   return [...buckets.values()];
 }
 
+// Downsamples VWAP points to the same 1-per-minute resolution as
+// aggregateMinuteCandles above, keeping the last observed value in each
+// minute (closest analogue to a candle's `close`). VWAP points otherwise
+// arrive at raw tick/poll resolution (a point every few seconds) and get
+// fed to a lightweight-charts LineSeries sharing the *same* timeScale as
+// the 1-minute candlestick series -- confirmed live, 2026-09-18: that
+// resolution mismatch inflates the chart's shared logical-index space by
+// ~40x (one index per VWAP tick instead of per minute), so fitContent()
+// can no longer fit a full trading day's candles into a normal container
+// width and silently collapses to showing only the most recent slice.
+// `timestamp` is normalized to the bucket's own minute boundary (not the
+// last raw tick's exact second) so a VWAP point and its same-minute
+// candle land on the *exact* same logical time-grid position.
+export function aggregateMinuteVwapPoints(points: VwapPoint[]): VwapPoint[] {
+  const sortedPoints = points
+    .map((point, index) => ({ ...point, index, time: Date.parse(point.timestamp) }))
+    .filter((point) => Number.isFinite(point.time) && Number.isFinite(point.value))
+    .sort((left, right) => left.time - right.time || left.index - right.index);
+  const lastValueByMinute = new Map<number, number>();
+
+  for (const point of sortedPoints) {
+    const minute = Math.floor(point.time / 1000 / SECONDS_PER_MINUTE) * SECONDS_PER_MINUTE;
+    lastValueByMinute.set(minute, point.value);
+  }
+
+  return [...lastValueByMinute.entries()].map(([minute, value]) => ({
+    timestamp: new Date(minute * 1000).toISOString(),
+    value,
+  }));
+}
+
 export function aggregateMinuteCandles(points: PricePoint[]): MinuteCandle[] {
   const sortedPoints = points
     .map((point, index) => ({ ...point, index, time: Date.parse(point.timestamp) }))

@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { aggregateCandles, aggregateMinuteCandles, type MinuteCandle } from "./candles";
+import {
+  aggregateCandles,
+  aggregateMinuteCandles,
+  aggregateMinuteVwapPoints,
+  type MinuteCandle,
+} from "./candles";
 
 describe("aggregateMinuteCandles", () => {
   it("builds one-minute OHLC candles from timestamped price points", () => {
@@ -26,6 +31,46 @@ describe("aggregateMinuteCandles", () => {
         low: 549,
         close: 549,
       },
+    ]);
+  });
+});
+
+describe("aggregateMinuteVwapPoints", () => {
+  it("keeps only the last value observed within each minute, timestamped to the bucket boundary", () => {
+    // Real VWAP polling/streaming lands several points within the same
+    // minute (confirmed live, 2026-09-18: roughly one every few seconds) --
+    // this must collapse to the same 1-per-minute resolution as
+    // aggregateMinuteCandles, not the raw tick resolution.
+    const points = aggregateMinuteVwapPoints([
+      { timestamp: "2026-08-03T14:30:05Z", value: 548 },
+      { timestamp: "2026-08-03T14:30:20Z", value: 549.5 },
+      { timestamp: "2026-08-03T14:30:45Z", value: 550 },
+      { timestamp: "2026-08-03T14:31:05Z", value: 551 },
+      { timestamp: "2026-08-03T14:31:35Z", value: 549 },
+    ]);
+
+    expect(points).toEqual([
+      { timestamp: new Date(Date.parse("2026-08-03T14:30:00Z")).toISOString(), value: 550 },
+      { timestamp: new Date(Date.parse("2026-08-03T14:31:00Z")).toISOString(), value: 549 },
+    ]);
+  });
+
+  it("lands each point on the exact same time grid as aggregateMinuteCandles for the same minute", () => {
+    const [vwapPoint] = aggregateMinuteVwapPoints([{ timestamp: "2026-08-03T14:30:45Z", value: 550 }]);
+    const [candle] = aggregateMinuteCandles([{ timestamp: "2026-08-03T14:30:45Z", price: 550 }]);
+
+    expect(Math.floor(Date.parse(vwapPoint.timestamp) / 1000)).toBe(candle.time);
+  });
+
+  it("drops out-of-order and non-finite points the same way aggregateMinuteCandles does", () => {
+    const points = aggregateMinuteVwapPoints([
+      { timestamp: "not-a-date", value: 100 },
+      { timestamp: "2026-08-03T14:30:05Z", value: Number.NaN },
+      { timestamp: "2026-08-03T14:30:10Z", value: 548 },
+    ]);
+
+    expect(points).toEqual([
+      { timestamp: new Date(Date.parse("2026-08-03T14:30:00Z")).toISOString(), value: 548 },
     ]);
   });
 });
