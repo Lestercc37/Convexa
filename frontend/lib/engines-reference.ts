@@ -26,7 +26,11 @@ export type EngineReferenceEntry = {
 
 export const ENGINES_REFERENCE: EngineReferenceEntry[] = [
   { id: "gammaExposure", classification: "standard" },
-  { id: "gammaFlip", classification: "standard" },
+  {
+    id: "gammaFlip",
+    classification: "standard",
+    citation: "SpotGamma (Zero Gamma methodology); FlashAlpha (gamma flip stability analysis)",
+  },
   { id: "absoluteGammaStrike", classification: "standard" },
   { id: "callPutWalls", classification: "standard" },
   { id: "maxPain", classification: "standard" },
