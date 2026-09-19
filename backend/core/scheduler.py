@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from datetime import UTC, date, datetime
 
 from backend.core.container import Container
@@ -103,18 +104,33 @@ class UnderlyingRefreshScheduler:
     async def _run_cycle(self) -> None:
         symbols = [underlying.symbol for underlying in ACTIVE_UNDERLYINGS]
         logger.info("Scheduler cycle starting for %d symbols", len(symbols))
+        started_at = time.monotonic()
         outcomes = await asyncio.gather(*(self._refresh_symbol(symbol) for symbol in symbols))
+        # Elapsed time, not just success/failure counts -- added alongside
+        # the all-expirations Gamma Aggregate rollout to every symbol
+        # (2026-09-18, ThetaDataProvider.get_option_chain): that rollout's
+        # own real cost is bigger open-interest responses and more BSM
+        # calculations per symbol per cycle, not more REST calls (see that
+        # change's own comment) -- this is the number that would actually
+        # show it pushing cycles past `interval_seconds`, which success/
+        # failure counts alone never would.
+        elapsed_seconds = time.monotonic() - started_at
         failed = [symbol for symbol, succeeded in zip(symbols, outcomes, strict=True) if not succeeded]
         succeeded_count = len(symbols) - len(failed)
         if failed:
             logger.warning(
-                "Scheduler cycle finished: %d succeeded, %d failed (%s)",
+                "Scheduler cycle finished in %.1fs: %d succeeded, %d failed (%s)",
+                elapsed_seconds,
                 succeeded_count,
                 len(failed),
                 ", ".join(failed),
             )
         else:
-            logger.info("Scheduler cycle finished: %d succeeded, 0 failed", succeeded_count)
+            logger.info(
+                "Scheduler cycle finished in %.1fs: %d succeeded, 0 failed",
+                elapsed_seconds,
+                succeeded_count,
+            )
 
     async def _refresh_symbol(self, symbol: str) -> bool:
         """Refreshes one symbol, reporting success/failure instead of
