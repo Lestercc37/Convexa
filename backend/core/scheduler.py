@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+import tracemalloc
 from datetime import UTC, date, datetime
 
 from backend.core.container import Container
@@ -66,6 +67,18 @@ class UnderlyingRefreshScheduler:
     def start(self) -> None:
         if self._task is not None:
             return
+        # Traces this whole process's Python-level memory, not just this
+        # scheduler's own allocations -- appropriate here since the Worker
+        # process this runs in does nothing else of consequence (see
+        # backend/worker.py). Added 2026-09-19 alongside extending Gamma
+        # Aggregate's all-expirations fetch to every symbol: that rollout
+        # creates more OptionContract/Decimal objects per symbol per
+        # cycle, and this is the number that would show that growing
+        # unbounded rather than settling, which cycle duration/ThetaData
+        # latency alone wouldn't catch. No-ops if already tracing (e.g. a
+        # test or another component started it first).
+        if not tracemalloc.is_tracing():
+            tracemalloc.start()
         self._task = asyncio.create_task(self._run())
 
     async def stop(self) -> None:
@@ -115,20 +128,35 @@ class UnderlyingRefreshScheduler:
         # show it pushing cycles past `interval_seconds`, which success/
         # failure counts alone never would.
         elapsed_seconds = time.monotonic() - started_at
+        # Current and peak *Python-level* allocation since tracemalloc.start()
+        # in .start() above -- not full process RSS (would need psutil, not
+        # already a dependency), but the right proxy for this rollout's
+        # actual risk: more OptionContract/Decimal objects created per
+        # symbol per cycle now that every symbol fetches every expiration,
+        # not just the 3 indices. A current/peak that keeps climbing cycle
+        # over cycle (rather than settling into a steady band) is the
+        # signal to watch for, not any single cycle's absolute value.
+        current_mb, peak_mb = (value / (1024 * 1024) for value in tracemalloc.get_traced_memory())
         failed = [symbol for symbol, succeeded in zip(symbols, outcomes, strict=True) if not succeeded]
         succeeded_count = len(symbols) - len(failed)
         if failed:
             logger.warning(
-                "Scheduler cycle finished in %.1fs: %d succeeded, %d failed (%s)",
+                "Scheduler cycle finished in %.1fs (mem %.1fMB, peak %.1fMB): "
+                "%d succeeded, %d failed (%s)",
                 elapsed_seconds,
+                current_mb,
+                peak_mb,
                 succeeded_count,
                 len(failed),
                 ", ".join(failed),
             )
         else:
             logger.info(
-                "Scheduler cycle finished in %.1fs: %d succeeded, 0 failed",
+                "Scheduler cycle finished in %.1fs (mem %.1fMB, peak %.1fMB): "
+                "%d succeeded, 0 failed",
                 elapsed_seconds,
+                current_mb,
+                peak_mb,
                 succeeded_count,
             )
 
