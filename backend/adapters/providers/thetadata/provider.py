@@ -446,6 +446,29 @@ def _nearest_expiration_cutoff(now_et: datetime) -> date:
     return today if now_et.time() < MARKET_CLOSE_ET else today + timedelta(days=1)
 
 
+# Generous relative to the client's default 10s request timeout
+# (ThetaDataProvider.__init__) -- flags a request that's meaningfully
+# eating into the scheduler's 30s cycle budget, without firing on
+# ordinary latency variance or on the one endpoint already documented to
+# routinely take 30-40s (history/greeks/first_order, which passes its own
+# explicit `timeout` override and is expected to show up here too --
+# that's real, useful signal, not a false alarm to suppress).
+THETADATA_SLOW_REQUEST_SECONDS = 5.0
+
+
+def _log_thetadata_latency(path: str, elapsed_seconds: float) -> None:
+    """Every real REST call to ThetaData passes through here (via
+    _get_json/_get_json_allow_no_data, the one chokepoint both already
+    document) -- added 2026-09-19 alongside extending Gamma Aggregate's
+    all-expirations fetch to every symbol (not just SPX/NDX/VIX), so that
+    rollout's actual latency impact is directly observable from Monday's
+    market open rather than inferred from cycle duration alone."""
+    if elapsed_seconds >= THETADATA_SLOW_REQUEST_SECONDS:
+        logger.warning("ThetaData request slow: GET %s took %.2fs", path, elapsed_seconds)
+    else:
+        logger.debug("ThetaData request: GET %s took %.2fs", path, elapsed_seconds)
+
+
 def _log_req_response(stream_name: str, message: dict[str, Any]) -> None:
     """Logs ThetaData's per-subscription acknowledgment — confirmed live
     (2026-09 investigation against the real Theta Terminal, Stocks/Index
@@ -1463,8 +1486,10 @@ class ThetaDataProvider:
         # it here covers get_option_chain, get_underlying_snapshot,
         # get_daily_bars, and the open-interest/rate lookups uniformly,
         # without touching each of them individually.
+        started_at = time.monotonic()
         with self._request_slots.hold():
             response = self._client.get(path, params=params)
+        _log_thetadata_latency(path, time.monotonic() - started_at)
         if response.status_code != 200:
             raise RuntimeError(
                 f"ThetaData request failed: GET {path} {params} -> "
@@ -1498,8 +1523,10 @@ class ThetaDataProvider:
         request_kwargs: dict[str, Any] = {"params": params}
         if timeout is not None:
             request_kwargs["timeout"] = timeout
+        started_at = time.monotonic()
         with self._request_slots.hold():
             response = self._client.get(path, **request_kwargs)
+        _log_thetadata_latency(path, time.monotonic() - started_at)
         if response.status_code == 472:
             return {"response": []}
         if response.status_code != 200:
