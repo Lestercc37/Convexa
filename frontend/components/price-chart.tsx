@@ -68,6 +68,19 @@ const HISTORICAL_LEVELS = [
 
 const VWAP_COLOR = "#f3c969";
 
+// How long after mount the [candles] effect keeps re-fitting on every bulk
+// jump, instead of only the first one -- confirmed live, 2026-09-21: under a
+// slow/retried initial history load (ThetaData latency degraded post-P1
+// rollout), `candles` can jump by >1 more than once in quick succession as
+// partial responses land and get superseded, and the old "exactly once,
+// ever" guard could consume its one re-fit against an early, still-partial
+// jump, leaving the chart permanently under-fit even once the rest of the
+// day's candles arrived seconds later. 15s comfortably covers the slow
+// loads observed live (8-10s) with headroom, while still turning itself off
+// well before steady-state polling would let this re-fit start fighting a
+// user's own pan/zoom.
+const CANDLE_SEED_SETTLING_WINDOW_MS = 15_000;
+
 // Neutral, distinct from every color already in use on this chart (candles,
 // Gamma levels, VWAP, ATR bands) — a user-drawn annotation, not something
 // Convexa calculated.
@@ -298,7 +311,15 @@ export function PriceChart({
   // apart from "one more live tick/poll appended a candle" (a jump of
   // at most 1) -- see that effect's own comment for why this matters.
   const previousCandleCountRef = useRef(candles.length);
-  const hasRefitAfterSeedRef = useRef(false);
+  // Real mount time, not a one-shot boolean -- see CANDLE_SEED_SETTLING_
+  // WINDOW_MS's own comment for why a bulk jump can legitimately need to
+  // re-fit more than once during a slow/retried initial load. Set inside
+  // the mount effect below, not here -- an impure Date.now() call during
+  // render itself isn't idempotent (and could run more than once per real
+  // mount under React Strict Mode's double-invoke), where the effect is
+  // guaranteed to run exactly once per real mount, before the [candles]
+  // effect (declared after it) ever reads this on that same commit.
+  const mountedAtRef = useRef(0);
   // A *second*, independent one-shot re-fit trigger alongside the one
   // above -- see the mount effect's handleSizeChange for why a candle-
   // count jump alone isn't enough to catch every case.
@@ -331,6 +352,8 @@ export function PriceChart({
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
+
+    mountedAtRef.current = Date.now();
 
     const chart = createChart(container, {
       // `autoSize` delegates to the library's own internal ResizeObserver,
@@ -456,14 +479,24 @@ export function PriceChart({
     // remount showing abnormally wide candles until the user manually
     // adjusted the visible range (confirmed live, 2026-09-17). A jump of
     // more than one candle at once means a bulk seed just landed, not a
-    // single live tick/poll appending its own new bar -- re-fit exactly
-    // once for that transition, not on every subsequent live update.
+    // single live tick/poll appending its own new bar -- re-fit for that
+    // transition, not on every subsequent live update.
     // This is a *separate* trigger from handleSizeChange's own re-fit
     // above -- a symbol whose full history is already present at first
     // render never has a jump for this to catch (see that handler's
     // comment), so both must exist independently to cover every case.
-    if (!hasRefitAfterSeedRef.current && candles.length - previousCandleCount > 1) {
-      hasRefitAfterSeedRef.current = true;
+    //
+    // Bounded by CANDLE_SEED_SETTLING_WINDOW_MS, not a one-shot boolean --
+    // confirmed live, 2026-09-21: under a slow/retried load, more than one
+    // qualifying jump can land in the first several seconds (a partial
+    // response superseded by the real one), and the original "exactly
+    // once, ever" guard could spend its single re-fit on an early, still-
+    // partial jump, permanently under-fitting the chart even once the
+    // rest of the day's candles arrived moments later.
+    if (
+      candles.length - previousCandleCount > 1 &&
+      Date.now() - mountedAtRef.current < CANDLE_SEED_SETTLING_WINDOW_MS
+    ) {
       chartRef.current?.timeScale().fitContent();
     }
   }, [candles]);
