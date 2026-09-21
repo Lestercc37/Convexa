@@ -99,7 +99,11 @@ def _make_client(handler: httpx.MockTransport | None, transport_handler=None) ->
 def _provider_with_transport(transport_handler) -> ThetaDataProvider:
     provider = ThetaDataProvider(REST_URL, WS_URL)
     provider._client = _make_client(None, transport_handler)
-    provider._hub = ThetaStreamHub(WS_URL, provider._client)
+    # Shares provider._request_slots, not a fresh default -- otherwise the
+    # hub's reconcile() would hold its own independent slot pool instead of
+    # actually competing with every other REST call for the one real,
+    # account-wide budget (see ThetaStreamHub.__init__'s own comment).
+    provider._hub = ThetaStreamHub(WS_URL, provider._client, provider._request_slots)
     return provider
 
 
@@ -1638,6 +1642,84 @@ class TestOptionTradeHandling:
 
         assert any("reconciled" in record.message for record in caplog.records)
         assert not any(record.levelno == logging.WARNING for record in caplog.records)
+
+    def test_reconcile_treats_472_as_no_data_without_logging_an_exception(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        # 472 ("no data found for your request") is the expected, normal
+        # outcome for a contract with no trades on file yet -- confirmed
+        # live, 2026-09-21 market open: 36,522 of these in 2 hours, every
+        # one logged as a full stack trace before this fix. Must be silent.
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(472, json={"error": "no data"})
+
+        client = httpx.Client(base_url=REST_URL, transport=httpx.MockTransport(handler))
+        stream = ThetaStreamHub(WS_URL, client)
+        stream.register_contract(
+            "SPY260918C00770000", "SPY", date(2026, 9, 18), ContractType.CALL, Decimal(770)
+        )
+        stream._cumulative_volume["SPY260918C00770000"] = 500
+
+        with caplog.at_level(logging.DEBUG):
+            stream._reconcile()
+
+        assert not any(record.levelno >= logging.WARNING for record in caplog.records)
+
+    def test_reconcile_shares_the_account_wide_concurrency_limit(self) -> None:
+        # Real bug, confirmed via git blame 2026-09-21: reconcile() used to
+        # call self._rest_client.get() directly, bypassing every other REST
+        # call's THETADATA_MAX_CONCURRENT_REQUESTS semaphore entirely --
+        # ThetaData's limit is per ACCOUNT (only one Terminal/account is
+        # ever connected), so this put real, uncounted load on the same
+        # shared budget the semaphore exists to protect. Proves the fix by
+        # saturating every slot with blocked get_option_chain-style calls
+        # and confirming reconcile()'s own call queues behind them instead
+        # of sneaking through.
+        in_flight = 0
+        max_observed = 0
+        lock = threading.Lock()
+        release_event = threading.Event()
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            nonlocal in_flight, max_observed
+            with lock:
+                in_flight += 1
+                max_observed = max(max_observed, in_flight)
+            release_event.wait(timeout=5)
+            with lock:
+                in_flight -= 1
+            return httpx.Response(200, json={"response": []})
+
+        provider = _provider_with_transport(handler)
+        provider._hub.register_contract(
+            "SPY260918C00770000", "SPY", date(2026, 9, 18), ContractType.CALL, Decimal(770)
+        )
+
+        saturating_threads = [
+            threading.Thread(target=lambda: provider._get_json("/v3/some/path"))
+            for _ in range(THETADATA_MAX_CONCURRENT_REQUESTS)
+        ]
+        for thread in saturating_threads:
+            thread.start()
+
+        deadline = time.monotonic() + 2.0
+        while time.monotonic() < deadline and in_flight < THETADATA_MAX_CONCURRENT_REQUESTS:
+            time.sleep(0.01)
+        assert in_flight == THETADATA_MAX_CONCURRENT_REQUESTS
+
+        reconcile_thread = threading.Thread(target=provider._hub._reconcile)
+        reconcile_thread.start()
+        time.sleep(0.2)  # give reconcile() every chance to (incorrectly) sneak through
+
+        try:
+            assert max_observed == THETADATA_MAX_CONCURRENT_REQUESTS
+        finally:
+            release_event.set()
+            for thread in saturating_threads:
+                thread.join(timeout=5)
+            reconcile_thread.join(timeout=5)
+
+        assert in_flight == 0
 
 
 class TestReconcileScheduling:
