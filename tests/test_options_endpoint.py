@@ -129,6 +129,28 @@ def test_gamma_profile_returns_frozen_snapshot_with_per_strike_items() -> None:
     assert {"strike", "net_gamma", "total_gamma_exposure"} <= payload["items"][0].keys()
 
 
+def test_gamma_profile_items_expose_the_real_open_interest_and_volume() -> None:
+    # P7 fix (2026-09-21): these two fields used to always serialize as 0
+    # (GammaAggregateItemResponse declared them, but the serializer never
+    # read them off the item, and the calculator upstream never summed
+    # them in the first place) -- MockDataProvider's own SPY fixture has
+    # real, non-zero values, so a real end-to-end regression would show up
+    # here as every item being 0 again.
+    with TestClient(app) as client:
+        client.post("/internal/trigger-calculation/spy")
+        response = client.get("/api/v1/gamma/spy/profile")
+        stored = app.state.container.storage.get_latest_gamma_aggregate("SPY")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert stored is not None
+    for item, stored_item in zip(payload["items"], stored.items, strict=True):
+        assert item["open_interest"] == stored_item.open_interest
+        assert item["volume"] == stored_item.volume
+    assert any(item["open_interest"] > 0 for item in payload["items"])
+    assert any(item["volume"] > 0 for item in payload["items"])
+
+
 def test_underlyings_history_and_flow_are_storage_backed_gets() -> None:
     with TestClient(app) as client:
         underlyings = client.get("/api/v1/underlyings")

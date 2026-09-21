@@ -31,6 +31,7 @@ def test_fake_gamma_exposure_calculator_returns_one_result_per_contract_determin
             open_interest=8000,
             dealer_gamma_exposure=Decimal("72600000.000"),
             sign=Decimal("1"),
+            volume=3400,
         ),
         GammaExposure(
             occ_symbol="SPY260220P00540000",
@@ -41,8 +42,20 @@ def test_fake_gamma_exposure_calculator_returns_one_result_per_contract_determin
             open_interest=6000,
             dealer_gamma_exposure=Decimal("-45375000.000"),
             sign=Decimal("-1"),
+            volume=3400,
         ),
     )
+
+
+def test_fake_gamma_exposure_calculator_propagates_contract_volume() -> None:
+    # P7 fix (2026-09-21): OptionContract.volume was silently dropped here
+    # before it ever reached GammaExposure -- confirmed via the chain's own
+    # end-to-end trace (OptionContract -> GammaExposure -> GammaAggregateItem).
+    chain = _chain()
+
+    exposures = FakeGammaExposureCalculator().calculate(chain)
+
+    assert all(exposure.volume == 3400 for exposure in exposures)
 
 
 def test_calculate_gamma_exposure_use_case_depends_only_on_port() -> None:

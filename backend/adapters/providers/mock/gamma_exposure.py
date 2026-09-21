@@ -39,4 +39,5 @@ class FakeGammaExposureCalculator(IGammaExposureCalculator):
             open_interest=contract.open_interest,
             dealer_gamma_exposure=dealer_gamma_exposure,
             sign=sign,
+            volume=contract.volume,
         )

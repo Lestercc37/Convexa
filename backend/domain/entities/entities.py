@@ -587,6 +587,12 @@ class GammaExposure:
     open_interest: int
     dealer_gamma_exposure: Decimal
     sign: Decimal
+    # Defaults to 0, not required -- P7 fix (2026-09-21): OptionContract
+    # already carried real volume, but it was dropped here before ever
+    # reaching GammaAggregateItem (which already had the field, just never
+    # populated). Defaulted for backward compatibility with any existing
+    # caller/fixture that only knew about open_interest.
+    volume: int = 0
 
     def __post_init__(self) -> None:
         if not self.occ_symbol:
@@ -601,6 +607,8 @@ class GammaExposure:
             "dealer_gamma_exposure",
         )
         _ensure_finite_decimal(self.sign, InvalidOptionError, "sign")
+        if self.volume < 0:
+            raise InvalidOptionError("volume cannot be negative")
         if self.open_interest < 0:
             raise InvalidOptionError("open_interest cannot be negative")
         if self.sign not in (Decimal("-1"), Decimal("1")):
