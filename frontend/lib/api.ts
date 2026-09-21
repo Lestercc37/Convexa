@@ -74,6 +74,20 @@ export function getGammaProfile(symbol: string, signal?: AbortSignal) {
   );
 }
 
+// P-E fix (2026-09-21): same shape as getGammaProfile, but the backend
+// limits it to near-term expirations only -- see
+// CalculateNearTermGammaProfileUseCase's own docstring for why a rare
+// far-dated outlier expiration (a real live incident: SPX's own 2031
+// LEAPS listing) can otherwise stretch the GEX-by-strike chart's x-axis
+// range far wider than what's actually relevant, squeezing every strike
+// that matters into a narrow band.
+export function getGammaNearTermProfile(symbol: string, signal?: AbortSignal) {
+  return getJson<GammaAggregateResponse>(
+    `/gamma/${encodeURIComponent(symbol)}/profile/near-term`,
+    signal,
+  );
+}
+
 export function getMarket(symbol: string, signal?: AbortSignal) {
   return getJson<MarketResponse>(`/market/${encodeURIComponent(symbol)}`, signal);
 }
