@@ -86,6 +86,20 @@ def gamma_profile(symbol: str, request: Request) -> GammaAggregateResponse:
     return GammaAggregateResponse.model_validate(gamma_aggregate_response(gamma))
 
 
+@router.get("/gamma/{symbol}/profile/near-term", response_model=GammaAggregateResponse)
+def gamma_near_term_profile(symbol: str, request: Request) -> GammaAggregateResponse:
+    """Same shape as /gamma/{symbol}/profile, but limited to near-term
+    expirations only (see CalculateNearTermGammaProfileUseCase's own
+    docstring) -- built for the GEX-by-strike chart (P-E), which needs a
+    per-strike breakdown a rare far-dated outlier expiration can't stretch
+    wide. Computed fresh on every request, not persisted -- deliberately
+    NOT the same GammaAggregate Gamma Flip/Walls/Max Pain read above,
+    which correctly want every expiration's real exposure included."""
+    container: Container = request.app.state.container
+    gamma = container.calculate_near_term_gamma_profile_use_case.execute(symbol)
+    return GammaAggregateResponse.model_validate(gamma_aggregate_response(gamma))
+
+
 @router.get("/gamma/{symbol}/flip", response_model=GammaFlipResponse)
 def gamma_flip(symbol: str, request: Request) -> GammaFlipResponse:
     """The one honest, correctly-nullable representation of gamma_flip --

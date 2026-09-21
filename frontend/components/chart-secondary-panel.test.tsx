@@ -13,7 +13,7 @@ import type {
 import { derivedMetricsFixture } from "@/test/fixtures";
 import { ChartSecondaryPanel } from "./chart-secondary-panel";
 
-const apiMocks = vi.hoisted(() => ({ getGammaProfile: vi.fn(), getAlerts: vi.fn() }));
+const apiMocks = vi.hoisted(() => ({ getGammaNearTermProfile: vi.fn(), getAlerts: vi.fn() }));
 
 // Between the two fixture strikes (545/550) — a realistic spot price
 // mid-chain, not coinciding with either strike.
@@ -21,7 +21,7 @@ const SPOT_PRICE = 547.25;
 
 vi.mock("@/lib/api", async () => {
   const actual = await vi.importActual<typeof import("@/lib/api")>("@/lib/api");
-  return { ...actual, getGammaProfile: apiMocks.getGammaProfile, getAlerts: apiMocks.getAlerts };
+  return { ...actual, getGammaNearTermProfile: apiMocks.getGammaNearTermProfile, getAlerts: apiMocks.getAlerts };
 });
 
 // Distinct from every fixture strike (540-555) so wall/level assertions
@@ -66,6 +66,8 @@ function profile(overrides: Partial<GammaAggregateResponse> = {}): GammaAggregat
         net_gamma: 90,
         contract_count: 2,
         absolute_gamma: 90,
+        open_interest: 14000,
+        volume: 6800,
       },
       {
         strike: 550,
@@ -75,6 +77,8 @@ function profile(overrides: Partial<GammaAggregateResponse> = {}): GammaAggregat
         net_gamma: 40,
         contract_count: 3,
         absolute_gamma: 40,
+        open_interest: 9000,
+        volume: 5200,
       },
     ],
     ...overrides,
@@ -93,6 +97,8 @@ function manyStrikeItems(count: number, start: number, step: number): GammaAggre
     net_gamma: 100,
     contract_count: 2,
     absolute_gamma: 100,
+    open_interest: 1000,
+    volume: 500,
   }));
 }
 
@@ -116,7 +122,7 @@ function alertsResponse(alerts: WhaleAlert[]): WhaleAlertsResponse {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  apiMocks.getGammaProfile.mockResolvedValue(profile());
+  apiMocks.getGammaNearTermProfile.mockResolvedValue(profile());
   apiMocks.getAlerts.mockResolvedValue(alertsResponse([]));
 });
 
@@ -124,7 +130,7 @@ describe("ChartSecondaryPanel", () => {
   it("renders the GEX-by-strike view by default, with a bar per strike", async () => {
     renderWithLanguage(<ChartSecondaryPanel symbol="SPY" spotPrice={SPOT_PRICE} gamma={gamma} />);
 
-    await waitFor(() => expect(apiMocks.getGammaProfile).toHaveBeenCalledWith("SPY", expect.any(AbortSignal)));
+    await waitFor(() => expect(apiMocks.getGammaNearTermProfile).toHaveBeenCalledWith("SPY", expect.any(AbortSignal)));
 
     expect(await screen.findByLabelText("GEX por strike para SPY")).toBeInTheDocument();
     expect(screen.getByLabelText("Strike 545")).toBeInTheDocument();
@@ -136,7 +142,7 @@ describe("ChartSecondaryPanel", () => {
   });
 
   it("draws a single net GEX bar per strike, colored green when positive and red when negative", async () => {
-    apiMocks.getGammaProfile.mockResolvedValue(
+    apiMocks.getGammaNearTermProfile.mockResolvedValue(
       profile({
         items: [
           {
@@ -147,6 +153,8 @@ describe("ChartSecondaryPanel", () => {
             net_gamma: 90,
             contract_count: 2,
             absolute_gamma: 90,
+            open_interest: 14000,
+            volume: 6800,
           },
           // The spec's own concrete example: Call GEX +50M, Put GEX -80M
           // -> a single -30M bar, red.
@@ -158,6 +166,8 @@ describe("ChartSecondaryPanel", () => {
             net_gamma: -30,
             contract_count: 3,
             absolute_gamma: 30,
+            open_interest: 9000,
+            volume: 5200,
           },
         ],
       }),
@@ -195,10 +205,14 @@ describe("ChartSecondaryPanel", () => {
   });
 
   it("renders a zero-height, neutrally-classed bar when net GEX is exactly zero", async () => {
-    apiMocks.getGammaProfile.mockResolvedValue(
+    apiMocks.getGammaNearTermProfile.mockResolvedValue(
       profile({
         items: [
           {
+            // Real open interest on both sides that happens to net to
+            // exactly zero (not "no interest") -- must still render, see
+            // gexItems' own P-E filtering comment for why open_interest,
+            // not net_gamma, is what that filter keys on.
             strike: 545,
             total_gamma_exposure: 100,
             call_gamma_exposure: 50,
@@ -206,6 +220,8 @@ describe("ChartSecondaryPanel", () => {
             net_gamma: 0,
             contract_count: 2,
             absolute_gamma: 0,
+            open_interest: 8000,
+            volume: 3000,
           },
           {
             strike: 550,
@@ -215,6 +231,8 @@ describe("ChartSecondaryPanel", () => {
             net_gamma: 40,
             contract_count: 3,
             absolute_gamma: 40,
+            open_interest: 9000,
+            volume: 5200,
           },
         ],
       }),
@@ -227,6 +245,104 @@ describe("ChartSecondaryPanel", () => {
     expect(bar545).not.toHaveClass("positive");
     expect(bar545).not.toHaveClass("negative");
     expect(Number(bar545?.getAttribute("height"))).toBe(0);
+  });
+
+  it("excludes zero-open-interest strikes so far OTM/illiquid strikes can't squeeze the real ones into a narrow band (regression, P-E, 2026-09-21)", async () => {
+    // Confirmed live, 2026-09-21: since the P1 rollout widened every
+    // symbol's fetch to every expiration, `profile.items` can include far
+    // OTM/far-dated strikes with zero real open interest -- their bar was
+    // already invisible (net_gamma is exactly 0 whenever open_interest is
+    // 0, since dealer exposure is gamma * open_interest * ...), but they
+    // still stretched the x-axis range, squeezing every strike that
+    // actually has a visible bar into a narrow band in the plot's middle.
+    apiMocks.getGammaNearTermProfile.mockResolvedValue(
+      profile({
+        items: [
+          {
+            strike: 545,
+            total_gamma_exposure: 390,
+            call_gamma_exposure: 240,
+            put_gamma_exposure: -150,
+            net_gamma: 90,
+            contract_count: 2,
+            absolute_gamma: 90,
+            open_interest: 14000,
+            volume: 6800,
+          },
+          {
+            strike: 550,
+            total_gamma_exposure: 200,
+            call_gamma_exposure: 120,
+            put_gamma_exposure: -80,
+            net_gamma: 40,
+            contract_count: 3,
+            absolute_gamma: 40,
+            open_interest: 9000,
+            volume: 5200,
+          },
+          // A far, illiquid strike from a distant expiration -- exactly
+          // the shape of data P1 added. Zero real interest, zero net
+          // gamma, nothing visible to lose by excluding it.
+          {
+            strike: 900,
+            total_gamma_exposure: 0,
+            call_gamma_exposure: 0,
+            put_gamma_exposure: 0,
+            net_gamma: 0,
+            contract_count: 1,
+            absolute_gamma: 0,
+            open_interest: 0,
+            volume: 0,
+          },
+        ],
+      }),
+    );
+    renderWithLanguage(<ChartSecondaryPanel symbol="SPY" spotPrice={SPOT_PRICE} gamma={gamma} />);
+    await screen.findByLabelText("GEX por strike para SPY");
+
+    expect(document.querySelectorAll(".secondary-gex-bar")).toHaveLength(2);
+    expect(screen.getByLabelText("Strike 545")).toBeInTheDocument();
+    expect(screen.getByLabelText("Strike 550")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Strike 900")).not.toBeInTheDocument();
+  });
+
+  it("falls back to every strike when none has real open interest yet, instead of rendering nothing", async () => {
+    // Right after startup/a symbol switch, the chain can briefly still be
+    // unenriched (every item's open_interest genuinely 0) -- excluding
+    // everything in that moment would show an empty chart instead of the
+    // real, if imprecise, data already on hand.
+    apiMocks.getGammaNearTermProfile.mockResolvedValue(
+      profile({
+        items: [
+          {
+            strike: 545,
+            total_gamma_exposure: 0,
+            call_gamma_exposure: 0,
+            put_gamma_exposure: 0,
+            net_gamma: 0,
+            contract_count: 2,
+            absolute_gamma: 0,
+            open_interest: 0,
+            volume: 0,
+          },
+          {
+            strike: 550,
+            total_gamma_exposure: 0,
+            call_gamma_exposure: 0,
+            put_gamma_exposure: 0,
+            net_gamma: 0,
+            contract_count: 3,
+            absolute_gamma: 0,
+            open_interest: 0,
+            volume: 0,
+          },
+        ],
+      }),
+    );
+    renderWithLanguage(<ChartSecondaryPanel symbol="SPY" spotPrice={SPOT_PRICE} gamma={gamma} />);
+    await screen.findByLabelText("GEX por strike para SPY");
+
+    expect(document.querySelectorAll(".secondary-gex-bar")).toHaveLength(2);
   });
 
   it("scales net bars on one shared axis, not independently per strike", async () => {
@@ -360,7 +476,7 @@ describe("ChartSecondaryPanel", () => {
   });
 
   it("shows a translated error when the GEX profile fetch fails", async () => {
-    apiMocks.getGammaProfile.mockRejectedValue(new ApiError(404));
+    apiMocks.getGammaNearTermProfile.mockRejectedValue(new ApiError(404));
 
     renderWithLanguage(<ChartSecondaryPanel symbol="SPY" spotPrice={SPOT_PRICE} gamma={gamma} />);
 
@@ -468,7 +584,7 @@ describe("ChartSecondaryPanel", () => {
 
   it("renders a bar for every strike but thins labels once there are too many to fit legibly", async () => {
     const items = manyStrikeItems(32, 7555, 5);
-    apiMocks.getGammaProfile.mockResolvedValue(profile({ symbol: "SPX", items }));
+    apiMocks.getGammaNearTermProfile.mockResolvedValue(profile({ symbol: "SPX", items }));
 
     // 7557 is closest to strike 7555 (index 0), which the label-thinning
     // step (2, at these 32 strikes) already keeps on its own — isolates
@@ -487,7 +603,7 @@ describe("ChartSecondaryPanel", () => {
 
   it("always labels the strike closest to spot even when the thinning pattern would skip it", async () => {
     const items = manyStrikeItems(32, 7555, 5);
-    apiMocks.getGammaProfile.mockResolvedValue(profile({ symbol: "SPX", items }));
+    apiMocks.getGammaNearTermProfile.mockResolvedValue(profile({ symbol: "SPX", items }));
 
     // Strike 7,560 is index 1 (odd) — the computed step (2) at these 32
     // strikes only labels even indices, so this strike would be skipped
@@ -506,7 +622,7 @@ describe("ChartSecondaryPanel", () => {
     // above) — showing all three visually overlapped in the browser.
     // Only the forced label should render in that neighborhood.
     const items = manyStrikeItems(32, 7555, 5);
-    apiMocks.getGammaProfile.mockResolvedValue(profile({ symbol: "SPX", items }));
+    apiMocks.getGammaNearTermProfile.mockResolvedValue(profile({ symbol: "SPX", items }));
 
     renderWithLanguage(<ChartSecondaryPanel symbol="SPX" spotPrice={7561} gamma={gamma} />);
     await screen.findByLabelText("GEX por strike para SPX");

@@ -9,7 +9,7 @@ import { Dashboard } from "./dashboard";
 const apiMocks = vi.hoisted(() => ({
   getAlerts: vi.fn(),
   getGamma: vi.fn(),
-  getGammaProfile: vi.fn(),
+  getGammaNearTermProfile: vi.fn(),
   getMarket: vi.fn(),
   getMarketPriceHistory: vi.fn(),
   getOptionChain: vi.fn(),
@@ -252,7 +252,7 @@ beforeEach(() => {
       },
     ],
   });
-  apiMocks.getGammaProfile.mockImplementation((symbol: string) =>
+  apiMocks.getGammaNearTermProfile.mockImplementation((symbol: string) =>
     Promise.resolve({
       schema_version: 1,
       symbol,
@@ -333,7 +333,7 @@ describe("Dashboard", () => {
       await screen.findByLabelText("GEX por strike y flujo acumulado de Whale Alerts"),
     ).toBeInTheDocument();
     await waitFor(() =>
-      expect(apiMocks.getGammaProfile).toHaveBeenCalledWith("SPY", expect.any(AbortSignal)),
+      expect(apiMocks.getGammaNearTermProfile).toHaveBeenCalledWith("SPY", expect.any(AbortSignal)),
     );
     expect(await screen.findByLabelText("GEX por strike para SPY")).toBeInTheDocument();
   });
@@ -513,7 +513,7 @@ describe("Dashboard", () => {
     expect(await screen.findByText(/Congelado desde el cierre de/)).toBeInTheDocument();
     expect(screen.queryByLabelText("Chart de velas para SPY")).not.toBeInTheDocument();
     await waitFor(() =>
-      expect(apiMocks.getGammaProfile).toHaveBeenCalledWith("SPY", expect.any(AbortSignal)),
+      expect(apiMocks.getGammaNearTermProfile).toHaveBeenCalledWith("SPY", expect.any(AbortSignal)),
     );
 
     await user.click(screen.getByRole("button", { name: "En vivo" }));

@@ -43,6 +43,7 @@ from backend.domain.use_cases import (
     CalculateGammaFlipUseCase,
     CalculateGreeksUseCase,
     CalculateMaxPainUseCase,
+    CalculateNearTermGammaProfileUseCase,
     CalculateWallsUseCase,
     GetMarketSnapshotUseCase,
     LoadOptionChainUseCase,
@@ -85,6 +86,7 @@ class Container:
     calculate_walls_use_case: CalculateWallsUseCase
     calculate_max_pain_use_case: CalculateMaxPainUseCase
     calculate_gamma_exposure_orchestrator: CalculateGammaExposureOrchestrator
+    calculate_near_term_gamma_profile_use_case: CalculateNearTermGammaProfileUseCase
     calculate_derived_metrics_use_case: CalculateDerivedMetricsUseCase
     whale_alerts_engine: WhaleAlertsEngine
     refresh_underlying_snapshot_use_case: RefreshUnderlyingSnapshotUseCase
@@ -212,6 +214,11 @@ def build_container() -> Container:
         walls=calculate_walls_use_case,
         max_pain=calculate_max_pain_use_case,
     )
+    calculate_near_term_gamma_profile_use_case = CalculateNearTermGammaProfileUseCase(
+        storage=storage,
+        greeks=calculate_greeks_use_case,
+        aggregate=calculate_gamma_aggregate_use_case,
+    )
     calculate_derived_metrics_use_case = CalculateDerivedMetricsUseCase(storage)
     whale_alerts_engine = build_whale_alerts_engine(whale_alerts_storage)
     refresh_underlying_snapshot_use_case = RefreshUnderlyingSnapshotUseCase(
@@ -245,6 +252,7 @@ def build_container() -> Container:
         calculate_walls_use_case=calculate_walls_use_case,
         calculate_max_pain_use_case=calculate_max_pain_use_case,
         calculate_gamma_exposure_orchestrator=calculate_gamma_exposure_orchestrator,
+        calculate_near_term_gamma_profile_use_case=calculate_near_term_gamma_profile_use_case,
         calculate_derived_metrics_use_case=calculate_derived_metrics_use_case,
         whale_alerts_engine=whale_alerts_engine,
         refresh_underlying_snapshot_use_case=refresh_underlying_snapshot_use_case,

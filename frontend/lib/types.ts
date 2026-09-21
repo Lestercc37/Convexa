@@ -175,6 +175,8 @@ export type GammaAggregateItem = {
   net_gamma: number;
   contract_count: number;
   absolute_gamma: number;
+  open_interest: number;
+  volume: number;
 };
 
 export type GammaAggregateResponse = {
