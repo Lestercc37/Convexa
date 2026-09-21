@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { getGammaNearTermProfile } from "@/lib/api";
+import { getGammaProfile } from "@/lib/api";
 import { describeError } from "@/lib/i18n/describe-error";
 import { useLanguage, type Language } from "@/lib/i18n/language-context";
 import type { GammaAggregateItem, GammaAggregateResponse, GammaResponse } from "@/lib/types";
@@ -48,11 +48,7 @@ export function PreSessionPanel({ symbol, gamma }: PreSessionPanelProps) {
     // Fetched once per symbol, on purpose — this is the frozen snapshot from
     // the previous close (dashboard-spec.md section 8), not a live view, so
     // it never joins the Dashboard's 30s polling loop.
-    // getGammaNearTermProfile, not getGammaProfile (P-E fix, 2026-09-21) --
-    // this chart's strike axis has the same squeeze risk chart-secondary-
-    // panel.tsx had from a rare far-dated outlier expiration; see
-    // CalculateNearTermGammaProfileUseCase's own docstring.
-    getGammaNearTermProfile(symbol, controller.signal)
+    getGammaProfile(symbol, controller.signal)
       .then((response) => setProfile(response))
       .catch((reason: unknown) => {
         if (!controller.signal.aborted) {

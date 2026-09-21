@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { getAlerts, getGammaNearTermProfile } from "@/lib/api";
+import { getAlerts, getGammaProfile } from "@/lib/api";
 import { describeError } from "@/lib/i18n/describe-error";
 import { useLanguage } from "@/lib/i18n/language-context";
 import { POLLING_INTERVAL_MS } from "@/lib/polling";
@@ -109,11 +109,7 @@ export function ChartSecondaryPanel({ symbol, spotPrice, gamma }: ChartSecondary
     const controller = new AbortController();
     const refresh = async () => {
       try {
-        // getGammaNearTermProfile, not getGammaProfile (P-E fix,
-        // 2026-09-21) -- this chart's strike axis is exactly what a rare
-        // far-dated outlier expiration squeezed live on SPX; see
-        // CalculateNearTermGammaProfileUseCase's own docstring.
-        const response = await getGammaNearTermProfile(symbol, controller.signal);
+        const response = await getGammaProfile(symbol, controller.signal);
         setProfile(response);
         setProfileError(null);
       } catch (reason: unknown) {
@@ -160,19 +156,17 @@ export function ChartSecondaryPanel({ symbol, spotPrice, gamma }: ChartSecondary
     };
   }, [symbol]);
 
-  // P-E fix (2026-09-21): `profile.items` now spans every expiration for
-  // every symbol (the P1 rollout), including far OTM/far-dated strikes
-  // with zero real open interest -- their bar is already invisible
-  // (net_gamma is exactly 0 whenever open_interest is 0, per the dealer
-  // exposure formula: gamma * open_interest * ...), but they still
-  // stretched gexXMin/gexXMax below, squeezing every strike that actually
-  // has a visible bar into a narrow band in the middle of the plot
-  // (confirmed live, 2026-09-21, SPX). Filtering to real open interest
-  // before computing the range removes exactly the strikes that were
-  // never contributing anything visible, not real data. Falls back to
-  // the unfiltered list on the rare chance every item is still 0 (e.g.
-  // right after startup before the chain has been enriched) rather than
-  // rendering nothing.
+  // `profile.items` is near-term-only now (the backend's own root-cause
+  // fix, 2026-09-21 -- see CalculateGammaExposureOrchestrator's own
+  // comment), so a far-dated outlier expiration can no longer stretch
+  // gexXMin/gexXMax the way SPX's 2031 LEAPS listing once did. This
+  // open_interest filter is a cheap remaining safety net for a genuinely
+  // zero-interest strike within that near-term window -- its bar is
+  // already invisible (net_gamma is exactly 0 whenever open_interest is
+  // 0, per the dealer exposure formula), so excluding it from the range
+  // never hides real data. Falls back to the unfiltered list on the rare
+  // chance every item is still 0 (e.g. right after startup before the
+  // chain has been enriched) rather than rendering nothing.
   const gexItems = useMemo<GammaAggregateItem[]>(() => {
     const sorted = [...(profile?.items ?? [])].sort((a, b) => a.strike - b.strike);
     const withOpenInterest = sorted.filter((item) => item.open_interest > 0);

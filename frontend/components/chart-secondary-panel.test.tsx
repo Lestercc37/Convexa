@@ -13,7 +13,7 @@ import type {
 import { derivedMetricsFixture } from "@/test/fixtures";
 import { ChartSecondaryPanel } from "./chart-secondary-panel";
 
-const apiMocks = vi.hoisted(() => ({ getGammaNearTermProfile: vi.fn(), getAlerts: vi.fn() }));
+const apiMocks = vi.hoisted(() => ({ getGammaProfile: vi.fn(), getAlerts: vi.fn() }));
 
 // Between the two fixture strikes (545/550) — a realistic spot price
 // mid-chain, not coinciding with either strike.
@@ -21,7 +21,7 @@ const SPOT_PRICE = 547.25;
 
 vi.mock("@/lib/api", async () => {
   const actual = await vi.importActual<typeof import("@/lib/api")>("@/lib/api");
-  return { ...actual, getGammaNearTermProfile: apiMocks.getGammaNearTermProfile, getAlerts: apiMocks.getAlerts };
+  return { ...actual, getGammaProfile: apiMocks.getGammaProfile, getAlerts: apiMocks.getAlerts };
 });
 
 // Distinct from every fixture strike (540-555) so wall/level assertions
@@ -122,7 +122,7 @@ function alertsResponse(alerts: WhaleAlert[]): WhaleAlertsResponse {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  apiMocks.getGammaNearTermProfile.mockResolvedValue(profile());
+  apiMocks.getGammaProfile.mockResolvedValue(profile());
   apiMocks.getAlerts.mockResolvedValue(alertsResponse([]));
 });
 
@@ -130,7 +130,7 @@ describe("ChartSecondaryPanel", () => {
   it("renders the GEX-by-strike view by default, with a bar per strike", async () => {
     renderWithLanguage(<ChartSecondaryPanel symbol="SPY" spotPrice={SPOT_PRICE} gamma={gamma} />);
 
-    await waitFor(() => expect(apiMocks.getGammaNearTermProfile).toHaveBeenCalledWith("SPY", expect.any(AbortSignal)));
+    await waitFor(() => expect(apiMocks.getGammaProfile).toHaveBeenCalledWith("SPY", expect.any(AbortSignal)));
 
     expect(await screen.findByLabelText("GEX por strike para SPY")).toBeInTheDocument();
     expect(screen.getByLabelText("Strike 545")).toBeInTheDocument();
@@ -142,7 +142,7 @@ describe("ChartSecondaryPanel", () => {
   });
 
   it("draws a single net GEX bar per strike, colored green when positive and red when negative", async () => {
-    apiMocks.getGammaNearTermProfile.mockResolvedValue(
+    apiMocks.getGammaProfile.mockResolvedValue(
       profile({
         items: [
           {
@@ -205,7 +205,7 @@ describe("ChartSecondaryPanel", () => {
   });
 
   it("renders a zero-height, neutrally-classed bar when net GEX is exactly zero", async () => {
-    apiMocks.getGammaNearTermProfile.mockResolvedValue(
+    apiMocks.getGammaProfile.mockResolvedValue(
       profile({
         items: [
           {
@@ -255,7 +255,7 @@ describe("ChartSecondaryPanel", () => {
     // 0, since dealer exposure is gamma * open_interest * ...), but they
     // still stretched the x-axis range, squeezing every strike that
     // actually has a visible bar into a narrow band in the plot's middle.
-    apiMocks.getGammaNearTermProfile.mockResolvedValue(
+    apiMocks.getGammaProfile.mockResolvedValue(
       profile({
         items: [
           {
@@ -311,7 +311,7 @@ describe("ChartSecondaryPanel", () => {
     // unenriched (every item's open_interest genuinely 0) -- excluding
     // everything in that moment would show an empty chart instead of the
     // real, if imprecise, data already on hand.
-    apiMocks.getGammaNearTermProfile.mockResolvedValue(
+    apiMocks.getGammaProfile.mockResolvedValue(
       profile({
         items: [
           {
@@ -476,7 +476,7 @@ describe("ChartSecondaryPanel", () => {
   });
 
   it("shows a translated error when the GEX profile fetch fails", async () => {
-    apiMocks.getGammaNearTermProfile.mockRejectedValue(new ApiError(404));
+    apiMocks.getGammaProfile.mockRejectedValue(new ApiError(404));
 
     renderWithLanguage(<ChartSecondaryPanel symbol="SPY" spotPrice={SPOT_PRICE} gamma={gamma} />);
 
@@ -584,7 +584,7 @@ describe("ChartSecondaryPanel", () => {
 
   it("renders a bar for every strike but thins labels once there are too many to fit legibly", async () => {
     const items = manyStrikeItems(32, 7555, 5);
-    apiMocks.getGammaNearTermProfile.mockResolvedValue(profile({ symbol: "SPX", items }));
+    apiMocks.getGammaProfile.mockResolvedValue(profile({ symbol: "SPX", items }));
 
     // 7557 is closest to strike 7555 (index 0), which the label-thinning
     // step (2, at these 32 strikes) already keeps on its own — isolates
@@ -603,7 +603,7 @@ describe("ChartSecondaryPanel", () => {
 
   it("always labels the strike closest to spot even when the thinning pattern would skip it", async () => {
     const items = manyStrikeItems(32, 7555, 5);
-    apiMocks.getGammaNearTermProfile.mockResolvedValue(profile({ symbol: "SPX", items }));
+    apiMocks.getGammaProfile.mockResolvedValue(profile({ symbol: "SPX", items }));
 
     // Strike 7,560 is index 1 (odd) — the computed step (2) at these 32
     // strikes only labels even indices, so this strike would be skipped
@@ -622,7 +622,7 @@ describe("ChartSecondaryPanel", () => {
     // above) — showing all three visually overlapped in the browser.
     // Only the forced label should render in that neighborhood.
     const items = manyStrikeItems(32, 7555, 5);
-    apiMocks.getGammaNearTermProfile.mockResolvedValue(profile({ symbol: "SPX", items }));
+    apiMocks.getGammaProfile.mockResolvedValue(profile({ symbol: "SPX", items }));
 
     renderWithLanguage(<ChartSecondaryPanel symbol="SPX" spotPrice={7561} gamma={gamma} />);
     await screen.findByLabelText("GEX por strike para SPX");

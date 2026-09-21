@@ -6,11 +6,11 @@ import type { GammaAggregateResponse, GammaResponse } from "@/lib/types";
 import { derivedMetricsFixture } from "@/test/fixtures";
 import { PreSessionPanel } from "./pre-session-panel";
 
-const apiMocks = vi.hoisted(() => ({ getGammaNearTermProfile: vi.fn() }));
+const apiMocks = vi.hoisted(() => ({ getGammaProfile: vi.fn() }));
 
 vi.mock("@/lib/api", async () => {
   const actual = await vi.importActual<typeof import("@/lib/api")>("@/lib/api");
-  return { ...actual, getGammaNearTermProfile: apiMocks.getGammaNearTermProfile };
+  return { ...actual, getGammaProfile: apiMocks.getGammaProfile };
 });
 
 const gamma: GammaResponse = {
@@ -78,7 +78,7 @@ beforeEach(() => {
 
 describe("PreSessionPanel", () => {
   it("labels the snapshot as frozen from the previous close and draws per-strike bars", async () => {
-    apiMocks.getGammaNearTermProfile.mockResolvedValue(profile());
+    apiMocks.getGammaProfile.mockResolvedValue(profile());
 
     renderWithLanguage(<PreSessionPanel symbol="SPY" gamma={gamma} />);
 
@@ -89,21 +89,21 @@ describe("PreSessionPanel", () => {
     expect(screen.getByLabelText("Strike 550")).toBeInTheDocument();
     expect(screen.getByLabelText("Gamma Flip 548.5")).toBeInTheDocument();
     expect(screen.getByLabelText("Max Pain 550")).toBeInTheDocument();
-    expect(apiMocks.getGammaNearTermProfile).toHaveBeenCalledWith("SPY", expect.any(AbortSignal));
+    expect(apiMocks.getGammaProfile).toHaveBeenCalledWith("SPY", expect.any(AbortSignal));
   });
 
   it("does not poll — fetches the frozen snapshot exactly once per symbol", async () => {
-    apiMocks.getGammaNearTermProfile.mockResolvedValue(profile());
+    apiMocks.getGammaProfile.mockResolvedValue(profile());
 
     renderWithLanguage(<PreSessionPanel symbol="SPY" gamma={gamma} />);
 
     await screen.findByLabelText("Strike 545");
     await new Promise((resolve) => setTimeout(resolve, 50));
-    expect(apiMocks.getGammaNearTermProfile).toHaveBeenCalledTimes(1);
+    expect(apiMocks.getGammaProfile).toHaveBeenCalledTimes(1);
   });
 
   it("shows a translated not-found error when no frozen snapshot exists yet for the symbol", async () => {
-    apiMocks.getGammaNearTermProfile.mockRejectedValue(new ApiError(404));
+    apiMocks.getGammaProfile.mockRejectedValue(new ApiError(404));
 
     renderWithLanguage(<PreSessionPanel symbol="SPY" gamma={gamma} />);
 
@@ -113,7 +113,7 @@ describe("PreSessionPanel", () => {
   });
 
   it("renders the Regime Badge below the frozen chart, regardless of that chart's own load state", async () => {
-    apiMocks.getGammaNearTermProfile.mockRejectedValue(new ApiError(404));
+    apiMocks.getGammaProfile.mockRejectedValue(new ApiError(404));
 
     renderWithLanguage(<PreSessionPanel symbol="SPY" gamma={gamma} />);
 
@@ -127,7 +127,7 @@ describe("PreSessionPanel", () => {
     // no-sign-crossing reading that day (71.6% of its own samples, 0%
     // for every other symbol) -- this is the real shape of the null
     // case in production, not a rare corner.
-    apiMocks.getGammaNearTermProfile.mockResolvedValue(profile({ symbol: "GOOGL", gamma_flip: null }));
+    apiMocks.getGammaProfile.mockResolvedValue(profile({ symbol: "GOOGL", gamma_flip: null }));
 
     renderWithLanguage(
       <PreSessionPanel symbol="GOOGL" gamma={{ ...gamma, symbol: "GOOGL", gamma_flip: null }} />,

@@ -50,7 +50,6 @@ from backend.domain.use_cases.flow import (
 )
 from backend.domain.use_cases.gamma import (
     CalculateGammaExposureOrchestrator,
-    CalculateNearTermGammaProfileUseCase,
     calculate_gamma_exposure,
     get_gamma_exposure,
     get_gamma_exposure_async,
@@ -90,7 +89,6 @@ __all__ = [
     "CalculateGammaFlipUseCase",
     "CalculateGreeksUseCase",
     "CalculateMaxPainUseCase",
-    "CalculateNearTermGammaProfileUseCase",
     "CalculateWallsUseCase",
     "GetMarketSnapshotUseCase",
     "LoadOptionChainUseCase",
