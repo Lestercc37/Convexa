@@ -151,42 +151,6 @@ def test_gamma_profile_items_expose_the_real_open_interest_and_volume() -> None:
     assert any(item["volume"] > 0 for item in payload["items"])
 
 
-def test_gamma_near_term_profile_returns_the_same_shape_computed_fresh() -> None:
-    # P-E fix (2026-09-21): CalculateNearTermGammaProfileUseCase's own
-    # end-to-end wiring -- reads the already-stored chain snapshot fresh
-    # on every request (not the persisted GammaAggregate /profile reads),
-    # so this must work even though nothing calls save_gamma_aggregate for
-    # it. The actual near-term filtering logic (excluding a far-dated
-    # outlier expiration) is covered at the domain level in
-    # tests/test_near_term_gamma_profile.py -- this just proves the route
-    # is wired to the real use case and returns a well-formed response.
-    with TestClient(app) as client:
-        trigger = client.post("/internal/trigger-calculation/spy")
-        response = client.get("/api/v1/gamma/spy/profile/near-term")
-
-    assert trigger.status_code == 200
-    assert response.status_code == 200
-    payload = response.json()
-    assert payload["schema_version"] == 1
-    assert payload["symbol"] == "SPY"
-    assert len(payload["items"]) > 0
-    assert {"strike", "net_gamma", "open_interest", "volume"} <= payload["items"][0].keys()
-
-
-def test_gamma_near_term_profile_404s_uniformly_when_no_chain_is_stored() -> None:
-    with TestClient(app) as client:
-        response = client.get("/api/v1/gamma/nvda/profile/near-term")
-
-    assert response.status_code == 404
-    assert response.json() == {
-        "schema_version": 1,
-        "error": {
-            "code": "NOT_FOUND",
-            "message": "No option chain found for NVDA",
-        },
-    }
-
-
 def test_underlyings_history_and_flow_are_storage_backed_gets() -> None:
     with TestClient(app) as client:
         underlyings = client.get("/api/v1/underlyings")

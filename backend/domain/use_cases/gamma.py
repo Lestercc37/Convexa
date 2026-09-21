@@ -62,7 +62,23 @@ class CalculateGammaExposureOrchestrator:
         if chain is None:
             raise NotFoundError(f"No option chain found for {underlying.upper()}")
 
-        enriched_chain = self._greeks.execute(chain)
+        # Near-term only, not the full chain -- confirmed live, 2026-09-21,
+        # against a real reference platform's own numbers (SPY/SPX): summing
+        # gamma exposure across every expiration a symbol lists (P1's own
+        # wildcard fetch, dozens for SPX) inflates Call Wall/Put Wall/Gamma
+        # Flip/Max Pain/Net GEX to a multiple of what every professional GEX
+        # provider reports, none of which blend that way (SpotGamma, FlashAlpha,
+        # ExpireWorthless all confirmed to key off a handful of near-term
+        # expirations, not the whole chain -- see
+        # _filter_to_near_term_expirations' own comment for the exact SPX
+        # LEAPS incident this was first caught on). This is what every
+        # consumer of this orchestrator's result already implicitly expected
+        # -- Gamma Flip/Walls/Max Pain were never designed to average across
+        # a LEAPS contract 5 years out diluting today's real dealer exposure.
+        near_term_chain = _filter_to_near_term_expirations(
+            chain, NEAR_TERM_GAMMA_PROFILE_WINDOW_DAYS
+        )
+        enriched_chain = self._greeks.execute(near_term_chain)
         aggregate = self._aggregate.execute(enriched_chain)
         gamma_flip = self._gamma_flip.execute(aggregate, enriched_chain.spot_price)
         walls = self._walls.execute(aggregate)
@@ -151,24 +167,30 @@ def calculate_gamma_exposure(
     return orchestrator.execute(underlying)
 
 
-# P-E fix (2026-09-21): GammaAggregateItem collapses every contract to
-# (strike) alone, discarding expiration -- reasonable when only one
-# expiration was ever in view, but after the P1 rollout widened every
-# symbol's own fetch to every expiration, a single far-dated outlier
-# listing can drag GammaAggregateItem's own strike range far wider than
-# what's actually relevant to near-term gamma structure. Confirmed live:
-# SPX's book is uniformly [7665, 7855] across every one of its 57 near-term
-# expirations (0-452 DTE) -- the sole exception is a single 2031 LEAPS
-# listing (1,915 DTE) contributing just 2 strikes (7200, 8000) with real,
-# if comparatively small, open interest, which alone doubled the
-# GEX-by-strike chart's visible x-axis range (confirmed: filtering by
-# open_interest > 0 alone does NOT exclude these -- open interest doesn't
-# separate "near-term relevant" from "far-dated outlier", strike 8000 (OI
-# 15,501) outranks several genuinely near-term strikes). AAPL and NDX both
-# stay tight across their own full expiration range (851 and 1,187 DTE
-# respectively) -- this isn't a systemic per-symbol tuning problem, just
-# this one kind of rare far-outlier listing, so 30 days comfortably covers
-# every real near-term expiration while excluding it.
+# Root-cause fix (2026-09-21): every headline number this orchestrator
+# produces -- Call Wall, Put Wall, Gamma Flip, Max Pain, Net GEX -- used to
+# be computed from the FULL chain, every expiration a symbol lists summed
+# together (P1's own wildcard fetch: 20-58+ expirations depending on
+# symbol). Confirmed live against a real reference platform's own numbers,
+# matched strike-by-strike and contract-by-contract (SPY/SPX, same moment,
+# same open interest down to the exact contract): summing across every
+# expiration inflates these numbers to several times what every
+# professional GEX provider reports (SpotGamma, FlashAlpha, ExpireWorthless
+# -- none blend the full chain into one number; ExpireWorthless explicitly
+# excludes 0DTE from its own wall calculation specifically so one expiring
+# strike can't distort the levels). The walls/flip/max-pain strikes
+# themselves were already landing close to the reference's own top strikes
+# even before this fix -- it's specifically the blended-across-every-
+# expiration dollar magnitude that was wrong, not the strike selection.
+#
+# First caught via the GEX-by-strike chart (P-E): a single 2031 LEAPS
+# listing on SPX (1,915 DTE), contributing just 2 strikes (7200, 8000) with
+# real, if comparatively small, open interest, doubled that chart's visible
+# x-axis range on its own. Confirmed NOT a per-symbol tuning problem --
+# AAPL and NDX both stay tight across their own full expiration range (851
+# and 1,187 DTE respectively); it's specifically rare far-outlier listings
+# like SPX's LEAPS. 30 days comfortably covers every real near-term
+# expiration while excluding that class of outlier.
 NEAR_TERM_GAMMA_PROFILE_WINDOW_DAYS = 30
 
 
@@ -181,43 +203,3 @@ def _filter_to_near_term_expirations(chain: OptionChain, window_days: int) -> Op
         contract for contract in chain.contracts if contract.expiration <= cutoff
     )
     return replace(chain, contracts=near_term_contracts)
-
-
-class CalculateNearTermGammaProfileUseCase:
-    """Gamma Aggregate limited to near-term expirations only -- built
-    specifically for the GEX-by-strike chart (P-E), which needs a
-    per-strike breakdown that isn't stretched by whatever far-dated
-    outlier expiration a symbol happens to also list. See
-    _filter_to_near_term_expirations' own comment for why this is a real,
-    if rare, problem and not something that needs per-symbol tuning.
-
-    Deliberately NOT the same GammaAggregate that Gamma Flip/Walls/Max Pain
-    use (CalculateGammaExposureOrchestrator, above) -- those want the real
-    exposure of the whole book, every expiration included, a different,
-    equally valid question from "what does near-term gamma structure look
-    like." Computed fresh from the already-stored chain snapshot
-    (get_latest_chain_snapshot) on every request, not persisted -- this
-    never runs on the scheduler's own write cycle, so it can't add to that
-    cycle's own duration or memory (see scheduler.py's own docstring on
-    why that budget already matters).
-    """
-
-    def __init__(
-        self,
-        storage: IStorage,
-        greeks: CalculateGreeksUseCase,
-        aggregate: CalculateGammaAggregateUseCase,
-        window_days: int = NEAR_TERM_GAMMA_PROFILE_WINDOW_DAYS,
-    ) -> None:
-        self._storage = storage
-        self._greeks = greeks
-        self._aggregate = aggregate
-        self._window_days = window_days
-
-    def execute(self, underlying: str) -> GammaAggregate:
-        chain = self._storage.get_latest_chain_snapshot(underlying)
-        if chain is None:
-            raise NotFoundError(f"No option chain found for {underlying.upper()}")
-        near_term_chain = _filter_to_near_term_expirations(chain, self._window_days)
-        enriched_chain = self._greeks.execute(near_term_chain)
-        return self._aggregate.execute(enriched_chain)
