@@ -60,6 +60,94 @@ def calculate_anchored_vwap_series(
     return series
 
 
+def calculate_proxy_anchored_vwap_series(
+    index_readings: list[MarketPrice],
+    proxy_readings: list[MarketPrice],
+    as_of: datetime,
+) -> list[tuple[datetime, Decimal]]:
+    """Anchored VWAP for a pure index (SPX/NDX -- ThetaData always reports
+    volume=0 for these, see AnchoredVwap's own docstring) via a liquid,
+    highly-correlated proxy ETF's real volume: SPY for SPX, QQQ for NDX.
+    Real technique traders already use, not invented here -- confirmed
+    with the user, 2026-09-21.
+
+    The proxy's VWAP is expressed as a ratio to ITS OWN session-open price
+    (how far volume-weighted trading has drifted from where the proxy
+    opened, in percentage terms), then that same ratio is applied to the
+    index's OWN session-open price. Correct despite the two trading at
+    completely different absolute scales (SPY ~1/10th of SPX by design)
+    because an index-tracking ETF is constructed to move in lockstep,
+    proportionally, with its index -- the ratio is scale-free, only the
+    two open prices anchor it back into the index's own units.
+
+    One point per PROXY reading (never the index's own -- the proxy is
+    what's actually volume-weighted here), timestamped and priced in the
+    INDEX's own scale. Empty if either side has no reading yet this
+    session, or if the proxy's own open price is somehow zero (never
+    fabricates a ratio from a zero denominator).
+    """
+    anchor = calculate_session_open(as_of)
+    index_session_readings = sorted(
+        (reading for reading in index_readings if anchor <= reading.as_of <= as_of),
+        key=lambda reading: reading.as_of,
+    )
+    if not index_session_readings:
+        return []
+    index_open_price = index_session_readings[0].price
+
+    proxy_session_readings = sorted(
+        (reading for reading in proxy_readings if anchor <= reading.as_of <= as_of),
+        key=lambda reading: reading.as_of,
+    )
+    if not proxy_session_readings:
+        return []
+    proxy_open_price = proxy_session_readings[0].price
+    if proxy_open_price == 0:
+        return []
+
+    proxy_series = calculate_anchored_vwap_series(proxy_readings, as_of)
+    return [
+        (timestamp, index_open_price * (proxy_vwap / proxy_open_price))
+        for timestamp, proxy_vwap in proxy_series
+    ]
+
+
+def calculate_proxy_anchored_vwap(
+    index_readings: list[MarketPrice],
+    proxy_readings: list[MarketPrice],
+    as_of: datetime,
+    proxy_symbol: str,
+) -> AnchoredVwap:
+    """Same shape as `calculate_anchored_vwap`, sourced from
+    `calculate_proxy_anchored_vwap_series` instead -- see that function's
+    own docstring. `provisional=True` (never `not_applicable`) when
+    nothing's computable yet this session: unlike a pure index with no
+    proxy at all, this genuinely could still show up once both sides have
+    a reading, so it gets the same "still accumulating" treatment a real
+    equity/ETF's own VWAP does.
+    """
+    anchor_utc = calculate_session_open(as_of).astimezone(UTC)
+    series = calculate_proxy_anchored_vwap_series(index_readings, proxy_readings, as_of)
+    sample_count = len(
+        [reading for reading in proxy_readings if anchor_utc <= reading.as_of <= as_of]
+    )
+    if not series:
+        return AnchoredVwap(
+            value=None,
+            provisional=True,
+            anchor_time=anchor_utc,
+            sample_count=sample_count,
+            proxy_symbol=proxy_symbol,
+        )
+    return AnchoredVwap(
+        value=series[-1][1],
+        provisional=False,
+        anchor_time=anchor_utc,
+        sample_count=sample_count,
+        proxy_symbol=proxy_symbol,
+    )
+
+
 def calculate_anchored_vwap(
     readings: list[MarketPrice], as_of: datetime, not_applicable: bool = False
 ) -> AnchoredVwap:

@@ -9,6 +9,8 @@ from backend.domain.underlyings import ACTIVE_UNDERLYINGS_BY_SYMBOL
 from backend.domain.use_cases.calculate_anchored_vwap import (
     calculate_anchored_vwap,
     calculate_anchored_vwap_series,
+    calculate_proxy_anchored_vwap,
+    calculate_proxy_anchored_vwap_series,
     calculate_session_open,
 )
 from backend.domain.use_cases.calculate_atr_range import REQUIRED_DAILY_BARS, calculate_atr_range
@@ -28,6 +30,18 @@ def _is_pure_index(underlying: str) -> bool:
     these, not just provisional."""
     active = ACTIVE_UNDERLYINGS_BY_SYMBOL.get(underlying.upper())
     return active is not None and active.kind == UnderlyingKind.INDEX
+
+
+# Confirmed with the user, 2026-09-21: a real technique traders already
+# use for a pure index with no volume of its own -- a liquid, tightly
+# correlated ETF that tracks the same underlying basket. VIX deliberately
+# has no entry here: VIXY/UVXY track VIX *futures*, not spot VIX, and
+# behave very differently (contango/roll cost) -- a proxy VWAP from either
+# would be misleading, not just imprecise, so VIX stays not_applicable.
+VWAP_PROXY_SYMBOL_BY_INDEX: dict[str, str] = {
+    "SPX": "SPY",
+    "NDX": "QQQ",
+}
 
 DEFAULT_FRESHNESS_SECONDS = 60
 
@@ -87,11 +101,20 @@ def build_market_snapshot(storage: IStorage, underlying: str) -> MarketSnapshot:
     chain = storage.get_latest_chain_snapshot(underlying)
     if chain is None:
         raise NotFoundError(f"No option chain found for {underlying}")
-    price_history = storage.get_price_history(
-        underlying, calculate_session_open(price.as_of), price.as_of
-    )
+    session_open = calculate_session_open(price.as_of)
+    price_history = storage.get_price_history(underlying, session_open, price.as_of)
     daily_bars = storage.get_daily_bars(underlying, limit=REQUIRED_DAILY_BARS)
     time_to_close_pct = calculate_time_to_close_pct(price.as_of)
+    proxy_symbol = VWAP_PROXY_SYMBOL_BY_INDEX.get(underlying.upper())
+    if proxy_symbol is not None:
+        proxy_history = storage.get_price_history(proxy_symbol, session_open, price.as_of)
+        anchored_vwap = calculate_proxy_anchored_vwap(
+            price_history, proxy_history, price.as_of, proxy_symbol
+        )
+    else:
+        anchored_vwap = calculate_anchored_vwap(
+            price_history, price.as_of, not_applicable=_is_pure_index(underlying)
+        )
     return MarketSnapshot(
         symbol=price.symbol,
         as_of=price.as_of,
@@ -99,9 +122,7 @@ def build_market_snapshot(storage: IStorage, underlying: str) -> MarketSnapshot:
         volume=price.volume,
         gamma=gamma,
         expected_move=calculate_expected_move(chain, price.as_of),
-        anchored_vwap=calculate_anchored_vwap(
-            price_history, price.as_of, not_applicable=_is_pure_index(underlying)
-        ),
+        anchored_vwap=anchored_vwap,
         atr_range=calculate_atr_range(daily_bars, price_history),
         closing_dynamics=calculate_closing_dynamics(gamma, price.price, time_to_close_pct),
         recent_flow=tuple(storage.get_recent_flow(underlying)),
@@ -124,11 +145,20 @@ async def build_market_snapshot_async(
     chain = await storage.get_latest_chain_snapshot(underlying)
     if chain is None:
         raise NotFoundError(f"No option chain found for {underlying}")
-    price_history = await storage.get_price_history(
-        underlying, calculate_session_open(price.as_of), price.as_of
-    )
+    session_open = calculate_session_open(price.as_of)
+    price_history = await storage.get_price_history(underlying, session_open, price.as_of)
     daily_bars = await storage.get_daily_bars(underlying, limit=REQUIRED_DAILY_BARS)
     time_to_close_pct = calculate_time_to_close_pct(price.as_of)
+    proxy_symbol = VWAP_PROXY_SYMBOL_BY_INDEX.get(underlying.upper())
+    if proxy_symbol is not None:
+        proxy_history = await storage.get_price_history(proxy_symbol, session_open, price.as_of)
+        anchored_vwap = calculate_proxy_anchored_vwap(
+            price_history, proxy_history, price.as_of, proxy_symbol
+        )
+    else:
+        anchored_vwap = calculate_anchored_vwap(
+            price_history, price.as_of, not_applicable=_is_pure_index(underlying)
+        )
     return MarketSnapshot(
         symbol=price.symbol,
         as_of=price.as_of,
@@ -136,9 +166,7 @@ async def build_market_snapshot_async(
         volume=price.volume,
         gamma=gamma,
         expected_move=calculate_expected_move(chain, price.as_of),
-        anchored_vwap=calculate_anchored_vwap(
-            price_history, price.as_of, not_applicable=_is_pure_index(underlying)
-        ),
+        anchored_vwap=anchored_vwap,
         atr_range=calculate_atr_range(daily_bars, price_history),
         closing_dynamics=calculate_closing_dynamics(gamma, price.price, time_to_close_pct),
         recent_flow=tuple(await storage.get_recent_flow(underlying)),
@@ -156,12 +184,23 @@ async def get_vwap_history_async(
 
     Same not_applicable rule and the exact same calculate_anchored_vwap_series
     formula build_market_snapshot_async uses for the single current
-    value -- this is that same series, not a second implementation.
-    Permissive like get_price_history's own route: no readings yet
-    (or not_applicable) just means an empty series, never an error.
+    value -- this is that same series, not a second implementation. A
+    symbol with a VWAP_PROXY_SYMBOL_BY_INDEX entry (SPX/NDX) uses
+    calculate_proxy_anchored_vwap_series instead -- see that function's
+    own docstring -- and is never not_applicable, since it genuinely can
+    compute once both sides have a reading. Permissive like
+    get_price_history's own route: no readings yet (or not_applicable)
+    just means an empty series, never an error.
     """
+    now = datetime.now(timezone.utc)
+    session_open = calculate_session_open(now)
+    proxy_symbol = VWAP_PROXY_SYMBOL_BY_INDEX.get(underlying.upper())
+    if proxy_symbol is not None:
+        index_history = await storage.get_price_history(underlying, session_open, now)
+        proxy_history = await storage.get_price_history(proxy_symbol, session_open, now)
+        series = calculate_proxy_anchored_vwap_series(index_history, proxy_history, now)
+        return series, False
     if _is_pure_index(underlying):
         return [], True
-    now = datetime.now(timezone.utc)
-    price_history = await storage.get_price_history(underlying, calculate_session_open(now), now)
+    price_history = await storage.get_price_history(underlying, session_open, now)
     return calculate_anchored_vwap_series(price_history, now), False

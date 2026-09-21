@@ -239,6 +239,7 @@ export type AnchoredVwap = {
   anchor_time: string;
   sample_count: number;
   not_applicable: boolean;
+  proxy_symbol: string | null;
 };
 
 export type AtrRange = {
