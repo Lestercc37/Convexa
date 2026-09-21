@@ -312,6 +312,84 @@ describe("PriceChart", () => {
     expect(chartMocks.fitContent).toHaveBeenCalledTimes(2);
   });
 
+  it("keeps re-fitting on every bulk jump within the settling window, not just the first (regression, 2026-09-21)", () => {
+    // Confirmed live, 2026-09-21: under a slow/retried initial history load
+    // (ThetaData latency degraded after the P1 all-expirations rollout),
+    // `candles` can jump by more than 1 candle more than once in quick
+    // succession -- a partial response superseded moments later by the
+    // real, fuller one. The old "exactly once, ever" guard could spend its
+    // single re-fit on that first, still-partial jump and never fire
+    // again, leaving the chart permanently under-fit even once the rest
+    // of the day's candles landed seconds later.
+    vi.setSystemTime(new Date("2026-09-21T14:00:00Z"));
+
+    const { rerender } = renderWithLanguage(
+      <PriceChart
+        symbol="SPY"
+        gamma={gamma}
+        candles={[{ time: 1_785_763_800, open: 500, high: 501, low: 499, close: 500.5 }]}
+      />,
+    );
+    expect(chartMocks.fitContent).toHaveBeenCalledTimes(1);
+
+    // First jump lands 3s later -- still a partial response.
+    vi.setSystemTime(new Date("2026-09-21T14:00:03Z"));
+    rerender(
+      <PriceChart
+        symbol="SPY"
+        gamma={gamma}
+        candles={[
+          { time: 1_785_763_800, open: 500, high: 501, low: 499, close: 500.5 },
+          { time: 1_785_763_860, open: 500.5, high: 502, low: 500, close: 501.5 },
+          { time: 1_785_763_920, open: 501.5, high: 503, low: 501, close: 502.5 },
+        ]}
+      />,
+    );
+    expect(chartMocks.fitContent).toHaveBeenCalledTimes(2);
+
+    // A second, larger jump lands 8s after mount (still within the 15s
+    // settling window) -- the real, full response superseding the partial
+    // one. This must re-fit again, not be silently ignored.
+    vi.setSystemTime(new Date("2026-09-21T14:00:08Z"));
+    rerender(
+      <PriceChart
+        symbol="SPY"
+        gamma={gamma}
+        candles={[
+          { time: 1_785_763_800, open: 500, high: 501, low: 499, close: 500.5 },
+          { time: 1_785_763_860, open: 500.5, high: 502, low: 500, close: 501.5 },
+          { time: 1_785_763_920, open: 501.5, high: 503, low: 501, close: 502.5 },
+          { time: 1_785_763_980, open: 502.5, high: 504, low: 502, close: 503.5 },
+          { time: 1_785_764_040, open: 503.5, high: 505, low: 503, close: 504.5 },
+        ]}
+      />,
+    );
+    expect(chartMocks.fitContent).toHaveBeenCalledTimes(3);
+
+    // Once the settling window has elapsed, a further bulk jump (e.g. the
+    // user switched timeframe and a new batch landed) must NOT keep
+    // re-fitting and fighting the user's own pan/zoom.
+    vi.setSystemTime(new Date("2026-09-21T14:00:20Z"));
+    rerender(
+      <PriceChart
+        symbol="SPY"
+        gamma={gamma}
+        candles={[
+          { time: 1_785_763_800, open: 500, high: 501, low: 499, close: 500.5 },
+          { time: 1_785_763_860, open: 500.5, high: 502, low: 500, close: 501.5 },
+          { time: 1_785_763_920, open: 501.5, high: 503, low: 501, close: 502.5 },
+          { time: 1_785_763_980, open: 502.5, high: 504, low: 502, close: 503.5 },
+          { time: 1_785_764_040, open: 503.5, high: 505, low: 503, close: 504.5 },
+          { time: 1_785_764_100, open: 504.5, high: 506, low: 504, close: 505.5 },
+          { time: 1_785_764_160, open: 505.5, high: 507, low: 505, close: 506.5 },
+        ]}
+      />,
+    );
+    expect(chartMocks.fitContent).toHaveBeenCalledTimes(3);
+
+    vi.useRealTimers();
+  });
+
   it("re-fits the visible range once the container reports its real size, even when the full day's candles were already present at first render (regression)", () => {
     // AAPL/SPY confirmed live, 2026-09-17: their history endpoint can
     // resolve fast enough that `candles` already holds the full trading
