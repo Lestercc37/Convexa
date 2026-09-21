@@ -34,6 +34,11 @@ class AnchoredVwapResponse(BaseModel):
     anchor_time: str = Field(examples=["2026-01-15T14:30:00Z"])
     sample_count: int = Field(examples=[42])
     not_applicable: bool = False
+    proxy_symbol: str | None = Field(
+        default=None,
+        examples=["SPY"],
+        description="Set when value is approximated from a correlated ETF's own VWAP (SPX/NDX).",
+    )
 
 
 class AtrRangeResponse(BaseModel):

@@ -30,6 +30,7 @@ type PriceChartProps = {
   gamma: GammaResponse;
   vwapPoints?: VwapPoint[];
   vwapNotApplicable?: boolean;
+  vwapProxySymbol?: string | null;
   atrRange?: AtrRange;
   timeframe?: Timeframe;
   streamStatus?: MarketPriceStreamStatus;
@@ -294,6 +295,7 @@ export function PriceChart({
   gamma,
   vwapPoints = [],
   vwapNotApplicable = false,
+  vwapProxySymbol = null,
   atrRange,
   timeframe = "1m",
   streamStatus = "connected",
@@ -682,7 +684,9 @@ export function PriceChart({
       color: VWAP_COLOR,
       lineWidth: 2,
       lineStyle: LineStyle.Solid,
-      title: t.priceChart.vwapAnchoredLabel,
+      title: vwapProxySymbol
+        ? t.priceChart.vwapProxyLabel(vwapProxySymbol)
+        : t.priceChart.vwapAnchoredLabel,
       priceLineVisible: false,
       lastValueVisible: true,
     });
@@ -711,7 +715,7 @@ export function PriceChart({
     // renders it on its own canvas, not as React JSX) picks up a language
     // switch by recreating the series — the title can't be patched in
     // place without also re-touching `applyOptions` bookkeeping here.
-  }, [vwapPoints, showVwap, t]);
+  }, [vwapPoints, showVwap, vwapProxySymbol, t]);
 
   useEffect(() => {
     const series = seriesRef.current;
@@ -783,7 +787,9 @@ export function PriceChart({
               />
               {vwapNotApplicable
                 ? t.priceChart.vwapNotApplicableLabel
-                : t.priceChart.vwapAnchoredLabel}
+                : vwapProxySymbol
+                  ? t.priceChart.vwapProxyLabel(vwapProxySymbol)
+                  : t.priceChart.vwapAnchoredLabel}
             </label>
             <label className="chart-toggle">
               <input

@@ -128,6 +128,7 @@ export function Dashboard() {
   const [pricePoints, setPricePoints] = useState<PricePoint[]>([]);
   const [vwapPoints, setVwapPoints] = useState<VwapPoint[]>([]);
   const [vwapNotApplicable, setVwapNotApplicable] = useState(false);
+  const [vwapProxySymbol, setVwapProxySymbol] = useState<string | null>(null);
   // Stores the raw error, not a pre-translated string — translating at
   // render time (via `describeError(error, t)` below) means the message
   // stays correct if the user switches language while it's on screen,
@@ -187,6 +188,7 @@ export function Dashboard() {
         ]);
       }
       const anchoredVwap = marketData.anchored_vwap;
+      setVwapProxySymbol(anchoredVwap?.proxy_symbol ?? null);
       // Same session gate as pricePoints above -- VWAP renders on a Line
       // series on the *same* chart/timeScale as the candlesticks, so an
       // out-of-session point here would drag the shared x-axis just as
@@ -325,6 +327,7 @@ export function Dashboard() {
                 setPricePoints([]);
                 setVwapPoints([]);
                 setVwapNotApplicable(false);
+                setVwapProxySymbol(null);
                 setSymbol(event.target.value);
               }}
               disabled={!underlyings.length}
@@ -440,6 +443,7 @@ export function Dashboard() {
                     gamma={gamma}
                     vwapPoints={vwapPoints}
                     vwapNotApplicable={vwapNotApplicable}
+                    vwapProxySymbol={vwapProxySymbol}
                     atrRange={market.atr_range}
                     timeframe={timeframe}
                     streamStatus={streamStatus}

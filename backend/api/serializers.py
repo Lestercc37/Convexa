@@ -283,6 +283,7 @@ def market_response(snapshot: MarketSnapshot) -> dict[str, Any]:
             "anchor_time": _dt(anchored_vwap.anchor_time),
             "sample_count": anchored_vwap.sample_count,
             "not_applicable": anchored_vwap.not_applicable,
+            "proxy_symbol": anchored_vwap.proxy_symbol,
         },
         "atr_range": {
             "atr": _optional_num(atr_range.atr),

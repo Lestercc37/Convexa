@@ -45,6 +45,7 @@ export type Translations = {
     overlaysLegend: string;
     vwapAnchoredLabel: string;
     vwapNotApplicableLabel: string;
+    vwapProxyLabel: (proxySymbol: string) => string;
     atrRangeLabel: string;
     streamFallbackLabel: string;
     drawingToolsAriaLabel: string;

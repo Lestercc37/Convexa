@@ -194,6 +194,7 @@ function marketFor(symbol: string) {
       anchor_time: "2026-08-03T13:30:00Z",
       sample_count: 3,
       not_applicable: false,
+      proxy_symbol: null,
     },
     atr_range: {
       atr: 5,
@@ -463,6 +464,38 @@ describe("Dashboard", () => {
     expect(
       await screen.findByText("VWAP Anclado: no disponible para índices"),
     ).toBeInTheDocument();
+  });
+
+  it("labels the VWAP overlay with its proxy symbol when the backend approximates it from a correlated ETF (regression)", async () => {
+    // SPX/NDX have no volume of their own, so the backend approximates
+    // their VWAP from a correlated ETF (VWAP_PROXY_SYMBOL_BY_INDEX,
+    // confirmed with the user, 2026-09-21) -- the overlay must say so
+    // ("VWAP (proxy SPY)"), not silently label it like a real index VWAP.
+    apiMocks.getUnderlyings.mockResolvedValueOnce({
+      schema_version: 1,
+      underlyings: [{ symbol: "SPX", kind: "index", is_priority: true }],
+    });
+    apiMocks.getMarket.mockImplementation((symbol: string) =>
+      Promise.resolve({
+        ...marketFor(symbol),
+        anchored_vwap: {
+          value: 5520,
+          provisional: false,
+          anchor_time: "2026-08-03T13:30:00Z",
+          sample_count: 2,
+          not_applicable: false,
+          proxy_symbol: "SPY",
+        },
+      }),
+    );
+    apiMocks.getVwapHistory.mockImplementation((symbol: string) =>
+      Promise.resolve({ schema_version: 1, symbol, not_applicable: false, points: [] }),
+    );
+
+    renderWithLanguage(<Dashboard />);
+    await screen.findByLabelText("Chart de velas para SPX");
+
+    expect(await screen.findByText("VWAP (proxy SPY)")).toBeInTheDocument();
   });
 
   it("connects the real-time price stream for the active symbol, and reconnects it on switch (regression)", async () => {

@@ -7,6 +7,8 @@ from backend.domain.entities import MarketPrice
 from backend.domain.use_cases.calculate_anchored_vwap import (
     calculate_anchored_vwap,
     calculate_anchored_vwap_series,
+    calculate_proxy_anchored_vwap,
+    calculate_proxy_anchored_vwap_series,
     calculate_session_open,
 )
 
@@ -19,6 +21,17 @@ def _reading(minutes_after_open: int, price: str, volume: int) -> MarketPrice:
         as_of=SESSION_OPEN_UTC + timedelta(minutes=minutes_after_open),
         price=Decimal(price),
         volume=volume,
+    )
+
+
+def _index_reading(minutes_after_open: int, price: str) -> MarketPrice:
+    # Pure indices always report volume=0 (see AnchoredVwap's own docstring) --
+    # the proxy calculation only ever reads .price off these, never .volume.
+    return MarketPrice(
+        symbol="SPX",
+        as_of=SESSION_OPEN_UTC + timedelta(minutes=minutes_after_open),
+        price=Decimal(price),
+        volume=0,
     )
 
 
@@ -157,3 +170,83 @@ def test_anchored_vwap_series_emits_no_point_while_volume_is_still_zero() -> Non
     # reading, where volume finally turns positive, produces one.
     assert len(series) == 1
     assert series[0][0] == readings[2].as_of
+
+
+# SPX/NDX have no volume of their own (see AnchoredVwap's own docstring), so
+# these approximate their VWAP from a liquid, correlated ETF (SPY/QQQ): the
+# proxy's own real VWAP expressed as a ratio to the proxy's session open,
+# applied to the index's own session open -- scale-free, so it works despite
+# the index trading at a completely different absolute price than its proxy.
+PROXY_READINGS = [
+    _reading(0, "500", 1000),  # vwap = 500 (first reading, baseline volume 0)
+    _reading(5, "520", 2000),  # interval vol 1000: (500*1000+520*1000)/2000 = 510
+    _reading(10, "540", 4000),  # interval vol 2000: (+540*2000)/4000 = 525
+]
+
+
+def test_calculate_proxy_anchored_vwap_series_scales_index_open_by_proxys_own_ratio() -> None:
+    index_readings = [_index_reading(0, "8000")]
+    as_of = SESSION_OPEN_UTC + timedelta(minutes=10)
+
+    series = calculate_proxy_anchored_vwap_series(index_readings, PROXY_READINGS, as_of)
+
+    # ratio at each proxy point: 500/500=1, 510/500=1.02, 525/500=1.05 --
+    # applied to the index's own 8000 open, not the proxy's 500 price.
+    assert [t for t, _ in series] == [r.as_of for r in PROXY_READINGS]
+    assert [v for _, v in series] == [Decimal(8000), Decimal(8160), Decimal(8400)]
+
+
+def test_calculate_proxy_anchored_vwap_series_is_empty_without_an_index_reading_this_session() -> None:
+    as_of = SESSION_OPEN_UTC + timedelta(minutes=10)
+
+    series = calculate_proxy_anchored_vwap_series([], PROXY_READINGS, as_of)
+
+    assert series == []
+
+
+def test_calculate_proxy_anchored_vwap_series_is_empty_without_a_proxy_reading_this_session() -> None:
+    index_readings = [_index_reading(0, "8000")]
+    as_of = SESSION_OPEN_UTC + timedelta(minutes=10)
+
+    series = calculate_proxy_anchored_vwap_series(index_readings, [], as_of)
+
+    assert series == []
+
+
+def test_calculate_proxy_anchored_vwap_series_is_empty_when_proxy_opened_at_zero() -> None:
+    index_readings = [_index_reading(0, "8000")]
+    proxy_readings = [_reading(0, "0", 1000)]
+    as_of = SESSION_OPEN_UTC
+
+    series = calculate_proxy_anchored_vwap_series(index_readings, proxy_readings, as_of)
+
+    assert series == []
+
+
+def test_calculate_proxy_anchored_vwap_returns_the_last_scaled_point() -> None:
+    index_readings = [_index_reading(0, "8000")]
+    as_of = SESSION_OPEN_UTC + timedelta(minutes=10)
+
+    result = calculate_proxy_anchored_vwap(index_readings, PROXY_READINGS, as_of, "SPY")
+
+    assert result.value == Decimal(8400)
+    assert result.provisional is False
+    assert result.not_applicable is False
+    assert result.sample_count == 3
+    assert result.anchor_time == SESSION_OPEN_UTC
+    assert result.proxy_symbol == "SPY"
+
+
+def test_calculate_proxy_anchored_vwap_is_provisional_when_the_index_has_no_reading_yet() -> None:
+    # The proxy (SPY) already has session readings, but the index (SPX)
+    # itself hasn't reported one yet -- provisional, not a crash, and
+    # sample_count still reflects the proxy side per the function's own
+    # contract (it counts proxy_readings, not index_readings).
+    as_of = SESSION_OPEN_UTC + timedelta(minutes=10)
+
+    result = calculate_proxy_anchored_vwap([], PROXY_READINGS, as_of, "SPY")
+
+    assert result.value is None
+    assert result.provisional is True
+    assert result.sample_count == 3
+    assert result.proxy_symbol == "SPY"

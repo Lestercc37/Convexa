@@ -831,6 +831,12 @@ class AnchoredVwap:
     anchor_time: datetime
     sample_count: int
     not_applicable: bool = False
+    # Set only when this value comes from calculate_proxy_anchored_vwap
+    # (a pure index with no volume of its own, e.g. SPX/NDX, approximated
+    # via a liquid correlated ETF's real volume -- SPY/QQQ respectively).
+    # None for a symbol's own real VWAP, never fabricated -- see
+    # calculate_proxy_anchored_vwap_series' own docstring for the method.
+    proxy_symbol: str | None = None
 
     def __post_init__(self) -> None:
         if self.value is not None:

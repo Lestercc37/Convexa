@@ -53,6 +53,7 @@ export const es: Translations = {
     overlaysLegend: "Overlays:",
     vwapAnchoredLabel: "VWAP Anclado",
     vwapNotApplicableLabel: "VWAP Anclado: no disponible para índices",
+    vwapProxyLabel: (proxySymbol) => `VWAP (proxy ${proxySymbol})`,
     atrRangeLabel: "Rango ATR",
     streamFallbackLabel: "Conexión en tiempo real perdida — actualizando cada 30s",
     drawingToolsAriaLabel: "Herramientas de dibujo",

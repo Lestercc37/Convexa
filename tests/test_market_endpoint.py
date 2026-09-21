@@ -31,28 +31,31 @@ def test_market_endpoint_reads_persisted_snapshot() -> None:
 
 
 def test_market_endpoint_marks_anchored_vwap_not_applicable_for_pure_indices() -> None:
-    # SPX always reports volume=0 from ThetaData's own index snapshot
+    # VIX always reports volume=0 from ThetaData's own index snapshot
     # endpoint (confirmed live, 2026-09-17) -- structurally never
-    # computable, not "still accumulating". A nonzero volume here (which
-    # would never happen for a real index) is deliberate: proves
-    # not_applicable wins on symbol kind alone, not on whatever volume
-    # happens to be in the reading.
+    # computable, not "still accumulating". Unlike SPX/NDX, VIX has no
+    # VWAP_PROXY_SYMBOL_BY_INDEX entry (VIXY/UVXY track VIX *futures*, not
+    # spot -- see read_models.py's own comment), so it's the one pure
+    # index that stays not_applicable rather than falling back to a proxy.
+    # A nonzero volume here (which would never happen for a real index) is
+    # deliberate: proves not_applicable wins on symbol kind alone, not on
+    # whatever volume happens to be in the reading.
     price_as_of = datetime(2026, 8, 3, 14, 31, tzinfo=UTC)
     gamma_as_of = datetime(2026, 8, 3, 14, 30, tzinfo=UTC)
 
     with TestClient(app) as client:
         storage = client.app.state.container.storage
         storage.save_market_price(
-            MarketPrice(symbol="SPX", as_of=price_as_of, price=Decimal(5500), volume=1000)
+            MarketPrice(symbol="VIX", as_of=price_as_of, price=Decimal(15), volume=1000)
         )
         storage.save_gamma_aggregate(
             GammaAggregate(
-                symbol="SPX",
+                symbol="VIX",
                 as_of=gamma_as_of,
-                gamma_flip=Decimal(5500),
-                call_wall=Decimal(5600),
-                put_wall=Decimal(5400),
-                absolute_gamma_strike=Decimal(5550),
+                gamma_flip=Decimal(15),
+                call_wall=Decimal(16),
+                put_wall=Decimal(14),
+                absolute_gamma_strike=Decimal(15),
                 net_gamma=Decimal(100),
             )
         )
@@ -67,6 +70,54 @@ def test_market_endpoint_marks_anchored_vwap_not_applicable_for_pure_indices() -
         # single-expiration saves would stay two single-expiration entries,
         # never merging into one multi-expiration batch the way two
         # same-timestamp Postgres writes do.
+        near = MockDataProvider().get_option_chain("VIX")
+        far = MockDataProvider().get_option_chain("VIX", date(2026, 3, 20))
+        storage.save_chain_snapshot(replace(near, contracts=near.contracts + far.contracts))
+        response = client.get("/api/v1/market/VIX")
+
+    assert response.status_code == 200
+    anchored_vwap = response.json()["anchored_vwap"]
+    assert anchored_vwap["not_applicable"] is True
+    assert anchored_vwap["value"] is None
+    assert anchored_vwap["provisional"] is False
+    assert anchored_vwap["proxy_symbol"] is None
+
+
+def test_market_endpoint_approximates_anchored_vwap_from_the_proxy_etf_for_spx() -> None:
+    # SPX itself has no volume, but SPY tracks it closely enough to stand
+    # in (VWAP_PROXY_SYMBOL_BY_INDEX, confirmed with the user, 2026-09-21)
+    # -- proves the end-to-end wiring through build_market_snapshot, not
+    # just the pure calculation already covered in test_anchored_vwap.py.
+    price_as_of = datetime(2026, 8, 3, 14, 35, tzinfo=UTC)
+    gamma_as_of = datetime(2026, 8, 3, 14, 30, tzinfo=UTC)
+
+    with TestClient(app) as client:
+        storage = client.app.state.container.storage
+        storage.save_market_price(
+            MarketPrice(symbol="SPX", as_of=price_as_of, price=Decimal(5500), volume=0)
+        )
+        storage.save_market_price(
+            MarketPrice(
+                symbol="SPY",
+                as_of=datetime(2026, 8, 3, 13, 30, tzinfo=UTC),
+                price=Decimal(550),
+                volume=800,
+            )
+        )
+        storage.save_market_price(
+            MarketPrice(symbol="SPY", as_of=price_as_of, price=Decimal(560), volume=1000)
+        )
+        storage.save_gamma_aggregate(
+            GammaAggregate(
+                symbol="SPX",
+                as_of=gamma_as_of,
+                gamma_flip=Decimal(5500),
+                call_wall=Decimal(5600),
+                put_wall=Decimal(5400),
+                absolute_gamma_strike=Decimal(5550),
+                net_gamma=Decimal(100),
+            )
+        )
         near = MockDataProvider().get_option_chain("SPX")
         far = MockDataProvider().get_option_chain("SPX", date(2026, 3, 20))
         storage.save_chain_snapshot(replace(near, contracts=near.contracts + far.contracts))
@@ -74,8 +125,11 @@ def test_market_endpoint_marks_anchored_vwap_not_applicable_for_pure_indices() -
 
     assert response.status_code == 200
     anchored_vwap = response.json()["anchored_vwap"]
-    assert anchored_vwap["not_applicable"] is True
-    assert anchored_vwap["value"] is None
+    assert anchored_vwap["not_applicable"] is False
+    assert anchored_vwap["proxy_symbol"] == "SPY"
+    # SPY's own VWAP over its two readings: (550*800 + 560*200) / 1000 = 552,
+    # a 552/550 ratio applied to SPX's own 5500 open = 5500 * 552/550 = 5520.
+    assert anchored_vwap["value"] == 5520
     assert anchored_vwap["provisional"] is False
 
 
@@ -112,12 +166,41 @@ def test_vwap_history_endpoint_seeds_a_full_series_not_just_the_latest_point() -
 
 def test_vwap_history_endpoint_marks_not_applicable_for_pure_indices() -> None:
     with TestClient(app) as client:
-        response = client.get("/api/v1/market/SPX/vwap-history")
+        response = client.get("/api/v1/market/VIX/vwap-history")
 
     assert response.status_code == 200
     payload = response.json()
     assert payload["not_applicable"] is True
     assert payload["points"] == []
+
+
+def test_vwap_history_endpoint_approximates_from_the_proxy_etf_for_ndx() -> None:
+    with TestClient(app) as client:
+        storage = client.app.state.container.storage
+        now = datetime.now(UTC)
+        storage.save_market_price(
+            MarketPrice(symbol="NDX", as_of=now - timedelta(minutes=5), price=Decimal(19000), volume=0)
+        )
+        storage.save_market_price(
+            MarketPrice(symbol="QQQ", as_of=now - timedelta(minutes=10), price=Decimal(475), volume=800)
+        )
+        storage.save_market_price(
+            MarketPrice(symbol="QQQ", as_of=now - timedelta(minutes=5), price=Decimal(480), volume=1000)
+        )
+        response = client.get("/api/v1/market/NDX/vwap-history")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["symbol"] == "NDX"
+    assert payload["not_applicable"] is False
+    # One point per QQQ reading (same series shape the SPY-only path
+    # produces), each scaled by that point's own QQQ-VWAP-to-QQQ-open
+    # ratio applied to NDX's single 19000 open (19000/475 = 40 exactly):
+    # point 1 ratio 475/475=1 -> 19000; point 2 (475*800+480*200)/1000=476,
+    # ratio 476/475 -> 19000*476/475 = 19040.
+    assert len(payload["points"]) == 2
+    assert payload["points"][0]["value"] == 19000
+    assert payload["points"][1]["value"] == 19040
 
 
 def test_market_endpoint_confirms_agreeing_dealer_mode_at_gamma_flip() -> None:
@@ -173,6 +256,7 @@ def test_market_endpoint_confirms_agreeing_dealer_mode_at_gamma_flip() -> None:
         "anchor_time": "2026-08-03T13:30:00Z",
         "sample_count": 1,
         "not_applicable": False,
+        "proxy_symbol": None,
     }
     # No daily_bars saved: ATR itself is provisional, but today's open is
     # still known from the same market price used above for anchored_vwap —
