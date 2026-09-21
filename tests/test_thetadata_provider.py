@@ -2861,6 +2861,116 @@ class TestNearTheMoneyWidthFiltering:
         assert Decimal("800.00") not in strikes  # farthest from spot 769.36 — excluded
 
 
+class TestGammaFlipWideSearchWidth:
+    """The gamma-calc chain (feeds Gamma Aggregate/Gamma Flip) now filters
+    to GAMMA_FLIP_WIDTH_MULTIPLIER's own wider width, not the regular
+    ATR_WIDTH_MULTIPLIER streaming registration keeps using -- confirmed
+    live 2026-09-21, SPX's real near-term Gamma Flip crossing sat outside
+    the regular width. $2 daily range -> ATR=2 -> narrow width=3 (1.5x,
+    streaming), wide width=8 (4x, gamma-calc)."""
+
+    def test_gamma_calc_chain_reaches_further_than_the_narrow_streaming_width(self) -> None:
+        near = _safe_future_expirations()[0]
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            if "greeks/first_order" in str(request.url):
+                return httpx.Response(
+                    200,
+                    json={
+                        "response": [
+                            _first_order_entry("769.00", "CALL", expiration=near.isoformat()),
+                            # diff from spot 769.36 is 5.64 -- outside the
+                            # narrow width (3) but inside the wide one (8).
+                            _first_order_entry("775.00", "CALL", expiration=near.isoformat()),
+                        ]
+                    },
+                )
+            if "open_interest" in str(request.url):
+                return httpx.Response(200, json={"response": []})
+            if "interest_rate/history/eod" in str(request.url):
+                return httpx.Response(
+                    200, json={"response": [{"rate": 3.64, "created": "2026-08-31"}]}
+                )
+            if "stock/history/eod" in str(request.url):
+                return httpx.Response(200, json=_daily_bars_response())
+            raise AssertionError(f"unexpected request: {request.url}")
+
+        provider = _provider_with_transport(handler)
+        chain = provider.get_option_chain("SPY")
+
+        strikes = {contract.strike for contract in chain.contracts}
+        assert strikes == {Decimal("769.00"), Decimal("775.00")}
+
+    def test_streaming_registration_keeps_the_narrow_width_unaffected(self) -> None:
+        # Same fixture as above -- the far strike (775.00) reaches the
+        # persisted gamma-calc chain (wide width) but must not get
+        # registered for live streaming (still the narrow width):
+        # widening Gamma Flip's own search must not grow WebSocket
+        # subscription volume, which is a separate, already-stable
+        # concern (see ThetaStreamHub's own docstring).
+        near = _safe_future_expirations()[0]
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            if "greeks/first_order" in str(request.url):
+                return httpx.Response(
+                    200,
+                    json={
+                        "response": [
+                            _first_order_entry("769.00", "CALL", expiration=near.isoformat()),
+                            _first_order_entry("775.00", "CALL", expiration=near.isoformat()),
+                        ]
+                    },
+                )
+            if "open_interest" in str(request.url):
+                return httpx.Response(200, json={"response": []})
+            if "interest_rate/history/eod" in str(request.url):
+                return httpx.Response(
+                    200, json={"response": [{"rate": 3.64, "created": "2026-08-31"}]}
+                )
+            if "stock/history/eod" in str(request.url):
+                return httpx.Response(200, json=_daily_bars_response())
+            raise AssertionError(f"unexpected request: {request.url}")
+
+        provider = _provider_with_transport(handler)
+        provider.get_option_chain("SPY")
+
+        assert provider._hub.contract_count() == 1
+
+    def test_resolving_both_widths_in_one_cycle_does_not_double_the_daily_bars_request(
+        self,
+    ) -> None:
+        # _resolve_width now caches per (symbol, multiplier), not just
+        # symbol -- confirms the streaming (narrow) and gamma-calc (wide)
+        # resolutions in the same cycle still only cost one real
+        # stock/history/eod call, via get_daily_bars' own 20-minute cache
+        # (keyed by (symbol, days), unaffected by which multiplier asked
+        # for it), not two.
+        near = _safe_future_expirations()[0]
+        history_request_count = 0
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            nonlocal history_request_count
+            if "greeks/first_order" in str(request.url):
+                return httpx.Response(
+                    200, json={"response": [_first_order_entry("769.00", "CALL", expiration=near.isoformat())]}
+                )
+            if "open_interest" in str(request.url):
+                return httpx.Response(200, json={"response": []})
+            if "interest_rate/history/eod" in str(request.url):
+                return httpx.Response(
+                    200, json={"response": [{"rate": 3.64, "created": "2026-08-31"}]}
+                )
+            if "stock/history/eod" in str(request.url):
+                history_request_count += 1
+                return httpx.Response(200, json=_daily_bars_response())
+            raise AssertionError(f"unexpected request: {request.url}")
+
+        provider = _provider_with_transport(handler)
+        provider.get_option_chain("SPY")
+
+        assert history_request_count == 1
+
+
 class TestRequestConcurrencyLimit:
     def test_limits_concurrent_rest_calls_to_the_documented_account_cap(self) -> None:
         # ThetaData's real, documented Options Standard concurrency cap

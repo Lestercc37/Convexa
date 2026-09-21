@@ -6,12 +6,16 @@ from decimal import Decimal
 
 from backend.domain.entities import GammaAggregate, OptionChain
 from backend.domain.ports import IAsyncMarketReadStorage, IStorage
+from backend.domain.use_cases.calculate_atr_range import REQUIRED_DAILY_BARS
 from backend.domain.use_cases.calculate_gamma_aggregate import (
     CalculateGammaAggregateUseCase,
 )
 from backend.domain.use_cases.calculate_gamma_flip import CalculateGammaFlipUseCase
 from backend.domain.use_cases.calculate_greeks import CalculateGreeksUseCase
 from backend.domain.use_cases.calculate_max_pain import CalculateMaxPainUseCase
+from backend.domain.use_cases.calculate_near_the_money_width import (
+    calculate_near_the_money_width,
+)
 from backend.domain.use_cases.calculate_walls import CalculateWallsUseCase
 from backend.domain.use_cases.errors import NotFoundError
 
@@ -79,29 +83,58 @@ class CalculateGammaExposureOrchestrator:
             chain, NEAR_TERM_GAMMA_PROFILE_WINDOW_DAYS
         )
         enriched_chain = self._greeks.execute(near_term_chain)
-        aggregate = self._aggregate.execute(enriched_chain)
-        gamma_flip = self._gamma_flip.execute(aggregate, enriched_chain.spot_price)
+
+        # Gamma Flip needs to search wherever dealer net gamma actually
+        # crosses zero, which can legitimately sit further from spot than
+        # Call Wall/Put Wall/Net GEX ever do -- confirmed live 2026-09-21,
+        # SPX's real near-term crossing sat ~$175 from spot, outside the
+        # regular (1.5x ATR) width. Call Wall/Put Wall/Net GEX/the
+        # aggregate items behind the GEX-by-strike histogram all keep
+        # using the narrower width below (unchanged, already verified
+        # against a real reference platform) -- only Gamma Flip's own
+        # search uses the wider one.
+        wide_aggregate = self._aggregate.execute(enriched_chain)
+        gamma_flip = self._gamma_flip.execute(wide_aggregate, enriched_chain.spot_price)
+
+        daily_bars = self._storage.get_daily_bars(underlying, REQUIRED_DAILY_BARS)
+        narrow_width = calculate_near_the_money_width(
+            underlying, daily_bars, enriched_chain.spot_price
+        )
+        narrow_contracts = tuple(
+            contract
+            for contract in enriched_chain.contracts
+            if abs(contract.strike - enriched_chain.spot_price) <= narrow_width
+        )
+        # Degenerate width guard, same reasoning as the provider's own
+        # _filter_near_the_money fallback: an unusually calm ATR window
+        # narrower than this symbol's own strike spacing must not zero
+        # out Call Wall/Put Wall/Net GEX entirely.
+        narrow_chain = replace(
+            enriched_chain, contracts=narrow_contracts or enriched_chain.contracts
+        )
+
+        aggregate = self._aggregate.execute(narrow_chain)
         walls = self._walls.execute(aggregate)
-        max_pain = self._max_pain.execute(enriched_chain)
+        max_pain = self._max_pain.execute(narrow_chain)
         contract_multiplier = Decimal(100)
         vega_exposure = sum(
             (
                 contract.greeks.vega * Decimal(contract.open_interest) * contract_multiplier
-                for contract in enriched_chain.contracts
+                for contract in narrow_chain.contracts
             ),
             Decimal(0),
         )
         theta_exposure = sum(
             (
                 contract.greeks.theta * Decimal(contract.open_interest) * contract_multiplier
-                for contract in enriched_chain.contracts
+                for contract in narrow_chain.contracts
             ),
             Decimal(0),
         )
         charm_exposure = sum(
             (
                 contract.greeks.charm * Decimal(contract.open_interest) * contract_multiplier
-                for contract in enriched_chain.contracts
+                for contract in narrow_chain.contracts
             ),
             Decimal(0),
         )
@@ -111,7 +144,7 @@ class CalculateGammaExposureOrchestrator:
                 * Decimal(contract.open_interest)
                 * contract_multiplier
                 * enriched_chain.spot_price
-                for contract in enriched_chain.contracts
+                for contract in narrow_chain.contracts
             ),
             Decimal(0),
         )
@@ -128,7 +161,7 @@ class CalculateGammaExposureOrchestrator:
         delta_exposure = sum(
             (
                 contract.greeks.delta * Decimal(contract.open_interest) * contract_multiplier
-                for contract in enriched_chain.contracts
+                for contract in narrow_chain.contracts
             ),
             Decimal(0),
         )
