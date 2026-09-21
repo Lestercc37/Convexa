@@ -22,6 +22,15 @@ class FakeGammaAggregateCalculator(IGammaAggregateCalculator):
         call_gamma_by_strike: dict[Decimal, Decimal] = defaultdict(lambda: Decimal("0"))
         put_gamma_by_strike: dict[Decimal, Decimal] = defaultdict(lambda: Decimal("0"))
         contract_count_by_strike: dict[Decimal, int] = defaultdict(int)
+        # P7 fix (2026-09-21): GammaAggregateItem already had these two
+        # fields (see storage/serializers, which already read and persist
+        # them) -- this calculator was simply the one place in the chain
+        # that never summed GammaExposure's own per-contract values into
+        # them, so every item silently carried 0 regardless of the real
+        # data upstream. Summed across every contract at a strike (both
+        # calls and puts), same as contract_count_by_strike above.
+        open_interest_by_strike: dict[Decimal, int] = defaultdict(int)
+        volume_by_strike: dict[Decimal, int] = defaultdict(int)
 
         for exposure in exposures:
             if exposure.contract_type == ContractType.CALL:
@@ -29,6 +38,8 @@ class FakeGammaAggregateCalculator(IGammaAggregateCalculator):
             else:
                 put_gamma_by_strike[exposure.strike] += exposure.dealer_gamma_exposure
             contract_count_by_strike[exposure.strike] += 1
+            open_interest_by_strike[exposure.strike] += exposure.open_interest
+            volume_by_strike[exposure.strike] += exposure.volume
 
         items: list[GammaAggregateItem] = []
         positive_gamma = Decimal("0")
@@ -52,6 +63,8 @@ class FakeGammaAggregateCalculator(IGammaAggregateCalculator):
                     net_gamma=net_gamma,
                     contract_count=contract_count_by_strike[strike],
                     absolute_gamma=absolute_gamma,
+                    open_interest=open_interest_by_strike[strike],
+                    volume=volume_by_strike[strike],
                 )
             )
 

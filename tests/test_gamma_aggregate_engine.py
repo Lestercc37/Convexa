@@ -35,6 +35,8 @@ def test_fake_gamma_aggregate_calculator_groups_gamma_exposure_by_strike() -> No
                 net_gamma=Decimal("27225000.000"),
                 contract_count=2,
                 absolute_gamma=Decimal("27225000.000"),
+                open_interest=14000,  # 8000 (call) + 6000 (put) -- P7 fix
+                volume=6800,  # 3400 + 3400
             ),
             GammaAggregateItem(
                 strike=Decimal("545"),
@@ -44,6 +46,8 @@ def test_fake_gamma_aggregate_calculator_groups_gamma_exposure_by_strike() -> No
                 net_gamma=Decimal("57475000.000"),
                 contract_count=2,
                 absolute_gamma=Decimal("57475000.000"),
+                open_interest=6000,  # 5000 (call) + 1000 (put)
+                volume=6800,  # 3400 + 3400
             ),
         ),
         total_market_gamma=Decimal("84700000.000"),
@@ -55,6 +59,26 @@ def test_fake_gamma_aggregate_calculator_groups_gamma_exposure_by_strike() -> No
         absolute_gamma_strike=Decimal("545"),
         peak_gamma_value=Decimal("57475000.000"),
     )
+
+
+def test_fake_gamma_aggregate_calculator_sums_open_interest_and_volume_per_strike() -> None:
+    # P7 fix (2026-09-21): confirmed via full end-to-end trace (OptionContract
+    # -> GammaExposure -> GammaAggregateItem) that both fields already existed
+    # on GammaAggregateItem, and were already read correctly by every
+    # downstream consumer (Walls, storage, the API serializer) -- this
+    # calculator was the one place in the chain that never summed them from
+    # GammaExposure, so every item silently carried 0 regardless of the real
+    # open_interest/volume already present per contract.
+    chain = _chain()
+    exposures = FakeGammaExposureCalculator().calculate(chain)
+
+    aggregate = FakeGammaAggregateCalculator().calculate(exposures, chain.symbol, chain.as_of)
+
+    by_strike = {item.strike: item for item in aggregate.items}
+    assert by_strike[Decimal(540)].open_interest == 14000  # 8000 (call) + 6000 (put)
+    assert by_strike[Decimal(540)].volume == 6800  # 3400 + 3400
+    assert by_strike[Decimal(545)].open_interest == 6000  # 5000 (call) + 1000 (put)
+    assert by_strike[Decimal(545)].volume == 6800  # 3400 + 3400
 
 
 def test_fake_gamma_aggregate_calculator_selects_peak_by_absolute_gamma() -> None:

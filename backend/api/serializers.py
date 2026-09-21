@@ -94,6 +94,8 @@ def gamma_aggregate_response(gamma: GammaAggregate) -> dict[str, Any]:
                 "net_gamma": _num(item.net_gamma),
                 "contract_count": item.contract_count,
                 "absolute_gamma": _num(item.absolute_gamma),
+                "open_interest": item.open_interest,
+                "volume": item.volume,
             }
             for item in gamma.items
         ],
