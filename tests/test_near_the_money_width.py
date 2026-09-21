@@ -7,6 +7,7 @@ from backend.domain.entities import DailyBar
 from backend.domain.use_cases.calculate_near_the_money_width import (
     ATR_WIDTH_MULTIPLIER,
     FIXED_WIDTH_BY_SYMBOL,
+    GAMMA_FLIP_WIDTH_MULTIPLIER,
     INSUFFICIENT_DATA_WIDTH_FRACTION,
     calculate_near_the_money_width,
 )
@@ -73,3 +74,43 @@ def test_insufficient_daily_bars_fallback_scales_with_spot_not_a_flat_dollar_amo
     high_price_width = calculate_near_the_money_width("SPX", _flat_daily_bars(count=5), Decimal(5600))
     assert high_price_width > low_price_width
     assert high_price_width == Decimal(5600) * INSUFFICIENT_DATA_WIDTH_FRACTION
+
+
+def test_wider_multiplier_scales_an_atr_based_width_proportionally() -> None:
+    width = calculate_near_the_money_width(
+        "SPY", _flat_daily_bars(), Decimal(560), multiplier=GAMMA_FLIP_WIDTH_MULTIPLIER
+    )
+    # ATR=2 here (see _flat_daily_bars' own comment) -- at the wider
+    # multiplier this is 2 x 4 = 8, not the default 2 x 1.5 = 3.
+    assert width == Decimal(2) * GAMMA_FLIP_WIDTH_MULTIPLIER
+    assert width == Decimal(8)
+
+
+def test_wider_multiplier_scales_a_fixed_width_symbol_by_the_same_ratio() -> None:
+    # VIX/ES don't have an ATR to multiply -- a wider multiplier must
+    # still widen their fixed width, by the same ratio an ATR-based
+    # symbol would get, not silently ignore the parameter.
+    default_width = calculate_near_the_money_width("VIX", _flat_daily_bars(), Decimal("18.50"))
+    wider_width = calculate_near_the_money_width(
+        "VIX", _flat_daily_bars(), Decimal("18.50"), multiplier=GAMMA_FLIP_WIDTH_MULTIPLIER
+    )
+    assert wider_width == default_width * (GAMMA_FLIP_WIDTH_MULTIPLIER / ATR_WIDTH_MULTIPLIER)
+
+
+def test_wider_multiplier_scales_the_insufficient_data_fallback_too() -> None:
+    default_width = calculate_near_the_money_width("SPY", _flat_daily_bars(count=5), Decimal(560))
+    wider_width = calculate_near_the_money_width(
+        "SPY", _flat_daily_bars(count=5), Decimal(560), multiplier=GAMMA_FLIP_WIDTH_MULTIPLIER
+    )
+    assert wider_width == default_width * (GAMMA_FLIP_WIDTH_MULTIPLIER / ATR_WIDTH_MULTIPLIER)
+
+
+def test_default_multiplier_keeps_every_existing_caller_unchanged() -> None:
+    # Every existing call site omits `multiplier` entirely -- confirms
+    # the parameter's default reproduces the exact pre-existing behavior
+    # byte for byte, not just "close enough".
+    width_with_default_arg = calculate_near_the_money_width("SPY", _flat_daily_bars(), Decimal(560))
+    width_with_explicit_multiplier = calculate_near_the_money_width(
+        "SPY", _flat_daily_bars(), Decimal(560), multiplier=ATR_WIDTH_MULTIPLIER
+    )
+    assert width_with_default_arg == width_with_explicit_multiplier

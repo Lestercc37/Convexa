@@ -39,7 +39,11 @@ from backend.domain.entities import (
 )
 from backend.domain.underlyings import ACTIVE_UNDERLYINGS_BY_SYMBOL
 from backend.domain.use_cases.calculate_bsm_greeks import calculate_bsm_greeks
-from backend.domain.use_cases.calculate_near_the_money_width import calculate_near_the_money_width
+from backend.domain.use_cases.calculate_near_the_money_width import (
+    ATR_WIDTH_MULTIPLIER,
+    GAMMA_FLIP_WIDTH_MULTIPLIER,
+    calculate_near_the_money_width,
+)
 from backend.domain.use_cases.market_hours import EASTERN_TIME, MARKET_CLOSE_ET, is_market_open
 
 logger = logging.getLogger(__name__)
@@ -1456,8 +1460,11 @@ class ThetaDataProvider:
         # only changes once a *closed* trading day is added to the
         # history — recomputing it on every ~30s poll would be pure
         # waste, so it's cached per symbol per day, same pattern as
-        # `_rate_cache` above.
-        self._width_cache: dict[str, tuple[date, Decimal]] = {}
+        # `_rate_cache` above. Keyed by (symbol, multiplier), not just
+        # symbol -- the gamma-calc path resolves a second, wider width
+        # (GAMMA_FLIP_WIDTH_MULTIPLIER) alongside the regular one
+        # (ATR_WIDTH_MULTIPLIER) for the same symbol on the same day.
+        self._width_cache: dict[tuple[str, Decimal], tuple[date, Decimal]] = {}
         # See NEAR_THE_MONEY_CACHE_TTL_SECONDS/OPEN_INTEREST_CACHE_TTL_SECONDS
         # above for why these exist and use different TTLs.
         self._near_the_money_cache: dict[tuple[str, date | None], tuple[float, _NearTheMoneyChain]] = {}
@@ -1596,25 +1603,37 @@ class ThetaDataProvider:
         self._rate_cache = (today, rate)
         return rate
 
-    def _resolve_width(self, symbol: str, spot_price: Decimal) -> Decimal:
+    def _resolve_width(
+        self, symbol: str, spot_price: Decimal, multiplier: Decimal = ATR_WIDTH_MULTIPLIER
+    ) -> Decimal:
         today = datetime.now(EASTERN_TIME).date()
-        cached = self._width_cache.get(symbol)
+        cache_key = (symbol, multiplier)
+        cached = self._width_cache.get(cache_key)
         if cached is not None and cached[0] == today:
             return cached[1]
         daily_bars = self.get_daily_bars(symbol)
-        width = calculate_near_the_money_width(symbol, daily_bars, spot_price)
-        self._width_cache[symbol] = (today, width)
+        width = calculate_near_the_money_width(symbol, daily_bars, spot_price, multiplier=multiplier)
+        self._width_cache[cache_key] = (today, width)
         # Confirmed with the user before implementing: log the real width
         # on every fresh (once-per-symbol-per-day) computation, to check
         # against the investigation's illustrative estimate table.
-        logger.info("Near-the-money width for %s: $%s (spot $%s)", symbol, width, spot_price)
+        logger.info(
+            "Near-the-money width for %s: $%s (spot $%s, multiplier %sx)",
+            symbol,
+            width,
+            spot_price,
+            multiplier,
+        )
         return width
 
     def _filter_near_the_money(
-        self, symbol: str, entries: list[dict[str, Any]]
+        self,
+        symbol: str,
+        entries: list[dict[str, Any]],
+        multiplier: Decimal = ATR_WIDTH_MULTIPLIER,
     ) -> list[dict[str, Any]]:
         spot_price = Decimal(str(entries[0]["data"][0]["underlying_price"]))
-        width = self._resolve_width(symbol, spot_price)
+        width = self._resolve_width(symbol, spot_price, multiplier=multiplier)
         filtered = [
             entry
             for entry in entries
@@ -1741,6 +1760,17 @@ class ThetaDataProvider:
         _near_the_money_all_raw_cache -- if called standalone (cache
         cold), this still works, it just costs one real wildcard REST
         call per root instead of reusing a same-cycle one.
+
+        Filters to GAMMA_FLIP_WIDTH_MULTIPLIER's own wider width, not the
+        regular ATR_WIDTH_MULTIPLIER _fetch_near_the_money uses for
+        streaming -- confirmed live 2026-09-21: SPX's real near-term
+        Gamma Flip crossing sat outside the regular width entirely.
+        `NEAR_THE_MONEY_OVERFETCH_STRIKE_RANGE` is a strike COUNT (100
+        strikes each side of ATM, not a price distance -- see that
+        constant's own comment), already comfortably wide enough in
+        dollar terms to contain this wider width without asking
+        ThetaData for anything extra; only the client-side filter kept
+        was ever the narrow one.
         """
         cache_key = symbol
         cached = self._near_the_money_all_raw_cache.get(cache_key)
@@ -1766,7 +1796,10 @@ class ThetaDataProvider:
             by_expiration[date.fromisoformat(entry["contract"]["expiration"])].append(entry)
 
         return tuple(
-            _NearTheMoneyChain(expiration, self._filter_near_the_money(symbol, group))
+            _NearTheMoneyChain(
+                expiration,
+                self._filter_near_the_money(symbol, group, multiplier=GAMMA_FLIP_WIDTH_MULTIPLIER),
+            )
             for expiration, group in sorted(by_expiration.items())
         )
 

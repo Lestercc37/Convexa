@@ -12,6 +12,18 @@ from backend.domain.use_cases.calculate_atr_range import calculate_atr_range
 # table. ATR already reflects each symbol's real volatility automatically.
 ATR_WIDTH_MULTIPLIER = Decimal("1.5")
 
+# Gamma Flip needs to search wherever dealer net gamma actually crosses
+# zero, which is NOT bounded by the same "near enough to matter for Call
+# Wall/Put Wall" distance the 1.5x width was tuned for -- confirmed live
+# 2026-09-21: SPX's real near-term sign crossing, when found without the
+# tight width, sat ~$175 from spot (outside even the current ~$98 width).
+# Reuses the identical ATR-based formula, just a wider multiplier, so it
+# inherits the same per-symbol-scale-aware sizing (this also incidentally
+# fixes NDX, whose own 1.5x width -- ~$512 -- already silently exceeded
+# the fetch's flat overfetch bound before this change) instead of a
+# second hand-tuned table.
+GAMMA_FLIP_WIDTH_MULTIPLIER = Decimal(4)
+
 # Fixed, deliberately modest widths -- two distinct reasons, not one
 # generic "weird symbol" exception:
 FIXED_WIDTH_BY_SYMBOL: dict[str, Decimal] = {
@@ -42,7 +54,10 @@ INSUFFICIENT_DATA_WIDTH_FRACTION = Decimal("0.02")
 
 
 def calculate_near_the_money_width(
-    symbol: str, daily_bars: list[DailyBar], spot_price: Decimal
+    symbol: str,
+    daily_bars: list[DailyBar],
+    spot_price: Decimal,
+    multiplier: Decimal = ATR_WIDTH_MULTIPLIER,
 ) -> Decimal:
     """Price-distance half-width for near-the-money strike selection.
 
@@ -52,18 +67,27 @@ def calculate_near_the_money_width(
     in the ThetaData adapter) down to the contracts actually worth
     streaming/computing for, without hand-tuning a width per symbol.
 
-    VIX and ES use a fixed width (see FIXED_WIDTH_BY_SYMBOL for each
-    one's own reason). Every other symbol gets `ATR(14d) x 1.5`, computed
-    from `daily_bars` alone (`calculate_atr_range`'s own `atr` field does
-    not depend on `session_readings` -- confirmed by reading that
-    function, not assumed -- so this works even before the first live
-    option-chain fetch of the day, seeded from `get_daily_bars()` alone).
+    `multiplier` defaults to `ATR_WIDTH_MULTIPLIER` (every existing
+    caller's unchanged behavior) -- pass `GAMMA_FLIP_WIDTH_MULTIPLIER`
+    for the wider search Gamma Flip needs (see that constant's own
+    comment). A fixed-width symbol's own width scales by the same ratio
+    (`multiplier / ATR_WIDTH_MULTIPLIER`) instead of ignoring the
+    parameter, so a wider multiplier widens every symbol consistently,
+    fixed or ATR-based.
+
+    VIX and ES use a fixed base width (see FIXED_WIDTH_BY_SYMBOL for each
+    one's own reason). Every other symbol gets `ATR(14d) x multiplier`,
+    computed from `daily_bars` alone (`calculate_atr_range`'s own `atr`
+    field does not depend on `session_readings` -- confirmed by reading
+    that function, not assumed -- so this works even before the first
+    live option-chain fetch of the day, seeded from `get_daily_bars()`
+    alone).
     """
     fixed = FIXED_WIDTH_BY_SYMBOL.get(symbol.upper())
     if fixed is not None:
-        return fixed
+        return fixed * (multiplier / ATR_WIDTH_MULTIPLIER)
 
     atr_range = calculate_atr_range(daily_bars, [])
     if atr_range.atr is None:
-        return spot_price * INSUFFICIENT_DATA_WIDTH_FRACTION
-    return atr_range.atr * ATR_WIDTH_MULTIPLIER
+        return spot_price * INSUFFICIENT_DATA_WIDTH_FRACTION * (multiplier / ATR_WIDTH_MULTIPLIER)
+    return atr_range.atr * multiplier
