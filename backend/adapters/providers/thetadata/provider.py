@@ -591,9 +591,31 @@ class ThetaStreamHub:
     instead, since only the latest one has any value for a 0DTE chart.
     """
 
-    def __init__(self, ws_url: str, rest_client: httpx.Client) -> None:
+    def __init__(
+        self,
+        ws_url: str,
+        rest_client: httpx.Client,
+        request_slots: PostgresThetaRequestSlots | InProcessThetaRequestSlots | None = None,
+    ) -> None:
         self._ws_url = ws_url
         self._rest_client = rest_client
+        # reconcile()'s own REST call (below) used to bypass every other
+        # REST call's account-wide concurrency limit entirely -- it never
+        # went through ThetaDataProvider._get_json()/_get_json_allow_no_data(),
+        # the only two call sites that ever acquired THETADATA_MAX_CONCURRENT_
+        # REQUESTS. Not a deliberate exemption: this class and _get_json()'s
+        # semaphore were both written within days of each other (2026-08-31
+        # and 2026-09-04) but as two different call paths that never got
+        # reconciled with each other -- confirmed via git blame, 2026-09-21.
+        # ThetaData's real limit is per ACCOUNT (see THETADATA_MAX_CONCURRENT_
+        # REQUESTS' own comment), and only one account/Terminal is ever
+        # connected, so reconcile() running unthrottled put real, uncounted
+        # load on the exact same shared budget the semaphore exists to
+        # protect. Defaults the same way ThetaDataProvider.__init__ does, for
+        # every existing test construction that doesn't care about this.
+        self._request_slots = request_slots or InProcessThetaRequestSlots(
+            THETADATA_MAX_CONCURRENT_REQUESTS
+        )
         self._contracts: dict[str, tuple[str, date, ContractType, Decimal]] = {}
         # register_contract()/has_contract() run from the scheduler's own
         # worker threads (get_option_chain() is called via asyncio.to_thread,
@@ -1320,18 +1342,31 @@ class ThetaStreamHub:
             contracts_snapshot = list(self._contracts.items())
         for occ_symbol, (root, expiration, contract_type, strike) in contracts_snapshot:
             try:
-                response = self._rest_client.get(
-                    "/v3/option/history/ohlc",
-                    params={
-                        "symbol": root,
-                        "expiration": expiration.strftime("%Y-%m-%d"),
-                        "strike": f"{strike:.2f}",
-                        "right": "call" if contract_type == ContractType.CALL else "put",
-                        "interval": "1m",
-                        "date": datetime.now(EASTERN_TIME).date().strftime("%Y-%m-%d"),
-                        "format": "json",
-                    },
-                )
+                with self._request_slots.hold():
+                    response = self._rest_client.get(
+                        "/v3/option/history/ohlc",
+                        params={
+                            "symbol": root,
+                            "expiration": expiration.strftime("%Y-%m-%d"),
+                            "strike": f"{strike:.2f}",
+                            "right": "call" if contract_type == ContractType.CALL else "put",
+                            "interval": "1m",
+                            "date": datetime.now(EASTERN_TIME).date().strftime("%Y-%m-%d"),
+                            "format": "json",
+                        },
+                    )
+                # 472 ("no data found for your request") is the expected,
+                # normal outcome for a contract with no trades on file yet
+                # (far OTM/far-dated strikes especially) -- not a real
+                # failure worth a full stack trace. Same treatment as
+                # _get_json_allow_no_data(), which this call deliberately
+                # doesn't reuse: that method returns parsed JSON, but the
+                # volume sum below also needs the *count* of contracts with
+                # zero rest_volume to mean "no data", not "zero trades",
+                # and a quiet `continue` here already gets that right
+                # without decoding a body only to discard it.
+                if response.status_code == 472:
+                    continue
                 response.raise_for_status()
                 bars = response.json().get("response", [])
                 rest_volume = sum(
@@ -1378,7 +1413,6 @@ class ThetaDataProvider:
         request_slots: PostgresThetaRequestSlots | InProcessThetaRequestSlots | None = None,
     ) -> None:
         self._client = httpx.Client(base_url=rest_base_url, timeout=10.0)
-        self._hub = ThetaStreamHub(ws_url, self._client)
         # Defaults to the pre-existing in-process behavior (correct on
         # its own whenever nothing in a separate OS process could also
         # be calling ThetaData -- every caller that doesn't pass a real
@@ -1389,6 +1423,11 @@ class ThetaDataProvider:
         self._request_slots = request_slots or InProcessThetaRequestSlots(
             THETADATA_MAX_CONCURRENT_REQUESTS
         )
+        # Built after _request_slots so reconcile() (inside the hub) can
+        # share the exact same account-wide slot pool as every other REST
+        # call this provider makes -- see ThetaStreamHub.__init__'s own
+        # comment for why this wasn't wired in from the start.
+        self._hub = ThetaStreamHub(ws_url, self._client, self._request_slots)
         self._rate_cache: tuple[date, Decimal] | None = None
         # ATR (and therefore the near-the-money width derived from it)
         # only changes once a *closed* trading day is added to the
