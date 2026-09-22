@@ -186,66 +186,97 @@ class PostgreSQLStorage:
         )
 
     def save_chain_snapshot(self, chain: OptionChain) -> None:
+        # Chunked multi-row upserts, not one contract at a time -- confirmed
+        # live, 2026-09-22: the old row-by-row loop issued two sequential
+        # INSERT round-trips per contract inside ONE transaction, so SPX
+        # alone (~8,000 contracts after PR #159 widened the persisted
+        # strike range) meant ~16,000 sequential round-trips held open
+        # under a single `session_factory.begin()`. With 15 symbols
+        # writing concurrently via the scheduler, this produced a real
+        # Postgres pile-up (40 connections, 16 waiting on a lock) even on
+        # a clean restart with no orphaned session involved -- confirmed
+        # via pg_locks that it was genuine write-path slowness, not a
+        # deadlock (it drained on its own). CHUNK_SIZE keeps each
+        # statement's bound-parameter count (5 or 15 per row) well under
+        # PostgreSQL's ~65,535-per-statement protocol limit while still
+        # cutting round-trips by ~2 orders of magnitude.
+        if not chain.contracts:
+            return
+        CHUNK_SIZE = 500
         with self.session_factory.begin() as session:
             underlying_id = self._ensure_underlying(session, chain.symbol)
-            for contract in chain.contracts:
-                contract_id = session.execute(
+            contracts = chain.contracts
+            for start in range(0, len(contracts), CHUNK_SIZE):
+                batch = contracts[start : start + CHUNK_SIZE]
+
+                contract_values_sql = ", ".join(
+                    f"(:underlying_id_{i}, :strike_{i}, :expiration_{i}, "
+                    f":contract_type_{i}, :occ_symbol_{i})"
+                    for i in range(len(batch))
+                )
+                contract_params: dict[str, object] = {}
+                for i, contract in enumerate(batch):
+                    contract_params[f"underlying_id_{i}"] = underlying_id
+                    contract_params[f"strike_{i}"] = contract.strike
+                    contract_params[f"expiration_{i}"] = contract.expiration
+                    contract_params[f"contract_type_{i}"] = contract.contract_type.value
+                    contract_params[f"occ_symbol_{i}"] = contract.occ_symbol
+                contract_rows = session.execute(
                     text(
-                        """
+                        f"""
                         INSERT INTO option_contracts (
                             underlying_id, strike, expiration, contract_type, occ_symbol
                         )
-                        VALUES (
-                            :underlying_id, :strike, :expiration, :contract_type, :occ_symbol
-                        )
+                        VALUES {contract_values_sql}
                         ON CONFLICT (occ_symbol) DO UPDATE SET
                             underlying_id = EXCLUDED.underlying_id,
                             strike = EXCLUDED.strike,
                             expiration = EXCLUDED.expiration,
                             contract_type = EXCLUDED.contract_type
-                        RETURNING id
+                        RETURNING id, occ_symbol
                         """
                     ),
-                    {
-                        "underlying_id": underlying_id,
-                        "strike": contract.strike,
-                        "expiration": contract.expiration,
-                        "contract_type": contract.contract_type.value,
-                        "occ_symbol": contract.occ_symbol,
-                    },
-                ).scalar_one()
+                    contract_params,
+                ).all()
+                contract_id_by_occ_symbol = {row.occ_symbol: row.id for row in contract_rows}
+
+                snapshot_values_sql = ", ".join(
+                    f"(:time_{i}, :contract_id_{i}, :bid_{i}, :ask_{i}, :last_{i}, :volume_{i}, "
+                    f":open_interest_{i}, :iv_{i}, :delta_{i}, :gamma_{i}, :theta_{i}, :vega_{i}, "
+                    f":charm_{i}, :vanna_{i}, :spot_price_{i})"
+                    for i in range(len(batch))
+                )
+                snapshot_params: dict[str, object] = {}
+                for i, contract in enumerate(batch):
+                    snapshot_params[f"time_{i}"] = chain.as_of
+                    snapshot_params[f"contract_id_{i}"] = contract_id_by_occ_symbol[
+                        contract.occ_symbol
+                    ]
+                    snapshot_params[f"bid_{i}"] = contract.bid
+                    snapshot_params[f"ask_{i}"] = contract.ask
+                    snapshot_params[f"last_{i}"] = contract.last
+                    snapshot_params[f"volume_{i}"] = contract.volume
+                    snapshot_params[f"open_interest_{i}"] = contract.open_interest
+                    snapshot_params[f"iv_{i}"] = contract.iv
+                    snapshot_params[f"delta_{i}"] = contract.greeks.delta
+                    snapshot_params[f"gamma_{i}"] = contract.greeks.gamma
+                    snapshot_params[f"theta_{i}"] = contract.greeks.theta
+                    snapshot_params[f"vega_{i}"] = contract.greeks.vega
+                    snapshot_params[f"charm_{i}"] = contract.greeks.charm
+                    snapshot_params[f"vanna_{i}"] = contract.greeks.vanna
+                    snapshot_params[f"spot_price_{i}"] = chain.spot_price
                 session.execute(
                     text(
-                        """
+                        f"""
                         INSERT INTO option_chain_snapshots (
                             time, contract_id, bid, ask, last, volume,
                             open_interest, iv, delta, gamma, theta, vega,
                             charm, vanna, spot_price
                         )
-                        VALUES (
-                            :time, :contract_id, :bid, :ask, :last, :volume,
-                            :open_interest, :iv, :delta, :gamma, :theta, :vega,
-                            :charm, :vanna, :spot_price
-                        )
+                        VALUES {snapshot_values_sql}
                         """
                     ),
-                    {
-                        "time": chain.as_of,
-                        "contract_id": contract_id,
-                        "bid": contract.bid,
-                        "ask": contract.ask,
-                        "last": contract.last,
-                        "volume": contract.volume,
-                        "open_interest": contract.open_interest,
-                        "iv": contract.iv,
-                        "delta": contract.greeks.delta,
-                        "gamma": contract.greeks.gamma,
-                        "theta": contract.greeks.theta,
-                        "vega": contract.greeks.vega,
-                        "charm": contract.greeks.charm,
-                        "vanna": contract.greeks.vanna,
-                        "spot_price": chain.spot_price,
-                    },
+                    snapshot_params,
                 )
 
     def get_latest_chain_snapshot(
