@@ -71,6 +71,10 @@ class AsyncPostgreSQLStorage:
 
     def __init__(self, session_factory: async_sessionmaker[AsyncSession]) -> None:
         self.session_factory = session_factory
+        # See _ensure_underlying's own comment -- a symbol's underlying_id
+        # never changes once seeded, so this cache is safe to keep for the
+        # whole process lifetime, not just per-call.
+        self._underlying_id_cache: dict[str, int] = {}
 
     async def get_latest_gamma_aggregate(self, underlying: str) -> GammaAggregate | None:
         async with self.session_factory() as session:
@@ -487,9 +491,24 @@ class AsyncPostgreSQLStorage:
                 {"channel": MARKET_PRICE_CHANNEL, "payload": payload},
             )
 
-    @staticmethod
-    async def _ensure_underlying(session: AsyncSession, symbol: str) -> int:
+    async def _ensure_underlying(self, session: AsyncSession, symbol: str) -> int:
+        # Confirmed live, 2026-09-22: this UPSERT ran unconditionally on
+        # *every* save_market_price call -- fine at the REST scheduler's
+        # 30s-per-symbol cadence, but with TICK_LEVEL_SYMBOLS (see
+        # stream_underlying_price.py) pushing every real trade tick for
+        # 5 symbols with no debounce, this became a real, measured
+        # contributor to WebSocket instability: an A/B test (tick-level
+        # on vs. off, same process, comparable ~9-minute windows) showed
+        # 4 disconnects vs. 0. An underlying's id/kind/is_priority never
+        # changes once seeded (kind/is_priority come from the static
+        # ACTIVE_UNDERLYINGS_BY_SYMBOL config, not live data) -- caching
+        # the id for this process's lifetime turns every tick after the
+        # first one for a given symbol into a plain dict lookup instead
+        # of a real INSERT..ON CONFLICT..RETURNING round-trip.
         normalized_symbol = symbol.upper()
+        cached = self._underlying_id_cache.get(normalized_symbol)
+        if cached is not None:
+            return cached
         configured = ACTIVE_UNDERLYINGS_BY_SYMBOL.get(normalized_symbol)
         kind = configured.kind.value if configured is not None else UnderlyingKind.EQUITY.value
         is_priority = configured.is_priority if configured is not None else False
@@ -513,4 +532,6 @@ class AsyncPostgreSQLStorage:
                 "is_priority": is_priority,
             },
         )
-        return result.scalar_one()
+        underlying_id = result.scalar_one()
+        self._underlying_id_cache[normalized_symbol] = underlying_id
+        return underlying_id

@@ -54,6 +54,24 @@ from backend.domain.use_cases.market_hours import is_market_open
 # today, not an unbounded firehose.
 MIN_WRITE_INTERVAL_SECONDS = 1.0
 
+# Trial (2026-09-22, explicit user request): these 5 -- SPX/NDX/SPY/QQQ/
+# IWM, the most-watched symbols -- get every real trade tick persisted
+# and pushed to the chart immediately, no debounce at all, instead of
+# coalesced to at most one write per second like everything else. Safe
+# to trial now specifically because the risk that made a blanket
+# "every tick, every symbol" policy risky before (this process's event
+# loop contending with the REST scheduler's own concurrent per-symbol
+# work for the GIL) is gone -- the scheduler no longer shares this
+# process at all (see backend/scheduler_worker.py's own docstring). The
+# underlying-price queue's own bounded maxsize + drop-oldest policy
+# (ThetaStreamHub._dispatch_dropping, UNDERLYING_QUEUE_MAXSIZE) is the
+# real backpressure valve regardless of this setting, so 0.0 here still
+# can't produce an unbounded write rate even under a genuine burst.
+# Scale to more symbols gradually once this trial confirms Postgres/the
+# WebSocket push to the chart hold up under real tick rates for these 5.
+TICK_LEVEL_SYMBOLS: frozenset[str] = frozenset({"SPX", "NDX", "SPY", "QQQ", "IWM"})
+TICK_LEVEL_MIN_WRITE_INTERVAL_SECONDS = 0.0
+
 
 class StreamUnderlyingPriceUseCase:
     def __init__(
@@ -61,11 +79,20 @@ class StreamUnderlyingPriceUseCase:
         provider: IDataProvider,
         storage: IAsyncMarketReadStorage,
         min_write_interval_seconds: float = MIN_WRITE_INTERVAL_SECONDS,
+        tick_level_symbols: frozenset[str] = TICK_LEVEL_SYMBOLS,
+        tick_level_min_write_interval_seconds: float = TICK_LEVEL_MIN_WRITE_INTERVAL_SECONDS,
     ) -> None:
         self._provider = provider
         self._storage = storage
         self._min_write_interval_seconds = min_write_interval_seconds
+        self._tick_level_symbols = tick_level_symbols
+        self._tick_level_min_write_interval_seconds = tick_level_min_write_interval_seconds
         self._last_written_at: dict[str, float] = {}
+
+    def _interval_for(self, symbol: str) -> float:
+        if symbol.upper() in self._tick_level_symbols:
+            return self._tick_level_min_write_interval_seconds
+        return self._min_write_interval_seconds
 
     async def run(self, underlying: str) -> None:
         """Consume the underlying trade stream for `underlying` until
@@ -90,7 +117,7 @@ class StreamUnderlyingPriceUseCase:
             return
         now = time.monotonic()
         last_written_at = self._last_written_at.get(event.symbol)
-        if last_written_at is not None and now - last_written_at < self._min_write_interval_seconds:
+        if last_written_at is not None and now - last_written_at < self._interval_for(event.symbol):
             return
         self._last_written_at[event.symbol] = now
         # save_market_price() replaces the whole stored row, not just a
