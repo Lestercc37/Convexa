@@ -18,10 +18,13 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-    # The 3 background systems (UnderlyingRefreshScheduler,
-    # WhaleAlertsStreamManager, UnderlyingPriceStreamManager) moved to
-    # backend/worker.py -- a separate process, per the approved
-    # process-split design. This process only serves HTTP now.
+    # The background systems moved out of this process to their own,
+    # per the approved process-split design: UnderlyingRefreshScheduler
+    # to backend/scheduler_worker.py, WhaleAlertsStreamManager/
+    # UnderlyingPriceStreamManager/StreamStateExporter to
+    # backend/worker.py (split further from each other 2026-09-22 --
+    # see scheduler_worker.py's own docstring for why). This process
+    # only serves HTTP now.
     #
     # Deliberately never calls `await container.market_data_provider.start()`
     # here: that's the ONE place that opens ThetaDataProvider's 3
@@ -36,21 +39,18 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # used by /chain/{symbol}'s live-fallback and
     # /internal/trigger-calculation -- neither needs the streams.
     #
-    # One real, confirmed consequence of never starting the trade
-    # stream here: get_option_chain()'s `volume` field comes from
-    # `self._stream.cumulative_volume(occ_symbol)`, a dict the trade
-    # stream populates as it runs -- with the stream never started,
-    # this API-process instance always reports volume=0 for every
-    # contract on any chain IT fetches live. That's silently wrong data
-    # if depended on: /internal/trigger-calculation's
-    # RefreshUnderlyingSnapshotUseCase feeds that same chain into
-    # WhaleAlertsEngine.process(), whose whale/unusual detection is a
-    # volume DELTA -- an always-zero volume means it would never fire
-    # from a chain fetched this way. Scoped to two rarely-hit paths
-    # (occasional live-fallback, manual/test-only trigger), not the
-    # worker's own scheduler cycle (which keeps using its own,
-    # stream-backed ThetaDataProvider instance with real volume) --
-    # flagged here deliberately rather than silently accepted.
+    # get_option_chain()'s `volume` field comes from `self._stream.
+    # cumulative_volume(occ_symbol)`, a dict the trade stream populates
+    # as it runs -- with the stream never started, this API-process
+    # instance would otherwise always report volume=0 for every contract
+    # on any chain it fetches live, silently breaking
+    # /internal/trigger-calculation's own RefreshUnderlyingSnapshotUseCase
+    # call (WhaleAlertsEngine.process()'s whale/unusual detection is a
+    # volume DELTA). Fixed for every caller of execute(), not just this
+    # process, by RefreshUnderlyingSnapshotUseCase's own
+    # _merge_cumulative_volume -- see that use case's comment and
+    # backend/scheduler_worker.py's own docstring (the same gap, but for
+    # that process's OWN scheduler cycle, not just this rarely-hit path).
     #
     # `.stop()` IS still called below, even though `.start()` never
     # ran: every stream's own stop() no-ops when its task was never

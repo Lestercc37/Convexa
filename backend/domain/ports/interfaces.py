@@ -58,6 +58,15 @@ class IDataProvider(Protocol):
     # cadence, never replacing that scheduler as the source of truth for
     # anything else (Gamma/GEX/OI).
     def stream_underlying_trades(self, underlying: str) -> AsyncIterator[UnderlyingTradeEvent]: ...
+    # A snapshot of every occ_symbol this process's own live trade stream
+    # has seen a trade for so far, keyed by occ_symbol -- empty for a
+    # provider instance whose stream was never started (see start()'s own
+    # comment below), which is exactly the case CumulativeVolumeExporter
+    # (core/underlying_price_stream.py) exists to make harmless for a
+    # process without one: see RefreshUnderlyingSnapshotUseCase's own
+    # comment on why a process without a live stream still needs real
+    # volume, not silently 0, for every contract it persists.
+    def cumulative_volumes(self) -> dict[str, int]: ...
     # Lifecycle hooks for providers backed by a persistent connection (e.g.
     # a streaming WebSocket) that must be opened/closed with the process,
     # not per-call. A no-op for providers with nothing to start (MockData
@@ -134,6 +143,8 @@ class IStorage(Protocol):
     def get_recent_whale_alerts(self, underlying: str, limit: int = 100) -> list[WhaleAlert]: ...
     def save_symbol_flow_pressure(self, flow: SymbolFlowPressure) -> None: ...
     def get_symbol_flow_pressure(self, underlying: str) -> SymbolFlowPressure | None: ...
+    def get_cumulative_volumes(self, occ_symbols: list[str]) -> dict[str, int]: ...
+    def save_cumulative_volumes(self, volumes: dict[str, int]) -> None: ...
 
 
 class IAsyncMarketReadStorage(Protocol):

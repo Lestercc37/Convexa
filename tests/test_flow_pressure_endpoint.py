@@ -17,7 +17,7 @@ def test_flow_pressure_endpoint_returns_not_found_before_any_trade() -> None:
     assert response.json()["error"]["code"] == "NOT_FOUND"
 
 
-def test_flow_pressure_endpoint_reflects_a_classified_trade_after_trigger_calculation() -> None:
+def test_flow_pressure_endpoint_reflects_a_classified_trade_once_exported() -> None:
     with TestClient(app) as client:
         container = app.state.container
         # symbol_flow() is fed only by process_trade() (the real trade
@@ -41,16 +41,24 @@ def test_flow_pressure_endpoint_reflects_a_classified_trade_after_trigger_calcul
             buy_leaning_quote,
         )
 
-        # RefreshUnderlyingSnapshotUseCase.execute() (run here via the
-        # manual trigger route) is what snapshots symbol_flow() to
-        # storage -- see refresh_snapshot.py's own comment for why this
-        # persistence step exists at all (the API process's own
-        # WhaleAlertsEngine instance is otherwise never fed, post the
-        # process split).
-        trigger = client.post("/internal/trigger-calculation/spy")
+        # StreamStateExporter (backend/core/stream_state_export.py) is
+        # what actually persists this in production, on its own timer,
+        # running only in backend/worker.py -- the process whose
+        # WhaleAlertsEngine instance process_trade() actually feeds.
+        # RefreshUnderlyingSnapshotUseCase.execute() (run by
+        # /internal/trigger-calculation, this API process's own instance)
+        # deliberately no longer does this itself (2026-09-22, the
+        # scheduler/stream process split): see that use case's own
+        # comment. Simulating one export tick directly here, same as
+        # StreamStateExporter._export_once() does, keeps this a test of
+        # the read endpoint against a real computed SymbolFlowPressure,
+        # not a hardcoded one.
+        flow_pressure = container.whale_alerts_engine.symbol_flow("SPY")
+        assert flow_pressure is not None
+        container.storage.save_symbol_flow_pressure(flow_pressure)
+
         response = client.get("/api/v1/flow/spy/pressure")
 
-    assert trigger.status_code == 200
     assert response.status_code == 200
     payload = response.json()
     assert payload["schema_version"] == 1

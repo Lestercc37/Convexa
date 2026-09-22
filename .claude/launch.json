@@ -1,0 +1,27 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "frontend-dev",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["--prefix", "frontend", "run", "dev"],
+      "port": 3000
+    },
+    {
+      "name": "backend-dev",
+      "runtimeExecutable": "python",
+      "runtimeArgs": ["-m", "uvicorn", "backend.main:app", "--reload", "--host", "0.0.0.0"],
+      "port": 8000
+    },
+    {
+      "name": "backend-worker",
+      "runtimeExecutable": "python",
+      "runtimeArgs": ["-m", "watchfiles", "python -m backend.worker", "backend"]
+    },
+    {
+      "name": "backend-scheduler-worker",
+      "runtimeExecutable": "python",
+      "runtimeArgs": ["-m", "watchfiles", "python -m backend.scheduler_worker", "backend"]
+    }
+  ]
+}

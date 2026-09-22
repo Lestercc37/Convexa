@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
-from backend.domain.entities import DerivedMetrics, GammaAggregate, MarketPrice
+from backend.domain.entities import DerivedMetrics, GammaAggregate, MarketPrice, OptionChain
 from backend.domain.ports import IDataProvider, IStorage
 from backend.domain.use_cases.calculate_derived_metrics import (
     CalculateDerivedMetricsUseCase,
@@ -10,6 +10,45 @@ from backend.domain.use_cases.calculate_derived_metrics import (
 )
 from backend.domain.use_cases.flow import WhaleAlertsEngine
 from backend.domain.use_cases.gamma import CalculateGammaExposureOrchestrator
+
+
+def _merge_cumulative_volume(chain: OptionChain, storage: IStorage) -> OptionChain:
+    """A contract's `volume` field comes from `IDataProvider.get_option_chain()`,
+    which reads it straight off the provider's own live trade-stream state
+    (ThetaStreamHub._cumulative_volume) -- always correct for a process that
+    actually owns a live stream, but always 0 for one that doesn't (the new
+    scheduler-only process, split out from backend/worker.py to stop the
+    scheduler's own REST/JSON/object-construction work contending with
+    ThetaStreamHub's event loop for the GIL -- confirmed live, 2026-09-22,
+    that this contention was the real cause of a WebSocket reconnect storm
+    ThetaData support attributed to us being a "slow consumer").
+
+    WhaleAlertsEngine.process(chain) -- called right after this in
+    execute() -- depends on real volume for its own detection; silently
+    persisting/processing an all-zero-volume chain from the scheduler-only
+    process would quietly degrade that, not just report a wrong number
+    somewhere. Only touches contracts whose own volume is 0 -- a process
+    WITH a live stream already has the real, current value and must never
+    have it overwritten by a periodic, necessarily-lagged Postgres read of
+    ANOTHER process's own snapshot (see core/stream_state_export.py's
+    StreamStateExporter, the writer this reads)."""
+    zero_volume_occ_symbols = [
+        contract.occ_symbol for contract in chain.contracts if contract.volume == 0
+    ]
+    if not zero_volume_occ_symbols:
+        return chain
+    real_volumes = storage.get_cumulative_volumes(zero_volume_occ_symbols)
+    if not real_volumes:
+        return chain
+    return replace(
+        chain,
+        contracts=tuple(
+            replace(contract, volume=real_volumes[contract.occ_symbol])
+            if contract.occ_symbol in real_volumes
+            else contract
+            for contract in chain.contracts
+        ),
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -32,29 +71,24 @@ class RefreshUnderlyingSnapshotUseCase:
 
     def execute(self, symbol: str) -> tuple[GammaAggregate, DerivedMetrics]:
         chain = self.market_data_provider.get_option_chain(symbol)
+        chain = _merge_cumulative_volume(chain, self.storage)
         self.storage.save_chain_snapshot(chain)
         self.whale_alerts_engine.process(chain)
 
-        # Net client flow pressure (SymbolFlowPressure) lives only in
-        # WhaleAlertsEngine's in-memory session accumulation, fed by
-        # process_trade() (the real trade stream) -- see that method's
-        # own comment for why process() above doesn't also feed it.
-        # Snapshotting it to storage here, on the same ~30s cadence as
-        # everything else this method persists, is what makes it visible
-        # to the API process at all: since the process split, the API's
-        # own WhaleAlertsEngine instance never receives any
-        # process()/process_trade() calls (it doesn't run the streams),
-        # so reading the Worker's in-memory engine directly from an API
-        # route would always see nothing. A plain sync write, not
-        # debounced per-trade -- this whole method already runs off the
-        # event loop (asyncio.to_thread, see core/scheduler.py), so
-        # there's no risk of blocking it the way an ungated per-trade
-        # write would (that mistake already happened once, and was fixed,
-        # for StreamUnderlyingPriceUseCase's own MarketPrice writes).
-        flow_pressure = self.whale_alerts_engine.symbol_flow(symbol)
-        if flow_pressure is not None:
-            self.storage.save_symbol_flow_pressure(flow_pressure)
-
+        # Net client flow pressure (SymbolFlowPressure) used to be read
+        # here, off `self.whale_alerts_engine.symbol_flow(symbol)`, and
+        # saved on this method's own cadence -- moved out (2026-09-22,
+        # the scheduler/stream process split) because `self.whale_alerts_
+        # engine` in THIS process (scheduler_worker.py) never receives a
+        # single process_trade() call any more (only backend/worker.py's
+        # own, separate WhaleAlertsEngine instance does, from the real
+        # trade stream) -- reading it here would always see nothing,
+        # same class of bug _merge_cumulative_volume above exists to
+        # avoid for chain.volume. StreamStateExporter
+        # (backend/core/stream_state_export.py), run by backend/worker.py
+        # (the process that DOES own the live stream and the engine
+        # instance process_trade() actually feeds), persists it directly
+        # from there now instead.
         market = self.market_data_provider.get_underlying_snapshot(symbol)
         self.storage.save_market_price(
             MarketPrice(

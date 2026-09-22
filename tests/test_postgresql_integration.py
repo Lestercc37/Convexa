@@ -353,6 +353,51 @@ def test_whale_threshold_round_trip_against_postgresql(
     assert storage.get_whale_thresholds()[symbol] == threshold
 
 
+def test_cumulative_volume_round_trip_against_postgresql(
+    postgresql_storage: tuple[PostgreSQLStorage, Engine, str],
+) -> None:
+    """save_cumulative_volumes/get_cumulative_volumes -- added alongside
+    the scheduler/stream process split (2026-09-22): StreamStateExporter
+    (backend/core/stream_state_export.py) writes this from the process
+    that owns the live trade stream, RefreshUnderlyingSnapshotUseCase's
+    own _merge_cumulative_volume reads it back for the process that
+    doesn't (backend/scheduler_worker.py)."""
+    storage, engine, symbol = postgresql_storage
+    occ_a = f"{symbol}260320C00550000"
+    occ_b = f"{symbol}260320P00540000"
+    try:
+        storage.save_cumulative_volumes({occ_a: 100, occ_b: 250})
+
+        assert storage.get_cumulative_volumes([occ_a, occ_b]) == {occ_a: 100, occ_b: 250}
+
+        # An UPDATE, not a second row -- ON CONFLICT DO UPDATE, matching
+        # what a real StreamStateExporter export tick 15s later would do
+        # for a contract whose cumulative volume kept growing.
+        storage.save_cumulative_volumes({occ_a: 175})
+
+        assert storage.get_cumulative_volumes([occ_a, occ_b]) == {occ_a: 175, occ_b: 250}
+    finally:
+        with engine.begin() as connection:
+            connection.execute(
+                text("DELETE FROM contract_cumulative_volume WHERE occ_symbol IN (:a, :b)"),
+                {"a": occ_a, "b": occ_b},
+            )
+
+
+def test_cumulative_volume_lookup_for_an_unknown_contract_is_absent_not_zero(
+    postgresql_storage: tuple[PostgreSQLStorage, Engine, str],
+) -> None:
+    """A contract with no persisted row at all -- distinct from one with
+    a real, persisted 0 -- must simply be missing from the returned
+    dict, so _merge_cumulative_volume's own `if occ_symbol in real_volumes`
+    check correctly leaves it alone rather than "correcting" it to 0."""
+    storage, _, symbol = postgresql_storage
+
+    result = storage.get_cumulative_volumes([f"{symbol}260320C00999000"])
+
+    assert result == {}
+
+
 def test_screener_preset_settings_round_trip_against_postgresql(
     postgresql_storage: tuple[PostgreSQLStorage, Engine, str],
 ) -> None:
