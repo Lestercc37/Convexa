@@ -985,6 +985,27 @@ class ThetaStreamHub:
         # meaningfully blocks the event loop.
         with self._contracts_lock:
             contracts_snapshot = list(self._contracts.values())
+        # Added investigating a real, reproducible connection-instability
+        # complaint (2026-09-22): reconnects were happening every 30-60s all
+        # session. This line's own count (752-758 live) ruled out the first
+        # suspect -- a ballooned resubscribe burst from the wider Gamma Flip
+        # near-the-money fetch (PR #159) -- since streaming registration has
+        # always used the narrower ATR_WIDTH_MULTIPLIER, single-nearest-
+        # expiration chain (see get_option_chain's own comment), never the
+        # wide one. Confirmed instead: the connection itself dies on this
+        # cadence regardless of subscribe-burst size (resubscribing here
+        # consistently finished in 2-15s across 8 samples), via both this
+        # hub's own "Heartbeat stale" watchdog (no STATUS message for 15s)
+        # and the server's own keepalive-ping-timeout close -- i.e. Theta
+        # Terminal's stream itself goes quiet on this cadence, not something
+        # this process's own processing load is causing. Kept as a
+        # permanent, cheap (one INFO line per reconnect) signal for
+        # whichever of the two explanations needs revisiting next.
+        logger.info(
+            "ThetaStreamHub: resubscribing %d contracts (%d messages) on reconnect",
+            len(contracts_snapshot),
+            len(contracts_snapshot) * 2,
+        )
         for root, expiration, contract_type, strike in contracts_snapshot:
             await self._subscribe_option(websocket, root, expiration, contract_type, strike, "TRADE")
             await self._subscribe_option(websocket, root, expiration, contract_type, strike, "QUOTE")
