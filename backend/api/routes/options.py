@@ -34,7 +34,7 @@ from backend.domain.use_cases import (
     get_gamma_exposure,
     get_gamma_exposure_async,
     get_gamma_history,
-    get_option_chain,
+    get_option_chain_async,
     get_option_chain_expirations,
     get_symbol_flow_pressure_async,
 )
@@ -51,13 +51,23 @@ def list_underlyings(request: Request) -> UnderlyingsResponse:
 
 
 @router.get("/chain/{symbol}", response_model=OptionChainResponse)
-def get_chain(
+async def get_chain(
     symbol: str,
     request: Request,
     expiration: date | None = None,
 ) -> OptionChainResponse:
+    # async def, not def -- confirmed live, 2026-09-22: the plain `def`
+    # version of this route hung 40+ seconds and produced real 500s
+    # under real market-open load, starved by the same shared threadpool
+    # the scheduler's own concurrent symbol refreshes use (same root
+    # cause /gamma/{symbol} was already fixed for -- see that route's
+    # own comment). get_option_chain_async reads the common case (a
+    # fresh-enough stored snapshot) purely on the event loop, no thread
+    # involved; only the rare stale-during-market-hours case falls
+    # through to a worker thread (see that function's own docstring).
     container: Container = request.app.state.container
-    chain = get_option_chain(
+    chain = await get_option_chain_async(
+        container.async_market_storage,
         container.storage,
         container.market_data_provider,
         symbol,
