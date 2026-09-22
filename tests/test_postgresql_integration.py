@@ -7,7 +7,7 @@ import threading
 import time
 from collections.abc import Iterator
 from dataclasses import replace
-from datetime import date, datetime, timedelta, timezone
+from datetime import UTC, date, datetime, timedelta, timezone
 from decimal import Decimal
 from uuid import uuid4
 
@@ -664,6 +664,45 @@ async def test_async_postgresql_storage_save_market_price_round_trips(
 
         assert sync_storage.get_latest_price(symbol) == price
         assert await async_storage.get_latest_price(symbol) == price
+    finally:
+        await async_engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_async_ensure_underlying_caches_the_id_across_calls(
+    postgresql_storage: tuple[PostgreSQLStorage, Engine, str],
+) -> None:
+    """Confirmed live, 2026-09-22: an unconditional UPSERT here on every
+    save_market_price call was a real, measured contributor to WebSocket
+    instability once TICK_LEVEL_SYMBOLS started pushing every real trade
+    tick with no debounce (an A/B test -- tick-level on vs. off, same
+    process, comparable ~9-minute windows -- showed 4 disconnects vs.
+    0). An underlying's id never changes once seeded, so the second
+    (and every later) save_market_price call for the same symbol must
+    be a plain cache hit, not a second round-trip -- verified here via
+    the cache dict directly, not just that both writes still round-trip
+    correctly (that alone wouldn't distinguish a cache hit from a
+    second real UPSERT returning the same id)."""
+    sync_storage, _, symbol = postgresql_storage
+    now = datetime.now(UTC)
+    first_price = MarketPrice(symbol=symbol, as_of=now, price=Decimal("100.00"), volume=1)
+    second_price = MarketPrice(
+        symbol=symbol, as_of=now + timedelta(seconds=1), price=Decimal("100.05"), volume=1
+    )
+
+    async_engine = create_engine(_require_test_database_url())
+    try:
+        async_storage = AsyncPostgreSQLStorage(create_session_factory(async_engine))
+        await async_storage.save_market_price(first_price)
+        cached_id_after_first_call = async_storage._underlying_id_cache.get(symbol.upper())
+
+        await async_storage.save_market_price(second_price)
+
+        assert cached_id_after_first_call is not None
+        assert async_storage._underlying_id_cache[symbol.upper()] == cached_id_after_first_call
+        # Still genuinely correct, not just cached and stale -- the
+        # second write's own price landed for real.
+        assert sync_storage.get_latest_price(symbol) == second_price
     finally:
         await async_engine.dispose()
 
