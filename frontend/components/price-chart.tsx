@@ -461,26 +461,44 @@ export function PriceChart({
     const latest = candles.at(-1);
     const series = seriesRef.current;
     if (!latest || !series) return;
-    try {
-      series.update(chartCandle(latest));
-    } catch (error) {
-      // lightweight-charts' *only* throw on this call path is "Cannot
-      // update oldest data" -- update() requires strictly non-decreasing
-      // time versus whatever the series already has, unlike setData()
-      // below, which has no such requirement and fully re-establishes
-      // truth from `candles` (same full-resync primitive the
-      // gamma/atrRange/showAtr effect further down already relies on).
-      // `candles` itself is always freshly rebuilt ascending from the
-      // full accumulated pricePoints (see aggregateMinuteCandles/
-      // aggregateCandles in lib/candles.ts), so this should be
-      // unreachable in steady state -- confirmed live, 2026-09, no
-      // ordering violation across a real market open. Kept as a recovery
-      // path rather than a crash for whatever this component can't
-      // control end to end: a stale `seriesRef` surviving a dev-only
-      // Fast Refresh reload being the concrete case found, not ruled out
-      // for good going forward.
-      console.warn("PriceChart: series.update() rejected the latest candle, resyncing via setData()", error);
+    if (previousCandleCount === 0) {
+      // The series currently holds *zero* bars, not even the whitespace
+      // anchor -- either the mount effect's own setData(withSessionOpenAnchor
+      // ([], ...)) ran with no real candle yet (right after a symbol
+      // switch), or this is candles' very first non-empty render.
+      // series.update() assumes an already-initialized series to append a
+      // single bar onto; calling it on a genuinely empty one doesn't throw
+      // synchronously, but leaves lightweight-charts' internal pane-view
+      // bar count out of sync with its own backing array -- confirmed live,
+      // 2026-09-22: a real, reproducible *uncaught* "Value is null" crash
+      // fires on a later, unrelated render, deep inside the library's own
+      // bar-styling code, immune to the try/catch below since it isn't
+      // thrown by this update() call itself. setData() fully re-establishes
+      // internal state from scratch and has no such assumption, so every
+      // zero-to-nonzero transition must go through it, not update().
       series.setData(withSessionOpenAnchor(candles, sessionOpenSecondsRef.current));
+    } else {
+      try {
+        series.update(chartCandle(latest));
+      } catch (error) {
+        // lightweight-charts' *only* throw on this call path is "Cannot
+        // update oldest data" -- update() requires strictly non-decreasing
+        // time versus whatever the series already has, unlike setData()
+        // below, which has no such requirement and fully re-establishes
+        // truth from `candles` (same full-resync primitive the
+        // gamma/atrRange/showAtr effect further down already relies on).
+        // `candles` itself is always freshly rebuilt ascending from the
+        // full accumulated pricePoints (see aggregateMinuteCandles/
+        // aggregateCandles in lib/candles.ts), so this should be
+        // unreachable in steady state -- confirmed live, 2026-09, no
+        // ordering violation across a real market open. Kept as a recovery
+        // path rather than a crash for whatever this component can't
+        // control end to end: a stale `seriesRef` surviving a dev-only
+        // Fast Refresh reload being the concrete case found, not ruled out
+        // for good going forward.
+        console.warn("PriceChart: series.update() rejected the latest candle, resyncing via setData()", error);
+        series.setData(withSessionOpenAnchor(candles, sessionOpenSecondsRef.current));
+      }
     }
     // The mount effect's fitContent() call above only ever saw whatever
     // sliver of `candles` existed synchronously at first render --
