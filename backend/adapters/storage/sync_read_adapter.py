@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 
 from backend.domain.entities import (
     DailyBar,
@@ -48,8 +48,10 @@ class SyncStorageAsyncReadAdapter:
     ) -> list[MarketPrice]:
         return self._storage.get_price_history(underlying, start, end)
 
-    async def get_latest_chain_snapshot(self, underlying: str) -> OptionChain | None:
-        return self._storage.get_latest_chain_snapshot(underlying)
+    async def get_latest_chain_snapshot(
+        self, underlying: str, expiration: date | None = None
+    ) -> OptionChain | None:
+        return self._storage.get_latest_chain_snapshot(underlying, expiration)
 
     async def get_daily_bars(self, underlying: str, limit: int = 15) -> list[DailyBar]:
         return self._storage.get_daily_bars(underlying, limit=limit)

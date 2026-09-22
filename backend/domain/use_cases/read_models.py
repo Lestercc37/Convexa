@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from datetime import date, datetime, timezone
+import asyncio
+from datetime import UTC, date, datetime, timezone
 from decimal import Decimal
 
 from backend.domain.entities import MarketSnapshot, OptionChain, UnderlyingKind
@@ -69,6 +70,44 @@ def get_option_chain(
     chain = provider.get_option_chain(underlying, expiration)
     storage.save_chain_snapshot(chain)
     return chain
+
+
+async def get_option_chain_async(
+    async_storage: IAsyncMarketReadStorage,
+    sync_storage: IStorage,
+    provider: IDataProvider,
+    underlying: str,
+    expiration: date | None = None,
+    freshness_seconds: int = DEFAULT_FRESHNESS_SECONDS,
+) -> OptionChain:
+    """Async twin of get_option_chain, for GET /chain/{symbol} -- confirmed
+    live, 2026-09-22: the plain `def` version of that route shared
+    Starlette's threadpool with the scheduler's own concurrent symbol
+    refreshes closely enough to hang 40+ seconds and produce real 500s
+    under real market-open load (same root cause /gamma/{symbol} was
+    already fixed for -- see that route's own comment).
+
+    The common case (a fresh-enough stored snapshot, or market closed --
+    same freshness/market-hours check as get_option_chain above) reads
+    purely via `async_storage`, no thread involved at all, same as
+    /gamma/{symbol}. The rare case -- genuinely stale during market
+    hours -- needs a real live ThetaData fetch, and `IDataProvider` has
+    no async-native path (a real, larger change left for later, not
+    attempted mid-trading-day): falls through to `asyncio.to_thread`
+    running the existing sync get_option_chain, the same pattern the
+    scheduler itself already uses for every symbol refresh, so this
+    doesn't introduce a new way of doing blocking I/O, just reuses the
+    one already proven safe.
+    """
+    chain = await async_storage.get_latest_chain_snapshot(underlying, expiration)
+    now = datetime.now(UTC)
+    if chain is not None and (
+        (now - chain.as_of).total_seconds() <= freshness_seconds or not is_market_open(now)
+    ):
+        return chain
+    return await asyncio.to_thread(
+        get_option_chain, sync_storage, provider, underlying, expiration, freshness_seconds
+    )
 
 
 def get_option_chain_expirations(storage: IStorage, underlying: str) -> OptionChain:
