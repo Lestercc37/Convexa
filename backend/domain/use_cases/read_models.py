@@ -71,6 +71,25 @@ def get_option_chain(
     return chain
 
 
+def get_option_chain_expirations(storage: IStorage, underlying: str) -> OptionChain:
+    """Storage-only twin of get_option_chain, for callers that only need
+    the distinct expiration dates (the option-chain-viewer/Volatility
+    Smile dropdown) -- never falls through to a live provider fetch,
+    unlike get_option_chain above. Expiration dates are near-static
+    within a session (no new one gets added mid-day, none disappears
+    until it actually expires), so there's nothing a live fetch would
+    give that the last stored snapshot doesn't already have -- confirmed
+    live, 2026-09-22: get_option_chain's own live-fetch fallback (gated
+    on a 60s freshness window) left this route stuck for 40+ seconds
+    waiting on the same thread pool and ThetaData concurrency semaphore
+    the scheduler's own cycle was saturating.
+    """
+    chain = storage.get_latest_chain_snapshot(underlying)
+    if chain is None:
+        raise NotFoundError(f"No option chain found for {underlying.upper()}")
+    return chain
+
+
 def get_flow(storage: IStorage, underlying: str, since: datetime | None = None, limit: int = 100):
     return storage.get_flow_events(underlying, since, limit)
 

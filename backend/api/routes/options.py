@@ -5,6 +5,7 @@ from datetime import date, datetime, timezone
 from fastapi import APIRouter, Query, Request
 
 from backend.api.schemas import (
+    ChainExpirationsResponse,
     FlowPressureResponse,
     FlowResponse,
     GammaAggregateResponse,
@@ -15,6 +16,7 @@ from backend.api.schemas import (
     UnderlyingsResponse,
 )
 from backend.api.serializers import (
+    chain_expirations_response,
     chain_response,
     flow_pressure_response,
     flow_response,
@@ -33,6 +35,7 @@ from backend.domain.use_cases import (
     get_gamma_exposure_async,
     get_gamma_history,
     get_option_chain,
+    get_option_chain_expirations,
     get_symbol_flow_pressure_async,
 )
 
@@ -61,6 +64,26 @@ def get_chain(
         expiration,
     )
     return OptionChainResponse.model_validate(chain_response(chain))
+
+
+@router.get("/chain/{symbol}/expirations", response_model=ChainExpirationsResponse)
+def get_chain_expirations(symbol: str, request: Request) -> ChainExpirationsResponse:
+    # The option-chain-viewer/Volatility Smile UI's own expiration dropdown
+    # only ever needs the distinct dates, not a single contract's worth of
+    # greeks/OI/bid/ask -- confirmed live, 2026-09-22: fetching the full
+    # unscoped chain just to read off `.expiration` cost a 2.3MB / ~8,000-
+    # contract response for SPX alone (widened by the Gamma Flip fix, PR
+    # #159), heavy enough to help starve /chain/{symbol}'s shared
+    # threadpool. get_option_chain_expirations, not get_option_chain --
+    # storage-only, never falls through to a live provider fetch (see its
+    # own docstring): confirmed live the same day this route's OWN
+    # get_option_chain call, gated on a 60s freshness window, could hang
+    # 40+ seconds waiting on the same thread pool and ThetaData
+    # concurrency semaphore the scheduler's cycle was saturating --
+    # expiration dates don't need to be that fresh to be correct.
+    container: Container = request.app.state.container
+    chain = get_option_chain_expirations(container.storage, symbol)
+    return ChainExpirationsResponse.model_validate(chain_expirations_response(chain))
 
 
 @router.get("/gamma/{symbol}", response_model=GammaResponse)

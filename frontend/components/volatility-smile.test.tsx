@@ -5,11 +5,18 @@ import { renderWithLanguage } from "@/lib/i18n/test-utils";
 import type { OptionChainResponse, OptionContract } from "@/lib/types";
 import { VolatilitySmile } from "./volatility-smile";
 
-const apiMocks = vi.hoisted(() => ({ getOptionChain: vi.fn() }));
+const apiMocks = vi.hoisted(() => ({
+  getOptionChain: vi.fn(),
+  getOptionChainExpirations: vi.fn(),
+}));
 
 vi.mock("@/lib/api", async () => {
   const actual = await vi.importActual<typeof import("@/lib/api")>("@/lib/api");
-  return { ...actual, getOptionChain: apiMocks.getOptionChain };
+  return {
+    ...actual,
+    getOptionChain: apiMocks.getOptionChain,
+    getOptionChainExpirations: apiMocks.getOptionChainExpirations,
+  };
 });
 
 function contract(
@@ -58,15 +65,15 @@ function chain(filteredContracts: OptionContract[]): OptionChainResponse {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  apiMocks.getOptionChain.mockImplementation(
-    (_symbol: string, expiration?: string) =>
-      Promise.resolve(
-        chain(
-          expiration
-            ? contracts.filter((item) => item.expiration === expiration)
-            : contracts,
-        ),
-      ),
+  apiMocks.getOptionChainExpirations.mockResolvedValue({
+    schema_version: 1,
+    symbol: "SPY",
+    expirations: [...new Set(contracts.map((item) => item.expiration))],
+  });
+  apiMocks.getOptionChain.mockImplementation((_symbol: string, expiration?: string) =>
+    Promise.resolve(
+      chain(expiration ? contracts.filter((item) => item.expiration === expiration) : contracts),
+    ),
   );
 });
 
@@ -104,12 +111,32 @@ describe("VolatilitySmile", () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     renderWithLanguage(<VolatilitySmile symbol="SPY" marketPrice={551} />);
 
-    await vi.waitFor(() => expect(apiMocks.getOptionChain).toHaveBeenCalledTimes(2));
+    await vi.waitFor(() => expect(apiMocks.getOptionChain).toHaveBeenCalledTimes(1));
 
     await vi.advanceTimersByTimeAsync(30_000);
-    await vi.waitFor(() => expect(apiMocks.getOptionChain).toHaveBeenCalledTimes(3));
+    await vi.waitFor(() => expect(apiMocks.getOptionChain).toHaveBeenCalledTimes(2));
 
     vi.useRealTimers();
+  });
+
+  it("populates the expiration dropdown from the lightweight expirations endpoint, not the full chain (regression)", async () => {
+    // getOptionChain (the full, per-contract chain) must never be called
+    // without an expiration -- confirmed live, 2026-09-22: doing so just
+    // to read off `.expiration` grew to ~8,000 contracts / 2.3MB for SPX
+    // after the Gamma Flip wide-search fix (PR #159), heavy enough to
+    // help starve /chain/{symbol}'s shared threadpool into real 500s.
+    renderWithLanguage(<VolatilitySmile symbol="SPY" marketPrice={551} />);
+
+    await screen.findByLabelText("Vencimiento");
+    expect(apiMocks.getOptionChainExpirations).toHaveBeenCalledWith(
+      "SPY",
+      expect.any(AbortSignal),
+    );
+    expect(apiMocks.getOptionChain).not.toHaveBeenCalledWith(
+      "SPY",
+      undefined,
+      expect.any(AbortSignal),
+    );
   });
 
   it("gives each IV point a hover tooltip with the same text as its aria-label (regression)", async () => {

@@ -26,6 +26,50 @@ def test_chain_get_keeps_documented_provider_fallback_and_expiration() -> None:
     assert {contract["occ_symbol"][3:9] for contract in response.json()["contracts"]} == {"260320"}
 
 
+def test_chain_expirations_get_returns_only_dates_not_full_contracts() -> None:
+    # The option-chain-viewer/Volatility Smile dropdown only needs the
+    # distinct expiration dates -- confirmed live, 2026-09-22: fetching
+    # the full unscoped chain just to read off `.expiration` cost a
+    # ~8,000-contract, 2.3MB response for SPX after the Gamma Flip
+    # wide-search fix (PR #159), heavy enough to help starve
+    # /chain/{symbol}'s shared threadpool into real 500s.
+    with TestClient(app) as client:
+        # get_option_chain_expirations is storage-only (never live-fetches,
+        # see its own docstring) -- /chain/spy runs first here purely to
+        # seed storage the same way a real scheduler cycle already would
+        # have by the time anyone opens the dropdown, not because the
+        # expirations route itself needs it.
+        full_chain = client.get("/api/v1/chain/spy")
+        response = client.get("/api/v1/chain/spy/expirations")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["schema_version"] == 1
+    assert payload["symbol"] == "SPY"
+    assert "contracts" not in payload
+    expected = sorted({contract["expiration"] for contract in full_chain.json()["contracts"]})
+    assert payload["expirations"] == expected
+    assert len(payload["expirations"]) > 0
+
+
+def test_chain_expirations_get_returns_uniform_not_found_when_nothing_is_stored() -> None:
+    # Storage-only, by design (see get_option_chain_expirations' own
+    # docstring) -- must 404 like every other read-only route here
+    # instead of silently triggering the live fetch it deliberately
+    # avoids.
+    with TestClient(app) as client:
+        response = client.get("/api/v1/chain/spy/expirations")
+
+    assert response.status_code == 404
+    assert response.json() == {
+        "schema_version": 1,
+        "error": {
+            "code": "NOT_FOUND",
+            "message": "No option chain found for SPY",
+        },
+    }
+
+
 def test_gamma_get_is_read_only_and_returns_uniform_not_found() -> None:
     with TestClient(app) as client:
         response = client.get("/api/v1/gamma/spy")

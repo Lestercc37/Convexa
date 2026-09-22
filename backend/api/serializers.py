@@ -63,6 +63,14 @@ def chain_response(chain: OptionChain) -> dict[str, Any]:
     }
 
 
+def chain_expirations_response(chain: OptionChain) -> dict[str, Any]:
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "symbol": chain.symbol,
+        "expirations": sorted({contract.expiration.isoformat() for contract in chain.contracts}),
+    }
+
+
 def greeks_chain_response(chain: OptionChain) -> dict[str, Any]:
     payload = chain_response(chain)
     for contract_payload, contract in zip(payload["contracts"], chain.contracts, strict=True):

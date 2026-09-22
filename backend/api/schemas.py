@@ -137,6 +137,12 @@ class OptionChainResponse(BaseModel):
     contracts: list[OptionContractResponse]
 
 
+class ChainExpirationsResponse(BaseModel):
+    schema_version: int = Field(examples=[1])
+    symbol: str = Field(examples=["SPY"])
+    expirations: list[str] = Field(examples=[["2026-01-16", "2026-01-23"]])
+
+
 class WhaleAlertResponse(BaseModel):
     symbol: str
     contract: str

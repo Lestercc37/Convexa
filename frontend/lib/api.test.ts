@@ -1,5 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { getGamma, getGammaProfile, getMarket, getOptionChain, getUnderlyings } from "./api";
+import {
+  getGamma,
+  getGammaProfile,
+  getMarket,
+  getOptionChain,
+  getOptionChainExpirations,
+  getUnderlyings,
+} from "./api";
 
 const fetchMock = vi.fn();
 
@@ -53,6 +60,17 @@ describe("API client cache policy", () => {
 
     expect(fetchMock).toHaveBeenCalledWith(
       "/backend/api/v1/gamma/SPY/profile",
+      expect.objectContaining({ cache: "no-store" }),
+    );
+  });
+
+  it("requests only the expiration list from its own lightweight route, not the full chain", async () => {
+    fetchMock.mockResolvedValueOnce(response({ symbol: "SPY", expirations: ["2026-01-16"] }));
+
+    await getOptionChainExpirations("SPY");
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/backend/api/v1/chain/SPY/expirations",
       expect.objectContaining({ cache: "no-store" }),
     );
   });
