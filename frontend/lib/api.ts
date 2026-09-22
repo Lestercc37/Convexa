@@ -1,4 +1,5 @@
 import type {
+  ChainExpirationsResponse,
   GammaAggregateResponse,
   GammaHistoryResponse,
   GammaResponse,
@@ -117,6 +118,13 @@ export function getOptionChain(
     : "";
   return getJson<OptionChainResponse>(
     `/chain/${encodeURIComponent(symbol)}${query}`,
+    signal,
+  );
+}
+
+export function getOptionChainExpirations(symbol: string, signal?: AbortSignal) {
+  return getJson<ChainExpirationsResponse>(
+    `/chain/${encodeURIComponent(symbol)}/expirations`,
     signal,
   );
 }

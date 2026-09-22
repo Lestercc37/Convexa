@@ -13,6 +13,7 @@ const apiMocks = vi.hoisted(() => ({
   getMarket: vi.fn(),
   getMarketPriceHistory: vi.fn(),
   getOptionChain: vi.fn(),
+  getOptionChainExpirations: vi.fn(),
   getScreenerPreset: vi.fn(),
   getUnderlyings: vi.fn(),
   getVwapHistory: vi.fn(),
@@ -233,6 +234,14 @@ beforeEach(() => {
     as_of: "2026-08-03T14:30:00Z",
     spot_price: 549.1,
     contracts: [],
+  });
+  apiMocks.getOptionChainExpirations.mockResolvedValue({
+    schema_version: 1,
+    symbol: "SPY",
+    // Non-empty on purpose -- VolatilitySmile only fetches the scoped
+    // getOptionChain(symbol, expiration) once it has a selectedExpiration
+    // to select, same as it would from a real backend response.
+    expirations: ["2026-08-03"],
   });
   apiMocks.getScreenerPreset.mockResolvedValue({
     schema_version: 1,

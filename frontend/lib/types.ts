@@ -89,6 +89,12 @@ export type OptionChainResponse = {
   contracts: OptionContract[];
 };
 
+export type ChainExpirationsResponse = {
+  schema_version: number;
+  symbol: string;
+  expirations: string[];
+};
+
 export type DerivedMetricValue = {
   value: number | null;
   provisional: boolean;

@@ -63,6 +63,7 @@ from backend.domain.use_cases.read_models import (
     build_market_snapshot_async,
     get_flow,
     get_option_chain,
+    get_option_chain_expirations,
     get_symbol_flow_pressure_async,
     get_vwap_history_async,
 )
@@ -126,6 +127,7 @@ __all__ = [
     "get_gamma_exposure_async",
     "get_gamma_history",
     "get_option_chain",
+    "get_option_chain_expirations",
     "get_screener_preset",
     "get_symbol_flow_pressure_async",
     "get_vwap_history_async",

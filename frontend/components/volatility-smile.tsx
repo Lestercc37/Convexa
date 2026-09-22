@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { getOptionChain } from "@/lib/api";
+import { getOptionChain, getOptionChainExpirations } from "@/lib/api";
 import { describeError } from "@/lib/i18n/describe-error";
 import { useLanguage, type Language } from "@/lib/i18n/language-context";
 import { POLLING_INTERVAL_MS } from "@/lib/polling";
@@ -47,11 +47,17 @@ export function VolatilitySmile({ symbol, marketPrice }: VolatilitySmileProps) {
 
   useEffect(() => {
     const controller = new AbortController();
-    getOptionChain(symbol, undefined, controller.signal)
+    // Only the distinct expiration dates are needed here, to populate the
+    // dropdown below -- getOptionChainExpirations (not getOptionChain)
+    // avoids fetching/serializing every contract's full greeks/OI/bid/ask
+    // just to discard all of it but `.expiration` (confirmed live,
+    // 2026-09-22: the full unscoped chain had grown to ~8,000 contracts /
+    // 2.3MB for SPX after the Gamma Flip wide-search fix, PR #159, heavy
+    // enough to help starve /chain/{symbol}'s shared threadpool during a
+    // slow scheduler cycle).
+    getOptionChainExpirations(symbol, controller.signal)
       .then((response) => {
-        const available = [
-          ...new Set(response.contracts.map((contract) => contract.expiration)),
-        ].sort();
+        const available = [...response.expirations].sort();
         setExpirations(available);
         setSelectedExpiration(available[0] ?? "");
       })
