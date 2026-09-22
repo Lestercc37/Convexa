@@ -8,7 +8,10 @@ from decimal import Decimal
 import pytest
 
 from backend.domain.entities import MarketPrice, UnderlyingTradeEvent
-from backend.domain.use_cases.stream_underlying_price import StreamUnderlyingPriceUseCase
+from backend.domain.use_cases.stream_underlying_price import (
+    TICK_LEVEL_SYMBOLS,
+    StreamUnderlyingPriceUseCase,
+)
 
 NOW = datetime(2026, 1, 15, 14, 30, tzinfo=UTC)
 
@@ -112,8 +115,14 @@ async def test_ticks_within_the_debounce_window_are_not_all_persisted() -> None:
         trades=[_trade("552.25"), _trade("552.30"), _trade("552.35")],
     )
     # A large window so all 3 fixture trades (processed effectively
-    # instantly) fall inside it.
-    use_case = StreamUnderlyingPriceUseCase(provider, storage, min_write_interval_seconds=60.0)
+    # instantly) fall inside it. SPY (this fixture's default symbol) is
+    # one of the real tick-level symbols now -- tick_level_symbols=
+    # frozenset() disables that override here, since this test is about
+    # the generic debounce mechanism, not tick-level behavior (see
+    # TestTickLevelSymbols below for that).
+    use_case = StreamUnderlyingPriceUseCase(
+        provider, storage, min_write_interval_seconds=60.0, tick_level_symbols=frozenset()
+    )
 
     await use_case.run("SPY")
 
@@ -139,7 +148,13 @@ async def test_a_tick_after_the_debounce_window_elapses_is_persisted() -> None:
 async def test_debounce_is_tracked_independently_per_symbol() -> None:
     storage = _FakeStorage()
     provider = _FakeProvider(trades=[_trade("552.25", symbol="SPY"), _trade("470.10", symbol="QQQ")])
-    use_case = StreamUnderlyingPriceUseCase(provider, storage, min_write_interval_seconds=60.0)
+    # Both fixture symbols are real tick-level symbols now --
+    # tick_level_symbols=frozenset() disables that override, since this
+    # test is about per-symbol debounce *tracking*, not tick-level
+    # behavior (see TestTickLevelSymbols below for that).
+    use_case = StreamUnderlyingPriceUseCase(
+        provider, storage, min_write_interval_seconds=60.0, tick_level_symbols=frozenset()
+    )
 
     await use_case.run("SPY")
 
@@ -236,3 +251,60 @@ class TestMarketHoursGate:
         await use_case.run("SPY")
 
         assert [p.price for p in storage.saved] == [Decimal("552.25")]
+
+
+class TestTickLevelSymbols:
+    """Trial (2026-09-22, explicit user request): SPX/NDX/SPY/QQQ/IWM get
+    every tick persisted, no debounce, regardless of whatever
+    min_write_interval_seconds the rest of the symbols use -- see
+    TICK_LEVEL_SYMBOLS' own module-level comment for why this is safe to
+    trial now (the scheduler/stream process split removed the GIL-
+    contention risk that made a blanket policy like this risky before)."""
+
+    def test_the_real_production_set_is_exactly_the_5_trial_symbols(self) -> None:
+        # A defined behavioral contract, not an implementation detail --
+        # changing this set changes which symbols get tick-level writes
+        # in production, so a change here should be a deliberate,
+        # visible diff in this test, not a silent side effect of
+        # editing the module constant.
+        assert TICK_LEVEL_SYMBOLS == frozenset({"SPX", "NDX", "SPY", "QQQ", "IWM"})
+
+    @pytest.mark.asyncio
+    async def test_a_tick_level_symbol_ignores_a_large_debounce_window(self) -> None:
+        storage = _FakeStorage()
+        provider = _FakeProvider(
+            trades=[_trade("552.25", symbol="SPY"), _trade("552.30", symbol="SPY")],
+        )
+        # A large window that would debounce any *non* tick-level
+        # symbol down to just the first tick -- SPY must still get both.
+        use_case = StreamUnderlyingPriceUseCase(provider, storage, min_write_interval_seconds=60.0)
+
+        await use_case.run("SPY")
+
+        assert [p.price for p in storage.saved] == [Decimal("552.25"), Decimal("552.30")]
+
+    @pytest.mark.asyncio
+    async def test_a_non_tick_level_symbol_still_debounces_normally(self) -> None:
+        """Contrast case for the test above -- confirms the override is
+        genuinely scoped to the named symbols, not accidentally global."""
+        storage = _FakeStorage()
+        provider = _FakeProvider(
+            trades=[_trade("340.00", symbol="AAPL"), _trade("340.05", symbol="AAPL")],
+        )
+        use_case = StreamUnderlyingPriceUseCase(provider, storage, min_write_interval_seconds=60.0)
+
+        await use_case.run("AAPL")
+
+        assert [p.price for p in storage.saved] == [Decimal("340.00")]
+
+    @pytest.mark.asyncio
+    async def test_symbol_matching_is_case_insensitive(self) -> None:
+        storage = _FakeStorage()
+        provider = _FakeProvider(
+            trades=[_trade("552.25", symbol="spy"), _trade("552.30", symbol="spy")],
+        )
+        use_case = StreamUnderlyingPriceUseCase(provider, storage, min_write_interval_seconds=60.0)
+
+        await use_case.run("spy")
+
+        assert [p.price for p in storage.saved] == [Decimal("552.25"), Decimal("552.30")]
