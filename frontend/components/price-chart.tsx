@@ -170,6 +170,15 @@ function withSessionOpenAnchor(
   candles: MinuteCandle[],
   sessionOpenSeconds: number,
 ): (ReturnType<typeof chartCandle> | { time: UTCTimestamp })[] {
+  // No real candle yet (e.g. right after a symbol switch, before the seed
+  // fetch lands) -- never hand the series an array containing *only* the
+  // whitespace anchor. Confirmed live, 2026-09-22: a real "Value is null"
+  // crash inside lightweight-charts' own bar-styling code, reproduced when
+  // a gamma/ATR update fired setData() while `candles` was still empty,
+  // leaving the anchor as the sole entry. A whitespace point exists to
+  // pin fitContent()'s left edge next to *real* bars -- with none, there's
+  // nothing for it to anchor anyway.
+  if (candles.length === 0) return [];
   const anchor = { time: (sessionOpenSeconds - 1) as UTCTimestamp };
   return [anchor, ...candles.map(chartCandle)];
 }

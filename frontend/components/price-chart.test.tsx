@@ -257,6 +257,25 @@ describe("PriceChart", () => {
     vi.useRealTimers();
   });
 
+  it("never hands the series a whitespace-only anchor with zero real candles (regression)", () => {
+    // Confirmed live, 2026-09-22: a real "Value is null" crash inside
+    // lightweight-charts' own bar-styling code (SeriesBarColorer.
+    // Candlestick._internal__barStyle), reproduced when a gamma/ATR update
+    // fired setData() while `candles` was still empty (e.g. right after a
+    // symbol switch, before the seed fetch lands) -- the anchor alone,
+    // with no real bar for it to sit next to, is not a safe input.
+    const { rerender } = renderWithLanguage(
+      <PriceChart symbol="SPY" gamma={gamma} candles={[]} />,
+    );
+
+    expect(chartMocks.setData).toHaveBeenCalledWith([]);
+
+    chartMocks.setData.mockClear();
+    rerender(<PriceChart symbol="SPY" gamma={{ ...gamma, call_wall: 560 }} candles={[]} />);
+
+    expect(chartMocks.setData).toHaveBeenCalledWith([]);
+  });
+
   it("re-fits the visible range once the async session history seed lands, not just at chart creation (regression)", () => {
     // The mount effect's own fitContent() call only ever sees whatever
     // sliver of `candles` exists synchronously at first render --
