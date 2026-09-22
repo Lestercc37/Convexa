@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import replace
-from datetime import date, datetime
+from datetime import UTC, date, datetime
 from decimal import Decimal
 
 from sqlalchemy import text
@@ -975,6 +975,74 @@ class PostgreSQLStorage:
             rolling_net_client_flow_pressure=rolling_call - rolling_put,
             rolling_window_minutes=int(row["rolling_window_minutes"]),
         )
+
+    def get_cumulative_volumes(self, occ_symbols: list[str]) -> dict[str, int]:
+        """Bulk read for RefreshUnderlyingSnapshotUseCase's own volume
+        merge -- see that use case's own comment. Keyed by occ_symbol
+        (not contract_id), matching ThetaStreamHub's own in-memory
+        _cumulative_volume dict exactly, so the merge is a plain dict
+        lookup on the caller's side. A single ANY(:occ_symbols) query,
+        not one row at a time -- a symbol's chain can have thousands of
+        contracts (SPX/NDX especially), and this already runs inside
+        the scheduler's own asyncio.to_thread per-symbol call, so there
+        is no reason to pay per-contract round-trips here either."""
+        if not occ_symbols:
+            return {}
+        with self.session_factory() as session:
+            rows = session.execute(
+                text(
+                    """
+                    SELECT occ_symbol, volume
+                    FROM contract_cumulative_volume
+                    WHERE occ_symbol = ANY(:occ_symbols)
+                    """
+                ),
+                {"occ_symbols": occ_symbols},
+            ).mappings()
+            return {str(row["occ_symbol"]): int(row["volume"]) for row in rows}
+
+    def save_cumulative_volumes(self, volumes: dict[str, int]) -> None:
+        """Written periodically by whichever process actually owns a
+        live ThetaData trade stream (ThetaStreamHub's own
+        _cumulative_volume, see core/stream_state_export.py's export
+        task) -- the ONLY source of truth for real cumulative volume.
+        Lets a process without a live stream (the scheduler-only
+        process, split out to stop it contending with ThetaStreamHub's
+        own event loop for the GIL -- see get_cumulative_volumes' own
+        comment) still report real volume instead of silently 0 for
+        every contract. Chunked the same way save_chain_snapshot's own
+        multi-row upsert is (500 rows per statement, well under
+        Postgres's ~65,535-parameter-per-statement limit) -- this can be
+        called with every contract this process has ever seen a trade
+        for, easily thousands across 15 symbols."""
+        if not volumes:
+            return
+        items = list(volumes.items())
+        CHUNK_SIZE = 500
+        now = datetime.now(UTC)
+        with self.session_factory.begin() as session:
+            for start in range(0, len(items), CHUNK_SIZE):
+                batch = items[start : start + CHUNK_SIZE]
+                values_sql = ", ".join(
+                    f"(:occ_symbol_{i}, :volume_{i}, :updated_at_{i})" for i in range(len(batch))
+                )
+                params: dict[str, object] = {}
+                for i, (occ_symbol, volume) in enumerate(batch):
+                    params[f"occ_symbol_{i}"] = occ_symbol
+                    params[f"volume_{i}"] = volume
+                    params[f"updated_at_{i}"] = now
+                session.execute(
+                    text(
+                        f"""
+                        INSERT INTO contract_cumulative_volume (occ_symbol, volume, updated_at)
+                        VALUES {values_sql}
+                        ON CONFLICT (occ_symbol) DO UPDATE SET
+                            volume = EXCLUDED.volume,
+                            updated_at = EXCLUDED.updated_at
+                        """
+                    ),
+                    params,
+                )
 
     def save_minute_bar(self, bar: MinuteBar) -> None:
         """Not part of `IStorage` — used only by the one-time Indices Pro

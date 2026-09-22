@@ -31,7 +31,7 @@ class UnderlyingRefreshScheduler:
     (`stream_underlying_price.py`, `read_models.py`, the provider's own
     internal check), which stay on the plain weekday/time-of-day check for
     now (see `is_market_open`'s own docstring). Started and stopped from
-    the FastAPI lifespan (`backend/main.py`) as a single
+    `backend/scheduler_worker.py`'s own `run()` as a single
     `asyncio.Task` that lives for the process's lifetime; each symbol runs
     in a worker thread (`asyncio.to_thread`) via
     `RefreshUnderlyingSnapshotUseCase` so a slow/blocking data provider
@@ -68,9 +68,10 @@ class UnderlyingRefreshScheduler:
         if self._task is not None:
             return
         # Traces this whole process's Python-level memory, not just this
-        # scheduler's own allocations -- appropriate here since the Worker
-        # process this runs in does nothing else of consequence (see
-        # backend/worker.py). Added 2026-09-19 alongside extending Gamma
+        # scheduler's own allocations -- appropriate here since the
+        # scheduler-worker process this runs in does nothing else of
+        # consequence (see backend/scheduler_worker.py). Added 2026-09-19
+        # alongside extending Gamma
         # Aggregate's all-expirations fetch to every symbol: that rollout
         # creates more OptionContract/Decimal objects per symbol per
         # cycle, and this is the number that would show that growing

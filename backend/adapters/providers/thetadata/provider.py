@@ -335,6 +335,21 @@ THETADATA_MAX_CONCURRENT_REQUESTS = 8
 # refresh cycle's own back-to-back calls.
 NEAR_THE_MONEY_CACHE_TTL_SECONDS = 10.0
 
+# Until the scheduler/stream process split (2026-09-22), ongoing streaming-
+# contract rediscovery (catching a contract that's newly near-the-money as
+# spot drifts intraday, not just what was near-the-money at process
+# startup) rode piggyback on the scheduler's OWN ~60-75s REST cycle, via
+# get_option_chain() -> _register_streaming_contracts() on this same
+# instance. Splitting the scheduler into its own process (to stop its
+# REST/JSON/object-construction work contending with this process's own
+# event loop for the GIL -- confirmed live as the real cause of a
+# WebSocket reconnect storm ThetaData support attributed to a "slow
+# consumer") removed that free ride: this process's own provider instance
+# never calls get_option_chain() itself now, so start() runs this loop
+# directly instead, matching that same cadence rather than inventing a
+# new one.
+CONTRACT_REDISCOVERY_INTERVAL_SECONDS = 60.0
+
 # Open interest, unlike the near-the-money chain above, is confirmed
 # static intraday — Open Interest for US options is calculated and
 # published by the OCC once per trading day, not continuously (a market-
@@ -717,6 +732,14 @@ class ThetaStreamHub:
 
     def cumulative_volume(self, occ_symbol: str) -> int:
         return self._cumulative_volume.get(occ_symbol, 0)
+
+    def cumulative_volumes(self) -> dict[str, int]:
+        # A plain shallow copy, not a lock -- _handle_option_trade (the
+        # only writer) and every caller of this method both run on the
+        # same single-threaded event loop, so there is no concurrent
+        # mutation to race against between statements, only interleaving
+        # at await points, which a synchronous dict() copy has none of.
+        return dict(self._cumulative_volume)
 
     def start(self) -> None:
         if self._task is not None:
@@ -1476,6 +1499,7 @@ class ThetaDataProvider:
         # call this provider makes -- see ThetaStreamHub.__init__'s own
         # comment for why this wasn't wired in from the start.
         self._hub = ThetaStreamHub(ws_url, self._client, self._request_slots)
+        self._rediscovery_task: asyncio.Task[None] | None = None
         self._rate_cache: tuple[date, Decimal] | None = None
         # ATR (and therefore the near-the-money width derived from it)
         # only changes once a *closed* trading day is added to the
@@ -1543,8 +1567,35 @@ class ThetaDataProvider:
                     occ_symbol, root, chain.expiration, contract_type, strike
                 )
         self._hub.start()
+        self._rediscovery_task = asyncio.create_task(self._periodic_contract_rediscovery())
+
+    async def _periodic_contract_rediscovery(self) -> None:
+        """See CONTRACT_REDISCOVERY_INTERVAL_SECONDS' own comment. Reuses
+        _register_streaming_contracts -- the exact same additive,
+        has_contract-guarded, live-subscribe-only-what's-new method the
+        scheduler used to drive -- so a contract already registered is
+        never redundantly re-subscribed, only ones that are newly
+        near-the-money since the last pass."""
+        while True:
+            await asyncio.sleep(CONTRACT_REDISCOVERY_INTERVAL_SECONDS)
+            for symbol in ACTIVE_UNDERLYINGS_BY_SYMBOL:
+                try:
+                    chain = self._fetch_near_the_money(symbol, expiration=None)
+                except (httpx.HTTPError, ValueError):
+                    logger.exception(
+                        "Failed to rediscover near-the-money contracts for %s", symbol
+                    )
+                    continue
+                self._register_streaming_contracts(symbol, chain)
 
     async def stop(self) -> None:
+        if self._rediscovery_task is not None:
+            self._rediscovery_task.cancel()
+            try:
+                await self._rediscovery_task
+            except asyncio.CancelledError:
+                pass
+            self._rediscovery_task = None
         await self._hub.stop()
         self._client.close()
 
@@ -2607,3 +2658,6 @@ class ThetaDataProvider:
         queue = self._hub.subscribe_underlying_queue(underlying)
         while True:
             yield await queue.get()
+
+    def cumulative_volumes(self) -> dict[str, int]:
+        return self._hub.cumulative_volumes()

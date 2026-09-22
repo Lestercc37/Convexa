@@ -36,6 +36,7 @@ class InMemoryStorage:
         self._daily_bars: dict[str, dict[date, DailyBar]] = {}
         self._whale_alerts: dict[str, list[WhaleAlert]] = {}
         self._symbol_flow_pressure: dict[str, SymbolFlowPressure] = {}
+        self._cumulative_volumes: dict[str, int] = {}
         self._whale_thresholds: dict[str, WhaleThreshold] = {
             underlying.symbol: WhaleThreshold(
                 symbol=underlying.symbol,
@@ -178,3 +179,13 @@ class InMemoryStorage:
 
     def get_symbol_flow_pressure(self, underlying: str) -> SymbolFlowPressure | None:
         return self._symbol_flow_pressure.get(underlying.upper())
+
+    def get_cumulative_volumes(self, occ_symbols: list[str]) -> dict[str, int]:
+        return {
+            occ_symbol: self._cumulative_volumes[occ_symbol]
+            for occ_symbol in occ_symbols
+            if occ_symbol in self._cumulative_volumes
+        }
+
+    def save_cumulative_volumes(self, volumes: dict[str, int]) -> None:
+        self._cumulative_volumes.update(volumes)

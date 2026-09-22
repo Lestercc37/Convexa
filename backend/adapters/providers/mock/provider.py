@@ -89,6 +89,9 @@ class MockDataProvider:
         if False:
             yield
 
+    def cumulative_volumes(self) -> dict[str, int]:
+        return {}
+
     async def start(self) -> None:
         """No persistent connection to open — deterministic, in-process data."""
 
