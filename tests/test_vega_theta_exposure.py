@@ -38,15 +38,17 @@ def test_orchestrator_sums_vanna_exposure_from_hand_built_chain() -> None:
 
     result = orchestrator.execute("SPY")
 
-    assert result.vega_exposure == Decimal(800)
-    assert result.theta_exposure == Decimal(-500)
-    assert result.charm_exposure == Decimal(10)
+    # Vega/Theta/Charm/Delta all carry the same Sigma(greek x OI x 100 x
+    # spot_price) pattern as Vanna -- spot_price=550 below.
+    assert result.vega_exposure == Decimal(440000)
+    assert result.theta_exposure == Decimal(-275000)
+    assert result.charm_exposure == Decimal(5500)
     assert result.vanna_exposure == Decimal(27500)
-    # Delta Exposure (DEX): same Sigma(greek x OI x 100) pattern as the
-    # other four, no call/put sign flip applied -- delta's own sign
-    # already does that job (0.50 call, -0.30 put below).
-    # (0.50 * 10 * 100) + (-0.30 * 20 * 100) = 500 - 600 = -100.
-    assert result.delta_exposure == Decimal(-100)
+    # Delta Exposure (DEX): same Sigma(greek x OI x 100 x spot_price)
+    # pattern as the other four, no call/put sign flip applied -- delta's
+    # own sign already does that job (0.50 call, -0.30 put below).
+    # (0.50 * 10 * 100 * 550) + (-0.30 * 20 * 100 * 550) = 275000 - 330000 = -55000.
+    assert result.delta_exposure == Decimal(-55000)
     assert storage.get_latest_gamma_aggregate("SPY") == result
 
 
