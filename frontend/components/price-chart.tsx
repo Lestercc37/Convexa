@@ -112,6 +112,25 @@ function gammaLevels(gamma: GammaResponse): GammaLevel[] {
   ];
 }
 
+const EXPECTED_MOVE_COLOR = "#f3c969";
+
+// EMC/EMP -- Expected Move Call / Expected Move Put, same call/put naming
+// convention as Call Wall/Put Wall so both level pairs read the same way,
+// even though these come from a completely different calculation (ATM
+// straddle IV off the chain's nearest expiration, not dealer OI/gamma).
+// Degenerate (upper_bound === lower_bound, e.g. atm_iv genuinely 0 -- see
+// calculate_bsm_greeks.py's own IV=0 watch item) returns [] rather than
+// two lines sitting exactly on top of each other at spot.
+function expectedMoveLevels(expectedMove: ExpectedMove | undefined): GammaLevel[] {
+  if (!expectedMove) return [];
+  const { upper_bound, lower_bound } = expectedMove;
+  if (upper_bound <= lower_bound) return [];
+  return [
+    { price: upper_bound, title: "EMC", color: EXPECTED_MOVE_COLOR },
+    { price: lower_bound, title: "EMP", color: EXPECTED_MOVE_COLOR },
+  ];
+}
+
 function chartCandle(candle: MinuteCandle) {
   return { ...candle, time: candle.time as UTCTimestamp };
 }
@@ -229,23 +248,6 @@ function atrBands(atrRange: AtrRange | undefined): AtrBandValues | null {
   };
 }
 
-type ExpectedMoveBandValues = { upper: number; lower: number };
-
-// Reuses `upper_bound`/`lower_bound` -- the exact pair ExpectedMoveWidget
-// already headlines as "the" expected move, so this band and that widget's
-// text never disagree about which of ExpectedMove's several fields is the
-// canonical one. Degenerate when atm_iv is genuinely 0 (a known upstream
-// gap, see calculate_bsm_greeks.py's own IV=0 watch item) -- upper_bound
-// equals lower_bound equals spot exactly then, and a zero-height band is
-// worth skipping rather than drawing a flat line indistinguishable from
-// the price scale's own gridlines.
-function expectedMoveBand(expectedMove: ExpectedMove | undefined): ExpectedMoveBandValues | null {
-  if (!expectedMove) return null;
-  const { upper_bound, lower_bound } = expectedMove;
-  if (upper_bound <= lower_bound) return null;
-  return { upper: upper_bound, lower: lower_bound };
-}
-
 function bandRect(
   series: ISeriesApi<"Candlestick">,
   upperPrice: number,
@@ -298,13 +300,13 @@ function referenceLevelPrices(
   showExpectedMove: boolean,
 ): number[] {
   const bands = showAtr ? atrBands(atrRange) : null;
-  const moveBand = showExpectedMove ? expectedMoveBand(expectedMove) : null;
+  const moveLevels = showExpectedMove ? expectedMoveLevels(expectedMove) : [];
   return [
     ...gammaLevels(gamma)
       .map((level) => level.price)
       .filter((price): price is number => price !== null),
     ...(bands ? [bands.outerUpper, bands.outerLower] : []),
-    ...(moveBand ? [moveBand.upper, moveBand.lower] : []),
+    ...moveLevels.map((level) => level.price).filter((price): price is number => price !== null),
   ];
 }
 
@@ -381,14 +383,9 @@ export function PriceChart({
   const referenceLevelsRef = useRef(
     referenceLevelPrices(gamma, atrRange, showAtr, expectedMove, showExpectedMove),
   );
-  const [bandRects, setBandRects] = useState<{
-    outer: BandRect | null;
-    inner: BandRect | null;
-    expectedMove: BandRect | null;
-  }>({
+  const [bandRects, setBandRects] = useState<{ outer: BandRect | null; inner: BandRect | null }>({
     outer: null,
     inner: null,
-    expectedMove: null,
   });
 
   useEffect(() => {
@@ -670,6 +667,29 @@ export function PriceChart({
     };
   }, [gamma, levelMode]);
 
+  // Independent of levelMode -- unlike Call Wall/Put Wall/Gamma Flip
+  // above, EMC/EMP have no "historical" line-series equivalent to switch
+  // to, so they stay drawn as price lines regardless of that toggle
+  // (same treatment ATR/VWAP already get as plain "Overlays").
+  useEffect(() => {
+    const series = seriesRef.current;
+    if (!series || !showExpectedMove) return;
+    const lines: IPriceLine[] = expectedMoveLevels(expectedMove)
+      .filter((level): level is GammaLevel & { price: number } => level.price !== null)
+      .map((level) =>
+        series.createPriceLine({
+          ...level,
+          lineStyle: LineStyle.Dashed,
+          lineWidth: 1,
+          axisLabelVisible: true,
+        }),
+      );
+    return () => {
+      if (seriesRef.current !== series) return;
+      lines.forEach((line) => series.removePriceLine(line));
+    };
+  }, [expectedMove, showExpectedMove]);
+
   useEffect(() => {
     referenceLevelsRef.current = referenceLevelPrices(
       gamma,
@@ -784,17 +804,15 @@ export function PriceChart({
   useEffect(() => {
     const series = seriesRef.current;
     const bands = showAtr ? atrBands(atrRange) : null;
-    const moveBand = showExpectedMove ? expectedMoveBand(expectedMove) : null;
 
     const recompute = () => {
-      if (!series || !hasPriceRange(candles)) {
-        setBandRects({ outer: null, inner: null, expectedMove: null });
+      if (!series || !bands || !hasPriceRange(candles)) {
+        setBandRects({ outer: null, inner: null });
         return;
       }
       setBandRects({
-        outer: bands ? bandRect(series, bands.outerUpper, bands.outerLower) : null,
-        inner: bands ? bandRect(series, bands.innerUpper, bands.innerLower) : null,
-        expectedMove: moveBand ? bandRect(series, moveBand.upper, moveBand.lower) : null,
+        outer: bandRect(series, bands.outerUpper, bands.outerLower),
+        inner: bandRect(series, bands.innerUpper, bands.innerLower),
       });
     };
 
@@ -810,7 +828,7 @@ export function PriceChart({
       }
       recomputeBandRectsRef.current = () => {};
     };
-  }, [atrRange, showAtr, expectedMove, showExpectedMove, candles]);
+  }, [atrRange, showAtr, candles]);
 
   return (
     <section className="panel price-chart-panel" aria-labelledby="price-chart-title">
@@ -923,13 +941,6 @@ export function PriceChart({
           <div
             className="atr-band atr-band-inner"
             style={{ top: bandRects.inner.top, height: bandRects.inner.height }}
-            aria-hidden="true"
-          />
-        )}
-        {bandRects.expectedMove && (
-          <div
-            className="expected-move-band"
-            style={{ top: bandRects.expectedMove.top, height: bandRects.expectedMove.height }}
             aria-hidden="true"
           />
         )}

@@ -967,8 +967,7 @@ describe("PriceChart", () => {
     expect(topAfter).not.toBe(topBefore);
   });
 
-  it("draws the Expected Move band from upper_bound/lower_bound when it's ready", () => {
-    chartMocks.priceToCoordinate.mockImplementation((price: number) => 500 - price);
+  it("draws EMC/EMP price lines from upper_bound/lower_bound when Expected Move is ready", () => {
     const readyExpectedMove: ExpectedMove = {
       implied_1sd_dollars: 8,
       implied_1sd_pct: 1.6,
@@ -978,7 +977,7 @@ describe("PriceChart", () => {
       lower_bound: 492,
       atm_iv: 0.15,
     };
-    const { container } = renderWithLanguage(
+    renderWithLanguage(
       <PriceChart
         symbol="SPY"
         gamma={gamma}
@@ -987,18 +986,21 @@ describe("PriceChart", () => {
       />,
     );
 
-    const band = container.querySelector<HTMLElement>(".expected-move-band");
-    expect(band).not.toBeNull();
-    expect(band?.style.top).toBe("-8px");
-    expect(band?.style.height).toBe("16px");
+    // The default `gamma` fixture's own 4 static levels, plus EMC/EMP.
+    expect(chartMocks.createPriceLine).toHaveBeenCalledTimes(6);
+    expect(chartMocks.createPriceLine).toHaveBeenCalledWith(
+      expect.objectContaining({ title: "EMC", price: 508 }),
+    );
+    expect(chartMocks.createPriceLine).toHaveBeenCalledWith(
+      expect.objectContaining({ title: "EMP", price: 492 }),
+    );
   });
 
-  it("hides the Expected Move band when upper_bound equals lower_bound (degenerate, e.g. atm_iv = 0)", () => {
+  it("skips EMC/EMP entirely when upper_bound equals lower_bound (degenerate, e.g. atm_iv = 0)", () => {
     // Known upstream gap (calculate_bsm_greeks.py's own IV=0 watch item):
     // atm_iv can legitimately be 0, collapsing implied_1sd_dollars and both
-    // bounds onto spot exactly -- a zero-height band would be indistinguishable
-    // from a stray gridline, so it's skipped rather than drawn.
-    chartMocks.priceToCoordinate.mockImplementation((price: number) => 500 - price);
+    // bounds onto spot exactly -- two lines sitting on top of each other
+    // (and on top of spot) would be worth less than not drawing them.
     const degenerateExpectedMove: ExpectedMove = {
       implied_1sd_dollars: 0,
       implied_1sd_pct: 0,
@@ -1008,7 +1010,7 @@ describe("PriceChart", () => {
       lower_bound: 500,
       atm_iv: 0,
     };
-    const { container } = renderWithLanguage(
+    renderWithLanguage(
       <PriceChart
         symbol="SPY"
         gamma={gamma}
@@ -1017,12 +1019,17 @@ describe("PriceChart", () => {
       />,
     );
 
-    expect(container.querySelector(".expected-move-band")).toBeNull();
+    expect(chartMocks.createPriceLine).toHaveBeenCalledTimes(4);
+    expect(chartMocks.createPriceLine).not.toHaveBeenCalledWith(
+      expect.objectContaining({ title: "EMC" }),
+    );
+    expect(chartMocks.createPriceLine).not.toHaveBeenCalledWith(
+      expect.objectContaining({ title: "EMP" }),
+    );
   });
 
-  it("toggles the Expected Move overlay off via its checkbox, and excludes it from autoscale once hidden", async () => {
+  it("toggles EMC/EMP off via the Expected Move checkbox, and excludes them from autoscale once hidden", async () => {
     const user = userEvent.setup();
-    chartMocks.priceToCoordinate.mockImplementation((price: number) => 500 - price);
     const readyExpectedMove: ExpectedMove = {
       implied_1sd_dollars: 8,
       implied_1sd_pct: 1.6,
@@ -1032,7 +1039,7 @@ describe("PriceChart", () => {
       lower_bound: 492,
       atm_iv: 0.15,
     };
-    const { container } = renderWithLanguage(
+    renderWithLanguage(
       <PriceChart
         symbol="SPY"
         gamma={gamma}
@@ -1041,18 +1048,20 @@ describe("PriceChart", () => {
       />,
     );
 
-    expect(container.querySelector(".expected-move-band")).not.toBeNull();
+    expect(chartMocks.createPriceLine).toHaveBeenCalledWith(
+      expect.objectContaining({ title: "EMC" }),
+    );
 
     await user.click(screen.getByRole("checkbox", { name: "Movimiento Esperado" }));
 
-    expect(container.querySelector(".expected-move-band")).toBeNull();
+    expect(chartMocks.removePriceLine).toHaveBeenCalled();
 
     const [, options] = chartMocks.addSeries.mock.calls.find(
       ([definition]) => definition === "CandlestickSeries",
     )!;
     const merged = options.autoscaleInfoProvider(() => null);
     // With the overlay off, only Gamma levels feed autoscale -- neither
-    // 508 nor 492 (Expected Move's own bounds) should appear.
+    // 508 nor 492 (EMC/EMP's own prices) should appear.
     expect(merged?.priceRange.minValue).not.toBe(492);
     expect(merged?.priceRange.maxValue).not.toBe(508);
   });
