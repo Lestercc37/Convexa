@@ -18,6 +18,7 @@ from backend.domain.use_cases.calculate_near_the_money_width import (
 )
 from backend.domain.use_cases.calculate_walls import CalculateWallsUseCase
 from backend.domain.use_cases.errors import NotFoundError
+from backend.domain.use_cases.market_hours import EASTERN_TIME
 
 
 def get_gamma_exposure(storage: IStorage, underlying: str) -> GammaAggregate:
@@ -114,26 +115,74 @@ class CalculateGammaExposureOrchestrator:
         )
 
         aggregate = self._aggregate.execute(narrow_chain)
-        walls = self._walls.execute(aggregate)
+
+        # Call Wall/Put Wall exclude 0DTE (expiring "today" in ET, the
+        # market's own trading day, not UTC), same documented precedent as
+        # NEAR_TERM_GAMMA_PROFILE_WINDOW_DAYS above: ExpireWorthless
+        # explicitly excludes 0DTE from its own wall calculation so one
+        # expiring strike can't distort the levels. Confirmed live,
+        # 2026-09-23, SPX: a single 0DTE contract at a near-the-money
+        # strike (539 calls / 2,793 puts open interest -- thin, nowhere
+        # near this chain's largest OI strikes) carried enough dealer
+        # gamma to hijack both walls onto its own strike and away from a
+        # stable reference level, because BSM gamma diverges as an ATM
+        # option's time-to-expiry approaches zero -- a real property of
+        # the formula, not a data error, but not what a "wall" (an
+        # inventory concentration dealers actually have to hedge across
+        # more than a few remaining hours) is meant to represent either.
+        # Net GEX/Gamma Flip/the GEX-by-strike histogram (`aggregate`
+        # itself, used below) keep including 0DTE unchanged -- only wall
+        # *selection* excludes it.
+        today_et = enriched_chain.as_of.astimezone(EASTERN_TIME).date()
+        walls_contracts = tuple(
+            contract for contract in narrow_chain.contracts if contract.expiration != today_et
+        )
+        # Degenerate guard, same reasoning as the narrow-width fallback
+        # above: if every near-the-money contract happens to expire today
+        # (a real possibility on 0DTE-heavy underlyings like SPX), excluding
+        # it entirely would leave nothing to select a wall from.
+        walls_chain = replace(narrow_chain, contracts=walls_contracts or narrow_chain.contracts)
+        walls_aggregate = self._aggregate.execute(walls_chain)
+        walls = self._walls.execute(walls_aggregate)
         max_pain = self._max_pain.execute(narrow_chain)
         contract_multiplier = Decimal(100)
+        # Vega/Theta/Charm/Delta exposure below all carry a `*
+        # enriched_chain.spot_price` multiplier, same as Vanna's own
+        # `dealer_gamma_exposure`-sibling formula just below -- confirmed
+        # missing here, 2026-09-23, comparing against GEXBot's own
+        # documented DEX formula (100 x delta x OI x share_price): without
+        # it, these four were the only exposures in this codebase reporting
+        # a per-contract-unit sensitivity instead of a dollar notional, an
+        # inconsistency with no compensating comment or intent behind it,
+        # and not compensated for anywhere on the frontend either
+        # (dashboard.tsx's EXPOSURE_FORMAT is a plain compact number, no
+        # currency styling or client-side price multiplication).
         vega_exposure = sum(
             (
-                contract.greeks.vega * Decimal(contract.open_interest) * contract_multiplier
+                contract.greeks.vega
+                * Decimal(contract.open_interest)
+                * contract_multiplier
+                * enriched_chain.spot_price
                 for contract in narrow_chain.contracts
             ),
             Decimal(0),
         )
         theta_exposure = sum(
             (
-                contract.greeks.theta * Decimal(contract.open_interest) * contract_multiplier
+                contract.greeks.theta
+                * Decimal(contract.open_interest)
+                * contract_multiplier
+                * enriched_chain.spot_price
                 for contract in narrow_chain.contracts
             ),
             Decimal(0),
         )
         charm_exposure = sum(
             (
-                contract.greeks.charm * Decimal(contract.open_interest) * contract_multiplier
+                contract.greeks.charm
+                * Decimal(contract.open_interest)
+                * contract_multiplier
+                * enriched_chain.spot_price
                 for contract in narrow_chain.contracts
             ),
             Decimal(0),
@@ -160,7 +209,10 @@ class CalculateGammaExposureOrchestrator:
         # convention to invent.
         delta_exposure = sum(
             (
-                contract.greeks.delta * Decimal(contract.open_interest) * contract_multiplier
+                contract.greeks.delta
+                * Decimal(contract.open_interest)
+                * contract_multiplier
+                * enriched_chain.spot_price
                 for contract in narrow_chain.contracts
             ),
             Decimal(0),
