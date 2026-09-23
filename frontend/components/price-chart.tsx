@@ -20,7 +20,7 @@ import { aggregateMinuteVwapPoints, type MinuteCandle, type Timeframe, type Vwap
 import { useLanguage } from "@/lib/i18n/language-context";
 import type { MarketPriceStreamStatus } from "@/lib/market-price-stream";
 import { EASTERN_TIME_ZONE, mostRecentSessionRange } from "@/lib/market-session";
-import type { AtrRange, GammaHistoryItem, GammaResponse } from "@/lib/types";
+import type { AtrRange, ExpectedMove, GammaHistoryItem, GammaResponse } from "@/lib/types";
 import { LEVEL_MERGE_THRESHOLD } from "./gravity-map";
 import { RegimeCompactBadge } from "./regime-badge";
 
@@ -32,6 +32,7 @@ type PriceChartProps = {
   vwapNotApplicable?: boolean;
   vwapProxySymbol?: string | null;
   atrRange?: AtrRange;
+  expectedMove?: ExpectedMove;
   timeframe?: Timeframe;
   streamStatus?: MarketPriceStreamStatus;
 };
@@ -228,6 +229,23 @@ function atrBands(atrRange: AtrRange | undefined): AtrBandValues | null {
   };
 }
 
+type ExpectedMoveBandValues = { upper: number; lower: number };
+
+// Reuses `upper_bound`/`lower_bound` -- the exact pair ExpectedMoveWidget
+// already headlines as "the" expected move, so this band and that widget's
+// text never disagree about which of ExpectedMove's several fields is the
+// canonical one. Degenerate when atm_iv is genuinely 0 (a known upstream
+// gap, see calculate_bsm_greeks.py's own IV=0 watch item) -- upper_bound
+// equals lower_bound equals spot exactly then, and a zero-height band is
+// worth skipping rather than drawing a flat line indistinguishable from
+// the price scale's own gridlines.
+function expectedMoveBand(expectedMove: ExpectedMove | undefined): ExpectedMoveBandValues | null {
+  if (!expectedMove) return null;
+  const { upper_bound, lower_bound } = expectedMove;
+  if (upper_bound <= lower_bound) return null;
+  return { upper: upper_bound, lower: lower_bound };
+}
+
 function bandRect(
   series: ISeriesApi<"Candlestick">,
   upperPrice: number,
@@ -276,13 +294,17 @@ function referenceLevelPrices(
   gamma: GammaResponse,
   atrRange: AtrRange | undefined,
   showAtr: boolean,
+  expectedMove: ExpectedMove | undefined,
+  showExpectedMove: boolean,
 ): number[] {
   const bands = showAtr ? atrBands(atrRange) : null;
+  const moveBand = showExpectedMove ? expectedMoveBand(expectedMove) : null;
   return [
     ...gammaLevels(gamma)
       .map((level) => level.price)
       .filter((price): price is number => price !== null),
     ...(bands ? [bands.outerUpper, bands.outerLower] : []),
+    ...(moveBand ? [moveBand.upper, moveBand.lower] : []),
   ];
 }
 
@@ -306,6 +328,7 @@ export function PriceChart({
   vwapNotApplicable = false,
   vwapProxySymbol = null,
   atrRange,
+  expectedMove,
   timeframe = "1m",
   streamStatus = "connected",
 }: PriceChartProps) {
@@ -352,12 +375,20 @@ export function PriceChart({
   const [history, setHistory] = useState<GammaHistoryItem[]>([]);
   const [showVwap, setShowVwap] = useState(true);
   const [showAtr, setShowAtr] = useState(true);
+  const [showExpectedMove, setShowExpectedMove] = useState(true);
   const [drawMode, setDrawMode] = useState(false);
   const [trendline, setTrendline] = useState<Trendline | null>(null);
-  const referenceLevelsRef = useRef(referenceLevelPrices(gamma, atrRange, showAtr));
-  const [bandRects, setBandRects] = useState<{ outer: BandRect | null; inner: BandRect | null }>({
+  const referenceLevelsRef = useRef(
+    referenceLevelPrices(gamma, atrRange, showAtr, expectedMove, showExpectedMove),
+  );
+  const [bandRects, setBandRects] = useState<{
+    outer: BandRect | null;
+    inner: BandRect | null;
+    expectedMove: BandRect | null;
+  }>({
     outer: null,
     inner: null,
+    expectedMove: null,
   });
 
   useEffect(() => {
@@ -640,7 +671,13 @@ export function PriceChart({
   }, [gamma, levelMode]);
 
   useEffect(() => {
-    referenceLevelsRef.current = referenceLevelPrices(gamma, atrRange, showAtr);
+    referenceLevelsRef.current = referenceLevelPrices(
+      gamma,
+      atrRange,
+      showAtr,
+      expectedMove,
+      showExpectedMove,
+    );
     // `autoscaleInfoProvider` only re-runs when the library itself decides
     // to recompute the visible range — genuinely new/changed series data,
     // a pan/zoom, or a resize. A prop change alone (a fresh gamma
@@ -659,7 +696,7 @@ export function PriceChart({
     // Candle *updates* are handled by the separate effect above via
     // `series.update()`, not this one.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [gamma, atrRange, showAtr]);
+  }, [gamma, atrRange, showAtr, expectedMove, showExpectedMove]);
 
 
   useEffect(() => {
@@ -747,15 +784,17 @@ export function PriceChart({
   useEffect(() => {
     const series = seriesRef.current;
     const bands = showAtr ? atrBands(atrRange) : null;
+    const moveBand = showExpectedMove ? expectedMoveBand(expectedMove) : null;
 
     const recompute = () => {
-      if (!series || !bands || !hasPriceRange(candles)) {
-        setBandRects({ outer: null, inner: null });
+      if (!series || !hasPriceRange(candles)) {
+        setBandRects({ outer: null, inner: null, expectedMove: null });
         return;
       }
       setBandRects({
-        outer: bandRect(series, bands.outerUpper, bands.outerLower),
-        inner: bandRect(series, bands.innerUpper, bands.innerLower),
+        outer: bands ? bandRect(series, bands.outerUpper, bands.outerLower) : null,
+        inner: bands ? bandRect(series, bands.innerUpper, bands.innerLower) : null,
+        expectedMove: moveBand ? bandRect(series, moveBand.upper, moveBand.lower) : null,
       });
     };
 
@@ -771,7 +810,7 @@ export function PriceChart({
       }
       recomputeBandRectsRef.current = () => {};
     };
-  }, [atrRange, showAtr, candles]);
+  }, [atrRange, showAtr, expectedMove, showExpectedMove, candles]);
 
   return (
     <section className="panel price-chart-panel" aria-labelledby="price-chart-title">
@@ -826,6 +865,14 @@ export function PriceChart({
               />
               {t.priceChart.atrRangeLabel}
             </label>
+            <label className="chart-toggle">
+              <input
+                type="checkbox"
+                checked={showExpectedMove}
+                onChange={(event) => setShowExpectedMove(event.target.checked)}
+              />
+              {t.priceChart.expectedMoveRangeLabel}
+            </label>
           </fieldset>
           <fieldset
             className="level-mode-selector drawing-tools"
@@ -876,6 +923,13 @@ export function PriceChart({
           <div
             className="atr-band atr-band-inner"
             style={{ top: bandRects.inner.top, height: bandRects.inner.height }}
+            aria-hidden="true"
+          />
+        )}
+        {bandRects.expectedMove && (
+          <div
+            className="expected-move-band"
+            style={{ top: bandRects.expectedMove.top, height: bandRects.expectedMove.height }}
             aria-hidden="true"
           />
         )}

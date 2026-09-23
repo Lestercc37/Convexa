@@ -5,7 +5,7 @@ import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { MinuteCandle } from "@/lib/candles";
 import { renderWithLanguage } from "@/lib/i18n/test-utils";
 import { mostRecentSessionRange } from "@/lib/market-session";
-import type { AtrRange, GammaResponse } from "@/lib/types";
+import type { AtrRange, ExpectedMove, GammaResponse } from "@/lib/types";
 import { derivedMetricsFixture } from "@/test/fixtures";
 import { PriceChart } from "./price-chart";
 
@@ -965,6 +965,96 @@ describe("PriceChart", () => {
     const topAfter = container.querySelector<HTMLElement>(".atr-band-outer")?.style.top;
     expect(topAfter).toBe("80px");
     expect(topAfter).not.toBe(topBefore);
+  });
+
+  it("draws the Expected Move band from upper_bound/lower_bound when it's ready", () => {
+    chartMocks.priceToCoordinate.mockImplementation((price: number) => 500 - price);
+    const readyExpectedMove: ExpectedMove = {
+      implied_1sd_dollars: 8,
+      implied_1sd_pct: 1.6,
+      remaining_1sd_dollars: 5,
+      remaining_1sd_pct: 1,
+      upper_bound: 508,
+      lower_bound: 492,
+      atm_iv: 0.15,
+    };
+    const { container } = renderWithLanguage(
+      <PriceChart
+        symbol="SPY"
+        gamma={gamma}
+        candles={candlesWithRange}
+        expectedMove={readyExpectedMove}
+      />,
+    );
+
+    const band = container.querySelector<HTMLElement>(".expected-move-band");
+    expect(band).not.toBeNull();
+    expect(band?.style.top).toBe("-8px");
+    expect(band?.style.height).toBe("16px");
+  });
+
+  it("hides the Expected Move band when upper_bound equals lower_bound (degenerate, e.g. atm_iv = 0)", () => {
+    // Known upstream gap (calculate_bsm_greeks.py's own IV=0 watch item):
+    // atm_iv can legitimately be 0, collapsing implied_1sd_dollars and both
+    // bounds onto spot exactly -- a zero-height band would be indistinguishable
+    // from a stray gridline, so it's skipped rather than drawn.
+    chartMocks.priceToCoordinate.mockImplementation((price: number) => 500 - price);
+    const degenerateExpectedMove: ExpectedMove = {
+      implied_1sd_dollars: 0,
+      implied_1sd_pct: 0,
+      remaining_1sd_dollars: 0,
+      remaining_1sd_pct: 0,
+      upper_bound: 500,
+      lower_bound: 500,
+      atm_iv: 0,
+    };
+    const { container } = renderWithLanguage(
+      <PriceChart
+        symbol="SPY"
+        gamma={gamma}
+        candles={candlesWithRange}
+        expectedMove={degenerateExpectedMove}
+      />,
+    );
+
+    expect(container.querySelector(".expected-move-band")).toBeNull();
+  });
+
+  it("toggles the Expected Move overlay off via its checkbox, and excludes it from autoscale once hidden", async () => {
+    const user = userEvent.setup();
+    chartMocks.priceToCoordinate.mockImplementation((price: number) => 500 - price);
+    const readyExpectedMove: ExpectedMove = {
+      implied_1sd_dollars: 8,
+      implied_1sd_pct: 1.6,
+      remaining_1sd_dollars: 5,
+      remaining_1sd_pct: 1,
+      upper_bound: 508,
+      lower_bound: 492,
+      atm_iv: 0.15,
+    };
+    const { container } = renderWithLanguage(
+      <PriceChart
+        symbol="SPY"
+        gamma={gamma}
+        candles={candlesWithRange}
+        expectedMove={readyExpectedMove}
+      />,
+    );
+
+    expect(container.querySelector(".expected-move-band")).not.toBeNull();
+
+    await user.click(screen.getByRole("checkbox", { name: "Movimiento Esperado" }));
+
+    expect(container.querySelector(".expected-move-band")).toBeNull();
+
+    const [, options] = chartMocks.addSeries.mock.calls.find(
+      ([definition]) => definition === "CandlestickSeries",
+    )!;
+    const merged = options.autoscaleInfoProvider(() => null);
+    // With the overlay off, only Gamma levels feed autoscale -- neither
+    // 508 nor 492 (Expected Move's own bounds) should appear.
+    expect(merged?.priceRange.minValue).not.toBe(492);
+    expect(merged?.priceRange.maxValue).not.toBe(508);
   });
 
   it("expands vertical autoscale to include Gamma levels and ATR bands beyond a single flat candle (regression for the #60 follow-up)", () => {
