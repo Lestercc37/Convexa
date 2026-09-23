@@ -988,11 +988,12 @@ describe("PriceChart", () => {
 
     // The default `gamma` fixture's own 4 static levels, plus EMC/EMP.
     expect(chartMocks.createPriceLine).toHaveBeenCalledTimes(6);
+    // Same green/red convention as Call Wall/Put Wall.
     expect(chartMocks.createPriceLine).toHaveBeenCalledWith(
-      expect.objectContaining({ title: "EMC", price: 508 }),
+      expect.objectContaining({ title: "EMC", price: 508, color: "#00DC5A" }),
     );
     expect(chartMocks.createPriceLine).toHaveBeenCalledWith(
-      expect.objectContaining({ title: "EMP", price: 492 }),
+      expect.objectContaining({ title: "EMP", price: 492, color: "#FA000A" }),
     );
   });
 

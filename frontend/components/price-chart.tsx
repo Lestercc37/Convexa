@@ -112,22 +112,21 @@ function gammaLevels(gamma: GammaResponse): GammaLevel[] {
   ];
 }
 
-const EXPECTED_MOVE_COLOR = "#f3c969";
-
 // EMC/EMP -- Expected Move Call / Expected Move Put, same call/put naming
-// convention as Call Wall/Put Wall so both level pairs read the same way,
-// even though these come from a completely different calculation (ATM
-// straddle IV off the chain's nearest expiration, not dealer OI/gamma).
-// Degenerate (upper_bound === lower_bound, e.g. atm_iv genuinely 0 -- see
-// calculate_bsm_greeks.py's own IV=0 watch item) returns [] rather than
-// two lines sitting exactly on top of each other at spot.
+// *and color* convention as Call Wall/Put Wall (green/red) so both level
+// pairs read the same way, even though these come from a completely
+// different calculation (ATM straddle IV off the chain's nearest
+// expiration, not dealer OI/gamma). Degenerate (upper_bound ===
+// lower_bound, e.g. atm_iv genuinely 0 -- see calculate_bsm_greeks.py's
+// own IV=0 watch item) returns [] rather than two lines sitting exactly
+// on top of each other at spot.
 function expectedMoveLevels(expectedMove: ExpectedMove | undefined): GammaLevel[] {
   if (!expectedMove) return [];
   const { upper_bound, lower_bound } = expectedMove;
   if (upper_bound <= lower_bound) return [];
   return [
-    { price: upper_bound, title: "EMC", color: EXPECTED_MOVE_COLOR },
-    { price: lower_bound, title: "EMP", color: EXPECTED_MOVE_COLOR },
+    { price: upper_bound, title: "EMC", color: CONVEXA_GREEN },
+    { price: lower_bound, title: "EMP", color: CONVEXA_RED },
   ];
 }
 
