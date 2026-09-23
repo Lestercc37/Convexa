@@ -714,7 +714,7 @@ describe("PriceChart", () => {
     ]);
   });
 
-  it("draws the VWAP line and both ATR bands when both are ready", () => {
+  it("draws the VWAP line and both ATR levels when both are ready", () => {
     chartMocks.priceToCoordinate.mockImplementation((price: number) => 500 - price);
     const readyAtrRange: AtrRange = {
       atr: 20,
@@ -749,14 +749,15 @@ describe("PriceChart", () => {
       { time: 1_785_763_860, value: 550 },
     ]);
 
-    const outer = container.querySelector<HTMLElement>(".atr-band-outer");
-    const inner = container.querySelector<HTMLElement>(".atr-band-inner");
-    expect(outer).not.toBeNull();
-    expect(inner).not.toBeNull();
-    expect(outer?.style.top).toBe("-20px");
-    expect(outer?.style.height).toBe("40px");
-    expect(inner?.style.top).toBe("-10px");
-    expect(inner?.style.height).toBe("20px");
+    // One thin (4px) filled rectangle per level -- upper (outer_upper_band
+    // = 520 -> coordinate -20) and lower (outer_lower_band = 480 ->
+    // coordinate 20), each centered on its own coordinate.
+    const bands = container.querySelectorAll<HTMLElement>(".atr-band");
+    expect(bands).toHaveLength(2);
+    expect(bands[0].style.top).toBe("-22px");
+    expect(bands[0].style.height).toBe("4px");
+    expect(bands[1].style.top).toBe("18px");
+    expect(bands[1].style.height).toBe("4px");
   });
 
   it("downsamples VWAP points to 1-per-minute before drawing them, so they can't re-inflate fitContent()'s logical range (regression, 2026-09-18)", () => {
@@ -825,8 +826,7 @@ describe("PriceChart", () => {
       />,
     );
 
-    expect(container.querySelector(".atr-band-outer")).toBeNull();
-    expect(container.querySelector(".atr-band-inner")).toBeNull();
+    expect(container.querySelector(".atr-band")).toBeNull();
   });
 
   it("draws nothing extra when VWAP and ATR are both provisional", () => {
@@ -849,8 +849,7 @@ describe("PriceChart", () => {
       "LineSeries",
       expect.objectContaining({ title: "VWAP Anclado" }),
     );
-    expect(container.querySelector(".atr-band-outer")).toBeNull();
-    expect(container.querySelector(".atr-band-inner")).toBeNull();
+    expect(container.querySelector(".atr-band")).toBeNull();
   });
 
   it("hides ATR bands when the ATR itself is ready but today's open is not", () => {
@@ -869,8 +868,7 @@ describe("PriceChart", () => {
       <PriceChart symbol="SPY" gamma={gamma} candles={[]} vwapPoints={[]} atrRange={mixedAtrRange} />,
     );
 
-    expect(container.querySelector(".atr-band-outer")).toBeNull();
-    expect(container.querySelector(".atr-band-inner")).toBeNull();
+    expect(container.querySelector(".atr-band")).toBeNull();
   });
 
   it("toggles the VWAP and ATR overlays off via their checkboxes", async () => {
@@ -897,14 +895,13 @@ describe("PriceChart", () => {
       />,
     );
 
-    expect(container.querySelector(".atr-band-outer")).not.toBeNull();
+    expect(container.querySelector(".atr-band")).not.toBeNull();
 
     await user.click(screen.getByRole("checkbox", { name: "VWAP Anclado" }));
     await user.click(screen.getByRole("checkbox", { name: "Rango ATR" }));
 
     expect(chartMocks.removeSeries).toHaveBeenCalled();
-    expect(container.querySelector(".atr-band-outer")).toBeNull();
-    expect(container.querySelector(".atr-band-inner")).toBeNull();
+    expect(container.querySelector(".atr-band")).toBeNull();
   });
 
   it("shows the VWAP overlay as not available, disabled, instead of a checkbox for pure indices (regression)", () => {
@@ -951,8 +948,8 @@ describe("PriceChart", () => {
       <PriceChart symbol="SPY" gamma={gamma} candles={candlesWithRange} atrRange={readyAtrRange} />,
     );
 
-    const topBefore = container.querySelector<HTMLElement>(".atr-band-outer")?.style.top;
-    expect(topBefore).toBe("-20px");
+    const topBefore = container.querySelector<HTMLElement>(".atr-band")?.style.top;
+    expect(topBefore).toBe("-22px");
 
     // Simulate the chart's coordinate system changing — the same recompute
     // path a real pan drives via subscribeVisibleLogicalRangeChange, here
@@ -964,8 +961,8 @@ describe("PriceChart", () => {
     expect(sizeChangeHandler).toBeTypeOf("function");
     act(() => sizeChangeHandler());
 
-    const topAfter = container.querySelector<HTMLElement>(".atr-band-outer")?.style.top;
-    expect(topAfter).toBe("80px");
+    const topAfter = container.querySelector<HTMLElement>(".atr-band")?.style.top;
+    expect(topAfter).toBe("78px");
     expect(topAfter).not.toBe(topBefore);
   });
 

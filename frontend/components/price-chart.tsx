@@ -222,41 +222,33 @@ function dedupeAscendingByTime(points: TimePoint[]): TimePoint[] {
   return deduped;
 }
 
-type AtrBandValues = {
-  outerUpper: number;
-  outerLower: number;
-  innerUpper: number;
-  innerLower: number;
-};
+type AtrLevelValues = { upper: number; lower: number };
 
-function atrBands(atrRange: AtrRange | undefined): AtrBandValues | null {
+// Per user request (2026-09-23): just the one pair of ATR levels (the
+// full 1.5x-ATR outer bound), not the earlier nested outer+inner pair --
+// each drawn as its own thin filled rectangle rather than a region
+// spanning between them.
+function atrLevels(atrRange: AtrRange | undefined): AtrLevelValues | null {
   if (!atrRange || atrRange.bands_provisional) return null;
-  const { outer_upper_band, outer_lower_band, inner_upper_band, inner_lower_band } = atrRange;
-  if (
-    outer_upper_band === null ||
-    outer_lower_band === null ||
-    inner_upper_band === null ||
-    inner_lower_band === null
-  ) {
-    return null;
-  }
-  return {
-    outerUpper: outer_upper_band,
-    outerLower: outer_lower_band,
-    innerUpper: inner_upper_band,
-    innerLower: inner_lower_band,
-  };
+  const { outer_upper_band, outer_lower_band } = atrRange;
+  if (outer_upper_band === null || outer_lower_band === null) return null;
+  return { upper: outer_upper_band, lower: outer_lower_band };
 }
 
-function bandRect(
+// Fixed pixel thickness, not price-derived -- these represent a single
+// level (a specific price), not a range with real height of its own, so
+// unlike bandRect below, the rectangle's height is purely a visual
+// affordance to make a 1px line legible as a filled bar.
+const ATR_LEVEL_THICKNESS_PX = 4;
+
+function levelRect(
   series: ISeriesApi<"Candlestick">,
-  upperPrice: number,
-  lowerPrice: number,
+  price: number,
+  thicknessPx: number = ATR_LEVEL_THICKNESS_PX,
 ): BandRect | null {
-  const top = series.priceToCoordinate(upperPrice);
-  const bottom = series.priceToCoordinate(lowerPrice);
-  if (top === null || bottom === null) return null;
-  return { top, height: bottom - top };
+  const center = series.priceToCoordinate(price);
+  if (center === null) return null;
+  return { top: center - thicknessPx / 2, height: thicknessPx };
 }
 
 // With zero price variance across the visible candles (e.g. the single
@@ -299,13 +291,13 @@ function referenceLevelPrices(
   expectedMove: ExpectedMove | undefined,
   showExpectedMove: boolean,
 ): number[] {
-  const bands = showAtr ? atrBands(atrRange) : null;
+  const levels = showAtr ? atrLevels(atrRange) : null;
   const moveLevels = showExpectedMove ? expectedMoveLevels(expectedMove) : [];
   return [
     ...gammaLevels(gamma)
       .map((level) => level.price)
       .filter((price): price is number => price !== null),
-    ...(bands ? [bands.outerUpper, bands.outerLower] : []),
+    ...(levels ? [levels.upper, levels.lower] : []),
     ...moveLevels.map((level) => level.price).filter((price): price is number => price !== null),
   ];
 }
@@ -383,9 +375,9 @@ export function PriceChart({
   const referenceLevelsRef = useRef(
     referenceLevelPrices(gamma, atrRange, showAtr, expectedMove, showExpectedMove),
   );
-  const [bandRects, setBandRects] = useState<{ outer: BandRect | null; inner: BandRect | null }>({
-    outer: null,
-    inner: null,
+  const [atrRects, setAtrRects] = useState<{ upper: BandRect | null; lower: BandRect | null }>({
+    upper: null,
+    lower: null,
   });
 
   useEffect(() => {
@@ -817,16 +809,16 @@ export function PriceChart({
 
   useEffect(() => {
     const series = seriesRef.current;
-    const bands = showAtr ? atrBands(atrRange) : null;
+    const levels = showAtr ? atrLevels(atrRange) : null;
 
     const recompute = () => {
-      if (!series || !bands || !hasPriceRange(candles)) {
-        setBandRects({ outer: null, inner: null });
+      if (!series || !levels || !hasPriceRange(candles)) {
+        setAtrRects({ upper: null, lower: null });
         return;
       }
-      setBandRects({
-        outer: bandRect(series, bands.outerUpper, bands.outerLower),
-        inner: bandRect(series, bands.innerUpper, bands.innerLower),
+      setAtrRects({
+        upper: levelRect(series, levels.upper),
+        lower: levelRect(series, levels.lower),
       });
     };
 
@@ -944,17 +936,17 @@ export function PriceChart({
           className={`price-chart${drawMode ? " price-chart-drawing" : ""}`}
           aria-label={t.priceChart.chartAriaLabel(symbol)}
         />
-        {bandRects.outer && (
+        {atrRects.upper && (
           <div
-            className="atr-band atr-band-outer"
-            style={{ top: bandRects.outer.top, height: bandRects.outer.height }}
+            className="atr-band"
+            style={{ top: atrRects.upper.top, height: atrRects.upper.height }}
             aria-hidden="true"
           />
         )}
-        {bandRects.inner && (
+        {atrRects.lower && (
           <div
-            className="atr-band atr-band-inner"
-            style={{ top: bandRects.inner.top, height: bandRects.inner.height }}
+            className="atr-band"
+            style={{ top: atrRects.lower.top, height: atrRects.lower.height }}
             aria-hidden="true"
           />
         )}
