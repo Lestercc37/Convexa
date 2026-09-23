@@ -42,6 +42,8 @@ vi.mock("lightweight-charts", () => ({
   LineSeries: "LineSeries",
   ColorType: { Solid: "solid" },
   LineStyle: { Dashed: 2, Solid: 0 },
+  // Real values from the library itself -- Simple: 0, WithSteps: 1, Curved: 2.
+  LineType: { Simple: 0, WithSteps: 1, Curved: 2 },
   // Real values from the library itself (lightweight-charts.development.mjs)
   // -- price-chart.tsx switches on these in tickMarkFormatter.
   TickMarkType: { Year: 0, Month: 1, DayOfMonth: 2, Time: 3, TimeWithSeconds: 4 },
@@ -570,9 +572,9 @@ describe("PriceChart", () => {
       .slice(-3)
       .map(([, options]) => options);
     expect(historicalOptions).toEqual([
-      expect.objectContaining({ title: "Call Wall" }),
-      expect.objectContaining({ title: "Gamma Flip" }),
-      expect.objectContaining({ title: "Put Wall" }),
+      expect.objectContaining({ title: "Call Wall", lineType: 1 }),
+      expect.objectContaining({ title: "Gamma Flip", lineType: 1 }),
+      expect.objectContaining({ title: "Put Wall", lineType: 1 }),
     ]);
     expect(historicalOptions).not.toContainEqual(
       expect.objectContaining({ title: expect.stringContaining("Abs") }),

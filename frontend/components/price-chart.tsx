@@ -8,6 +8,7 @@ import {
   createChart,
   LineSeries,
   LineStyle,
+  LineType,
   TickMarkType,
   type AutoscaleInfo,
   type IChartApi,
@@ -728,6 +729,15 @@ export function PriceChart({
         title: level.title,
         priceLineVisible: false,
         lastValueVisible: true,
+        // Holds each level flat at its own value between snapshots and
+        // jumps vertically when it changes, instead of a diagonal line
+        // interpolating between them -- these levels stay constant for
+        // long stretches then move in discrete steps (a new gamma
+        // aggregate cycle recomputing a different strike), so a straight
+        // interpolated line drew a slope that never actually existed and
+        // made Call Wall/Gamma Flip/Put Wall cross and overlap each other
+        // illegibly whenever two of them swapped relative order.
+        lineType: LineType.WithSteps,
       });
       // Same null-price crash as the static-mode price lines above
       // (item.gamma_flip can legitimately be null) -- setData() asserts
