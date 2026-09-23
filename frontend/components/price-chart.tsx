@@ -20,7 +20,7 @@ import { aggregateMinuteVwapPoints, type MinuteCandle, type Timeframe, type Vwap
 import { useLanguage } from "@/lib/i18n/language-context";
 import type { MarketPriceStreamStatus } from "@/lib/market-price-stream";
 import { EASTERN_TIME_ZONE, mostRecentSessionRange } from "@/lib/market-session";
-import type { AtrRange, GammaHistoryItem, GammaResponse } from "@/lib/types";
+import type { AtrRange, ExpectedMove, GammaHistoryItem, GammaResponse } from "@/lib/types";
 import { LEVEL_MERGE_THRESHOLD } from "./gravity-map";
 import { RegimeCompactBadge } from "./regime-badge";
 
@@ -32,6 +32,7 @@ type PriceChartProps = {
   vwapNotApplicable?: boolean;
   vwapProxySymbol?: string | null;
   atrRange?: AtrRange;
+  expectedMove?: ExpectedMove;
   timeframe?: Timeframe;
   streamStatus?: MarketPriceStreamStatus;
 };
@@ -108,6 +109,24 @@ function gammaLevels(gamma: GammaResponse): GammaLevel[] {
     { price: gamma.put_wall, title: "Put Wall", color: CONVEXA_RED },
     ...middleLevels,
     { price: gamma.call_wall, title: "Call Wall", color: CONVEXA_GREEN },
+  ];
+}
+
+// EMC/EMP -- Expected Move Call / Expected Move Put, same call/put naming
+// *and color* convention as Call Wall/Put Wall (green/red) so both level
+// pairs read the same way, even though these come from a completely
+// different calculation (ATM straddle IV off the chain's nearest
+// expiration, not dealer OI/gamma). Degenerate (upper_bound ===
+// lower_bound, e.g. atm_iv genuinely 0 -- see calculate_bsm_greeks.py's
+// own IV=0 watch item) returns [] rather than two lines sitting exactly
+// on top of each other at spot.
+function expectedMoveLevels(expectedMove: ExpectedMove | undefined): GammaLevel[] {
+  if (!expectedMove) return [];
+  const { upper_bound, lower_bound } = expectedMove;
+  if (upper_bound <= lower_bound) return [];
+  return [
+    { price: upper_bound, title: "EMC", color: CONVEXA_GREEN },
+    { price: lower_bound, title: "EMP", color: CONVEXA_RED },
   ];
 }
 
@@ -276,13 +295,17 @@ function referenceLevelPrices(
   gamma: GammaResponse,
   atrRange: AtrRange | undefined,
   showAtr: boolean,
+  expectedMove: ExpectedMove | undefined,
+  showExpectedMove: boolean,
 ): number[] {
   const bands = showAtr ? atrBands(atrRange) : null;
+  const moveLevels = showExpectedMove ? expectedMoveLevels(expectedMove) : [];
   return [
     ...gammaLevels(gamma)
       .map((level) => level.price)
       .filter((price): price is number => price !== null),
     ...(bands ? [bands.outerUpper, bands.outerLower] : []),
+    ...moveLevels.map((level) => level.price).filter((price): price is number => price !== null),
   ];
 }
 
@@ -306,6 +329,7 @@ export function PriceChart({
   vwapNotApplicable = false,
   vwapProxySymbol = null,
   atrRange,
+  expectedMove,
   timeframe = "1m",
   streamStatus = "connected",
 }: PriceChartProps) {
@@ -352,9 +376,12 @@ export function PriceChart({
   const [history, setHistory] = useState<GammaHistoryItem[]>([]);
   const [showVwap, setShowVwap] = useState(true);
   const [showAtr, setShowAtr] = useState(true);
+  const [showExpectedMove, setShowExpectedMove] = useState(true);
   const [drawMode, setDrawMode] = useState(false);
   const [trendline, setTrendline] = useState<Trendline | null>(null);
-  const referenceLevelsRef = useRef(referenceLevelPrices(gamma, atrRange, showAtr));
+  const referenceLevelsRef = useRef(
+    referenceLevelPrices(gamma, atrRange, showAtr, expectedMove, showExpectedMove),
+  );
   const [bandRects, setBandRects] = useState<{ outer: BandRect | null; inner: BandRect | null }>({
     outer: null,
     inner: null,
@@ -639,8 +666,37 @@ export function PriceChart({
     };
   }, [gamma, levelMode]);
 
+  // Independent of levelMode -- unlike Call Wall/Put Wall/Gamma Flip
+  // above, EMC/EMP have no "historical" line-series equivalent to switch
+  // to, so they stay drawn as price lines regardless of that toggle
+  // (same treatment ATR/VWAP already get as plain "Overlays").
   useEffect(() => {
-    referenceLevelsRef.current = referenceLevelPrices(gamma, atrRange, showAtr);
+    const series = seriesRef.current;
+    if (!series || !showExpectedMove) return;
+    const lines: IPriceLine[] = expectedMoveLevels(expectedMove)
+      .filter((level): level is GammaLevel & { price: number } => level.price !== null)
+      .map((level) =>
+        series.createPriceLine({
+          ...level,
+          lineStyle: LineStyle.Dashed,
+          lineWidth: 1,
+          axisLabelVisible: true,
+        }),
+      );
+    return () => {
+      if (seriesRef.current !== series) return;
+      lines.forEach((line) => series.removePriceLine(line));
+    };
+  }, [expectedMove, showExpectedMove]);
+
+  useEffect(() => {
+    referenceLevelsRef.current = referenceLevelPrices(
+      gamma,
+      atrRange,
+      showAtr,
+      expectedMove,
+      showExpectedMove,
+    );
     // `autoscaleInfoProvider` only re-runs when the library itself decides
     // to recompute the visible range — genuinely new/changed series data,
     // a pan/zoom, or a resize. A prop change alone (a fresh gamma
@@ -659,7 +715,7 @@ export function PriceChart({
     // Candle *updates* are handled by the separate effect above via
     // `series.update()`, not this one.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [gamma, atrRange, showAtr]);
+  }, [gamma, atrRange, showAtr, expectedMove, showExpectedMove]);
 
 
   useEffect(() => {
@@ -825,6 +881,14 @@ export function PriceChart({
                 onChange={(event) => setShowAtr(event.target.checked)}
               />
               {t.priceChart.atrRangeLabel}
+            </label>
+            <label className="chart-toggle">
+              <input
+                type="checkbox"
+                checked={showExpectedMove}
+                onChange={(event) => setShowExpectedMove(event.target.checked)}
+              />
+              {t.priceChart.expectedMoveRangeLabel}
             </label>
           </fieldset>
           <fieldset

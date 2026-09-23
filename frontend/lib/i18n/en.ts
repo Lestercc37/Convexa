@@ -55,6 +55,7 @@ export const en: Translations = {
     vwapNotApplicableLabel: "Anchored VWAP: not available for indices",
     vwapProxyLabel: (proxySymbol) => `VWAP (proxy ${proxySymbol})`,
     atrRangeLabel: "ATR Range",
+    expectedMoveRangeLabel: "Expected Move",
     streamFallbackLabel: "Real-time connection lost — updating every 30s",
     drawingToolsAriaLabel: "Drawing tools",
     drawingToolsLegend: "Draw:",

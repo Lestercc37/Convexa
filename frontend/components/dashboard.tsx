@@ -445,6 +445,7 @@ export function Dashboard() {
                     vwapNotApplicable={vwapNotApplicable}
                     vwapProxySymbol={vwapProxySymbol}
                     atrRange={market.atr_range}
+                    expectedMove={market.expected_move}
                     timeframe={timeframe}
                     streamStatus={streamStatus}
                   />

@@ -5,7 +5,7 @@ import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { MinuteCandle } from "@/lib/candles";
 import { renderWithLanguage } from "@/lib/i18n/test-utils";
 import { mostRecentSessionRange } from "@/lib/market-session";
-import type { AtrRange, GammaResponse } from "@/lib/types";
+import type { AtrRange, ExpectedMove, GammaResponse } from "@/lib/types";
 import { derivedMetricsFixture } from "@/test/fixtures";
 import { PriceChart } from "./price-chart";
 
@@ -965,6 +965,106 @@ describe("PriceChart", () => {
     const topAfter = container.querySelector<HTMLElement>(".atr-band-outer")?.style.top;
     expect(topAfter).toBe("80px");
     expect(topAfter).not.toBe(topBefore);
+  });
+
+  it("draws EMC/EMP price lines from upper_bound/lower_bound when Expected Move is ready", () => {
+    const readyExpectedMove: ExpectedMove = {
+      implied_1sd_dollars: 8,
+      implied_1sd_pct: 1.6,
+      remaining_1sd_dollars: 5,
+      remaining_1sd_pct: 1,
+      upper_bound: 508,
+      lower_bound: 492,
+      atm_iv: 0.15,
+    };
+    renderWithLanguage(
+      <PriceChart
+        symbol="SPY"
+        gamma={gamma}
+        candles={candlesWithRange}
+        expectedMove={readyExpectedMove}
+      />,
+    );
+
+    // The default `gamma` fixture's own 4 static levels, plus EMC/EMP.
+    expect(chartMocks.createPriceLine).toHaveBeenCalledTimes(6);
+    // Same green/red convention as Call Wall/Put Wall.
+    expect(chartMocks.createPriceLine).toHaveBeenCalledWith(
+      expect.objectContaining({ title: "EMC", price: 508, color: "#00DC5A" }),
+    );
+    expect(chartMocks.createPriceLine).toHaveBeenCalledWith(
+      expect.objectContaining({ title: "EMP", price: 492, color: "#FA000A" }),
+    );
+  });
+
+  it("skips EMC/EMP entirely when upper_bound equals lower_bound (degenerate, e.g. atm_iv = 0)", () => {
+    // Known upstream gap (calculate_bsm_greeks.py's own IV=0 watch item):
+    // atm_iv can legitimately be 0, collapsing implied_1sd_dollars and both
+    // bounds onto spot exactly -- two lines sitting on top of each other
+    // (and on top of spot) would be worth less than not drawing them.
+    const degenerateExpectedMove: ExpectedMove = {
+      implied_1sd_dollars: 0,
+      implied_1sd_pct: 0,
+      remaining_1sd_dollars: 0,
+      remaining_1sd_pct: 0,
+      upper_bound: 500,
+      lower_bound: 500,
+      atm_iv: 0,
+    };
+    renderWithLanguage(
+      <PriceChart
+        symbol="SPY"
+        gamma={gamma}
+        candles={candlesWithRange}
+        expectedMove={degenerateExpectedMove}
+      />,
+    );
+
+    expect(chartMocks.createPriceLine).toHaveBeenCalledTimes(4);
+    expect(chartMocks.createPriceLine).not.toHaveBeenCalledWith(
+      expect.objectContaining({ title: "EMC" }),
+    );
+    expect(chartMocks.createPriceLine).not.toHaveBeenCalledWith(
+      expect.objectContaining({ title: "EMP" }),
+    );
+  });
+
+  it("toggles EMC/EMP off via the Expected Move checkbox, and excludes them from autoscale once hidden", async () => {
+    const user = userEvent.setup();
+    const readyExpectedMove: ExpectedMove = {
+      implied_1sd_dollars: 8,
+      implied_1sd_pct: 1.6,
+      remaining_1sd_dollars: 5,
+      remaining_1sd_pct: 1,
+      upper_bound: 508,
+      lower_bound: 492,
+      atm_iv: 0.15,
+    };
+    renderWithLanguage(
+      <PriceChart
+        symbol="SPY"
+        gamma={gamma}
+        candles={candlesWithRange}
+        expectedMove={readyExpectedMove}
+      />,
+    );
+
+    expect(chartMocks.createPriceLine).toHaveBeenCalledWith(
+      expect.objectContaining({ title: "EMC" }),
+    );
+
+    await user.click(screen.getByRole("checkbox", { name: "Movimiento Esperado" }));
+
+    expect(chartMocks.removePriceLine).toHaveBeenCalled();
+
+    const [, options] = chartMocks.addSeries.mock.calls.find(
+      ([definition]) => definition === "CandlestickSeries",
+    )!;
+    const merged = options.autoscaleInfoProvider(() => null);
+    // With the overlay off, only Gamma levels feed autoscale -- neither
+    // 508 nor 492 (EMC/EMP's own prices) should appear.
+    expect(merged?.priceRange.minValue).not.toBe(492);
+    expect(merged?.priceRange.maxValue).not.toBe(508);
   });
 
   it("expands vertical autoscale to include Gamma levels and ATR bands beyond a single flat candle (regression for the #60 follow-up)", () => {
