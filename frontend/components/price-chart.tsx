@@ -411,7 +411,12 @@ export function PriceChart({
       width: container.clientWidth,
       height: container.clientHeight || 420,
       layout: {
-        background: { type: ColorType.Solid, color: "transparent" },
+        // Per user request (2026-09-23): a near-black chart body, distinct
+        // from the lighter navy --tv-panel background the rest of the
+        // dashboard's panels use -- solid rather than "transparent" so
+        // this stays the chart's own color regardless of what sits behind
+        // it in .price-chart-frame.
+        background: { type: ColorType.Solid, color: "#050608" },
         textColor: "#787b86",
         attributionLogo: false,
       },

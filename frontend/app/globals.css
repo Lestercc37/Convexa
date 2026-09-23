@@ -305,9 +305,12 @@ button, select { font: inherit; }
    upgrade raises its own internal z-index further, this needs to go up
    too (there's no public API for "always on top" here, only this simple
    z-index tracking). */
-.atr-band { position: absolute; left: 0; right: 0; z-index: 3; pointer-events: none; border-top: 1px solid rgba(167, 139, 250, 0.35); border-bottom: 1px solid rgba(167, 139, 250, 0.35); }
-.atr-band-outer { background: rgba(167, 139, 250, 0.08); }
-.atr-band-inner { background: rgba(167, 139, 250, 0.20); }
+/* Per user request (2026-09-23): a thin gray outline rectangle instead of
+   the earlier purple filled band -- border on all four sides (not just
+   top/bottom) so it actually reads as a rectangle, no background fill so
+   the candles underneath stay fully legible through it. */
+.atr-band { position: absolute; left: 0; right: 0; z-index: 3; pointer-events: none; background: transparent; border: 1px solid rgba(190, 194, 204, 0.4); }
+.atr-band-inner { border-color: rgba(190, 194, 204, 0.65); }
 .chart-watermark { position: absolute; left: 14px; bottom: 14px; z-index: 2; width: 72px; height: auto; opacity: 0.14; pointer-events: none; user-select: none; }
 .chart-empty { position: absolute; inset: 52% 0 auto; margin: 0; color: var(--tv-text-dim); text-align: center; pointer-events: none; }
 
