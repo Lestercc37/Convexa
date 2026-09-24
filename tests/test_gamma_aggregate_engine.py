@@ -56,8 +56,13 @@ def test_fake_gamma_aggregate_calculator_groups_gamma_exposure_by_strike() -> No
         total_gamma=Decimal("84700000.000"),
         net_gamma=Decimal("84700000.000"),
         dealer_gamma_notional=Decimal("84700000.000"),
-        absolute_gamma_strike=Decimal("545"),
-        peak_gamma_value=Decimal("57475000.000"),
+        # 540 wins despite a smaller net_gamma (27.225M vs 545's 57.475M)
+        # -- it has far more total two-sided gamma exposure (117.975M vs
+        # 63.525M: large offsetting call/put positions, not one-sided).
+        # See FakeGammaAggregateCalculator's own comment for why this is
+        # the correct ranking now, not a regression.
+        absolute_gamma_strike=Decimal("540"),
+        peak_gamma_value=Decimal("117975000.000"),
     )
 
 
@@ -81,16 +86,30 @@ def test_fake_gamma_aggregate_calculator_sums_open_interest_and_volume_per_strik
     assert by_strike[Decimal(545)].volume == 6800  # 3400 + 3400
 
 
-def test_fake_gamma_aggregate_calculator_selects_peak_by_absolute_gamma() -> None:
+def test_fake_gamma_aggregate_calculator_selects_peak_by_total_exposure_not_net() -> None:
+    # Confirmed live, 2026-09-24: Absolute Gamma Strike must measure total
+    # two-sided hedging demand at a strike, not net (directional) gamma --
+    # a strike with large, roughly offsetting call/put gamma is exactly
+    # the kind of real pinning magnet this level is supposed to surface,
+    # and a net-based ranking makes it invisible (nets toward zero) even
+    # though it demands more total hedging liquidity than any other
+    # strike. Same class of fix already applied to Call Wall/Put Wall
+    # (net-gamma-based there -- the opposite correction, since those
+    # measure directional dealer positioning, not total exposure).
     chain = _chain()
     exposures = FakeGammaExposureCalculator().calculate(chain)
 
     aggregate = FakeGammaAggregateCalculator().calculate(exposures, chain.symbol, chain.as_of)
 
-    assert aggregate.items[0].absolute_gamma == Decimal("27225000.000")
-    assert aggregate.items[1].absolute_gamma == Decimal("57475000.000")
-    assert aggregate.absolute_gamma_strike == Decimal("545")
-    assert aggregate.peak_gamma_value == Decimal("57475000.000")
+    # 540 has the smaller net_gamma (27.225M vs 545's 57.475M -- 545
+    # would win under the old, net-based ranking) but the larger
+    # total_gamma_exposure (117.975M vs 63.525M), because 540's call/put
+    # legs largely offset (72.6M call, -45.375M put) while 545's are far
+    # more one-sided (60.5M call, -3.025M put).
+    assert aggregate.items[0].total_gamma_exposure == Decimal("117975000.000")
+    assert aggregate.items[1].total_gamma_exposure == Decimal("63525000.000")
+    assert aggregate.absolute_gamma_strike == Decimal("540")
+    assert aggregate.peak_gamma_value == Decimal("117975000.000")
 
 
 def test_calculate_gamma_aggregate_use_case_uses_gamma_exposure_output() -> None:
