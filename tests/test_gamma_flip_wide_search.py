@@ -101,6 +101,47 @@ def test_gamma_flip_finds_a_crossing_outside_the_narrow_walls_width() -> None:
     assert {item.strike for item in result.items} == {Decimal(545), Decimal(555)}
 
 
+def test_regime_reflects_the_wide_book_not_just_the_narrow_walls_window() -> None:
+    # Confirmed with the user, 2026-09-24, from a real trading scenario:
+    # price crossing a LOCAL zero-crossing near a support level doesn't
+    # mean the regime that actually governs dealer hedging flow has
+    # changed, if the broader book is still dominated by the opposite
+    # sign -- a regime reading tied to the ATR-narrow walls window alone
+    # would have been actively misleading there, not just cosmetically
+    # inconsistent with the Gamma Flip line.
+    #
+    # Strike 525 (outside the ~11-wide narrow width, inside the ~29-wide
+    # Gamma Flip search) is heavily put-dominant (5 call OI vs 500 put
+    # OI) -- a large negative net_gamma sitting just outside the narrow
+    # radius. Both narrow strikes (545, 555) are call-dominant
+    # (positive). Under the old narrow-only regime calculation, only
+    # 545/555 would be summed -- both positive, "long_gamma". The real,
+    # complete book is net short.
+    contracts = (
+        _contract("SPY260116C00525000", ContractType.CALL, Decimal(525), 5, "0.05"),
+        _contract("SPY260116P00525000", ContractType.PUT, Decimal(525), 500, "0.05"),
+        _contract("SPY260116C00545000", ContractType.CALL, Decimal(545), 50, "0.05"),
+        _contract("SPY260116P00545000", ContractType.PUT, Decimal(545), 5, "0.05"),
+        _contract("SPY260116C00555000", ContractType.CALL, Decimal(555), 50, "0.05"),
+        _contract("SPY260116P00555000", ContractType.PUT, Decimal(555), 5, "0.05"),
+    )
+    chain = OptionChain(symbol="SPY", as_of=AS_OF, spot_price=SPOT, contracts=contracts)
+    storage = InMemoryStorage()
+    storage.save_chain_snapshot(chain)
+
+    result = _orchestrator(storage).execute("SPY")
+
+    # The narrow window (still used for the GEX-by-strike histogram/
+    # items, Call Wall/Put Wall/Max Pain -- unchanged) never sees 525.
+    assert {item.strike for item in result.items} == {Decimal(545), Decimal(555)}
+    # But the regime/Net GEX totals now correctly reflect it: net short,
+    # not the "long_gamma" the narrow window alone would have implied.
+    assert result.net_gamma == Decimal("-6125625.0000")
+    assert result.positive_gamma == Decimal("1361250.0000")
+    assert result.negative_gamma == Decimal("-7486875.0000")
+    assert result.dealer_position == "short_gamma"
+
+
 def test_gamma_flip_is_still_none_when_no_crossing_exists_even_in_the_wide_search() -> None:
     # Every strike (near and far) is call-dominant -- no crossing
     # anywhere, wide search included. Must not fabricate one.
