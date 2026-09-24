@@ -8,7 +8,8 @@ import time
 from datetime import date, datetime, timedelta
 from datetime import time as dtime
 from decimal import Decimal
-from typing import ClassVar
+from typing import ClassVar, Self
+from unittest.mock import AsyncMock
 
 import httpx
 import pytest
@@ -18,6 +19,7 @@ from backend.adapters.providers.thetadata.provider import (
     DAILY_BARS_CACHE_TTL_SECONDS,
     MARKET_HOLIDAYS_CACHE_TTL_SECONDS,
     THETADATA_MAX_CONCURRENT_REQUESTS,
+    WS_MAX_QUEUE,
     ThetaDataProvider,
     ThetaStreamHub,
     _build_occ_symbol,
@@ -2294,6 +2296,46 @@ class TestStreamHubReconnection:
             await asyncio.sleep(0.05)  # must not raise
 
         assert any("Live-subscribe failed" in record.message for record in caplog.records)
+
+
+class TestStreamHubWebsocketQueueSize:
+    @pytest.mark.asyncio
+    async def test_connects_with_a_generous_max_queue_not_the_librarys_tiny_default(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Confirmed live, 2026-09-24: the `websockets` library's own
+        # incoming-frame buffer defaults to just 16 -- far smaller than
+        # any of this module's own per-symbol app queues (5000). Once that
+        # tiny buffer fills (a real, sustained processing backlog on this
+        # same event loop), the library stops reading from the TCP socket
+        # entirely, which looks like an unresponsive client to Theta
+        # Terminal and gets the connection dropped -- exactly the
+        # queue-full-then-disconnect sequence seen live that day. See
+        # WS_MAX_QUEUE's own comment in provider.py for the full mechanism.
+        captured: dict[str, object] = {}
+
+        class _FakeWebsocket:
+            async def __aenter__(self) -> Self:
+                return self
+
+            async def __aexit__(self, *args: object) -> None:
+                return None
+
+        def fake_connect(url: str, **kwargs: object) -> _FakeWebsocket:
+            captured["url"] = url
+            captured["kwargs"] = kwargs
+            return _FakeWebsocket()
+
+        monkeypatch.setattr(provider_module.websockets, "connect", fake_connect)
+
+        stream = ThetaStreamHub(WS_URL, httpx.Client(base_url=REST_URL))
+        monkeypatch.setattr(stream, "_consume", AsyncMock())
+
+        await stream._connect_and_consume()
+
+        assert captured["url"] == WS_URL
+        assert captured["kwargs"] == {"max_queue": WS_MAX_QUEUE}
+        assert WS_MAX_QUEUE > 16
 
 
 class TestStreamHubDataSilenceWatchdog:
