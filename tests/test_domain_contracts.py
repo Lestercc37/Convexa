@@ -146,6 +146,36 @@ def test_get_latest_chain_snapshot_ignores_a_fresher_narrow_write_for_indices() 
     assert len({contract.expiration for contract in latest.contracts}) > 1
 
 
+def test_get_latest_chain_snapshot_ignores_a_fresher_narrow_write_for_equities_too() -> None:
+    # Confirmed live, 2026-09-24: the exact same race as the SPX incident
+    # above, but for AAPL -- an equity, not an index. The 2026-09-18 fix
+    # only guarded indices, on the assumption a narrow single-expiration
+    # write "only exists for indices in the first place" (see the original
+    # comment this replaced in PostgreSQLStorage.get_latest_chain_snapshot).
+    # That assumption was wrong: the Volatility Smile panel
+    # (frontend/components/volatility-smile.tsx) polls /chain/{symbol}
+    # with whatever expiration the user has selected, for ANY symbol, and
+    # if that selection goes stale (e.g. an already-expired date left
+    # selected across a day rollover) it keeps writing a narrow,
+    # ~16-contract snapshot that raced the scheduler's own ~680-contract
+    # full write for AAPL every other cycle -- gamma_flip/walls silently
+    # went null/0 live. The guard now applies to every symbol, not just
+    # indices, so this regression test uses a plain equity on purpose.
+    storage = InMemoryStorage()
+    near = MockDataProvider().get_option_chain("AAPL")
+    far = MockDataProvider().get_option_chain("AAPL", date(2026, 3, 20))
+    full = replace(near, contracts=near.contracts + far.contracts)
+    storage.save_chain_snapshot(full)
+
+    narrow = replace(near, as_of=full.as_of + timedelta(minutes=1))
+    storage.save_chain_snapshot(narrow)
+
+    latest = storage.get_latest_chain_snapshot("AAPL")
+
+    assert latest is full
+    assert len({contract.expiration for contract in latest.contracts}) > 1
+
+
 def test_get_latest_chain_snapshot_still_serves_a_single_expiration_on_explicit_request() -> None:
     # Requirement: the option chain viewer (GET /chain/SPX?expiration=...)
     # must keep working unchanged -- this fix only guards the *unscoped*
