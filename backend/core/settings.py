@@ -32,6 +32,13 @@ class Settings(BaseSettings):
     data_provider: Literal["mock", "thetadata"] = Field(default="mock")
     thetadata_rest_url: str = Field(default="http://localhost:25503")
     thetadata_ws_url: str = Field(default="ws://127.0.0.1:25520/v1/events")
+    # Local-only TCP link (see backend/core/whale_alerts_relay.py): worker.py
+    # forwards every trade/quote event to backend/whale_alerts_worker.py's
+    # own process over this, so whale-alerts' own CPU-bound classification
+    # never again shares a GIL with the process that owns the real ThetaData
+    # WebSocket connection. Never reaches the network beyond this machine.
+    whale_alerts_relay_host: str = Field(default="127.0.0.1")
+    whale_alerts_relay_port: int = Field(default=25599)
 
 
 @lru_cache

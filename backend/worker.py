@@ -1,10 +1,33 @@
 """Standalone entrypoint for Convexa's ThetaData stream-owning systems --
-WhaleAlertsStreamManager, UnderlyingPriceStreamManager, and
+WhaleAlertsRelayPublisher, UnderlyingPriceStreamManager, and
 StreamStateExporter. No HTTP server here; backend/main.py's FastAPI
 app no longer starts these itself (see its own lifespan docstring for
 exactly why -- GIL/threadpool contention with /gamma and /market,
 confirmed live and fixed piecemeal before this split, per the approved
 process-split design).
+
+Whale-alerts' own CPU-bound classification (Lee-Ready side
+classification, bucketing, threshold comparisons) does NOT run in this
+process (2026-09-24 change) -- it moved to backend/whale_alerts_worker.py,
+its own OS process with its own GIL. Confirmed live that running it here,
+even offloaded to a dedicated thread pool, still shared this process's
+GIL with ThetaStreamHub's own WebSocket read loop closely enough to
+starve it under real trade volume: 17 reconnects and ~70,000 dropped
+trade messages in under an hour, each preceded by ~10s of queue-
+saturation CRITICAL logs. This process now only relays raw trade/quote
+events to that other process (WhaleAlertsRelayPublisher, see
+backend/core/whale_alerts_relay.py) -- cheap serialize-and-enqueue work
+that runs directly on this process's own event loop, nothing that
+competes for the GIL the WebSocket read loop needs.
+
+Consequence for StreamStateExporter (still started below, unchanged):
+its own whale_alerts_engine.symbol_flow() export half is now a
+permanent no-op HERE -- this process's own WhaleAlertsEngine instance
+never receives a single process_trade() call anymore, since that only
+happens in backend/whale_alerts_worker.py's own separate instance now
+(which runs its own StreamStateExporter for exactly this reason -- see
+that module's own comment). Only this process's cumulative_volumes()
+export half still does real work here.
 
 The REST scheduler (UnderlyingRefreshScheduler) used to run in this same
 process too, until 2026-09-22: confirmed live that its own concurrent
@@ -47,7 +70,7 @@ from backend.core.container import build_container
 from backend.core.logging import configure_logging
 from backend.core.stream_state_export import StreamStateExporter
 from backend.core.underlying_price_stream import UnderlyingPriceStreamManager
-from backend.core.whale_alerts_stream import WhaleAlertsStreamManager
+from backend.core.whale_alerts_relay import WhaleAlertsRelayPublisher, WhaleAlertsRelayServer
 
 logger = logging.getLogger(__name__)
 
@@ -68,13 +91,22 @@ async def run() -> None:
         return
 
     await container.market_data_provider.start()
-    whale_alerts_stream = WhaleAlertsStreamManager(container)
+    whale_alerts_relay_server = WhaleAlertsRelayServer(
+        container.settings.whale_alerts_relay_host, container.settings.whale_alerts_relay_port
+    )
+    await whale_alerts_relay_server.start()
+    whale_alerts_relay_publisher = WhaleAlertsRelayPublisher(
+        container.market_data_provider, whale_alerts_relay_server
+    )
     underlying_price_stream = UnderlyingPriceStreamManager(container)
     stream_state_exporter = StreamStateExporter(container)
-    whale_alerts_stream.start()
+    whale_alerts_relay_publisher.start()
     underlying_price_stream.start()
     stream_state_exporter.start()
-    logger.info("Worker running: whale-alerts stream, underlying-price stream, state exporter")
+    logger.info(
+        "Worker running: whale-alerts relay, underlying-price stream, state exporter -- "
+        "also run backend.whale_alerts_worker for whale alerts to actually process"
+    )
 
     try:
         # Runs forever -- Ctrl+C (KeyboardInterrupt) or the process being
@@ -83,7 +115,8 @@ async def run() -> None:
         await asyncio.Event().wait()
     finally:
         logger.info("Stopping %s worker", container.settings.app_name)
-        await whale_alerts_stream.stop()
+        await whale_alerts_relay_publisher.stop()
+        await whale_alerts_relay_server.stop()
         await underlying_price_stream.stop()
         await stream_state_exporter.stop()
         await container.market_data_provider.stop()
