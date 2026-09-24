@@ -235,6 +235,30 @@ class CalculateGammaExposureOrchestrator:
             ),
             put_wall=(walls.put_wall.strike if walls.put_wall is not None else aggregate.put_wall),
             max_pain=max_pain.max_pain_strike,
+            # Net GEX / dealer_position (the "gamma regime" the dashboard
+            # badge shows) now sourced from wide_aggregate -- the same
+            # complete, ATR-unrestricted window Gamma Flip's own crossing
+            # search already uses -- instead of the ATR-narrow window
+            # below (walls_aggregate/aggregate), which can silently
+            # exclude real gamma exposure sitting just outside that
+            # radius. Confirmed with the user, 2026-09-24, from a real
+            # trading scenario: price crossing a LOCAL zero-crossing near
+            # a support level does not necessarily mean the regime that
+            # actually governs dealer hedging flow has changed, if the
+            # broader book (outside the narrow radius) is still dominated
+            # by the opposite sign -- a regime reading tied to that
+            # narrower slice would have been actively misleading in that
+            # scenario, not just cosmetically inconsistent with the flip
+            # line. Call Wall/Put Wall/Max Pain/the Greek exposures below
+            # are UNCHANGED (still the ATR-narrow window, already tuned
+            # and verified against a real reference platform) -- this
+            # only widens the regime/Net GEX reading itself.
+            total_market_gamma=wide_aggregate.total_market_gamma,
+            positive_gamma=wide_aggregate.positive_gamma,
+            negative_gamma=wide_aggregate.negative_gamma,
+            total_gamma=wide_aggregate.total_gamma,
+            net_gamma=wide_aggregate.net_gamma,
+            dealer_gamma_notional=wide_aggregate.dealer_gamma_notional,
             vega_exposure=vega_exposure,
             theta_exposure=theta_exposure,
             charm_exposure=charm_exposure,
