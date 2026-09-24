@@ -69,12 +69,36 @@ class FakeGammaAggregateCalculator(IGammaAggregateCalculator):
             )
 
         total_market_gamma = sum((item.net_gamma for item in items), Decimal("0"))
-        absolute_gamma_item = max(items, key=lambda item: item.absolute_gamma, default=None)
+        # Ranked by total_gamma_exposure (|call| + |put|, each leg summed
+        # independently), NOT by absolute_gamma (|call + put|, netted
+        # first) -- confirmed live, 2026-09-24: a strike with large,
+        # roughly offsetting call and put gamma (heavy two-sided dealer
+        # hedging activity -- exactly the kind of strike that acts as a
+        # real pinning magnet) nets to near-zero under absolute_gamma,
+        # making it invisible to this ranking even though it demands the
+        # most real hedging liquidity of any strike in the book. This is
+        # the same class of bug already fixed for Call Wall/Put Wall
+        # (net-gamma-based selection, see FakeWallCalculator) -- Absolute
+        # Gamma Strike needed the opposite correction: it's supposed to
+        # measure total two-sided hedging demand regardless of
+        # directional bias, not a netted, bias-sensitive quantity. Likely
+        # explains part of the unresolved "Large Gamma Strike" ranking
+        # mismatch against a real reference platform documented in this
+        # project's own history (that platform's own winning strikes
+        # consistently carried far more OI than Convexa's, which is
+        # exactly the signature of comparing against the wrong metric).
+        # item.absolute_gamma itself is untouched -- it's still the
+        # right (net, signed-magnitude) quantity for the GEX-by-strike
+        # histogram each item feeds, a genuinely different use case from
+        # "which single strike is the dominant hedging magnet."
+        absolute_gamma_item = max(items, key=lambda item: item.total_gamma_exposure, default=None)
         absolute_gamma_strike = (
             absolute_gamma_item.strike if absolute_gamma_item is not None else Decimal("0")
         )
         peak_gamma_value = (
-            absolute_gamma_item.absolute_gamma if absolute_gamma_item is not None else Decimal("0")
+            absolute_gamma_item.total_gamma_exposure
+            if absolute_gamma_item is not None
+            else Decimal("0")
         )
         return GammaAggregate(
             symbol=symbol,
