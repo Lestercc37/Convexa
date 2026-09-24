@@ -15,6 +15,7 @@ from typing import Any, TypeVar
 import httpx
 import websockets
 
+from backend.adapters.notifications.desktop_notify import notify_windows
 from backend.adapters.providers.thetadata.request_slots import (
     InProcessThetaRequestSlots,
     PostgresThetaRequestSlots,
@@ -242,6 +243,15 @@ LOOP_ITERATION_SLOW_THRESHOLD_SECONDS = 0.1
 # itself.
 RECONCILE_DANGEROUS_THRESHOLD_SECONDS = STATUS_STALE_AFTER_SECONDS / 2
 QUEUE_DEPTH_LOG_INTERVAL_SECONDS = 60
+
+# A real incident fires the CRITICAL log this gates (see
+# ThetaStreamHub._maybe_alert_queue_saturation) dozens of times per
+# second -- confirmed live, 2026-09-24, QQQ: ~65/s sustained. Desktop-
+# notifying on every one of those would itself be a flood, not an alert.
+# 5 minutes: one notification per genuinely new incident, plus a "still
+# happening" reminder if it hasn't cleared, without being noisy about an
+# already-known, ongoing one.
+QUEUE_ALERT_COOLDOWN_SECONDS = 300.0
 
 # Fix (2026-09-10), following the investigation instrumentation above:
 # confirmed live overnight, 2026-09-09 into 2026-09-10 (~16 hours, ~48
@@ -702,6 +712,11 @@ class ThetaStreamHub:
         self._last_option_trade_at: float | None = None
         self._last_underlying_trade_at: float | None = None
         self._watchdog_task: asyncio.Task[None] | None = None
+        # See QUEUE_ALERT_COOLDOWN_SECONDS' own module-level comment.
+        # Keyed by "{kind}:{symbol}" (e.g. "TRADE:QQQ") -- QUOTE and
+        # TRADE queues for the same symbol are genuinely separate
+        # problems, tracked independently.
+        self._last_queue_alert_at: dict[str, float] = {}
 
     def register_contract(
         self,
@@ -1212,8 +1227,50 @@ class ThetaStreamHub:
                     symbol,
                     queue.maxsize,
                 )
+                self._maybe_alert_queue_saturation(kind, symbol, queue.maxsize)
 
         self._timed_dispatch(queues, kind, put_one)
+
+    def _maybe_alert_queue_saturation(self, kind: str, symbol: str, maxsize: int) -> None:
+        """Desktop-notifies at most once per QUEUE_ALERT_COOLDOWN_SECONDS
+        per (kind, symbol) pair, not once per dropped message -- the
+        CRITICAL log just above this call fires dozens of times a second
+        during a real incident (confirmed live, 2026-09-24, QQQ: ~65/s
+        sustained), and notifying that often would itself be a flood,
+        not an alert a human could act on.
+
+        Fire-and-forget: schedules notify_windows via asyncio.create_task
+        rather than awaiting it here. This method is called synchronously
+        from put_one, itself called from _timed_dispatch's per-queue
+        put_nowait() loop on the same event loop ThetaStreamHub's own WS
+        read loop runs on -- that loop is timed specifically because it
+        must never itself become the slow thing (see _timed_dispatch's
+        own docstring), so awaiting a process spawn here would reintroduce
+        exactly the blocking-the-shared-loop class of bug this whole
+        dispatch path exists to avoid."""
+        key = f"{kind}:{symbol}"
+        now = time.monotonic()
+        last_alert = self._last_queue_alert_at.get(key)
+        if last_alert is not None and now - last_alert < QUEUE_ALERT_COOLDOWN_SECONDS:
+            return
+        self._last_queue_alert_at[key] = now
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            # No running loop -- this method is always reached from the
+            # WS consumer's own coroutine in real use, so a loop always
+            # exists there; the exception here is a synchronous unit
+            # test calling _dispatch_critical directly (see
+            # TestQueueBackpressure). Skip the notification rather than
+            # raise over a best-effort alert.
+            return
+        asyncio.create_task(
+            notify_windows(
+                "Convexa: flujo de datos degradado",
+                f"La cola de {kind} para {symbol} está llena (max={maxsize}) y "
+                "descartando mensajes. Un consumidor se está quedando atrás.",
+            )
+        )
 
     def _dispatch_dropping(
         self, queues: list[asyncio.Queue[_QueueEventT]], event: _QueueEventT, kind: str
