@@ -32,6 +32,10 @@ async def test_run_starts_all_three_managers_and_stops_cleanly_on_cancellation(
         _env_file=None,
         DATABASE_URL="sqlite+aiosqlite:///:memory:",
         enable_scheduler=True,
+        # port=0 asks the OS for any free port -- the production default
+        # (25599) could otherwise collide with a real worker.py process
+        # already listening on this same machine while tests run.
+        whale_alerts_relay_port=0,
     )
     monkeypatch.setattr(container_module, "get_settings", lambda: settings)
 
