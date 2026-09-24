@@ -123,3 +123,51 @@ class TestPeriodicContractRediscovery:
         assert "SPY" in fetch_calls
         assert "SPY" not in register_calls
         assert set(register_calls) == set(ALL_SYMBOLS) - {"SPY"}
+
+    def test_offloads_the_blocking_fetch_to_a_thread_instead_of_calling_it_directly(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Regression (2026-09-24, live market-open incident): _fetch_near_
+        the_money is a plain sync method backed by a blocking httpx.Client
+        (not AsyncClient) -- calling it directly from this coroutine blocks
+        the same event loop ThetaStreamHub's own WS read loop runs on.
+        Confirmed live: with REST latency degraded under real market-open
+        load ("ThetaData request slow... took 6.75s" observed), that
+        blocking held the loop long enough to starve websocket.recv() past
+        every staleness watchdog's own threshold, forcing a reconnect
+        cycle roughly every 90-120s through the first 10+ minutes of the
+        session -- and each reconnect resubscribing the full contract set
+        (1720 contracts / 3440 messages observed) only made the next pass
+        more likely to overlap another slow stretch. asyncio.to_thread is
+        what must carry this call now, not a direct invocation."""
+        provider = _provider()
+        fake_chain = _NearTheMoneyChain(date(2099, 1, 1), [])
+        to_thread_calls: list[tuple[object, tuple[object, ...], dict[str, object]]] = []
+
+        async def fake_to_thread(func, /, *args: object, **kwargs: object):
+            to_thread_calls.append((func, args, kwargs))
+            return fake_chain
+
+        monkeypatch.setattr(asyncio, "to_thread", fake_to_thread)
+        monkeypatch.setattr(provider, "_register_streaming_contracts", lambda *a: None)
+
+        sleep_calls: list[float] = []
+
+        async def fake_sleep(seconds: float) -> None:
+            sleep_calls.append(seconds)
+            if len(sleep_calls) >= 2:
+                raise asyncio.CancelledError
+
+        monkeypatch.setattr(asyncio, "sleep", fake_sleep)
+
+        async def run() -> None:
+            with pytest.raises(asyncio.CancelledError):
+                await provider._periodic_contract_rediscovery()
+
+        asyncio.run(run())
+
+        assert len(to_thread_calls) == len(ALL_SYMBOLS)
+        for func, args, kwargs in to_thread_calls:
+            assert func == provider._fetch_near_the_money
+            assert args[0] in ALL_SYMBOLS
+            assert kwargs == {"expiration": None}
