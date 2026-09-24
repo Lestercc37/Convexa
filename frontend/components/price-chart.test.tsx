@@ -42,6 +42,8 @@ vi.mock("lightweight-charts", () => ({
   LineSeries: "LineSeries",
   ColorType: { Solid: "solid" },
   LineStyle: { Dashed: 2, Solid: 0 },
+  // Real values from the library itself -- Simple: 0, WithSteps: 1, Curved: 2.
+  LineType: { Simple: 0, WithSteps: 1, Curved: 2 },
   // Real values from the library itself (lightweight-charts.development.mjs)
   // -- price-chart.tsx switches on these in tickMarkFormatter.
   TickMarkType: { Year: 0, Month: 1, DayOfMonth: 2, Time: 3, TimeWithSeconds: 4 },
@@ -570,9 +572,9 @@ describe("PriceChart", () => {
       .slice(-3)
       .map(([, options]) => options);
     expect(historicalOptions).toEqual([
-      expect.objectContaining({ title: "Call Wall" }),
-      expect.objectContaining({ title: "Gamma Flip" }),
-      expect.objectContaining({ title: "Put Wall" }),
+      expect.objectContaining({ title: "Call Wall", lineType: 1 }),
+      expect.objectContaining({ title: "Gamma Flip", lineType: 1 }),
+      expect.objectContaining({ title: "Put Wall", lineType: 1 }),
     ]);
     expect(historicalOptions).not.toContainEqual(
       expect.objectContaining({ title: expect.stringContaining("Abs") }),
@@ -712,7 +714,7 @@ describe("PriceChart", () => {
     ]);
   });
 
-  it("draws the VWAP line and both ATR bands when both are ready", () => {
+  it("draws the VWAP line and both ATR levels when both are ready", () => {
     chartMocks.priceToCoordinate.mockImplementation((price: number) => 500 - price);
     const readyAtrRange: AtrRange = {
       atr: 20,
@@ -747,14 +749,15 @@ describe("PriceChart", () => {
       { time: 1_785_763_860, value: 550 },
     ]);
 
-    const outer = container.querySelector<HTMLElement>(".atr-band-outer");
-    const inner = container.querySelector<HTMLElement>(".atr-band-inner");
-    expect(outer).not.toBeNull();
-    expect(inner).not.toBeNull();
-    expect(outer?.style.top).toBe("-20px");
-    expect(outer?.style.height).toBe("40px");
-    expect(inner?.style.top).toBe("-10px");
-    expect(inner?.style.height).toBe("20px");
+    // One thin (4px) filled rectangle per level -- upper (inner_upper_band
+    // = 510 -> coordinate -10) and lower (inner_lower_band = 490 ->
+    // coordinate 10), each centered on its own coordinate.
+    const bands = container.querySelectorAll<HTMLElement>(".atr-band");
+    expect(bands).toHaveLength(2);
+    expect(bands[0].style.top).toBe("-12px");
+    expect(bands[0].style.height).toBe("4px");
+    expect(bands[1].style.top).toBe("8px");
+    expect(bands[1].style.height).toBe("4px");
   });
 
   it("downsamples VWAP points to 1-per-minute before drawing them, so they can't re-inflate fitContent()'s logical range (regression, 2026-09-18)", () => {
@@ -823,8 +826,7 @@ describe("PriceChart", () => {
       />,
     );
 
-    expect(container.querySelector(".atr-band-outer")).toBeNull();
-    expect(container.querySelector(".atr-band-inner")).toBeNull();
+    expect(container.querySelector(".atr-band")).toBeNull();
   });
 
   it("draws nothing extra when VWAP and ATR are both provisional", () => {
@@ -847,8 +849,7 @@ describe("PriceChart", () => {
       "LineSeries",
       expect.objectContaining({ title: "VWAP Anclado" }),
     );
-    expect(container.querySelector(".atr-band-outer")).toBeNull();
-    expect(container.querySelector(".atr-band-inner")).toBeNull();
+    expect(container.querySelector(".atr-band")).toBeNull();
   });
 
   it("hides ATR bands when the ATR itself is ready but today's open is not", () => {
@@ -867,8 +868,7 @@ describe("PriceChart", () => {
       <PriceChart symbol="SPY" gamma={gamma} candles={[]} vwapPoints={[]} atrRange={mixedAtrRange} />,
     );
 
-    expect(container.querySelector(".atr-band-outer")).toBeNull();
-    expect(container.querySelector(".atr-band-inner")).toBeNull();
+    expect(container.querySelector(".atr-band")).toBeNull();
   });
 
   it("toggles the VWAP and ATR overlays off via their checkboxes", async () => {
@@ -895,14 +895,13 @@ describe("PriceChart", () => {
       />,
     );
 
-    expect(container.querySelector(".atr-band-outer")).not.toBeNull();
+    expect(container.querySelector(".atr-band")).not.toBeNull();
 
     await user.click(screen.getByRole("checkbox", { name: "VWAP Anclado" }));
     await user.click(screen.getByRole("checkbox", { name: "Rango ATR" }));
 
     expect(chartMocks.removeSeries).toHaveBeenCalled();
-    expect(container.querySelector(".atr-band-outer")).toBeNull();
-    expect(container.querySelector(".atr-band-inner")).toBeNull();
+    expect(container.querySelector(".atr-band")).toBeNull();
   });
 
   it("shows the VWAP overlay as not available, disabled, instead of a checkbox for pure indices (regression)", () => {
@@ -949,8 +948,8 @@ describe("PriceChart", () => {
       <PriceChart symbol="SPY" gamma={gamma} candles={candlesWithRange} atrRange={readyAtrRange} />,
     );
 
-    const topBefore = container.querySelector<HTMLElement>(".atr-band-outer")?.style.top;
-    expect(topBefore).toBe("-20px");
+    const topBefore = container.querySelector<HTMLElement>(".atr-band")?.style.top;
+    expect(topBefore).toBe("-12px");
 
     // Simulate the chart's coordinate system changing — the same recompute
     // path a real pan drives via subscribeVisibleLogicalRangeChange, here
@@ -962,9 +961,50 @@ describe("PriceChart", () => {
     expect(sizeChangeHandler).toBeTypeOf("function");
     act(() => sizeChangeHandler());
 
-    const topAfter = container.querySelector<HTMLElement>(".atr-band-outer")?.style.top;
-    expect(topAfter).toBe("80px");
+    const topAfter = container.querySelector<HTMLElement>(".atr-band")?.style.top;
+    expect(topAfter).toBe("88px");
     expect(topAfter).not.toBe(topBefore);
+  });
+
+  it("nudges the chart container's own width to force a real ResizeObserver-driven repaint (regression, 2026-09-23)", async () => {
+    // Confirmed live: after certain resizes, the candlestick + axis-label
+    // canvas layers stop painting (sampled fully transparent pixels via
+    // getImageData()) while the background layer keeps working, and even a
+    // full series.setData() call doesn't recover it -- only destroying and
+    // recreating the chart does. IChartApi.resize(w, h, true) looked like
+    // the sanctioned fix but confirmed (by reading the library's bundled
+    // source) to be a hard no-op whenever autoSize is on -- its very first
+    // line is `if (this.autoSizeActive()) { warn(...); return; }`, before
+    // ever reaching the real repaint logic. autoSize's OWN internal
+    // ResizeObserver callback does reach that logic directly, so the only
+    // way in from outside is to make the browser fire a genuine
+    // ResizeObserver entry on the observed container -- wiggling its own
+    // width by 1px and back does exactly that.
+    const { container } = renderWithLanguage(
+      <PriceChart symbol="SPY" gamma={gamma} candles={candlesWithRange} />,
+    );
+    const chartContainer = container.querySelector(".price-chart") as HTMLElement;
+
+    const sizeChangeHandler = chartMocks.subscribeSizeChange.mock.calls.at(-1)?.[0];
+    expect(sizeChangeHandler).toBeTypeOf("function");
+    act(() => sizeChangeHandler(800));
+
+    expect(chartContainer.style.width).toBe("799px");
+
+    // Two timers: the first restores the original width (empty, the CSS
+    // class's own 100% takes back over), the second only lifts the
+    // re-entry guard -- both must elapse before the wiggle is done.
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      await new Promise((resolve) => setTimeout(resolve, 60));
+    });
+    expect(chartContainer.style.width).toBe("");
+
+    // A later, genuinely new resize must still be handled (the guard
+    // lifted, not left stuck on).
+    chartMocks.fitContent.mockClear();
+    act(() => sizeChangeHandler(900));
+    expect(chartContainer.style.width).toBe("899px");
   });
 
   it("draws EMC/EMP price lines from upper_bound/lower_bound when Expected Move is ready", () => {
@@ -1107,11 +1147,12 @@ describe("PriceChart", () => {
     });
     const merged = options.autoscaleInfoProvider(candleOnlyRange);
 
-    // outer_lower_band (460) is the lowest of every candidate level, and
-    // outer_upper_band (630) the highest — both must survive the merge,
-    // not just the Gamma levels or just the candle range alone.
+    // inner_lower_band (480) is the lowest of every candidate level, and
+    // inner_upper_band (610, tied with call_wall) the highest — both must
+    // survive the merge, not just the Gamma levels or just the candle
+    // range alone.
     expect(merged).toEqual({
-      priceRange: { minValue: 460, maxValue: 630 },
+      priceRange: { minValue: 480, maxValue: 610 },
       margins: { above: 0.1, below: 0.1 },
     });
   });
