@@ -1575,12 +1575,32 @@ class ThetaDataProvider:
         has_contract-guarded, live-subscribe-only-what's-new method the
         scheduler used to drive -- so a contract already registered is
         never redundantly re-subscribed, only ones that are newly
-        near-the-money since the last pass."""
+        near-the-money since the last pass.
+
+        _fetch_near_the_money is a plain sync method -- it calls
+        self._client.get(), an httpx.Client (the blocking one, not
+        AsyncClient) -- so calling it directly here would block this
+        coroutine's own event loop, the same one ThetaStreamHub's read
+        loop runs on. Confirmed live, 2026-09-24, real market open: with
+        REST latency degraded under open-bell load ("ThetaData request
+        slow... took 6.75s" observed), 15-17 sequential unthreaded calls
+        (up to 2 roots per symbol, ACTIVE_UNDERLYINGS_BY_SYMBOL) held the
+        loop long enough to starve websocket.recv() past every staleness
+        watchdog's own threshold, forcing a reconnect -- and each
+        reconnect resubscribes the full contract set again (1720
+        contracts / 3440 messages seen live), which only made the next
+        pass more likely to overlap another slow stretch. Same fix this
+        file already applies to reconcile() (see the other
+        asyncio.to_thread call above) -- offload the blocking call so
+        this coroutine's own await here is what yields, not a raw
+        function call the loop can't preempt."""
         while True:
             await asyncio.sleep(CONTRACT_REDISCOVERY_INTERVAL_SECONDS)
             for symbol in ACTIVE_UNDERLYINGS_BY_SYMBOL:
                 try:
-                    chain = self._fetch_near_the_money(symbol, expiration=None)
+                    chain = await asyncio.to_thread(
+                        self._fetch_near_the_money, symbol, expiration=None
+                    )
                 except (httpx.HTTPError, ValueError):
                     logger.exception(
                         "Failed to rediscover near-the-money contracts for %s", symbol
