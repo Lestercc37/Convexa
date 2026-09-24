@@ -90,8 +90,16 @@ from backend.domain.use_cases.flow import WhaleAlertsEngine
 
 # See this module's docstring -- confirmed live, 2026-09-10, via
 # symbol-tagged queue instrumentation, not assumed from this project's
-# own history of suspecting SPX.
-HIGH_VOLUME_BATCHED_SYMBOLS: frozenset[str] = frozenset({"SPY"})
+# own history of suspecting SPX. QQQ added 2026-09-24: the same
+# symbol-tagged CRITICAL log this module's own docstring named as "the
+# trigger to revisit this list" fired for QQQ specifically that morning
+# (13,000+ dropped option-TRADE messages within the first ~25 minutes
+# of the session) -- confirmed via the same live queue-depth
+# instrumentation, not assumed from QQQ's own trade-rate resembling
+# SPY's. SPX/NDX checked the same morning and confirmed still clean
+# (zero drops) -- consistent with this module's own dollar-exposure
+# reasoning for why indices don't hit this.
+HIGH_VOLUME_BATCHED_SYMBOLS: frozenset[str] = frozenset({"SPY", "QQQ"})
 
 # A batch flushes after this many seconds even if it hasn't reached
 # BATCH_MAX_SIZE (so a quiet stretch on a batched symbol never stalls
