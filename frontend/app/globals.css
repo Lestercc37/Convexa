@@ -313,7 +313,16 @@ button, select { font: inherit; }
    price-derived, since each rectangle represents a single price level. */
 .atr-band { position: absolute; left: 0; right: 0; z-index: 3; pointer-events: none; background: rgba(190, 194, 204, 0.55); }
 .chart-watermark { position: absolute; left: 14px; bottom: 14px; z-index: 2; width: 72px; height: auto; opacity: 0.14; pointer-events: none; user-select: none; }
-.chart-empty { position: absolute; inset: 52% 0 auto; margin: 0; color: var(--tv-text-dim); text-align: center; pointer-events: none; }
+/* z-index: 3, same as .atr-band above and for the identical reason -- the
+   chart's own canvas layers (up to z-index 2) now paint a solid, opaque
+   background (see PriceChart's own createChart() call) instead of
+   "transparent" like before, so without this the empty-state message was
+   completely hidden behind it, not just visually blended in. Confirmed
+   live, 2026-09-24: before market open, with zero candles for the day,
+   the chart looked entirely blank instead of showing this message --
+   confirmed via document.elementFromPoint() at the message's own
+   coordinates returning the CANVAS element, not the message itself. */
+.chart-empty { position: absolute; inset: 52% 0 auto; z-index: 3; margin: 0; color: var(--tv-text-dim); text-align: center; pointer-events: none; }
 
 .mode-pill { border: 1px solid var(--tv-border); border-radius: 999px; color: var(--tv-text-dim); font-size: 0.68rem; padding: 4px 8px; text-transform: uppercase; letter-spacing: 0.1em; }
 .stream-fallback-indicator { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--warning); cursor: help; }

@@ -23,3 +23,23 @@ describe(".atr-band stacking", () => {
     expect(zIndex).toBeGreaterThan(2);
   });
 });
+
+describe(".chart-empty stacking", () => {
+  it("keeps a z-index above Lightweight Charts' own canvas layers, same as .atr-band (regression, 2026-09-24)", () => {
+    // The chart's own canvas background switched from "transparent" to a
+    // solid color (see PriceChart's own createChart() call) -- without a
+    // z-index here, that opaque canvas paints over this message instead of
+    // letting it show through, which is exactly what happened live before
+    // market open with zero candles for the day: the chart looked
+    // completely blank instead of showing "waiting for first price".
+    const css = readFileSync(cssPath, "utf-8");
+    const rule = css.match(/\.chart-empty\s*\{[^}]*\}/)?.[0];
+    expect(rule, ".chart-empty rule not found in globals.css").toBeDefined();
+
+    const zIndexMatch = rule?.match(/z-index:\s*(\d+)/);
+    expect(zIndexMatch, ".chart-empty has no z-index declared").not.toBeNull();
+
+    const zIndex = Number(zIndexMatch?.[1]);
+    expect(zIndex).toBeGreaterThan(2);
+  });
+});
