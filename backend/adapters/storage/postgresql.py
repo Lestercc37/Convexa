@@ -40,6 +40,16 @@ class PostgreSQLStorage:
 
     def __init__(self, session_factory: sessionmaker[Session]) -> None:
         self.session_factory = session_factory
+        # See _ensure_underlying's own comment -- a symbol's underlying_id
+        # never changes once seeded, so this cache is safe to keep for the
+        # whole process lifetime, not just per-call. Same fix already
+        # applied to AsyncPostgreSQLStorage (2026-09-22) -- this class was
+        # the one call path that never got it, confirmed live 2026-09-24
+        # to be a real, measured source of lock contention on the tiny
+        # (~15-row) underlyings table under real concurrent write load
+        # (multiple whale-alerts consumer threads, the REST scheduler,
+        # daily-bar/gamma-aggregate writers all hitting this at once).
+        self._underlying_id_cache: dict[str, int] = {}
 
     def list_underlyings(self) -> list[Underlying]:
         with self.session_factory() as session:
@@ -1078,9 +1088,36 @@ class PostgreSQLStorage:
                 },
             )
 
-    @staticmethod
-    def _ensure_underlying(session: Session, symbol: str) -> int:
+    def _ensure_underlying(self, session: Session, symbol: str) -> int:
+        # Confirmed live, 2026-09-24: this UPSERT used to run
+        # unconditionally on *every* call -- save_whale_alert alone can
+        # fire from up to 15 concurrent worker threads (the dedicated
+        # whale-alerts executor, one per active symbol), each hitting
+        # this same tiny (~15-row) table independently, on top of the
+        # REST scheduler's and every other writer's own calls through
+        # this same method. Caught mid-incident: a real INSERT here blocked
+        # for 11+ seconds on a row lock, tying up a worker thread that
+        # should have taken microseconds -- directly behind the queue
+        # backlogs/drops this session was investigating. An underlying's
+        # id/kind/is_priority never changes once seeded (kind/is_priority
+        # come from the static ACTIVE_UNDERLYINGS_BY_SYMBOL config, not
+        # live data) -- caching the id for this process's lifetime turns
+        # every call after the first one for a given symbol into a plain
+        # dict lookup instead of a real INSERT..ON CONFLICT..RETURNING
+        # round-trip. Same fix already applied to AsyncPostgreSQLStorage's
+        # own _ensure_underlying (2026-09-22); this class was the one
+        # call path that never got it.
+        #
+        # Thread safety: no lock around the cache. Two threads racing to
+        # populate the same symbol's entry both perform the (idempotent)
+        # UPSERT and both get the identical id back -- a wasted extra
+        # round-trip in that rare case, never a wrong value, so a plain
+        # dict is sufficient (CPython's GIL already makes the individual
+        # get/set operations atomic; no torn reads/writes are possible).
         normalized_symbol = symbol.upper()
+        cached = self._underlying_id_cache.get(normalized_symbol)
+        if cached is not None:
+            return cached
         configured = ACTIVE_UNDERLYINGS_BY_SYMBOL.get(normalized_symbol)
         kind = configured.kind.value if configured is not None else UnderlyingKind.EQUITY.value
         is_priority = configured.is_priority if configured is not None else False
@@ -1089,7 +1126,7 @@ class PostgreSQLStorage:
             if configured is not None
             else "symbol = EXCLUDED.symbol"
         )
-        return session.execute(
+        underlying_id = session.execute(
             text(
                 f"""
                 INSERT INTO underlyings (symbol, kind, is_priority)
@@ -1104,6 +1141,8 @@ class PostgreSQLStorage:
                 "is_priority": is_priority,
             },
         ).scalar_one()
+        self._underlying_id_cache[normalized_symbol] = underlying_id
+        return underlying_id
 
     @staticmethod
     def _gamma_from_row(mapping: RowMapping) -> GammaAggregate:

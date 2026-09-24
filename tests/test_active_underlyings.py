@@ -48,7 +48,7 @@ def test_ensure_underlying_corrects_configured_symbol_metadata() -> None:
                     """
                 )
             )
-            PostgreSQLStorage._ensure_underlying(session, "spx")
+            PostgreSQLStorage(session_factory)._ensure_underlying(session, "spx")
 
         with session_factory() as session:
             row = session.execute(
@@ -70,7 +70,7 @@ def test_ensure_underlying_classifies_es_as_future() -> None:
     session_factory, engine = _underlying_session_factory()
     try:
         with session_factory.begin() as session:
-            PostgreSQLStorage._ensure_underlying(session, "es")
+            PostgreSQLStorage(session_factory)._ensure_underlying(session, "es")
 
         with session_factory() as session:
             row = session.execute(
@@ -107,7 +107,7 @@ def test_ensure_underlying_preserves_unconfigured_symbol_metadata() -> None:
                     """
                 )
             )
-            PostgreSQLStorage._ensure_underlying(session, "xom")
+            PostgreSQLStorage(session_factory)._ensure_underlying(session, "xom")
 
         with session_factory() as session:
             row = session.execute(
@@ -121,6 +121,47 @@ def test_ensure_underlying_preserves_unconfigured_symbol_metadata() -> None:
             ).one()
 
         assert row == ("XOM", "equity", True)
+    finally:
+        engine.dispose()
+
+
+def test_ensure_underlying_caches_the_id_across_calls() -> None:
+    """Confirmed live, 2026-09-24: an unconditional UPSERT here on every
+    call was a real, measured source of lock contention under real
+    concurrent write load (multiple whale-alerts consumer threads, the
+    REST scheduler, and every other writer all hitting this same tiny
+    table through this one method) -- caught mid-incident blocking a
+    worker thread for 11+ seconds on a single INSERT. An underlying's id
+    never changes once seeded, so the second (and every later) call for
+    the same symbol must be a plain cache hit, not a second round-trip --
+    verified here by corrupting the row between calls and confirming the
+    second call doesn't "correct" it back, which a real second UPSERT
+    would have (see test_ensure_underlying_corrects_configured_symbol_
+    metadata above for that correction behavior on a genuine first call)."""
+    session_factory, engine = _underlying_session_factory()
+    try:
+        storage = PostgreSQLStorage(session_factory)
+        with session_factory.begin() as session:
+            first_id = storage._ensure_underlying(session, "spx")
+        assert storage._underlying_id_cache.get("SPX") == first_id
+
+        with session_factory.begin() as session:
+            session.execute(
+                text("UPDATE underlyings SET kind = 'equity', is_priority = false WHERE symbol = 'SPX'")
+            )
+
+        with session_factory.begin() as session:
+            second_id = storage._ensure_underlying(session, "spx")
+
+        assert second_id == first_id
+        with session_factory() as session:
+            row = session.execute(
+                text("SELECT kind, is_priority FROM underlyings WHERE symbol = 'SPX'")
+            ).one()
+        # Still corrupted -- a real second UPSERT would have corrected it
+        # back to ('index', True), same as the first-call test above
+        # proves for a genuine (uncached) call.
+        assert row == ("equity", False)
     finally:
         engine.dispose()
 
