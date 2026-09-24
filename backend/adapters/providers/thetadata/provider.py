@@ -133,6 +133,28 @@ STATUS_STALE_AFTER_SECONDS = 15
 RECONNECT_BASE_DELAY_SECONDS = 2
 RECONNECT_MAX_DELAY_SECONDS = 60
 
+# The `websockets` library's own incoming-frame buffer, separate from and
+# far smaller than every one of this module's own per-symbol app-level
+# queues (ThetaStreamHub's TRADE_QUEUE_MAXSIZE etc., 5000) -- defaults to
+# just 16 frames. Once THIS buffer fills, the library stops reading from
+# the TCP socket entirely until the app drains it (documented backpressure
+# behavior: "the connection stops reading from the network... this creates
+# backpressure on the TCP connection"), which is indistinguishable from a
+# genuinely unresponsive client from Theta Terminal's side -- confirmed
+# live, 2026-09-24: a real, sustained SPY/QQQ trade-processing backlog
+# (this process's own whale-alerts consumer threads contending for the GIL
+# with this same event loop, not a data-provider issue) preceded every one
+# of 17 reconnects that hour by ~10s of queue-full CRITICAL logs, exactly
+# the TCP-backpressure-then-drop sequence this default causes. Raised well
+# past this app's own largest queue (5000) so THAT queue's own maxsize is
+# always what actually governs backpressure/drop decisions -- with real
+# message sizes (small JSON trade/quote/greeks frames, nowhere near
+# `max_size`'s own 1 MiB default), the added memory this costs is
+# negligible. A mitigation for the symptom (the TCP connection dying under
+# a backlog), not the underlying cause (GIL contention between whale-alerts
+# processing and this read loop) -- that needs its own, separate fix.
+WS_MAX_QUEUE = 8192
+
 # Confirmed live, 2026-09, real market open, from the Worker's own log:
 # the exponential backoff above never actually resets in practice, for
 # any of the 3 stream classes -- `_run()`'s `delay = RECONNECT_BASE_
@@ -1007,7 +1029,7 @@ class ThetaStreamHub:
                 delay = min(delay * 2, RECONNECT_MAX_DELAY_SECONDS)
 
     async def _connect_and_consume(self) -> None:
-        async with websockets.connect(self._ws_url) as websocket:
+        async with websockets.connect(self._ws_url, max_queue=WS_MAX_QUEUE) as websocket:
             self._active_websocket = websocket
             try:
                 await self._consume(websocket)
