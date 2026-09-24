@@ -103,8 +103,17 @@ def test_calculate_gamma_exposure_orchestrates_and_persists() -> None:
     result = calculate_gamma_exposure(orchestrator, "SPY")
 
     assert storage.get_latest_gamma_aggregate("SPY") is result
-    assert result.call_wall > 0
-    assert result.put_wall > 0
+    # MockDataProvider's SPY chain gives every strike identical OI/gamma on
+    # both legs (see backend/adapters/providers/mock/provider.py's
+    # _contract), so call_gamma_exposure == -put_gamma_exposure exactly --
+    # net_gamma is 0 at every strike, meaning there's genuinely no
+    # directional dealer positioning to build a wall from. FakeWallCalculator
+    # correctly returns no wall in that case (see test_walls_engine.py for
+    # the real selection logic); this smoke test only cares that the
+    # orchestrator wires walls through to persistence, not what value they
+    # land on with this deliberately symmetric fixture.
+    assert result.call_wall == 0
+    assert result.put_wall == 0
     assert result.max_pain > 0
 
 
