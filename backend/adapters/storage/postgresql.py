@@ -293,46 +293,82 @@ class PostgreSQLStorage:
         self, underlying: str, expiration: date | None = None
     ) -> OptionChain | None:
         expiration_filter = "AND oc.expiration = :expiration" if expiration else ""
-        # An unscoped ("give me whatever's latest") read for an index can
-        # collide with two structurally different write shapes sharing this
-        # table: the scheduler's full multi-expiration fetch (Gamma
-        # Aggregate's real input, CalculateGammaExposureOrchestrator) and a
-        # narrow single-expiration fetch from the option chain viewer
-        # (LoadOptionChainUseCase, itself always called with an explicit
-        # `expiration` -- see the `expiration_filter` branch below, which
-        # this guard never touches). If the narrow write lands with a
-        # fresher `time` than the last full one, a plain MAX(s.time) would
-        # silently hand the orchestrator a tiny, unrepresentative slice of
-        # the book instead of the full chain -- confirmed live, 2026-09-18:
-        # SPX showing price above gamma_flip while still reporting
-        # short_gamma with net_gamma in the -20B to -32B range, and ~1-in-5
-        # cycles collapsing to gamma_flip=null/walls=0 when that slice also
-        # had degenerate IV. Requiring >1 distinct expiration only when this
-        # call is itself unscoped keeps a genuinely single-expiration
-        # equity/ETF's own latest snapshot (always exactly 1 expiration,
-        # even when queried unscoped) working exactly as before -- the two
-        # write shapes only exist for indices in the first place.
-        active = ACTIVE_UNDERLYINGS_BY_SYMBOL.get(underlying.upper())
-        is_index = active is not None and active.kind == UnderlyingKind.INDEX
-        multi_expiration_guard = (
-            "HAVING COUNT(DISTINCT oc.expiration) > 1"
-            if expiration is None and is_index
-            else ""
-        )
+        # An unscoped ("give me whatever's latest") read can collide with
+        # two structurally different write shapes sharing this table: the
+        # scheduler's full multi-expiration fetch (Gamma Aggregate's real
+        # input, CalculateGammaExposureOrchestrator) and a narrow single-
+        # expiration fetch from anything that calls this storage with an
+        # explicit `expiration` (LoadOptionChainUseCase, and
+        # read_models.get_option_chain's on-demand /chain/{symbol} refresh
+        # -- see the `expiration_filter` branch below, which this guard
+        # never touches). If the narrow write lands with a fresher `time`
+        # than the last full one, a plain MAX(s.time) would silently hand
+        # the orchestrator a tiny, unrepresentative slice of the book
+        # instead of the full chain -- confirmed live, 2026-09-18: SPX
+        # showing price above gamma_flip while still reporting short_gamma
+        # with net_gamma in the -20B to -32B range, and ~1-in-5 cycles
+        # collapsing to gamma_flip=null/walls=0 when that slice also had
+        # degenerate IV. That fix only guarded indices, on the assumption
+        # this race "only exists for indices in the first place" -- proven
+        # wrong live, 2026-09-24: AAPL hit the identical symptom (gamma_
+        # flip/walls silently going null/0 roughly every other scheduler
+        # cycle) once the frontend's Volatility Smile panel was left open
+        # on a stale, already-expired `selectedExpiration`, repeatedly
+        # writing a 1-expiration/16-contract narrow snapshot that kept
+        # winning the latest-`time` race against the scheduler's own
+        # 25-expiration/~680-contract full write. Any symbol with more
+        # than one real expiration (every actively traded US-listed
+        # underlying this system tracks) can hit this the same way, so the
+        # guard now applies unconditionally whenever the read is unscoped
+        # -- not just for indices.
+        if expiration is None:
+            # Prefer a multi-expiration write, but never end up with
+            # nothing just because one hasn't landed yet -- a brand-new
+            # symbol before the scheduler's first full fetch, or an
+            # environment that only ever wrote a single-expiration chain,
+            # must still get that chain back rather than None. Ranks
+            # candidates instead of filtering them out: priority 0 (a real
+            # multi-expiration write) always wins over priority 1 (any
+            # write at all) regardless of which is more recent, and only
+            # falls back to priority 1 when no priority-0 row exists.
+            latest_cte_sql = """
+                WITH candidates AS (
+                    SELECT s.time, 0 AS priority
+                    FROM option_chain_snapshots AS s
+                    JOIN option_contracts AS oc ON oc.id = s.contract_id
+                    JOIN underlyings AS u ON u.id = oc.underlying_id
+                    WHERE u.symbol = :symbol
+                    GROUP BY s.time
+                    HAVING COUNT(DISTINCT oc.expiration) > 1
+                    UNION ALL
+                    SELECT s.time, 1 AS priority
+                    FROM option_chain_snapshots AS s
+                    JOIN option_contracts AS oc ON oc.id = s.contract_id
+                    JOIN underlyings AS u ON u.id = oc.underlying_id
+                    WHERE u.symbol = :symbol
+                    GROUP BY s.time
+                ),
+                latest AS (
+                    SELECT time FROM candidates ORDER BY priority ASC, time DESC LIMIT 1
+                )
+            """
+        else:
+            latest_cte_sql = f"""
+                WITH latest AS (
+                    SELECT s.time
+                    FROM option_chain_snapshots AS s
+                    JOIN option_contracts AS oc ON oc.id = s.contract_id
+                    JOIN underlyings AS u ON u.id = oc.underlying_id
+                    WHERE u.symbol = :symbol
+                    {expiration_filter}
+                    GROUP BY s.time
+                    ORDER BY s.time DESC
+                    LIMIT 1
+                )
+            """
         statement = text(
             f"""
-            WITH latest AS (
-                SELECT s.time
-                FROM option_chain_snapshots AS s
-                JOIN option_contracts AS oc ON oc.id = s.contract_id
-                JOIN underlyings AS u ON u.id = oc.underlying_id
-                WHERE u.symbol = :symbol
-                {expiration_filter}
-                GROUP BY s.time
-                {multi_expiration_guard}
-                ORDER BY s.time DESC
-                LIMIT 1
-            )
+            {latest_cte_sql}
             SELECT
                 s.time, s.spot_price, oc.strike, oc.expiration,
                 oc.contract_type, oc.occ_symbol, s.bid, s.ask, s.last,

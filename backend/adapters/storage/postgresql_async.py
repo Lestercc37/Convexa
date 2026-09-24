@@ -215,7 +215,8 @@ class AsyncPostgreSQLStorage:
     ) -> OptionChain | None:
         # Mirrors PostgreSQLStorage.get_latest_chain_snapshot's own
         # expiration_filter/multi_expiration_guard exactly (see that
-        # method's own comment for the full reasoning) -- added so
+        # method's own comment for the full reasoning, including why the
+        # guard now applies to every symbol, not just indices) -- added so
         # GET /chain/{symbol} could become a real `async def` route
         # (confirmed live, 2026-09-22: the sync version of that route
         # hung 40+ seconds and produced real 500s, starved by the same
@@ -223,13 +224,48 @@ class AsyncPostgreSQLStorage:
         # refreshes use) without losing the `?expiration=` scoping the
         # option-chain-viewer/Volatility Smile already depend on.
         expiration_filter = "AND oc.expiration = :expiration" if expiration else ""
-        active = ACTIVE_UNDERLYINGS_BY_SYMBOL.get(underlying.upper())
-        is_index = active is not None and active.kind == UnderlyingKind.INDEX
-        multi_expiration_guard = (
-            "HAVING COUNT(DISTINCT oc.expiration) > 1"
-            if expiration is None and is_index
-            else ""
-        )
+        if expiration is None:
+            # Prefer a multi-expiration write, but fall back to whatever's
+            # latest when none exists yet -- see PostgreSQLStorage.
+            # get_latest_chain_snapshot's own comment for the full
+            # reasoning (ranks candidates instead of filtering them out,
+            # so a symbol with only a narrow write so far still gets
+            # something back instead of None).
+            latest_cte_sql = """
+                WITH candidates AS (
+                    SELECT s.time, 0 AS priority
+                    FROM option_chain_snapshots AS s
+                    JOIN option_contracts AS oc ON oc.id = s.contract_id
+                    JOIN underlyings AS u ON u.id = oc.underlying_id
+                    WHERE u.symbol = :symbol
+                    GROUP BY s.time
+                    HAVING COUNT(DISTINCT oc.expiration) > 1
+                    UNION ALL
+                    SELECT s.time, 1 AS priority
+                    FROM option_chain_snapshots AS s
+                    JOIN option_contracts AS oc ON oc.id = s.contract_id
+                    JOIN underlyings AS u ON u.id = oc.underlying_id
+                    WHERE u.symbol = :symbol
+                    GROUP BY s.time
+                ),
+                latest AS (
+                    SELECT time FROM candidates ORDER BY priority ASC, time DESC LIMIT 1
+                )
+            """
+        else:
+            latest_cte_sql = f"""
+                WITH latest AS (
+                    SELECT s.time
+                    FROM option_chain_snapshots AS s
+                    JOIN option_contracts AS oc ON oc.id = s.contract_id
+                    JOIN underlyings AS u ON u.id = oc.underlying_id
+                    WHERE u.symbol = :symbol
+                    {expiration_filter}
+                    GROUP BY s.time
+                    ORDER BY s.time DESC
+                    LIMIT 1
+                )
+            """
         parameters: dict[str, str | date] = {"symbol": underlying.upper()}
         if expiration is not None:
             parameters["expiration"] = expiration
@@ -237,18 +273,7 @@ class AsyncPostgreSQLStorage:
             result = await session.execute(
                 text(
                     f"""
-                    WITH latest AS (
-                        SELECT s.time
-                        FROM option_chain_snapshots AS s
-                        JOIN option_contracts AS oc ON oc.id = s.contract_id
-                        JOIN underlyings AS u ON u.id = oc.underlying_id
-                        WHERE u.symbol = :symbol
-                        {expiration_filter}
-                        GROUP BY s.time
-                        {multi_expiration_guard}
-                        ORDER BY s.time DESC
-                        LIMIT 1
-                    )
+                    {latest_cte_sql}
                     SELECT
                         s.time, s.spot_price, oc.strike, oc.expiration,
                         oc.contract_type, oc.occ_symbol, s.bid, s.ask, s.last,
