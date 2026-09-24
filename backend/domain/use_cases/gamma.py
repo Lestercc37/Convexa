@@ -298,9 +298,18 @@ def calculate_gamma_exposure(
 # x-axis range on its own. Confirmed NOT a per-symbol tuning problem --
 # AAPL and NDX both stay tight across their own full expiration range (851
 # and 1,187 DTE respectively); it's specifically rare far-outlier listings
-# like SPX's LEAPS. 30 days comfortably covers every real near-term
-# expiration while excluding that class of outlier.
-NEAR_TERM_GAMMA_PROFILE_WINDOW_DAYS = 30
+# like SPX's LEAPS. Still comfortably excludes that class of outlier at
+# any value well under a year.
+#
+# Widened 30 -> 90, 2026-09-24, per the user's own direction: 90 days
+# (including 0DTE) is the window convention referenced across GEX
+# literature/reference platforms, and the user wants to observe this
+# value against live market behavior and iterate from there rather than
+# treat 30 as final. Not a correction of the original 30-day choice --
+# that was itself deliberate and verified (see this comment's own
+# history) -- this is a considered adjustment, to be revisited based on
+# what live data actually shows.
+NEAR_TERM_GAMMA_PROFILE_WINDOW_DAYS = 90
 
 
 def _filter_to_near_term_expirations(chain: OptionChain, window_days: int) -> OptionChain:
