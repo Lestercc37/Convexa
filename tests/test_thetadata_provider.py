@@ -1986,6 +1986,115 @@ class TestQueueBackpressure:
         assert any("SPX" in r.getMessage() for r in info_records)
 
 
+class TestQueueSaturationAlert:
+    """Fix (2026-09-24, live incident): a real overflow fires the CRITICAL
+    log dozens of times per second (confirmed live, QQQ: ~65/s sustained)
+    -- desktop-notifying on every one of those would itself be a flood,
+    not an alert a human could act on. See QUEUE_ALERT_COOLDOWN_SECONDS'
+    own module-level comment."""
+
+    @pytest.mark.asyncio
+    async def test_first_drop_for_a_symbol_triggers_a_desktop_notification(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        notified: list[tuple[str, str]] = []
+
+        async def fake_notify(title: str, message: str) -> None:
+            notified.append((title, message))
+
+        monkeypatch.setattr(provider_module, "notify_windows", fake_notify)
+        queue: asyncio.Queue[str] = asyncio.Queue(maxsize=1)
+        queue.put_nowait("already queued")
+        stream = ThetaStreamHub(WS_URL, httpx.Client(base_url=REST_URL))
+
+        stream._dispatch_critical([queue], "dropped", "TRADE", "QQQ")
+        # asyncio.create_task only schedules the coroutine -- yield
+        # control once so it actually runs before asserting on it.
+        await asyncio.sleep(0)
+
+        assert len(notified) == 1
+        assert "QQQ" in notified[0][1]
+
+    @pytest.mark.asyncio
+    async def test_repeated_drops_within_the_cooldown_only_notify_once(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        notified: list[tuple[str, str]] = []
+
+        async def fake_notify(title: str, message: str) -> None:
+            notified.append((title, message))
+
+        monkeypatch.setattr(provider_module, "notify_windows", fake_notify)
+        queue: asyncio.Queue[str] = asyncio.Queue(maxsize=1)
+        queue.put_nowait("already queued")
+        stream = ThetaStreamHub(WS_URL, httpx.Client(base_url=REST_URL))
+
+        for _ in range(50):
+            stream._dispatch_critical([queue], "dropped", "TRADE", "QQQ")
+        await asyncio.sleep(0)
+
+        assert len(notified) == 1
+
+    @pytest.mark.asyncio
+    async def test_notifies_again_after_the_cooldown_elapses(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        notified: list[tuple[str, str]] = []
+
+        async def fake_notify(title: str, message: str) -> None:
+            notified.append((title, message))
+
+        monkeypatch.setattr(provider_module, "notify_windows", fake_notify)
+        current_time = 1000.0
+        monkeypatch.setattr(time, "monotonic", lambda: current_time)
+        queue: asyncio.Queue[str] = asyncio.Queue(maxsize=1)
+        queue.put_nowait("already queued")
+        stream = ThetaStreamHub(WS_URL, httpx.Client(base_url=REST_URL))
+
+        stream._dispatch_critical([queue], "dropped", "TRADE", "QQQ")
+        await asyncio.sleep(0)
+        current_time += provider_module.QUEUE_ALERT_COOLDOWN_SECONDS + 1
+        stream._dispatch_critical([queue], "dropped", "TRADE", "QQQ")
+        await asyncio.sleep(0)
+
+        assert len(notified) == 2
+
+    @pytest.mark.asyncio
+    async def test_different_symbols_are_alerted_independently(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        notified: list[tuple[str, str]] = []
+
+        async def fake_notify(title: str, message: str) -> None:
+            notified.append((title, message))
+
+        monkeypatch.setattr(provider_module, "notify_windows", fake_notify)
+        queue: asyncio.Queue[str] = asyncio.Queue(maxsize=1)
+        queue.put_nowait("already queued")
+        stream = ThetaStreamHub(WS_URL, httpx.Client(base_url=REST_URL))
+
+        stream._dispatch_critical([queue], "dropped", "TRADE", "QQQ")
+        stream._dispatch_critical([queue], "dropped", "TRADE", "SPY")
+        await asyncio.sleep(0)
+
+        assert len(notified) == 2
+        combined_messages = " ".join(message for _, message in notified)
+        assert "QQQ" in combined_messages
+        assert "SPY" in combined_messages
+
+    def test_does_not_raise_with_no_running_event_loop(self) -> None:
+        """A synchronous caller (see TestQueueBackpressure's own tests,
+        which call _dispatch_critical with no asyncio.run() wrapper at
+        all) must not crash just because there's nowhere to schedule the
+        notification task -- asyncio.create_task requires a running
+        loop, which doesn't exist in that context."""
+        queue: asyncio.Queue[str] = asyncio.Queue(maxsize=1)
+        queue.put_nowait("already queued")
+        stream = ThetaStreamHub(WS_URL, httpx.Client(base_url=REST_URL))
+
+        stream._dispatch_critical([queue], "dropped", "TRADE", "QQQ")  # must not raise
+
+
 class TestStreamHubReconnection:
     """Backoff/reset now lives in exactly one _run() loop, shared by all
     3 logical streams (see ThetaStreamHub's own docstring for why there's
