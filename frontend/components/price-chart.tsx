@@ -224,15 +224,20 @@ function dedupeAscendingByTime(points: TimePoint[]): TimePoint[] {
 
 type AtrLevelValues = { upper: number; lower: number };
 
-// Per user request (2026-09-23): just the one pair of ATR levels (the
-// full 1.5x-ATR outer bound), not the earlier nested outer+inner pair --
-// each drawn as its own thin filled rectangle rather than a region
-// spanning between them.
+// The *inner* band (today_open +/- half of the 14-day ATR), not outer
+// (+/- the full ATR) -- confirmed live, 2026-09-23: outer_upper_band -
+// outer_lower_band alone spans a full 2x ATR (e.g. ~$136 for SPX, ~$14
+// for AAPL on the session checked), roughly double each symbol's own
+// real typical daily high-low range (the ATR value itself), which is
+// what made the earlier outer-based levels look oversized against every
+// symbol checked. inner_upper_band - inner_lower_band spans exactly 1x
+// ATR -- the actual average daily true range -- which is the number
+// this level is meant to represent.
 function atrLevels(atrRange: AtrRange | undefined): AtrLevelValues | null {
   if (!atrRange || atrRange.bands_provisional) return null;
-  const { outer_upper_band, outer_lower_band } = atrRange;
-  if (outer_upper_band === null || outer_lower_band === null) return null;
-  return { upper: outer_upper_band, lower: outer_lower_band };
+  const { inner_upper_band, inner_lower_band } = atrRange;
+  if (inner_upper_band === null || inner_lower_band === null) return null;
+  return { upper: inner_upper_band, lower: inner_lower_band };
 }
 
 // Fixed pixel thickness, not price-derived -- these represent a single
@@ -334,6 +339,9 @@ export function PriceChart({
   const dragStartRef = useRef<TrendlinePoint | null>(null);
   const initialCandlesRef = useRef(candles);
   const recomputeBandRectsRef = useRef<() => void>(() => {});
+  // Guards the synthetic width wiggle in handleSizeChange below against
+  // re-triggering itself -- see that function's own comment.
+  const forcingRepaintRef = useRef(false);
   // Tracks candle count across renders so the [candles] effect below can
   // tell "the async session-history seed just landed" (a large jump)
   // apart from "one more live tick/poll appended a candle" (a jump of
@@ -449,6 +457,12 @@ export function PriceChart({
     trendlineSeriesRef.current = trendlineSeries;
 
     const handleSizeChange = (width: number) => {
+      // The wiggle below fires this same callback again (it resizes the
+      // very container this is subscribed to) -- ignore those synthetic
+      // re-entries so they don't recurse into another wiggle, or re-run
+      // the one-shot re-fit/recompute logic for a resize this component
+      // caused itself rather than a real one.
+      if (forcingRepaintRef.current) return;
       recomputeBandRectsRef.current();
       // `autoSize`'s internal ResizeObserver (see the option's own comment
       // above) can report the container's real pixel width well after
@@ -467,6 +481,60 @@ export function PriceChart({
       if (!hasRefitAfterRealSizeRef.current && width > 0) {
         hasRefitAfterRealSizeRef.current = true;
         chart.timeScale().fitContent();
+      }
+      // Works around a real, confirmed lightweight-charts (5.2.0) resize bug
+      // -- live, 2026-09-23: after some resizes, the candlestick series and
+      // both axis-label canvas layers stop painting entirely (sampled their
+      // pixels directly via canvas.getContext('2d').getImageData() during
+      // the blank state: fully transparent, [0,0,0,0], even though the
+      // canvas elements themselves are correctly sized) while the
+      // background layer keeps rendering fine. A full series.setData() call
+      // with the exact same data does NOT recover it; only destroying and
+      // recreating the whole chart does (confirmed by switching timeframe,
+      // which remounts PriceChart via its own React `key`) -- so this is a
+      // stuck internal paint/invalidation state in the existing chart
+      // instance, not a data problem this component's own state can fix by
+      // re-feeding it data.
+      //
+      // IChartApiBase.resize(width, height, forceRepaint) looked like the
+      // library's own sanctioned way to force this -- it isn't, with
+      // autoSize on: confirmed by reading the library's own bundled source,
+      // the public resize() method's very first check is `if
+      // (this.autoSizeActive()) { warn(...); return; }` -- a hard, silent
+      // no-op before it ever reaches the internal repaint logic (the
+      // console warning it prints was the giveaway once looked for). The
+      // library's OWN internal ResizeObserver callback (autoSize's own
+      // implementation) does call `_internal_resize(w, h, true)` directly,
+      // bypassing that guard -- so the only way to reach the same working
+      // code path from outside is to make the browser fire a real
+      // ResizeObserver entry on the observed container, the same as an
+      // actual window/layout resize would. Nudging the container's own
+      // width by 1px and immediately back does exactly that -- twice, both
+      // through the library's real (autoSize-internal) forceRepaint path,
+      // not the guarded public one.
+      const container = containerRef.current;
+      if (container && width > 1) {
+        forcingRepaintRef.current = true;
+        const originalWidth = container.style.width;
+        container.style.width = `${width - 1}px`;
+        // setTimeout, not requestAnimationFrame -- rAF can be suspended
+        // indefinitely on a backgrounded/unfocused tab (confirmed live:
+        // an rAF-chained version of this same restore never ran at all in
+        // an automated, not-frontmost browser tab, permanently stuck with
+        // forcingRepaintRef left true and every future resize silently
+        // ignored). A timer fires on wall-clock time regardless of paint
+        // scheduling, so the guard can't get stuck the same way.
+        window.setTimeout(() => {
+          if (containerRef.current === container) {
+            container.style.width = originalWidth;
+          }
+          // A second, later timer, not the same tick -- the restore above
+          // is itself a resize this same guard must still swallow before
+          // it's safe to let a genuinely new resize back in.
+          window.setTimeout(() => {
+            forcingRepaintRef.current = false;
+          }, 50);
+        }, 0);
       }
     };
     chart.timeScale().subscribeSizeChange(handleSizeChange);

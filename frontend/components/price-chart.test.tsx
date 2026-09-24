@@ -749,14 +749,14 @@ describe("PriceChart", () => {
       { time: 1_785_763_860, value: 550 },
     ]);
 
-    // One thin (4px) filled rectangle per level -- upper (outer_upper_band
-    // = 520 -> coordinate -20) and lower (outer_lower_band = 480 ->
-    // coordinate 20), each centered on its own coordinate.
+    // One thin (4px) filled rectangle per level -- upper (inner_upper_band
+    // = 510 -> coordinate -10) and lower (inner_lower_band = 490 ->
+    // coordinate 10), each centered on its own coordinate.
     const bands = container.querySelectorAll<HTMLElement>(".atr-band");
     expect(bands).toHaveLength(2);
-    expect(bands[0].style.top).toBe("-22px");
+    expect(bands[0].style.top).toBe("-12px");
     expect(bands[0].style.height).toBe("4px");
-    expect(bands[1].style.top).toBe("18px");
+    expect(bands[1].style.top).toBe("8px");
     expect(bands[1].style.height).toBe("4px");
   });
 
@@ -949,7 +949,7 @@ describe("PriceChart", () => {
     );
 
     const topBefore = container.querySelector<HTMLElement>(".atr-band")?.style.top;
-    expect(topBefore).toBe("-22px");
+    expect(topBefore).toBe("-12px");
 
     // Simulate the chart's coordinate system changing — the same recompute
     // path a real pan drives via subscribeVisibleLogicalRangeChange, here
@@ -962,8 +962,49 @@ describe("PriceChart", () => {
     act(() => sizeChangeHandler());
 
     const topAfter = container.querySelector<HTMLElement>(".atr-band")?.style.top;
-    expect(topAfter).toBe("78px");
+    expect(topAfter).toBe("88px");
     expect(topAfter).not.toBe(topBefore);
+  });
+
+  it("nudges the chart container's own width to force a real ResizeObserver-driven repaint (regression, 2026-09-23)", async () => {
+    // Confirmed live: after certain resizes, the candlestick + axis-label
+    // canvas layers stop painting (sampled fully transparent pixels via
+    // getImageData()) while the background layer keeps working, and even a
+    // full series.setData() call doesn't recover it -- only destroying and
+    // recreating the chart does. IChartApi.resize(w, h, true) looked like
+    // the sanctioned fix but confirmed (by reading the library's bundled
+    // source) to be a hard no-op whenever autoSize is on -- its very first
+    // line is `if (this.autoSizeActive()) { warn(...); return; }`, before
+    // ever reaching the real repaint logic. autoSize's OWN internal
+    // ResizeObserver callback does reach that logic directly, so the only
+    // way in from outside is to make the browser fire a genuine
+    // ResizeObserver entry on the observed container -- wiggling its own
+    // width by 1px and back does exactly that.
+    const { container } = renderWithLanguage(
+      <PriceChart symbol="SPY" gamma={gamma} candles={candlesWithRange} />,
+    );
+    const chartContainer = container.querySelector(".price-chart") as HTMLElement;
+
+    const sizeChangeHandler = chartMocks.subscribeSizeChange.mock.calls.at(-1)?.[0];
+    expect(sizeChangeHandler).toBeTypeOf("function");
+    act(() => sizeChangeHandler(800));
+
+    expect(chartContainer.style.width).toBe("799px");
+
+    // Two timers: the first restores the original width (empty, the CSS
+    // class's own 100% takes back over), the second only lifts the
+    // re-entry guard -- both must elapse before the wiggle is done.
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      await new Promise((resolve) => setTimeout(resolve, 60));
+    });
+    expect(chartContainer.style.width).toBe("");
+
+    // A later, genuinely new resize must still be handled (the guard
+    // lifted, not left stuck on).
+    chartMocks.fitContent.mockClear();
+    act(() => sizeChangeHandler(900));
+    expect(chartContainer.style.width).toBe("899px");
   });
 
   it("draws EMC/EMP price lines from upper_bound/lower_bound when Expected Move is ready", () => {
@@ -1106,11 +1147,12 @@ describe("PriceChart", () => {
     });
     const merged = options.autoscaleInfoProvider(candleOnlyRange);
 
-    // outer_lower_band (460) is the lowest of every candidate level, and
-    // outer_upper_band (630) the highest — both must survive the merge,
-    // not just the Gamma levels or just the candle range alone.
+    // inner_lower_band (480) is the lowest of every candidate level, and
+    // inner_upper_band (610, tied with call_wall) the highest — both must
+    // survive the merge, not just the Gamma levels or just the candle
+    // range alone.
     expect(merged).toEqual({
-      priceRange: { minValue: 460, maxValue: 630 },
+      priceRange: { minValue: 480, maxValue: 610 },
       margins: { above: 0.1, below: 0.1 },
     });
   });
