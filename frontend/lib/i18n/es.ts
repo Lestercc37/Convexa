@@ -20,7 +20,7 @@ export const es: Translations = {
     structuralButton: "Estructural",
     tacticalButton: "Táctico",
     structuralOnlyBadge: "(Estructural)",
-    noTacticalDataLabel: "Sin contratos 0-2 DTE hoy para este símbolo",
+    noTacticalDataLabel: "Sin datos de opciones disponibles para este símbolo",
     structuralAsOfLabel: (minutesAgo) =>
       minutesAgo <= 0 ? "Estructural: recién actualizado" : `Estructural: hace ${minutesAgo}m`,
     exposureGroupAriaLabel: "Charm y Vanna Exposure",

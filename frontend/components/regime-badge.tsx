@@ -28,8 +28,8 @@ const compactCurrency = new Intl.NumberFormat("en-US", {
 // can't happen anymore now that `market` isn't consulted here.
 export function RegimeBadge({ gamma }: { gamma: GammaResponse }) {
   const { t } = useLanguage();
-  // has_data: false is the honest-empty Tactical case (no 0-2 DTE
-  // contracts listed today) -- net_gamma comes back 0 in that case, not
+  // has_data: false is the honest-empty Tactical case (no chain data
+  // fetched at all) -- net_gamma comes back 0 in that case, not
   // a genuine flat reading, so a LONG/SHORT label here would fabricate a
   // regime that was never actually computed. See GammaResponse.has_data's
   // own comment.
