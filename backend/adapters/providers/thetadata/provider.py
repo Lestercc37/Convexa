@@ -1097,11 +1097,30 @@ class ThetaStreamHub:
             len(contracts_snapshot),
             len(contracts_snapshot) * 2,
         )
+        # Underlyings first, options second (2026-09-25): every reconnect
+        # -- and per the comment above, that's every ~50-90s, an accepted
+        # cost of Theta Terminal's own external keepalive cadence, not
+        # something this process's own load causes -- used to resubscribe
+        # all ~800+ option contracts (1600+ messages) before ever
+        # getting to the handful of underlyings the chart's own
+        # real-time candle push depends on (UnderlyingPriceStreamManager /
+        # price_notifications.py), so every single reconnect stalled live
+        # candle updates for however long that whole options burst took,
+        # not just the connection handshake itself. Options subscriber
+        # count vastly outnumbers underlyings (~800+ vs ~15), so this
+        # reordering shrinks the underlying-specific gap on every
+        # reconnect to roughly a connection handshake plus ~15 messages,
+        # regardless of how large the options book has grown. Purely a
+        # send-order change -- _next_request_id is a simple incrementing
+        # counter with no dependency on which subscription happens first,
+        # and each subscribe call is independent (see _subscribe_option/
+        # _subscribe_underlying, both just one fire-and-forget STREAM
+        # add message).
+        for symbol, kind in self._symbols.items():
+            await self._subscribe_underlying(websocket, symbol, kind)
         for root, expiration, contract_type, strike in contracts_snapshot:
             await self._subscribe_option(websocket, root, expiration, contract_type, strike, "TRADE")
             await self._subscribe_option(websocket, root, expiration, contract_type, strike, "QUOTE")
-        for symbol, kind in self._symbols.items():
-            await self._subscribe_underlying(websocket, symbol, kind)
 
         last_status_at = utc_now()
         queue_depths_logged_at = self._queue_depths_logged_at or utc_now()
