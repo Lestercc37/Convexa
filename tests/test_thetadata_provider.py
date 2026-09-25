@@ -1556,6 +1556,44 @@ class TestOptionTradeHandling:
         assert event.size == 10
         assert event.premium == Decimal("2.00") * Decimal(10) * Decimal(100)
 
+    @pytest.mark.asyncio
+    async def test_a_weekly_root_trade_reaches_the_logical_symbols_subscriber(self) -> None:
+        # Confirmed live, 2026-09-25: SPX's own near-dated/0DTE contracts
+        # trade under the separate "SPXW" root (see _WEEKLY_ROOT_BY_SYMBOL's
+        # own comment), but only "SPX" is ever subscribed to
+        # (subscribe_trade_queue is only ever called with the outer
+        # logical symbol, from ACTIVE_UNDERLYINGS). Dispatching by the
+        # raw "SPXW" root instead of resolving it back meant every SPXW
+        # trade silently reached zero subscribers -- confirmed with a
+        # live relay client: SPX/NDX/VIX produced exactly zero trade/
+        # quote messages over a 15s window while every other symbol
+        # flowed normally. This starved WhaleAlertsEngine.process_trade()
+        # for these three symbols specifically.
+        stream = ThetaStreamHub(WS_URL, httpx.Client(base_url=REST_URL))
+        queue = stream.subscribe_trade_queue("SPX")
+        message = {
+            "header": {"type": "TRADE", "status": "CONNECTED"},
+            "contract": {
+                "security_type": "OPTION",
+                "root": "SPXW",
+                "expiration": 20260925,
+                "strike": 7700000,
+                "right": "C",
+            },
+            "trade": {"size": 5, "price": 12.50, "sequence": 1},
+        }
+
+        stream._handle_option_trade(message)
+        event = await asyncio.wait_for(queue.get(), timeout=1)
+
+        # occ_symbol keeps the real traded root ("SPXW...") -- only the
+        # event's own symbol (the dispatch key) resolves to the logical
+        # underlying.
+        assert event.symbol == "SPX"
+        assert event.occ_symbol == _build_occ_symbol(
+            "SPXW", date(2026, 9, 25), ContractType.CALL, Decimal(7700)
+        )
+
     def test_handle_option_trade_ignores_incomplete_messages(self) -> None:
         stream = ThetaStreamHub(WS_URL, httpx.Client(base_url=REST_URL))
         stream._handle_option_trade({"contract": {"root": "SPY"}, "trade": {}})
@@ -2509,6 +2547,37 @@ class TestQuoteHandling:
         assert event.occ_symbol == occ
         assert event.bid == Decimal("1.08")
         assert event.ask == Decimal("1.09")
+
+    def test_a_weekly_root_quote_reaches_the_logical_symbols_subscriber(self) -> None:
+        # Same fix as TestOptionTradeHandling's own weekly-root test --
+        # see that test's comment for the full live-confirmed mechanism.
+        stream = ThetaStreamHub(WS_URL, httpx.Client(base_url=REST_URL))
+        queue = stream.subscribe_quote_queue("NDX")
+        message = {
+            "header": {"type": "QUOTE", "status": "CONNECTED"},
+            "contract": {
+                "security_type": "OPTION",
+                "root": "NDXP",
+                "expiration": 20260925,
+                "strike": 25000000,
+                "right": "P",
+            },
+            "quote": {
+                "ms_of_day": 26622025,
+                "bid_size": 3,
+                "bid": 4.20,
+                "ask_size": 3,
+                "ask": 4.30,
+                "date": 20260925,
+            },
+        }
+
+        stream._handle_quote(message)
+        event = queue.get_nowait()
+
+        occ = _build_occ_symbol("NDXP", date(2026, 9, 25), ContractType.PUT, Decimal(25000))
+        assert event.symbol == "NDX"
+        assert event.occ_symbol == occ
 
     def test_handle_quote_ignores_incomplete_messages(self) -> None:
         stream = ThetaStreamHub(WS_URL, httpx.Client(base_url=REST_URL))

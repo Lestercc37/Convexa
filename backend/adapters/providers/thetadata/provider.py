@@ -452,6 +452,37 @@ def _roots_for_symbol(symbol: str) -> tuple[str, ...]:
     return (symbol, weekly_root) if weekly_root else (symbol,)
 
 
+# Reverse of _WEEKLY_ROOT_BY_SYMBOL -- confirmed live, 2026-09-25: every
+# incoming trade/quote message's own `contract.root` field is whichever
+# specific root the contract actually trades under (e.g. "SPXW" for a
+# near-dated/0DTE SPX contract, not "SPX" itself -- see
+# _WEEKLY_ROOT_BY_SYMBOL's own comment for why these are genuinely
+# separate, both-real roots, not aliases). subscribe_trade_queue()/
+# subscribe_quote_queue() are only ever called with the outer logical
+# symbol ("SPX"), from ACTIVE_UNDERLYINGS -- nothing subscribes to
+# "SPXW" directly. Dispatching by the raw message root instead of
+# resolving it back through this map means every SPXW/NDXP/VIXW trade
+# and quote silently reaches zero subscribers (an empty list, no error,
+# no log) -- confirmed live with a direct relay client: SPX/NDX/VIX
+# produced exactly zero trade and quote messages over a 15s window while
+# every other symbol flowed normally. This is what actually starves
+# WhaleAlertsEngine.process_trade() for these three symbols; the
+# REST-scheduler's own process() path (a separate, unaffected
+# mechanism) is why they ever appeared to work at all.
+_SYMBOL_BY_WEEKLY_ROOT: dict[str, str] = {
+    weekly_root: symbol for symbol, weekly_root in _WEEKLY_ROOT_BY_SYMBOL.items()
+}
+
+
+def _underlying_symbol_for_root(root: str) -> str:
+    """Resolves a raw ThetaData contract root (already upper-cased, e.g.
+    "SPXW") back to the logical underlying symbol subscribers key on
+    (e.g. "SPX"). A plain pass-through for every symbol without a
+    weekly-root split (SPY, QQQ, AAPL, ...) -- their own root already IS
+    the logical symbol."""
+    return _SYMBOL_BY_WEEKLY_ROOT.get(root, root)
+
+
 def _build_occ_symbol(
     root: str, expiration: date, contract_type: ContractType, strike: Decimal
 ) -> str:
@@ -1384,18 +1415,23 @@ class ThetaStreamHub:
         contract_type = ContractType.CALL if right == "C" else ContractType.PUT
         strike = Decimal(strike_raw) / Decimal(1000)
         occ_symbol = _build_occ_symbol(root, expiration, contract_type, strike)
+        # occ_symbol keeps the real traded root (e.g. "SPXW...") -- only
+        # the dispatch key/event symbol resolve to the logical underlying
+        # subscribers actually key on. See _underlying_symbol_for_root's
+        # own comment.
+        underlying_symbol = _underlying_symbol_for_root(root.upper())
 
         self._dispatch_critical(
-            self._quote_subscribers.get(root.upper(), []),
+            self._quote_subscribers.get(underlying_symbol, []),
             QuoteEvent(
-                symbol=root.upper(),
+                symbol=underlying_symbol,
                 occ_symbol=occ_symbol,
                 as_of=utc_now(),
                 bid=Decimal(str(bid)),
                 ask=Decimal(str(ask)),
             ),
             "QUOTE",
-            root.upper(),
+            underlying_symbol,
         )
 
     def _handle_option_trade(self, message: dict[str, Any]) -> None:
@@ -1418,6 +1454,11 @@ class ThetaStreamHub:
         occ_symbol = _build_occ_symbol(root, expiration, contract_type, strike)
         self._cumulative_volume[occ_symbol] = self._cumulative_volume.get(occ_symbol, 0) + int(size)
         logger.debug("Trade stream message for %s: size=%s sequence=%s", occ_symbol, size, sequence)
+        # occ_symbol keeps the real traded root (e.g. "SPXW...") -- only
+        # the dispatch key/event symbol resolve to the logical underlying
+        # subscribers actually key on. See _underlying_symbol_for_root's
+        # own comment.
+        underlying_symbol = _underlying_symbol_for_root(root.upper())
 
         price = trade.get("price")
         # `stream_trades` (IDataProvider) has no consumer anywhere in this
@@ -1428,9 +1469,9 @@ class ThetaStreamHub:
         # not a real classification. Revisit once something consumes it.
         if price is not None:
             self._dispatch_critical(
-                self._trade_subscribers.get(root.upper(), []),
+                self._trade_subscribers.get(underlying_symbol, []),
                 FlowEvent(
-                    symbol=root.upper(),
+                    symbol=underlying_symbol,
                     occ_symbol=occ_symbol,
                     as_of=utc_now(),
                     event_type=FlowEventType.UNUSUAL,
@@ -1439,7 +1480,7 @@ class ThetaStreamHub:
                     aggressor_side=Side.UNKNOWN,
                 ),
                 "option TRADE",
-                root.upper(),
+                underlying_symbol,
             )
 
     def _handle_underlying_trade(self, message: dict[str, Any]) -> None:
