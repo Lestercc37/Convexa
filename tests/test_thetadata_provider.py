@@ -2376,6 +2376,41 @@ class TestStreamHubWebsocketQueueSize:
         assert WS_MAX_QUEUE > 16
 
 
+class TestStreamHubResubscribeOrder:
+    @pytest.mark.asyncio
+    async def test_underlyings_are_resubscribed_before_options_on_reconnect(self) -> None:
+        """Fix (2026-09-25): resubscribing on reconnect used to send every
+        registered option contract (hundreds, 2 messages each) before
+        ever getting to the underlyings the chart's own real-time candle
+        push depends on (UnderlyingPriceStreamManager/price_notifications.py)
+        -- every reconnect (an accepted, frequent cost of Theta Terminal's
+        own external keepalive cadence, per this method's own comment,
+        not this process's own load) stalled live candle updates for
+        however long the whole options burst took, not just the
+        connection handshake. Underlyings first shrinks that gap to
+        roughly a handshake plus one message per underlying, regardless
+        of how large the options book has grown."""
+        stream = ThetaStreamHub(WS_URL, httpx.Client(base_url=REST_URL))
+        stream.register_contract(
+            "SPY260918C00770000", "SPY", date(2026, 9, 18), ContractType.CALL, Decimal(770)
+        )
+        stream.register_symbol("SPY", UnderlyingKind.EQUITY)
+
+        sec_types: list[str] = []
+
+        class _FakeWebsocket:
+            async def send(self, raw: str) -> None:
+                sec_types.append(json.loads(raw)["sec_type"])
+
+            async def recv(self) -> str:
+                raise ConnectionError("stop right after resubscribing")
+
+        with pytest.raises(ConnectionError):
+            await stream._consume(_FakeWebsocket())  # type: ignore[arg-type]
+
+        assert sec_types.index("STOCK") < sec_types.index("OPTION")
+
+
 class TestStreamHubDataSilenceWatchdog:
     """One watchdog task now tracks 3 independent timestamps (QUOTE,
     option TRADE, underlying TRADE) instead of 3 separate classes each
