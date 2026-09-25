@@ -83,6 +83,7 @@ import contextvars
 import functools
 from collections.abc import AsyncIterator
 from concurrent.futures import Executor
+from datetime import UTC, datetime
 
 from backend.domain.entities import FlowEvent, LatestQuote
 from backend.domain.ports import IDataProvider
@@ -111,6 +112,18 @@ HIGH_VOLUME_BATCHED_SYMBOLS: frozenset[str] = frozenset({"SPY", "QQQ"})
 # clear before being trusted as final.
 BATCH_WINDOW_SECONDS = 0.1
 BATCH_MAX_SIZE = 50
+
+# How often WhaleAlertsEngine.flush_stale_buckets() runs for a symbol --
+# see that method's own docstring for the bug this closes (a thinly-
+# traded contract's bucket previously never closed until its own next
+# trade, multi-minute delays or none at all). Same order of magnitude as
+# core/stream_state_export.py's EXPORT_INTERVAL_SECONDS (15s) -- not a
+# new, unrelated cadence for this codebase. Worst case this adds
+# FLUSH_INTERVAL_SECONDS of extra latency on top of the real calendar-
+# minute boundary a bucket already waits for; tightening this trades
+# more housekeeping executor calls (all symbols, every tick) for less
+# worst-case latency.
+FLUSH_INTERVAL_SECONDS = 15.0
 
 
 class _BatchCollector:
@@ -221,11 +234,44 @@ class StreamWhaleAlertsUseCase:
         own `stop()`. Completes immediately for a provider with nothing
         to stream (e.g. MockDataProvider — both of its stream methods
         are an immediately-exhausted async generator).
+
+        Also runs a periodic WhaleAlertsEngine.flush_stale_buckets() task
+        for this symbol alongside the two streams (see that method's own
+        docstring) -- guarded by `lock`, the same per-symbol
+        asyncio.Lock the trade-consumption path below takes before every
+        executor submission, so a flush call and a process_trade() call
+        for this symbol's own contracts can never run concurrently on
+        two different executor threads. Stopped in `finally` right
+        alongside the two streams -- for a finite provider (tests,
+        MockDataProvider) this keeps `run()`'s existing "completes once
+        both streams are exhausted" contract; for a real one, cancelling
+        it here is what actually stops the periodic housekeeping once a
+        caller cancels this whole task.
         """
-        await asyncio.gather(
-            self._consume_quotes(underlying),
-            self._consume_trades(underlying),
-        )
+        lock = asyncio.Lock()
+        flush_task = asyncio.create_task(self._flush_stale_buckets_periodically(underlying, lock))
+        try:
+            await asyncio.gather(
+                self._consume_quotes(underlying),
+                self._consume_trades(underlying, lock),
+            )
+        finally:
+            flush_task.cancel()
+            try:
+                await flush_task
+            except asyncio.CancelledError:
+                pass
+
+    async def _flush_stale_buckets_periodically(self, underlying: str, lock: asyncio.Lock) -> None:
+        loop = asyncio.get_running_loop()
+        while True:
+            await asyncio.sleep(FLUSH_INTERVAL_SECONDS)
+            async with lock:
+                ctx = contextvars.copy_context()
+                call = functools.partial(
+                    ctx.run, self._engine.flush_stale_buckets, underlying, datetime.now(UTC)
+                )
+                await loop.run_in_executor(self._executor, call)
 
     async def _consume_quotes(self, underlying: str) -> None:
         async for quote_event in self._provider.stream_quotes(underlying):
@@ -235,16 +281,23 @@ class StreamWhaleAlertsUseCase:
                 as_of=quote_event.as_of,
             )
 
-    async def _consume_trades(self, underlying: str) -> None:
+    async def _consume_trades(self, underlying: str, lock: asyncio.Lock | None = None) -> None:
         """Dispatches to the batched or single-message path by symbol --
         see this module's own docstring for why only
-        HIGH_VOLUME_BATCHED_SYMBOLS need the former."""
-        if underlying.upper() in HIGH_VOLUME_BATCHED_SYMBOLS:
-            await self._consume_trades_batched(underlying)
-        else:
-            await self._consume_trades_single(underlying)
+        HIGH_VOLUME_BATCHED_SYMBOLS need the former.
 
-    async def _consume_trades_single(self, underlying: str) -> None:
+        `lock` defaults to a fresh, private Lock when called directly
+        (as the tests in this package do) rather than through run() --
+        there's no periodic flush task to coordinate with in that case,
+        so a lock that only ever has one caller is a harmless no-op."""
+        if lock is None:
+            lock = asyncio.Lock()
+        if underlying.upper() in HIGH_VOLUME_BATCHED_SYMBOLS:
+            await self._consume_trades_batched(underlying, lock)
+        else:
+            await self._consume_trades_single(underlying, lock)
+
+    async def _consume_trades_single(self, underlying: str, lock: asyncio.Lock) -> None:
         async for trade_event in self._provider.stream_trades(underlying):
             quote = self._latest_quotes.get(trade_event.occ_symbol)
             # See this module's own docstring -- process_trade() can do a
@@ -253,13 +306,16 @@ class StreamWhaleAlertsUseCase:
             # default shared one) so it can never stall the shared event
             # loop ThetaStreamHub's own read loop runs on, and never
             # queues behind the REST scheduler's or reconcile()'s own
-            # unrelated work either.
+            # unrelated work either. Lock-guarded so this never overlaps
+            # this symbol's own periodic flush_stale_buckets() call (see
+            # run()'s own docstring).
             loop = asyncio.get_running_loop()
             ctx = contextvars.copy_context()
             call = functools.partial(ctx.run, self._engine.process_trade, trade_event, quote)
-            await loop.run_in_executor(self._executor, call)
+            async with lock:
+                await loop.run_in_executor(self._executor, call)
 
-    async def _consume_trades_batched(self, underlying: str) -> None:
+    async def _consume_trades_batched(self, underlying: str, lock: asyncio.Lock) -> None:
         """See this module's own docstring -- SPY's own trade rate can
         outpace one-executor-call-per-trade even on an uncontended
         dedicated thread; this amortizes the executor round-trip over a
@@ -279,6 +335,7 @@ class StreamWhaleAlertsUseCase:
                 pairs = [(event, self._latest_quotes.get(event.occ_symbol)) for event in batch]
                 ctx = contextvars.copy_context()
                 call = functools.partial(ctx.run, self._engine.process_trade_batch, pairs)
-                await loop.run_in_executor(self._executor, call)
+                async with lock:
+                    await loop.run_in_executor(self._executor, call)
         finally:
             await collector.aclose()

@@ -17,9 +17,14 @@ ACTIVE_SYMBOLS = [underlying.symbol for underlying in ACTIVE_UNDERLYINGS]
 class _StubEngine:
     def __init__(self) -> None:
         self.calls: list[tuple[object, object]] = []
+        self.flush_calls: list[tuple[str, object]] = []
 
     def process_trade(self, event: object, quote: object) -> tuple[()]:
         self.calls.append((event, quote))
+        return ()
+
+    def flush_stale_buckets(self, symbol: str, now: object) -> tuple[()]:
+        self.flush_calls.append((symbol, now))
         return ()
 
 
@@ -207,7 +212,14 @@ async def test_a_symbols_task_restarts_after_an_exception_without_affecting_othe
     await asyncio.wait_for(asyncio.gather(*manager._tasks), timeout=5)
 
     assert provider.calls["AAPL"] == 2
-    assert sleep_calls == [2]  # RECONNECT_BASE_DELAY_SECONDS, the shared convention
+    # RECONNECT_BASE_DELAY_SECONDS (the shared convention), exactly once --
+    # asyncio.sleep is patched process-wide, so it also captures every
+    # symbol's own periodic flush_stale_buckets() housekeeping sleep
+    # (StreamWhaleAlertsUseCase.FLUSH_INTERVAL_SECONDS, 15.0 -- unrelated
+    # to this retry-backoff mechanism, which is what this assertion is
+    # actually about) -- counting `2`'s occurrences instead of comparing
+    # the whole list keeps this scoped to the one thing under test.
+    assert sleep_calls.count(2) == 1
     other_symbols = [s for s in ACTIVE_SYMBOLS if s != "AAPL"]
     assert all(provider.calls[symbol] == 1 for symbol in other_symbols)
 
