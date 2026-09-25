@@ -17,6 +17,8 @@ const gamma: GammaResponse = {
   schema_version: 1,
   symbol: "SPY",
   as_of: "2026-08-03T14:30:00Z",
+  view: "structural",
+  has_data: true,
   gamma_flip: 548.5,
   call_wall: 555,
   put_wall: 540,
@@ -37,6 +39,8 @@ function profile(overrides: Partial<GammaAggregateResponse> = {}): GammaAggregat
     schema_version: 1,
     symbol: "SPY",
     as_of: "2026-08-07T20:30:00Z",
+    view: "structural",
+    has_data: true,
     gamma_flip: 548.5,
     max_pain: 550,
     total_market_gamma: 280,
@@ -89,7 +93,11 @@ describe("PreSessionPanel", () => {
     expect(screen.getByLabelText("Strike 550")).toBeInTheDocument();
     expect(screen.getByLabelText("Gamma Flip 548.5")).toBeInTheDocument();
     expect(screen.getByLabelText("Max Pain 550")).toBeInTheDocument();
-    expect(apiMocks.getGammaProfile).toHaveBeenCalledWith("SPY", expect.any(AbortSignal));
+    expect(apiMocks.getGammaProfile).toHaveBeenCalledWith(
+      "SPY",
+      "structural",
+      expect.any(AbortSignal),
+    );
   });
 
   it("does not poll — fetches the frozen snapshot exactly once per symbol", async () => {

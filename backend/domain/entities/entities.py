@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 from datetime import date, datetime, time, timezone
 from decimal import Decimal
 from enum import StrEnum
+from typing import Literal
 
 SCHEMA_VERSION = 1
 
@@ -341,10 +342,23 @@ class Walls:
         object.__setattr__(self, "symbol", self.symbol.upper())
 
 
+GammaView = Literal["structural", "tactical"]
+
+
 @dataclass(frozen=True, slots=True)
 class GammaAggregate:
     symbol: str
     as_of: datetime
+    # "structural": the wider, symbol-tiered near-term window (Call
+    # Wall/Put Wall/Gamma Flip/Net GEX/Max Pain -- the macro levels).
+    # "tactical": a fixed 0-2 DTE window (today's own expiring flow --
+    # "fuerza intradia"), computed and persisted as a fully independent
+    # second aggregate, not a derived reading of the structural one. See
+    # CalculateGammaExposureOrchestrator.execute_both -- a real symbol
+    # can legitimately have an EMPTY tactical aggregate (items=()) on a
+    # day it lists no 0-2 DTE contracts (most individual stocks, most
+    # days) -- that is the honest result, not a fallback to structural.
+    view: GammaView = "structural"
     items: tuple[GammaAggregateItem, ...] = field(default_factory=tuple)
     total_market_gamma: Decimal = Decimal("0")
     positive_gamma: Decimal = Decimal("0")
@@ -373,6 +387,8 @@ class GammaAggregate:
         if not self.symbol or not self.symbol.strip():
             raise InvalidOptionError("gamma aggregate symbol is required")
         object.__setattr__(self, "symbol", self.symbol.upper())
+        if self.view not in ("structural", "tactical"):
+            raise InvalidOptionError("gamma aggregate view must be 'structural' or 'tactical'")
         for name in (
             "total_market_gamma",
             "positive_gamma",

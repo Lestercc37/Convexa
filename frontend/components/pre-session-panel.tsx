@@ -4,10 +4,10 @@ import { useEffect, useMemo, useState } from "react";
 import { getGammaProfile } from "@/lib/api";
 import { describeError } from "@/lib/i18n/describe-error";
 import { useLanguage, type Language } from "@/lib/i18n/language-context";
-import type { GammaAggregateItem, GammaAggregateResponse, GammaResponse } from "@/lib/types";
+import type { GammaAggregateItem, GammaAggregateResponse, GammaResponse, GammaView } from "@/lib/types";
 import { RegimeBadge } from "./regime-badge";
 
-type PreSessionPanelProps = { symbol: string; gamma: GammaResponse };
+type PreSessionPanelProps = { symbol: string; gamma: GammaResponse; gammaView?: GammaView };
 
 const PLOT = { top: 20, bottom: 320, centerLeft: 120, centerRight: 640, edgeLeft: 20, edgeRight: 740 };
 
@@ -36,7 +36,7 @@ function magnitude(value: number, peak: number, start: number, end: number) {
   return start + ratio * (end - start);
 }
 
-export function PreSessionPanel({ symbol, gamma }: PreSessionPanelProps) {
+export function PreSessionPanel({ symbol, gamma, gammaView = "structural" }: PreSessionPanelProps) {
   const { language, t } = useLanguage();
   const [profile, setProfile] = useState<GammaAggregateResponse | null>(null);
   const [error, setError] = useState<unknown>(null);
@@ -45,10 +45,12 @@ export function PreSessionPanel({ symbol, gamma }: PreSessionPanelProps) {
   useEffect(() => {
     if (!symbol) return;
     const controller = new AbortController();
-    // Fetched once per symbol, on purpose — this is the frozen snapshot from
-    // the previous close (dashboard-spec.md section 8), not a live view, so
-    // it never joins the Dashboard's 30s polling loop.
-    getGammaProfile(symbol, controller.signal)
+    // Fetched once per symbol (and now per gammaView -- Dashboard remounts
+    // this component on a gammaView change via its own key), on purpose —
+    // this is the frozen snapshot from the previous close (dashboard-spec.md
+    // section 8), not a live view, so it never joins the Dashboard's 30s
+    // polling loop.
+    getGammaProfile(symbol, gammaView, controller.signal)
       .then((response) => setProfile(response))
       .catch((reason: unknown) => {
         if (!controller.signal.aborted) {
@@ -56,7 +58,7 @@ export function PreSessionPanel({ symbol, gamma }: PreSessionPanelProps) {
         }
       });
     return () => controller.abort();
-  }, [symbol]);
+  }, [symbol, gammaView]);
 
   const items = useMemo<GammaAggregateItem[]>(
     () => [...(profile?.items ?? [])].sort((a, b) => b.strike - a.strike),
@@ -183,7 +185,11 @@ export function PreSessionPanel({ symbol, gamma }: PreSessionPanelProps) {
           </div>
         </div>
       ) : profile ? (
-        <p className="pre-session-status">{t.preSessionPanel.noBreakdown}</p>
+        <p className="pre-session-status">
+          {gammaView === "tactical" && !profile.has_data
+            ? t.dashboard.noTacticalDataLabel
+            : t.preSessionPanel.noBreakdown}
+        </p>
       ) : (
         <p className="pre-session-status">{t.preSessionPanel.loading}</p>
       )}

@@ -28,6 +28,18 @@ const compactCurrency = new Intl.NumberFormat("en-US", {
 // can't happen anymore now that `market` isn't consulted here.
 export function RegimeBadge({ gamma }: { gamma: GammaResponse }) {
   const { t } = useLanguage();
+  // has_data: false is the honest-empty Tactical case (no 0-2 DTE
+  // contracts listed today) -- net_gamma comes back 0 in that case, not
+  // a genuine flat reading, so a LONG/SHORT label here would fabricate a
+  // regime that was never actually computed. See GammaResponse.has_data's
+  // own comment.
+  if (!gamma.has_data) {
+    return (
+      <section className="panel regime-badge no-data" aria-label={t.regimeBadge.ariaLabel}>
+        <p className="regime-detail">{t.dashboard.noTacticalDataLabel}</p>
+      </section>
+    );
+  }
   const isLong = gamma.dealer_position === "long_gamma";
 
   return (
@@ -60,6 +72,14 @@ export function RegimeBadge({ gamma }: { gamma: GammaResponse }) {
 // Dashboard already only renders PriceChart once gamma/market both exist
 // (no separate loading/freshness state to manage here).
 export function RegimeCompactBadge({ gamma }: { gamma: GammaResponse }) {
+  // See RegimeBadge's own has_data comment above.
+  if (!gamma.has_data) {
+    return (
+      <span className="mode-pill regime-badge-compact no-data">
+        —
+      </span>
+    );
+  }
   const isLong = gamma.dealer_position === "long_gamma";
   const label = isLong ? "LONG GAMMA" : "SHORT GAMMA";
   const amount = compactCurrency.format(gamma.net_gamma);

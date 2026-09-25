@@ -34,8 +34,10 @@ class SyncStorageAsyncReadAdapter:
     def __init__(self, storage: IStorage) -> None:
         self._storage = storage
 
-    async def get_latest_gamma_aggregate(self, underlying: str) -> GammaAggregate | None:
-        return self._storage.get_latest_gamma_aggregate(underlying)
+    async def get_latest_gamma_aggregate(
+        self, underlying: str, view: str = "structural"
+    ) -> GammaAggregate | None:
+        return self._storage.get_latest_gamma_aggregate(underlying, view=view)
 
     async def get_latest_price(self, underlying: str) -> MarketPrice | None:
         return self._storage.get_latest_price(underlying)

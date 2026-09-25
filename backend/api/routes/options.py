@@ -27,7 +27,7 @@ from backend.api.serializers import (
     underlyings_response,
 )
 from backend.core.container import Container
-from backend.domain.entities import GammaFlip
+from backend.domain.entities import GammaFlip, GammaView
 from backend.domain.use_cases import (
     calculate_derived_metrics_async,
     get_flow,
@@ -97,7 +97,11 @@ def get_chain_expirations(symbol: str, request: Request) -> ChainExpirationsResp
 
 
 @router.get("/gamma/{symbol}", response_model=GammaResponse)
-async def get_gamma(symbol: str, request: Request) -> GammaResponse:
+async def get_gamma(
+    symbol: str,
+    request: Request,
+    view: GammaView = Query(default="structural"),
+) -> GammaResponse:
     # async def, not def: dispatched on the event loop instead of
     # Starlette's shared threadpool, which the scheduler's own 15
     # concurrent asyncio.to_thread symbol refreshes (each with 3
@@ -106,21 +110,32 @@ async def get_gamma(symbol: str, request: Request) -> GammaResponse:
     # measured 3.5-23s end to end while a scheduler cycle was in flight,
     # even though it never itself calls the data provider. See
     # AsyncPostgreSQLStorage's own docstring.
+    #
+    # derived_metrics stays Structural-only regardless of `view`,
+    # deliberately (2026-09-25, confirmed with the user): Dealer Impact
+    # Score/Signal Alignment Score/Market Bias depend on historical
+    # comparisons (DailyGammaReference) that only exist for the
+    # Structural window -- see capture_daily_gamma_reference's own
+    # Structural-only scoping in refresh_snapshot.py.
     container: Container = request.app.state.container
-    gamma = await get_gamma_exposure_async(container.async_market_storage, symbol)
+    gamma = await get_gamma_exposure_async(container.async_market_storage, symbol, view=view)
     derived_metrics = await calculate_derived_metrics_async(container.async_market_storage, symbol)
     return GammaResponse.model_validate(gamma_response(gamma, derived_metrics))
 
 
 @router.get("/gamma/{symbol}/profile", response_model=GammaAggregateResponse)
-def gamma_profile(symbol: str, request: Request) -> GammaAggregateResponse:
+def gamma_profile(
+    symbol: str, request: Request, view: GammaView = Query(default="structural")
+) -> GammaAggregateResponse:
     container: Container = request.app.state.container
-    gamma = get_gamma_exposure(container.storage, symbol)
+    gamma = get_gamma_exposure(container.storage, symbol, view=view)
     return GammaAggregateResponse.model_validate(gamma_aggregate_response(gamma))
 
 
 @router.get("/gamma/{symbol}/flip", response_model=GammaFlipResponse)
-def gamma_flip(symbol: str, request: Request) -> GammaFlipResponse:
+def gamma_flip(
+    symbol: str, request: Request, view: GammaView = Query(default="structural")
+) -> GammaFlipResponse:
     """The one honest, correctly-nullable representation of gamma_flip --
     GammaFlipResponse/gamma_flip_response() already existed for this
     (flip_found + a nullable gamma_flip_price) but no route used them
@@ -133,7 +148,7 @@ def gamma_flip(symbol: str, request: Request) -> GammaFlipResponse:
     detail, so they're honestly None here too, not guessed.
     """
     container: Container = request.app.state.container
-    gamma = get_gamma_exposure(container.storage, symbol)
+    gamma = get_gamma_exposure(container.storage, symbol, view=view)
     flip = GammaFlip(gamma_flip_price=gamma.gamma_flip, flip_found=gamma.gamma_flip is not None)
     return GammaFlipResponse.model_validate(gamma_flip_response(flip))
 
@@ -144,9 +159,10 @@ def gamma_history(
     request: Request,
     start: datetime = Query(default=datetime.min.replace(tzinfo=timezone.utc)),
     end: datetime = Query(default=datetime.max.replace(tzinfo=timezone.utc)),
+    view: GammaView = Query(default="structural"),
 ) -> GammaHistoryResponse:
     container: Container = request.app.state.container
-    items = get_gamma_history(container.storage, symbol, start, end)
+    items = get_gamma_history(container.storage, symbol, start, end, view=view)
     return GammaHistoryResponse.model_validate(gamma_history_response(symbol, items))
 
 

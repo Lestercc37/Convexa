@@ -242,6 +242,11 @@ class GammaAggregateResponse(BaseModel):
     schema_version: int = Field(examples=[1])
     symbol: str = Field(examples=["SPY"])
     as_of: str = Field(examples=["2026-01-15T14:30:00Z"])
+    view: Literal["structural", "tactical"] = Field(examples=["structural"])
+    # See GammaSummaryResponse.has_data's own comment -- this response
+    # already carries `items`, so `not items` is an equally valid check,
+    # but the explicit field keeps both response shapes symmetric.
+    has_data: bool = Field(examples=[True])
     gamma_flip: Number | None = Field(default=None, examples=[548.5])
     max_pain: Number = Field(examples=[550])
     total_market_gamma: Number = Field(examples=[280])
@@ -283,6 +288,17 @@ class GammaSummaryResponse(BaseModel):
     schema_version: int = Field(examples=[1])
     symbol: str = Field(examples=["SPY"])
     as_of: str = Field(examples=["2026-01-15T14:30:00Z"])
+    view: Literal["structural", "tactical"] = Field(examples=["structural"])
+    # False only for the honest-empty Tactical case (a symbol with no
+    # 0-2 DTE contracts listed today -- see CalculateGammaExposureOrchestrator
+    # ._build_view's own comment) -- every other field on this response
+    # still comes back as a real, if zeroed/null, value in that case, so
+    # a consumer needs this explicit signal to tell "genuinely nothing to
+    # show" apart from "a real reading that happens to be 0". This
+    # response never carries `items` itself (see GammaAggregateResponse
+    # for that), so this is the only way a consumer without a strike
+    # breakdown can detect the empty case.
+    has_data: bool = Field(examples=[True])
     gamma_flip: Number | None = Field(default=None, examples=[548.5])
     call_wall: Number = Field(examples=[555])
     put_wall: Number = Field(examples=[540])

@@ -232,6 +232,75 @@ def test_gamma_aggregate_round_trip_against_postgresql(
     assert history == [replace(aggregate, items=())]
 
 
+def test_structural_and_tactical_gamma_aggregates_do_not_collide_against_postgresql(
+    postgresql_storage: tuple[PostgreSQLStorage, Engine, str],
+) -> None:
+    """The exact upsert collision the view-column PK widening (migration
+    0029) exists to prevent: before that migration, gamma_aggregates'
+    natural key was (underlying_id, time) alone -- a same-cycle Tactical
+    write for the same symbol/moment would have silently overwritten the
+    Structural row (or vice versa) via ON CONFLICT DO UPDATE."""
+    storage, _, symbol = postgresql_storage
+    as_of = datetime.now(timezone.utc)
+    structural = GammaAggregate(
+        symbol=symbol,
+        as_of=as_of,
+        view="structural",
+        items=(
+            GammaAggregateItem(
+                strike=Decimal("550"),
+                total_gamma_exposure=Decimal("200"),
+                call_gamma_exposure=Decimal("120"),
+                put_gamma_exposure=Decimal("-80"),
+                net_gamma=Decimal("40"),
+                contract_count=3,
+                absolute_gamma=Decimal("40"),
+            ),
+        ),
+        call_wall=Decimal("555"),
+        put_wall=Decimal("545"),
+    )
+    tactical = GammaAggregate(
+        symbol=symbol,
+        as_of=as_of,
+        view="tactical",
+        items=(
+            GammaAggregateItem(
+                strike=Decimal("551"),
+                total_gamma_exposure=Decimal("900"),
+                call_gamma_exposure=Decimal("900"),
+                put_gamma_exposure=Decimal("0"),
+                net_gamma=Decimal("900"),
+                contract_count=1,
+                absolute_gamma=Decimal("900"),
+            ),
+        ),
+        call_wall=Decimal("551"),
+        put_wall=Decimal("548"),
+    )
+
+    storage.save_gamma_aggregate(structural)
+    storage.save_gamma_aggregate(tactical)
+
+    loaded_structural = storage.get_latest_gamma_aggregate(symbol, view="structural")
+    loaded_tactical = storage.get_latest_gamma_aggregate(symbol, view="tactical")
+
+    assert loaded_structural == structural
+    assert loaded_tactical == tactical
+    assert loaded_structural != loaded_tactical
+    assert loaded_structural is not None and loaded_structural.items == structural.items
+    assert loaded_tactical is not None and loaded_tactical.items == tactical.items
+
+    structural_history = storage.get_gamma_history(
+        symbol, as_of - timedelta(seconds=1), as_of + timedelta(seconds=1), view="structural"
+    )
+    tactical_history = storage.get_gamma_history(
+        symbol, as_of - timedelta(seconds=1), as_of + timedelta(seconds=1), view="tactical"
+    )
+    assert structural_history == [replace(structural, items=())]
+    assert tactical_history == [replace(tactical, items=())]
+
+
 def test_gamma_flip_none_round_trips_against_postgresql_as_null_not_zero(
     postgresql_storage: tuple[PostgreSQLStorage, Engine, str],
 ) -> None:
@@ -560,6 +629,39 @@ async def test_async_postgresql_storage_ignores_fresher_narrow_write_for_index(
         assert len({contract.expiration for contract in latest.contracts}) > 1
     finally:
         _delete_test_option_chain_data(engine, "SPX")
+
+
+@pytest.mark.asyncio
+async def test_async_postgresql_storage_filters_gamma_aggregate_by_view(
+    postgresql_storage: tuple[PostgreSQLStorage, Engine, str],
+) -> None:
+    """AsyncPostgreSQLStorage's own SQL is kept in sync with
+    PostgreSQLStorage's by hand (see that class's own docstring) -- this
+    confirms the view filter was actually mirrored there too, not just
+    in the sync path the previous test already covers."""
+    sync_storage, _, symbol = postgresql_storage
+    now = datetime.now(timezone.utc)
+    sync_storage.save_gamma_aggregate(
+        GammaAggregate(symbol=symbol, as_of=now, view="structural", call_wall=Decimal("555"))
+    )
+    sync_storage.save_gamma_aggregate(
+        GammaAggregate(symbol=symbol, as_of=now, view="tactical", call_wall=Decimal("551"))
+    )
+
+    async_engine = create_engine(_require_test_database_url())
+    try:
+        async_storage = AsyncPostgreSQLStorage(create_session_factory(async_engine))
+        loaded_structural = await async_storage.get_latest_gamma_aggregate(
+            symbol, view="structural"
+        )
+        loaded_tactical = await async_storage.get_latest_gamma_aggregate(symbol, view="tactical")
+    finally:
+        await async_engine.dispose()
+
+    assert loaded_structural is not None and loaded_structural.view == "structural"
+    assert loaded_structural.call_wall == Decimal("555")
+    assert loaded_tactical is not None and loaded_tactical.view == "tactical"
+    assert loaded_tactical.call_wall == Decimal("551")
 
 
 @pytest.mark.asyncio

@@ -21,7 +21,7 @@ import { aggregateMinuteVwapPoints, type MinuteCandle, type Timeframe, type Vwap
 import { useLanguage } from "@/lib/i18n/language-context";
 import type { MarketPriceStreamStatus } from "@/lib/market-price-stream";
 import { EASTERN_TIME_ZONE, mostRecentSessionRange } from "@/lib/market-session";
-import type { AtrRange, ExpectedMove, GammaHistoryItem, GammaResponse } from "@/lib/types";
+import type { AtrRange, ExpectedMove, GammaHistoryItem, GammaResponse, GammaView } from "@/lib/types";
 import { LEVEL_MERGE_THRESHOLD } from "./gravity-map";
 import { RegimeCompactBadge } from "./regime-badge";
 
@@ -29,6 +29,7 @@ type PriceChartProps = {
   symbol: string;
   candles: MinuteCandle[];
   gamma: GammaResponse;
+  gammaView?: GammaView;
   vwapPoints?: VwapPoint[];
   vwapNotApplicable?: boolean;
   vwapProxySymbol?: string | null;
@@ -93,6 +94,13 @@ type TrendlinePoint = { time: UTCTimestamp; price: number };
 type Trendline = { start: TrendlinePoint; end: TrendlinePoint };
 
 function gammaLevels(gamma: GammaResponse): GammaLevel[] {
+  // The honest-empty Tactical case (no 0-2 DTE contracts listed today)
+  // -- every field below still comes back a real 0/null in that case,
+  // which would otherwise draw Call Wall/Put Wall/Gamma Flip pinned at
+  // price 0 as if they were genuine levels. See GammaResponse.has_data's
+  // own comment; the empty-state message this produces is rendered
+  // separately (see the levelMode==="static" effect below).
+  if (!gamma.has_data) return [];
   const range = gamma.call_wall - gamma.put_wall;
   const mergeFlipAndAbsolute =
     gamma.gamma_flip !== null &&
@@ -323,6 +331,7 @@ export function PriceChart({
   symbol,
   candles,
   gamma,
+  gammaView = "structural",
   vwapPoints = [],
   vwapNotApplicable = false,
   vwapProxySymbol = null,
@@ -694,7 +703,7 @@ export function PriceChart({
   useEffect(() => {
     if (levelMode !== "historical") return;
     const controller = new AbortController();
-    getGammaHistory(symbol, controller.signal)
+    getGammaHistory(symbol, gammaView, controller.signal)
       .then(({ items }) => setHistory(items))
       .catch((reason: unknown) => {
         if (!controller.signal.aborted) {
@@ -702,7 +711,7 @@ export function PriceChart({
         }
       });
     return () => controller.abort();
-  }, [levelMode, symbol]);
+  }, [levelMode, symbol, gammaView]);
 
   useEffect(() => {
     const series = seriesRef.current;
@@ -820,7 +829,11 @@ export function PriceChart({
       line.setData(
         dedupeAscendingByTime(
           history
-            .filter((item) => item[level.field] !== null)
+            // has_data: false is the honest-empty Tactical case (see
+            // GammaResponse.has_data's own comment) -- same reasoning as
+            // gammaLevels() skipping it entirely in static mode, applied
+            // per-point here since historical mode plots a whole series.
+            .filter((item) => item.has_data && item[level.field] !== null)
             .map((item) => ({
               time: Math.floor(new Date(item.as_of).getTime() / 1000) as UTCTimestamp,
               value: item[level.field] as number,
@@ -912,6 +925,9 @@ export function PriceChart({
           <h2 id="price-chart-title">
             {t.priceChart.title(symbol, t.priceChart.timeframeLabels[timeframe])}
           </h2>
+          {gammaView === "tactical" && !gamma.has_data && (
+            <p className="no-tactical-data-notice">{t.dashboard.noTacticalDataLabel}</p>
+          )}
         </div>
         <div className="chart-controls">
           <fieldset className="level-mode-selector" aria-label={t.priceChart.levelModeAriaLabel}>

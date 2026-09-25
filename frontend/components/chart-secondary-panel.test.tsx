@@ -30,6 +30,8 @@ const gamma: GammaResponse = {
   schema_version: 1,
   symbol: "SPY",
   as_of: "2026-08-07T20:30:00Z",
+  view: "structural",
+  has_data: true,
   gamma_flip: 548.5,
   call_wall: 555,
   put_wall: 540,
@@ -50,6 +52,8 @@ function profile(overrides: Partial<GammaAggregateResponse> = {}): GammaAggregat
     schema_version: 1,
     symbol: "SPY",
     as_of: "2026-08-07T20:30:00Z",
+    view: "structural",
+    has_data: true,
     gamma_flip: 548.5,
     max_pain: 550,
     total_market_gamma: 280,
@@ -130,7 +134,13 @@ describe("ChartSecondaryPanel", () => {
   it("renders the GEX-by-strike view by default, with a bar per strike", async () => {
     renderWithLanguage(<ChartSecondaryPanel symbol="SPY" spotPrice={SPOT_PRICE} gamma={gamma} />);
 
-    await waitFor(() => expect(apiMocks.getGammaProfile).toHaveBeenCalledWith("SPY", expect.any(AbortSignal)));
+    await waitFor(() =>
+      expect(apiMocks.getGammaProfile).toHaveBeenCalledWith(
+        "SPY",
+        "structural",
+        expect.any(AbortSignal),
+      ),
+    );
 
     expect(await screen.findByLabelText("GEX por strike para SPY")).toBeInTheDocument();
     expect(screen.getByLabelText("Strike 545")).toBeInTheDocument();
