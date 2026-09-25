@@ -122,6 +122,15 @@ def _floor_to_minute(moment: datetime) -> datetime:
 class _ContractState:
     cumulative_volume: int
     bucket_start: datetime
+    # The underlying this contract belongs to -- needed by
+    # flush_stale_buckets() to find one symbol's own contracts within
+    # _trade_states without re-deriving it from occ_symbol (which, for
+    # SPX/NDX/VIX, is built from the raw weekly contract root, not the
+    # logical symbol -- see _underlying_symbol_for_root() in the
+    # ThetaData adapter). Both process() and process_trade() already
+    # know their own symbol at state-construction time, so this is just
+    # captured once rather than reconstructed later.
+    symbol: str = ""
     bucket_amount: Decimal = Decimal(0)
     previous_amounts: deque[Decimal] = field(default_factory=lambda: deque(maxlen=5))
     sustained_amounts: deque[Decimal] = field(default_factory=lambda: deque(maxlen=15))
@@ -316,6 +325,7 @@ class WhaleAlertsEngine:
                 self._states[contract.occ_symbol] = _ContractState(
                     cumulative_volume=contract.volume,
                     bucket_start=current_bucket_start,
+                    symbol=chain.symbol,
                     previous_price=contract.last,
                 )
                 continue
@@ -407,7 +417,10 @@ class WhaleAlertsEngine:
             # process()'s own _ContractState construction leaves it at
             # its class default (False, inert for that path).
             state = _ContractState(
-                cumulative_volume=0, bucket_start=current_bucket_start, bucket_quote_unavailable=True
+                cumulative_volume=0,
+                bucket_start=current_bucket_start,
+                symbol=event.symbol,
+                bucket_quote_unavailable=True,
             )
             self._trade_states[event.occ_symbol] = state
 
@@ -476,6 +489,45 @@ class WhaleAlertsEngine:
         generated: list[WhaleAlert] = []
         for event, quote in events:
             generated.extend(self.process_trade(event, quote))
+        return tuple(generated)
+
+    def flush_stale_buckets(self, symbol: str, now: datetime) -> tuple[WhaleAlert, ...]:
+        """Force-closes `symbol`'s own in-progress Lee-Ready buckets
+        (_trade_states only -- process()'s own _states never need this,
+        since every reading cycle re-visits every contract in the chain
+        regardless of whether it traded, so _finalize_bucket already runs
+        on time there via chain.as_of alone) whose calendar minute has
+        fully elapsed, even though no new trade has arrived for that
+        specific contract to trigger the close via process_trade()'s own
+        `current_bucket_start != state.bucket_start` check.
+
+        Found 2026-09-25: a thinly-traded contract's bucket (and any
+        Whale/Unusual alert it would produce) previously wouldn't close
+        until that SAME contract's next trade -- multi-minute delays, or
+        never, for anything that doesn't trade again that session.
+        `process()` was never affected (see above), so this is specific
+        to the streaming path.
+
+        Called from this symbol's own single-threaded stream consumer
+        (StreamWhaleAlertsUseCase.run(), between trade-processing calls,
+        guarded by the same per-symbol asyncio.Lock used there) -- never
+        concurrently with process_trade() for this symbol's own
+        contracts, so no additional locking is needed here. Other
+        symbols' contracts are simply skipped (not locked out), same as
+        process_trade() itself never touching another symbol's state.
+        """
+        normalized = symbol.upper()
+        thresholds = self._resolve_thresholds(normalized)
+        current_bucket_start = _floor_to_minute(now)
+        generated: list[WhaleAlert] = []
+        for occ_symbol, state in list(self._trade_states.items()):
+            if state.symbol.upper() != normalized or state.bucket_start >= current_bucket_start:
+                continue
+            generated.extend(
+                self._finalize_bucket(
+                    state, normalized, occ_symbol, now, thresholds, current_bucket_start
+                )
+            )
         return tuple(generated)
 
     def _finalize_bucket(

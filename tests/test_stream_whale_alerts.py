@@ -37,6 +37,9 @@ class _FakeEngine:
             self.process_trade(event, quote)
         return ()
 
+    def flush_stale_buckets(self, symbol: str, now: object) -> tuple[()]:
+        return ()
+
 
 class _FakeProvider:
     """A finite, deterministic stand-in for IDataProvider's two streams —
@@ -181,6 +184,9 @@ async def test_consume_trades_runs_process_trade_on_a_worker_thread_not_the_even
                 self.process_trade(event, quote)
             return ()
 
+        def flush_stale_buckets(self, symbol: str, now: object) -> tuple[()]:
+            return ()
+
     provider = _FakeProvider(trades=[_trade("100")])
     use_case = StreamWhaleAlertsUseCase(provider, _ThreadRecordingEngine())
 
@@ -211,6 +217,9 @@ async def test_consume_trades_uses_the_passed_executor_not_the_default_shared_on
         ) -> tuple[()]:
             for event, quote in events:
                 self.process_trade(event, quote)
+            return ()
+
+        def flush_stale_buckets(self, symbol: str, now: object) -> tuple[()]:
             return ()
 
     executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="test-whale-alerts")

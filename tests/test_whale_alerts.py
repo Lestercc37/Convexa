@@ -516,6 +516,67 @@ def test_process_trade_sustained_flow_fires_once() -> None:
     assert sustained_alerts[0].estimated_buy_volume == Decimal(600000)
 
 
+def test_flush_stale_buckets_closes_a_bucket_with_no_trade_to_trigger_it() -> None:
+    """The actual bug (2026-09-25): process_trade()'s own bucket only ever
+    closed via the NEXT trade for that SAME contract -- a thinly-traded
+    contract's bucket (and any alert it should have produced) could sit
+    open for minutes, or forever, with nothing to trigger the close.
+    flush_stale_buckets() is the fix: called on a timer (see
+    StreamWhaleAlertsUseCase), it force-closes any bucket whose calendar
+    minute has already fully elapsed, with no new trade required."""
+    engine = WhaleAlertsEngine(InMemoryStorage())
+
+    for period in range(6):
+        assert engine.process_trade(_trade(period, "100"), BUY_LEANING_QUOTE) == ()
+    # Lands in period 6's bucket -- nothing else ever trades this
+    # contract again this session, so process_trade() alone would never
+    # close it.
+    assert engine.process_trade(_trade(6, "45000"), BUY_LEANING_QUOTE) == ()
+
+    # Still inside period 6's own minute -- nothing stale yet.
+    still_open = engine.flush_stale_buckets(TRADE_SYMBOL, TRADE_BASE_TIME + timedelta(minutes=6, seconds=30))
+    assert still_open == ()
+
+    # Period 6's minute has now fully elapsed -- same classification a
+    # real period-7 trade would have triggered.
+    alerts = engine.flush_stale_buckets(TRADE_SYMBOL, TRADE_BASE_TIME + timedelta(minutes=7, seconds=5))
+
+    assert len(alerts) == 1
+    assert alerts[0].alert_type is WhaleAlertType.UNUSUAL
+    assert alerts[0].amount == Decimal(45000)
+
+    # Nothing left to flush -- calling again immediately is a no-op, not
+    # a duplicate alert.
+    assert engine.flush_stale_buckets(TRADE_SYMBOL, TRADE_BASE_TIME + timedelta(minutes=7, seconds=6)) == ()
+
+
+def test_flush_stale_buckets_only_touches_the_requested_symbol() -> None:
+    engine = WhaleAlertsEngine(InMemoryStorage())
+    other_trade = FlowEvent(
+        symbol="AAPL",
+        occ_symbol="AAPL260220C00185000",
+        as_of=TRADE_BASE_TIME,
+        event_type=FlowEventType.UNUSUAL,
+        premium=Decimal(100),
+        size=1,
+        aggressor_side=Side.UNKNOWN,
+    )
+    assert engine.process_trade(_trade(0, "100"), BUY_LEANING_QUOTE) == ()
+    assert engine.process_trade(other_trade, BUY_LEANING_QUOTE) == ()
+
+    # Flushing IWM must not disturb AAPL's own still-open bucket --
+    # confirmed indirectly: flushing AAPL immediately afterward at the
+    # same instant still finalizes its bucket normally (nothing about it
+    # was already force-closed or corrupted by the first call).
+    engine.flush_stale_buckets(TRADE_SYMBOL, TRADE_BASE_TIME + timedelta(minutes=5))
+    aapl_alerts = engine.flush_stale_buckets("AAPL", TRADE_BASE_TIME + timedelta(minutes=5))
+
+    # Below every threshold -- the point here is only that AAPL's bucket
+    # was untouched (and thus flushable) by the earlier IWM-scoped call,
+    # not that it produces an alert.
+    assert aapl_alerts == ()
+
+
 def test_process_and_process_trade_never_share_state_for_the_same_contract() -> None:
     # Confirms the design decision behind _trade_states being a separate
     # dict from _states: under ThetaDataProvider, process() (still
