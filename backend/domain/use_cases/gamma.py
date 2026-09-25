@@ -339,10 +339,21 @@ class CalculateGammaExposureOrchestrator:
             # already the right value (None or a real Decimal) -- just use
             # it directly, no fallback needed.
             gamma_flip=gamma_flip.gamma_flip_price,
-            call_wall=(
-                walls.call_wall.strike if walls.call_wall is not None else aggregate.call_wall
-            ),
-            put_wall=(walls.put_wall.strike if walls.put_wall is not None else aggregate.put_wall),
+            # Same reasoning as gamma_flip just above, now that call_wall/
+            # put_wall are properly nullable too -- None means "no valid
+            # candidate found on that side" (e.g. every in-range strike
+            # nets the same sign), a real, distinct outcome from "the wall
+            # is at strike 0". `aggregate.call_wall`/`.put_wall` are no
+            # longer consulted as a fallback -- that was always just the
+            # dataclass's own unset default (never a real computed value;
+            # CalculateGammaAggregateUseCase never sets these itself), so
+            # it silently manufactured a fake $0 wall instead of an honest
+            # "not found". Confirmed live, 2026-09-25: SPX's own Tactical
+            # window hit this for real, and the fake $0 dragged the price
+            # chart's autoscale down to include it, visually collapsing
+            # every other level into a sliver at the top of the chart.
+            call_wall=walls.call_wall.strike if walls.call_wall is not None else None,
+            put_wall=walls.put_wall.strike if walls.put_wall is not None else None,
             max_pain=max_pain.max_pain_strike,
             # Net GEX / dealer_position (the "gamma regime" the dashboard
             # badge shows) now sourced from wide_aggregate -- the same

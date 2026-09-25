@@ -161,8 +161,8 @@ def test_gamma_get_view_query_param_routes_to_the_tactical_aggregate() -> None:
 
     assert tactical.json()["view"] == "tactical"
     assert tactical.json()["has_data"] is False
-    assert tactical.json()["call_wall"] == 0
-    assert tactical.json()["put_wall"] == 0
+    assert tactical.json()["call_wall"] is None
+    assert tactical.json()["put_wall"] is None
     assert tactical.json()["gamma_flip"] is None
 
     # Omitting the param must still return exactly today's structural

@@ -370,8 +370,23 @@ class GammaAggregate:
     # (confirmed live, 2026-09: SPX's net_gamma was positive at every
     # strike in range, which is exactly this case, not a bug).
     gamma_flip: Decimal | None = None
-    call_wall: Decimal = Decimal("0")
-    put_wall: Decimal = Decimal("0")
+    # None means "no wall found" (the strike-selection logic in
+    # CalculateWallsUseCase/FakeWallCalculator found no valid candidate on
+    # that side -- e.g. every strike in range nets the same sign, so
+    # there's no negative-net-gamma strike to call a put wall) -- a real,
+    # distinct outcome from "the wall is at strike 0", which the old
+    # non-nullable Decimal="0" default silently conflated. Confirmed
+    # live, 2026-09-25: SPX's own Tactical (0-2 DTE) window is narrow
+    # enough to hit this for real -- put_wall came back a fake $0,
+    # dragging the price chart's own autoscale down to include that
+    # "level" and visually collapsing every real level into a sliver at
+    # the top of the chart. Same fix pattern gamma_flip already
+    # established above; ScreenerPresetGammaSummary/frontend's screener
+    # types were already declared nullable for these two fields before
+    # this fix landed (defensive future-proofing, never actually
+    # exercised until now).
+    call_wall: Decimal | None = None
+    put_wall: Decimal | None = None
     max_pain: Decimal = Decimal("0")
     net_gamma: Decimal = Decimal("0")
     dealer_gamma_notional: Decimal = Decimal("0")
@@ -394,8 +409,6 @@ class GammaAggregate:
             "positive_gamma",
             "negative_gamma",
             "total_gamma",
-            "call_wall",
-            "put_wall",
             "max_pain",
             "net_gamma",
             "dealer_gamma_notional",
@@ -407,10 +420,12 @@ class GammaAggregate:
             "peak_gamma_value",
         ):
             _ensure_finite_decimal(getattr(self, name), InvalidOptionError, name)
-        # gamma_flip is the one field here allowed to be None -- see its
-        # own field comment above.
-        if self.gamma_flip is not None:
-            _ensure_finite_decimal(self.gamma_flip, InvalidOptionError, "gamma_flip")
+        # gamma_flip/call_wall/put_wall are the fields here allowed to be
+        # None -- see each one's own field comment above.
+        for nullable_name in ("gamma_flip", "call_wall", "put_wall"):
+            value = getattr(self, nullable_name)
+            if value is not None:
+                _ensure_finite_decimal(value, InvalidOptionError, nullable_name)
 
     @property
     def strikes(self) -> tuple[GammaAggregateItem, ...]:

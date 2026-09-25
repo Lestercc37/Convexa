@@ -20,18 +20,25 @@ function level(value: number) {
 }
 
 export function GravityMap({ gamma, market }: GravityMapProps) {
-  const range = gamma.call_wall - gamma.put_wall;
-  // gamma_flip is a legitimate null (no sign crossing found in the
-  // current window, not an error) -- level()'s .toLocaleString() call
-  // throws on null, so every branch below must skip rendering that
-  // marker entirely rather than calling level()/position() on it. This
-  // is containment only, not the final "no crossing" design.
+  // call_wall/put_wall are a legitimate null too now (no valid wall
+  // candidate found on that side -- see GammaAggregate.call_wall's own
+  // comment on the backend), same containment reasoning as gamma_flip
+  // just below: every branch here must skip rendering that marker
+  // entirely rather than calling level()/position() on it.
+  const hasWallRange = gamma.call_wall !== null && gamma.put_wall !== null;
+  const range = hasWallRange ? gamma.call_wall! - gamma.put_wall! : null;
   const mergeLevels =
     gamma.gamma_flip !== null &&
+    range !== null &&
     range > 0 &&
     Math.abs(gamma.gamma_flip - gamma.absolute_gamma_strike) <
       LEVEL_MERGE_THRESHOLD * range;
-  const position = (value: number) => `${percentage(value, gamma.put_wall, gamma.call_wall)}%`;
+  const position = (value: number) =>
+    hasWallRange
+      ? `${percentage(value, gamma.put_wall!, gamma.call_wall!)}%`
+      : // No wall range to position against -- centers every other
+        // marker instead of crashing on a null bound.
+        "50%";
 
   return (
     <section className="panel gravity-panel" aria-labelledby="gravity-title">
@@ -44,16 +51,20 @@ export function GravityMap({ gamma, market }: GravityMapProps) {
       </div>
       <div className="gravity-map" aria-label={`Mapa de niveles para ${gamma.symbol}`}>
         <div className="gravity-track" />
-        <div className="marker wall-marker put" style={{ left: "0%" }}>
-          <span className="marker-line" />
-          <span className="marker-label">Put Wall</span>
-          <span className="marker-value">{level(gamma.put_wall)}</span>
-        </div>
-        <div className="marker wall-marker call" style={{ left: "100%" }}>
-          <span className="marker-line" />
-          <span className="marker-label">Call Wall</span>
-          <span className="marker-value">{level(gamma.call_wall)}</span>
-        </div>
+        {gamma.put_wall !== null && (
+          <div className="marker wall-marker put" style={{ left: "0%" }}>
+            <span className="marker-line" />
+            <span className="marker-label">Put Wall</span>
+            <span className="marker-value">{level(gamma.put_wall)}</span>
+          </div>
+        )}
+        {gamma.call_wall !== null && (
+          <div className="marker wall-marker call" style={{ left: "100%" }}>
+            <span className="marker-line" />
+            <span className="marker-label">Call Wall</span>
+            <span className="marker-value">{level(gamma.call_wall)}</span>
+          </div>
+        )}
 
         {mergeLevels && gamma.gamma_flip !== null ? (
           <div className="marker" style={{ left: position(gamma.gamma_flip) }}>

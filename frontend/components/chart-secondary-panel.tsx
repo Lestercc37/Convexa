@@ -83,8 +83,6 @@ function gexLevels(gamma: GammaResponse): GexLevel[] {
   // comment) -- same gating as price-chart.tsx's own gammaLevels().
   if (!gamma.has_data) return [];
   const levels: GexLevel[] = [
-    { key: "call-wall", label: "Call Wall", value: gamma.call_wall, className: "call-wall" },
-    { key: "put-wall", label: "Put Wall", value: gamma.put_wall, className: "put-wall" },
     {
       key: "abs-gamma",
       label: "Abs. Gamma / Magnet",
@@ -93,10 +91,17 @@ function gexLevels(gamma: GammaResponse): GexLevel[] {
     },
     { key: "max-pain", label: "Max Pain", value: gamma.max_pain, className: "max-pain" },
   ];
-  // See GammaResponse.gamma_flip in lib/types.ts -- genuinely nullable
-  // when no sign crossing was found in range; hidden rather than
-  // fabricated, same coordinated decision as price-chart.tsx and
-  // pre-session-panel.tsx.
+  // call_wall/put_wall/gamma_flip are all genuinely nullable -- null
+  // means "no valid candidate found" (walls) or "no sign crossing found
+  // in range" (flip), a real, distinct outcome from a value of 0. Hidden
+  // rather than fabricated, same coordinated decision as
+  // price-chart.tsx's own gammaLevels() and pre-session-panel.tsx.
+  if (gamma.call_wall !== null) {
+    levels.push({ key: "call-wall", label: "Call Wall", value: gamma.call_wall, className: "call-wall" });
+  }
+  if (gamma.put_wall !== null) {
+    levels.push({ key: "put-wall", label: "Put Wall", value: gamma.put_wall, className: "put-wall" });
+  }
   if (gamma.gamma_flip !== null) {
     levels.push({ key: "gamma-flip", label: "Gamma Flip", value: gamma.gamma_flip, className: "gamma-flip" });
   }

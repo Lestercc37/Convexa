@@ -109,11 +109,14 @@ def test_calculate_gamma_exposure_orchestrates_and_persists() -> None:
     # net_gamma is 0 at every strike, meaning there's genuinely no
     # directional dealer positioning to build a wall from. FakeWallCalculator
     # correctly returns no wall in that case (see test_walls_engine.py for
-    # the real selection logic); this smoke test only cares that the
-    # orchestrator wires walls through to persistence, not what value they
-    # land on with this deliberately symmetric fixture.
-    assert result.call_wall == 0
-    assert result.put_wall == 0
+    # the real selection logic), and call_wall/put_wall are now properly
+    # nullable (2026-09-25 fix) to represent exactly this -- None, not a
+    # fake $0 that used to be indistinguishable from a real wall at strike
+    # 0. This smoke test only cares that the orchestrator wires walls
+    # through to persistence, not what value they land on with this
+    # deliberately symmetric fixture.
+    assert result.call_wall is None
+    assert result.put_wall is None
     assert result.max_pain > 0
 
 
