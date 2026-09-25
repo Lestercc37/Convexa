@@ -16,6 +16,13 @@ export const es: Translations = {
     liveButton: "En vivo",
     preSessionButton: "Pre-Sesión",
     scannerButton: "Escáner Rápido",
+    gammaViewGroupAriaLabel: "Vista Gamma",
+    structuralButton: "Estructural",
+    tacticalButton: "Táctico",
+    structuralOnlyBadge: "(Estructural)",
+    noTacticalDataLabel: "Sin contratos 0-2 DTE hoy para este símbolo",
+    structuralAsOfLabel: (minutesAgo) =>
+      minutesAgo <= 0 ? "Estructural: recién actualizado" : `Estructural: hace ${minutesAgo}m`,
     exposureGroupAriaLabel: "Charm y Vanna Exposure",
     aggregatedGreeksEyebrow: "Griegas agregadas",
     loadingRegime: "Cargando régimen y niveles…",

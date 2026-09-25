@@ -9,6 +9,8 @@ const gamma: GammaResponse = {
   schema_version: 1,
   symbol: "SPY",
   as_of: "2026-08-03T14:30:00Z",
+  view: "structural",
+  has_data: true,
   gamma_flip: 548.5,
   call_wall: 555,
   put_wall: 540,

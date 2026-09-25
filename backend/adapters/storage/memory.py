@@ -113,16 +113,22 @@ class InMemoryStorage:
     def save_gamma_aggregate(self, gamma: GammaAggregate) -> None:
         self._gamma.setdefault(gamma.symbol, []).append(gamma)
 
-    def get_latest_gamma_aggregate(self, underlying: str) -> GammaAggregate | None:
+    def get_latest_gamma_aggregate(
+        self, underlying: str, view: str = "structural"
+    ) -> GammaAggregate | None:
         return max(
-            self._gamma.get(underlying.upper(), []), key=lambda item: item.as_of, default=None
+            (item for item in self._gamma.get(underlying.upper(), []) if item.view == view),
+            key=lambda item: item.as_of,
+            default=None,
         )
 
     def get_gamma_history(
-        self, underlying: str, start: datetime, end: datetime
+        self, underlying: str, start: datetime, end: datetime, view: str = "structural"
     ) -> list[GammaAggregate]:
         return [
-            item for item in self._gamma.get(underlying.upper(), []) if start <= item.as_of <= end
+            item
+            for item in self._gamma.get(underlying.upper(), [])
+            if start <= item.as_of <= end and item.view == view
         ]
 
     def save_market_price(self, price: MarketPrice) -> None:

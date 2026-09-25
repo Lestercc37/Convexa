@@ -3,6 +3,13 @@ import type { DerivedMetrics } from "@/lib/types";
 
 type DerivedMetricsBarProps = {
   metrics: DerivedMetrics;
+  // True when the active gamma view is Tactical -- these metrics depend
+  // on historical comparisons (DailyGammaReference) that only exist for
+  // the Structural window, so they stay Structural regardless of the
+  // toggle. A visible badge here is the honest way to show that,
+  // instead of silently looking unchanged next to every other panel
+  // that DOES follow the toggle.
+  showStructuralOnlyBadge?: boolean;
 };
 
 type MetricCardProps = {
@@ -47,7 +54,7 @@ function MetricCard({
   );
 }
 
-export function DerivedMetricsBar({ metrics }: DerivedMetricsBarProps) {
+export function DerivedMetricsBar({ metrics, showStructuralOnlyBadge }: DerivedMetricsBarProps) {
   const { t } = useLanguage();
   const dealerImpact = metrics.dealer_impact_score;
   const signalAlignment = metrics.signal_alignment_score;
@@ -58,6 +65,9 @@ export function DerivedMetricsBar({ metrics }: DerivedMetricsBarProps) {
 
   return (
     <section className="panel metrics-bar" aria-label={t.derivedMetricsBar.ariaLabel}>
+      {showStructuralOnlyBadge && (
+        <span className="metrics-bar-structural-badge">{t.dashboard.structuralOnlyBadge}</span>
+      )}
       <MetricCard
         name="Dealer Impact Score"
         value={formatNumber(dealerImpact.value)}

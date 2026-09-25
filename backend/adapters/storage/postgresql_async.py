@@ -76,12 +76,14 @@ class AsyncPostgreSQLStorage:
         # whole process lifetime, not just per-call.
         self._underlying_id_cache: dict[str, int] = {}
 
-    async def get_latest_gamma_aggregate(self, underlying: str) -> GammaAggregate | None:
+    async def get_latest_gamma_aggregate(
+        self, underlying: str, view: str = "structural"
+    ) -> GammaAggregate | None:
         async with self.session_factory() as session:
             result = await session.execute(
                 text(
                     """
-                    SELECT g.time, g.underlying_id, u.symbol, g.gamma_flip, g.call_wall,
+                    SELECT g.time, g.underlying_id, u.symbol, g.view, g.gamma_flip, g.call_wall,
                            g.put_wall, g.max_pain, g.net_gamma,
                            g.dealer_gamma_notional, g.vega_exposure,
                            g.theta_exposure, g.charm_exposure,
@@ -91,20 +93,23 @@ class AsyncPostgreSQLStorage:
                            g.peak_gamma_value
                     FROM gamma_aggregates AS g
                     JOIN underlyings AS u ON u.id = g.underlying_id
-                    WHERE u.symbol = :symbol
+                    WHERE u.symbol = :symbol AND g.view = :view
                     ORDER BY g.time DESC
                     LIMIT 1
                     """
                 ),
-                {"symbol": underlying.upper()},
+                {"symbol": underlying.upper(), "view": view},
             )
             row = result.mappings().one_or_none()
             if row is None:
                 return None
-            items = await self._gamma_aggregate_items(session, row["underlying_id"], row["time"])
+            items = await self._gamma_aggregate_items(
+                session, row["underlying_id"], row["time"], view
+            )
         return GammaAggregate(
             symbol=str(row["symbol"]),
             as_of=row["time"],
+            view=str(row["view"]),
             items=items,
             gamma_flip=(Decimal(row["gamma_flip"]) if row["gamma_flip"] is not None else None),
             call_wall=Decimal(row["call_wall"]),
@@ -125,7 +130,11 @@ class AsyncPostgreSQLStorage:
         )
 
     async def _gamma_aggregate_items(
-        self, session: AsyncSession, underlying_id: int, time: datetime
+        self,
+        session: AsyncSession,
+        underlying_id: int,
+        time: datetime,
+        view: str = "structural",
     ) -> tuple[GammaAggregateItem, ...]:
         rows = (
             await session.execute(
@@ -135,11 +144,11 @@ class AsyncPostgreSQLStorage:
                            put_gamma_exposure, net_gamma, contract_count,
                            absolute_gamma, open_interest, volume
                     FROM gamma_aggregate_items
-                    WHERE underlying_id = :underlying_id AND time = :time
+                    WHERE underlying_id = :underlying_id AND time = :time AND view = :view
                     ORDER BY strike
                     """
                 ),
-                {"underlying_id": underlying_id, "time": time},
+                {"underlying_id": underlying_id, "time": time, "view": view},
             )
         ).mappings()
         return tuple(

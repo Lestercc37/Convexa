@@ -214,6 +214,8 @@ button, select { font: inherit; }
 .regime-badge { padding: 20px; display: flex; flex-direction: column; justify-content: space-between; gap: 14px; }
 .regime-badge.long { border-color: rgba(0, 220, 90, 0.4); background: linear-gradient(145deg, var(--calm-soft), var(--tv-panel)); }
 .regime-badge.short { border-color: rgba(250, 0, 10, 0.4); background: linear-gradient(145deg, var(--risk-soft), var(--tv-panel)); }
+.regime-badge.no-data { color: var(--tv-text-dim); }
+.regime-badge-compact.no-data { color: var(--tv-text-dim); }
 .regime-label { margin: 0; font-size: 1.6rem; line-height: 1; letter-spacing: -0.02em; }
 .long .regime-label { color: var(--calm); }
 .short .regime-label { color: var(--risk); }
@@ -441,6 +443,21 @@ button, select { font: inherit; }
 .tv-view-toggle { display: flex; align-items: center; gap: 2px; }
 .tv-view-toggle button { border: 0; border-radius: 5px; background: transparent; color: var(--tv-text-dim); cursor: pointer; font-size: 0.74rem; font-weight: 700; padding: 5px 9px; }
 .tv-view-toggle button[aria-pressed="true"] { background: var(--tv-panel-raised); color: var(--tv-text); }
+
+/* Structural vs. Tactical (0-2 DTE) gamma view -- same "global mode"
+   altitude as .tv-view-toggle above (changes what `gamma` is across
+   every consuming panel at once), so it gets the identical styling. */
+.tv-gamma-view-toggle { display: flex; align-items: center; gap: 2px; }
+.tv-gamma-view-toggle button { border: 0; border-radius: 5px; background: transparent; color: var(--tv-text-dim); cursor: pointer; font-size: 0.74rem; font-weight: 700; padding: 5px 9px; }
+.tv-gamma-view-toggle button[aria-pressed="true"] { background: var(--tv-panel-raised); color: var(--tv-text); }
+.tv-structural-as-of { margin-left: 6px; color: var(--tv-text-dim); font-size: 0.68rem; white-space: nowrap; }
+
+.no-tactical-data-notice { margin: 2px 0 0; color: var(--tv-text-dim); font-size: 0.72rem; }
+
+/* Derived metrics stay Structural-only regardless of the toggle above
+   (see DerivedMetricsBar's own comment) -- a small badge makes that
+   explicit instead of silently looking unchanged. */
+.metrics-bar-structural-badge { display: inline-block; margin-bottom: 6px; padding: 2px 7px; border-radius: 5px; background: var(--tv-panel-raised); color: var(--tv-text-dim); font-size: 0.65rem; font-weight: 700; letter-spacing: 0.02em; }
 
 /* Reintroduced (section 25) — removed in section 23 once both of its
    former occupants (the Whale Alerts gear, the Regime Badge) moved out

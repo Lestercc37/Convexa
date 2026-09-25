@@ -430,7 +430,7 @@ class PostgreSQLStorage:
                 text(
                     """
                     INSERT INTO gamma_aggregates (
-                        time, underlying_id, gamma_flip, call_wall, put_wall,
+                        time, underlying_id, view, gamma_flip, call_wall, put_wall,
                         max_pain, net_gamma, dealer_gamma_notional,
                         vega_exposure, theta_exposure, charm_exposure,
                         vanna_exposure, delta_exposure,
@@ -439,7 +439,7 @@ class PostgreSQLStorage:
                         peak_gamma_value
                     )
                     VALUES (
-                        :time, :underlying_id, :gamma_flip, :call_wall, :put_wall,
+                        :time, :underlying_id, :view, :gamma_flip, :call_wall, :put_wall,
                         :max_pain, :net_gamma, :dealer_gamma_notional,
                         :vega_exposure, :theta_exposure, :charm_exposure,
                         :vanna_exposure, :delta_exposure,
@@ -447,7 +447,7 @@ class PostgreSQLStorage:
                         :total_market_gamma, :positive_gamma, :negative_gamma,
                         :peak_gamma_value
                     )
-                    ON CONFLICT (underlying_id, time) DO UPDATE SET
+                    ON CONFLICT (underlying_id, time, view) DO UPDATE SET
                         gamma_flip = EXCLUDED.gamma_flip,
                         call_wall = EXCLUDED.call_wall,
                         put_wall = EXCLUDED.put_wall,
@@ -469,6 +469,7 @@ class PostgreSQLStorage:
                 {
                     "time": gamma.as_of,
                     "underlying_id": underlying_id,
+                    "view": gamma.view,
                     "gamma_flip": gamma.gamma_flip,
                     "call_wall": gamma.call_wall,
                     "put_wall": gamma.put_wall,
@@ -492,16 +493,16 @@ class PostgreSQLStorage:
                     text(
                         """
                         INSERT INTO gamma_aggregate_items (
-                            underlying_id, time, strike, total_gamma_exposure,
+                            underlying_id, time, view, strike, total_gamma_exposure,
                             call_gamma_exposure, put_gamma_exposure, net_gamma,
                             contract_count, absolute_gamma, open_interest, volume
                         )
                         VALUES (
-                            :underlying_id, :time, :strike, :total_gamma_exposure,
+                            :underlying_id, :time, :view, :strike, :total_gamma_exposure,
                             :call_gamma_exposure, :put_gamma_exposure, :net_gamma,
                             :contract_count, :absolute_gamma, :open_interest, :volume
                         )
-                        ON CONFLICT (underlying_id, time, strike) DO UPDATE SET
+                        ON CONFLICT (underlying_id, time, view, strike) DO UPDATE SET
                             total_gamma_exposure = EXCLUDED.total_gamma_exposure,
                             call_gamma_exposure = EXCLUDED.call_gamma_exposure,
                             put_gamma_exposure = EXCLUDED.put_gamma_exposure,
@@ -515,6 +516,7 @@ class PostgreSQLStorage:
                     {
                         "underlying_id": underlying_id,
                         "time": gamma.as_of,
+                        "view": gamma.view,
                         "strike": item.strike,
                         "total_gamma_exposure": item.total_gamma_exposure,
                         "call_gamma_exposure": item.call_gamma_exposure,
@@ -527,13 +529,15 @@ class PostgreSQLStorage:
                     },
                 )
 
-    def get_latest_gamma_aggregate(self, underlying: str) -> GammaAggregate | None:
+    def get_latest_gamma_aggregate(
+        self, underlying: str, view: str = "structural"
+    ) -> GammaAggregate | None:
         with self.session_factory() as session:
             row = (
                 session.execute(
                     text(
                         """
-                    SELECT g.time, g.underlying_id, u.symbol, g.gamma_flip, g.call_wall,
+                    SELECT g.time, g.underlying_id, u.symbol, g.view, g.gamma_flip, g.call_wall,
                            g.put_wall, g.max_pain, g.net_gamma,
                            g.dealer_gamma_notional, g.vega_exposure,
                            g.theta_exposure, g.charm_exposure,
@@ -543,23 +547,23 @@ class PostgreSQLStorage:
                            g.peak_gamma_value
                     FROM gamma_aggregates AS g
                     JOIN underlyings AS u ON u.id = g.underlying_id
-                    WHERE u.symbol = :symbol
+                    WHERE u.symbol = :symbol AND g.view = :view
                     ORDER BY g.time DESC
                     LIMIT 1
                     """
                     ),
-                    {"symbol": underlying.upper()},
+                    {"symbol": underlying.upper(), "view": view},
                 )
                 .mappings()
                 .one_or_none()
             )
             if row is None:
                 return None
-            items = self._gamma_aggregate_items(session, row["underlying_id"], row["time"])
+            items = self._gamma_aggregate_items(session, row["underlying_id"], row["time"], view)
         return replace(self._gamma_from_row(row), items=items)
 
     def _gamma_aggregate_items(
-        self, session: Session, underlying_id: int, time: datetime
+        self, session: Session, underlying_id: int, time: datetime, view: str = "structural"
     ) -> tuple[GammaAggregateItem, ...]:
         rows = session.execute(
             text(
@@ -568,11 +572,11 @@ class PostgreSQLStorage:
                        put_gamma_exposure, net_gamma, contract_count,
                        absolute_gamma, open_interest, volume
                 FROM gamma_aggregate_items
-                WHERE underlying_id = :underlying_id AND time = :time
+                WHERE underlying_id = :underlying_id AND time = :time AND view = :view
                 ORDER BY strike
                 """
             ),
-            {"underlying_id": underlying_id, "time": time},
+            {"underlying_id": underlying_id, "time": time, "view": view},
         ).mappings()
         return tuple(
             GammaAggregateItem(
@@ -590,13 +594,13 @@ class PostgreSQLStorage:
         )
 
     def get_gamma_history(
-        self, underlying: str, start: datetime, end: datetime
+        self, underlying: str, start: datetime, end: datetime, view: str = "structural"
     ) -> list[GammaAggregate]:
         with self.session_factory() as session:
             rows = session.execute(
                 text(
                     """
-                    SELECT g.time, u.symbol, g.gamma_flip, g.call_wall,
+                    SELECT g.time, u.symbol, g.view, g.gamma_flip, g.call_wall,
                            g.put_wall, g.max_pain, g.net_gamma,
                            g.dealer_gamma_notional, g.vega_exposure,
                            g.theta_exposure, g.charm_exposure,
@@ -606,12 +610,12 @@ class PostgreSQLStorage:
                            g.peak_gamma_value
                     FROM gamma_aggregates AS g
                     JOIN underlyings AS u ON u.id = g.underlying_id
-                    WHERE u.symbol = :symbol
+                    WHERE u.symbol = :symbol AND g.view = :view
                       AND g.time BETWEEN :start AND :end
                     ORDER BY g.time
                     """
                 ),
-                {"symbol": underlying.upper(), "start": start, "end": end},
+                {"symbol": underlying.upper(), "start": start, "end": end, "view": view},
             ).mappings()
             return [self._gamma_from_row(row) for row in rows]
 
@@ -1185,6 +1189,7 @@ class PostgreSQLStorage:
         return GammaAggregate(
             symbol=str(mapping["symbol"]),
             as_of=mapping["time"],
+            view=str(mapping["view"]),
             # NULL means "no sign crossing found" -- a real, distinct
             # outcome from a flip found at strike 0 (see GammaAggregate's
             # own field comment). Every other field here stays required.

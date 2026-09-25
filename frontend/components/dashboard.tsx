@@ -19,7 +19,7 @@ import {
   type MarketPriceStreamStatus,
 } from "@/lib/market-price-stream";
 import { POLLING_INTERVAL_MS } from "@/lib/polling";
-import type { GammaResponse, MarketResponse, Underlying } from "@/lib/types";
+import type { GammaResponse, GammaView, MarketResponse, Underlying } from "@/lib/types";
 import { AlertsPanel } from "./alerts-panel";
 import { ChartSecondaryPanel } from "./chart-secondary-panel";
 import { ClosingDynamicsPanel } from "./closing-dynamics-panel";
@@ -123,6 +123,9 @@ export function Dashboard() {
   const [underlyings, setUnderlyings] = useState<Underlying[]>([]);
   const [symbol, setSymbol] = useState("");
   const [view, setView] = useState<"live" | "pre-session" | "scanner">("live");
+  // Structural vs. Tactical (0-2 DTE) -- named gammaView, not view, since
+  // that name is already the Live/Pre-Session/Scanner tab selector above.
+  const [gammaView, setGammaView] = useState<GammaView>("structural");
   const [gamma, setGamma] = useState<GammaResponse | null>(null);
   const [market, setMarket] = useState<MarketResponse | null>(null);
   const [pricePoints, setPricePoints] = useState<PricePoint[]>([]);
@@ -143,6 +146,18 @@ export function Dashboard() {
     [candles, timeframe],
   );
   const latestCandle = displayedCandles.at(-1) ?? null;
+  // Structural now refreshes on its own slower cadence on the backend
+  // (STRUCTURAL_REFRESH_INTERVAL, gamma.py) -- a scalper/day trader's
+  // own request (2026-09-25): Tactical is the working set and needs
+  // every cycle's freshness, Structural is background macro context
+  // that doesn't. This surfaces gamma.as_of next to the toggle so an
+  // unmoving Call Wall/Put Wall under Structural reads as "intentionally
+  // slower," not "stuck." Only shown for Structural -- Tactical is
+  // always as fresh as the latest poll, same as every other panel.
+  const structuralMinutesAgo =
+    gamma && gammaView === "structural"
+      ? Math.max(0, Math.floor((Date.now() - Date.parse(gamma.as_of)) / 60_000))
+      : null;
 
   useEffect(() => {
     const controller = new AbortController();
@@ -163,7 +178,7 @@ export function Dashboard() {
     if (!activeSymbol) return;
     try {
       const [gammaData, marketData] = await Promise.all([
-        getGamma(activeSymbol, signal),
+        getGamma(activeSymbol, gammaView, signal),
         getMarket(activeSymbol, signal),
       ]);
       setGamma(gammaData);
@@ -218,7 +233,7 @@ export function Dashboard() {
         setError(reason);
       }
     }
-  }, []);
+  }, [gammaView]);
 
   useEffect(() => {
     if (!symbol) return;
@@ -405,6 +420,37 @@ export function Dashboard() {
             {t.dashboard.scannerButton}
           </button>
         </div>
+        <div
+          className="tv-gamma-view-toggle"
+          role="group"
+          aria-label={t.dashboard.gammaViewGroupAriaLabel}
+        >
+          <button
+            type="button"
+            aria-pressed={gammaView === "structural"}
+            onClick={() => {
+              setGamma(null);
+              setGammaView("structural");
+            }}
+          >
+            {t.dashboard.structuralButton}
+          </button>
+          <button
+            type="button"
+            aria-pressed={gammaView === "tactical"}
+            onClick={() => {
+              setGamma(null);
+              setGammaView("tactical");
+            }}
+          >
+            {t.dashboard.tacticalButton}
+          </button>
+        </div>
+        {structuralMinutesAgo !== null && (
+          <span className="tv-structural-as-of" role="status">
+            {t.dashboard.structuralAsOfLabel(structuralMinutesAgo)}
+          </span>
+        )}
         <div className="tv-topbar-right">
           <button
             type="button"
@@ -441,6 +487,7 @@ export function Dashboard() {
                     symbol={symbol}
                     candles={displayedCandles}
                     gamma={gamma}
+                    gammaView={gammaView}
                     vwapPoints={vwapPoints}
                     vwapNotApplicable={vwapNotApplicable}
                     vwapProxySymbol={vwapProxySymbol}
@@ -454,10 +501,16 @@ export function Dashboard() {
                     symbol={symbol}
                     spotPrice={market.price}
                     gamma={gamma}
+                    gammaView={gammaView}
                   />
                 </>
               ) : view === "pre-session" ? (
-                <PreSessionPanel key={`pre-session-${symbol}`} symbol={symbol} gamma={gamma} />
+                <PreSessionPanel
+                  key={`pre-session-${symbol}-${gammaView}`}
+                  symbol={symbol}
+                  gamma={gamma}
+                  gammaView={gammaView}
+                />
               ) : (
                 <QuickScreener />
               )}
@@ -465,7 +518,10 @@ export function Dashboard() {
           );
           const metricsContent = (
             <aside className="tv-sidebar">
-              <DerivedMetricsBar metrics={gamma.derived_metrics} />
+              <DerivedMetricsBar
+                metrics={gamma.derived_metrics}
+                showStructuralOnlyBadge={gammaView === "tactical"}
+              />
               <section
                 className="panel exposure-panel"
                 aria-label={t.dashboard.exposureGroupAriaLabel}

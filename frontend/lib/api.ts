@@ -3,6 +3,7 @@ import type {
   GammaAggregateResponse,
   GammaHistoryResponse,
   GammaResponse,
+  GammaView,
   MarketPriceHistoryResponse,
   MarketResponse,
   OptionChainResponse,
@@ -57,20 +58,23 @@ export function getUnderlyings(signal?: AbortSignal) {
   return getJson<UnderlyingsResponse>("/underlyings", signal);
 }
 
-export function getGamma(symbol: string, signal?: AbortSignal) {
-  return getJson<GammaResponse>(`/gamma/${encodeURIComponent(symbol)}`, signal);
+export function getGamma(symbol: string, view?: GammaView, signal?: AbortSignal) {
+  const query = view ? `?${new URLSearchParams({ view }).toString()}` : "";
+  return getJson<GammaResponse>(`/gamma/${encodeURIComponent(symbol)}${query}`, signal);
 }
 
-export function getGammaHistory(symbol: string, signal?: AbortSignal) {
+export function getGammaHistory(symbol: string, view?: GammaView, signal?: AbortSignal) {
+  const query = view ? `?${new URLSearchParams({ view }).toString()}` : "";
   return getJson<GammaHistoryResponse>(
-    `/gamma/${encodeURIComponent(symbol)}/history`,
+    `/gamma/${encodeURIComponent(symbol)}/history${query}`,
     signal,
   );
 }
 
-export function getGammaProfile(symbol: string, signal?: AbortSignal) {
+export function getGammaProfile(symbol: string, view?: GammaView, signal?: AbortSignal) {
+  const query = view ? `?${new URLSearchParams({ view }).toString()}` : "";
   return getJson<GammaAggregateResponse>(
-    `/gamma/${encodeURIComponent(symbol)}/profile`,
+    `/gamma/${encodeURIComponent(symbol)}/profile${query}`,
     signal,
   );
 }
