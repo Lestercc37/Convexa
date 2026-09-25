@@ -1,7 +1,7 @@
 "use client";
 
 import Image from "next/image";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Group, Panel, Separator, useDefaultLayout } from "react-resizable-panels";
 import { getGamma, getMarket, getMarketPriceHistory, getUnderlyings, getVwapHistory } from "@/lib/api";
 import {
@@ -174,11 +174,22 @@ export function Dashboard() {
     return () => controller.abort();
   }, []);
 
-  const refresh = useCallback(async (activeSymbol: string, signal?: AbortSignal) => {
+  // `view` is an explicit parameter, not read off the `gammaView` state
+  // closure -- this is what lets refresh() stay referentially stable
+  // ([] deps, matching this callback's original shape pre-dating the
+  // gammaView feature) instead of getting a new identity every time
+  // gammaView changes. A new identity here would have forced the
+  // seed-then-poll effect below (keyed on `[refresh, symbol]`) to tear
+  // down and restart from scratch on every view toggle -- re-seeding
+  // the whole day's price history AND VWAP history, not just re-fetching
+  // gamma, which is what actually made toggling the view feel like a
+  // full symbol switch (confirmed live, 2026-09-25, right after this
+  // feature shipped).
+  const refresh = useCallback(async (activeSymbol: string, view: GammaView, signal?: AbortSignal) => {
     if (!activeSymbol) return;
     try {
       const [gammaData, marketData] = await Promise.all([
-        getGamma(activeSymbol, gammaView, signal),
+        getGamma(activeSymbol, view, signal),
         getMarket(activeSymbol, signal),
       ]);
       setGamma(gammaData);
@@ -233,6 +244,17 @@ export function Dashboard() {
         setError(reason);
       }
     }
+  }, []);
+
+  // Lets the poll/interval below always read the *current* gammaView at
+  // call time without needing it in their own dependency arrays (which
+  // would re-trigger the full reseed effect on every toggle -- see
+  // refresh's own comment above). Deliberately a ref, not the gammaView
+  // state itself: this file never reads gammaViewRef.current during
+  // render, only inside the async callbacks below.
+  const gammaViewRef = useRef(gammaView);
+  useEffect(() => {
+    gammaViewRef.current = gammaView;
   }, [gammaView]);
 
   useEffect(() => {
@@ -278,8 +300,11 @@ export function Dashboard() {
         }
       }
       if (controller.signal.aborted) return;
-      void refresh(symbol, controller.signal);
-      interval = window.setInterval(() => void refresh(symbol), POLLING_INTERVAL_MS);
+      void refresh(symbol, gammaViewRef.current, controller.signal);
+      interval = window.setInterval(
+        () => void refresh(symbol, gammaViewRef.current),
+        POLLING_INTERVAL_MS,
+      );
     };
     void seedThenPoll();
 
@@ -431,6 +456,13 @@ export function Dashboard() {
             onClick={() => {
               setGamma(null);
               setGammaView("structural");
+              // Targeted, immediate re-fetch -- not a symbol switch, so
+              // it deliberately does NOT touch pricePoints/vwapPoints or
+              // re-seed their own history the way an actual symbol
+              // change does (see the seed-then-poll effect above). This
+              // is what makes toggling the view fast instead of feeling
+              // like a full symbol reload.
+              void refresh(symbol, "structural");
             }}
           >
             {t.dashboard.structuralButton}
@@ -441,6 +473,7 @@ export function Dashboard() {
             onClick={() => {
               setGamma(null);
               setGammaView("tactical");
+              void refresh(symbol, "tactical");
             }}
           >
             {t.dashboard.tacticalButton}

@@ -70,8 +70,8 @@ class MarketSnapshotResponse(BaseModel):
     price: Number = Field(examples=[552.25])
     volume: int = Field(examples=[1250000])
     gamma_flip: Number | None = Field(default=None, examples=[548.5])
-    call_wall: Number = Field(examples=[555])
-    put_wall: Number = Field(examples=[540])
+    call_wall: Number | None = Field(default=None, examples=[555])
+    put_wall: Number | None = Field(default=None, examples=[540])
     absolute_gamma_strike: Number = Field(examples=[550])
     dealer_mode: Literal["long_gamma", "short_gamma"]
     dealer_mode_source: Literal["agree", "price_vs_flip"]
@@ -300,8 +300,8 @@ class GammaSummaryResponse(BaseModel):
     # breakdown can detect the empty case.
     has_data: bool = Field(examples=[True])
     gamma_flip: Number | None = Field(default=None, examples=[548.5])
-    call_wall: Number = Field(examples=[555])
-    put_wall: Number = Field(examples=[540])
+    call_wall: Number | None = Field(default=None, examples=[555])
+    put_wall: Number | None = Field(default=None, examples=[540])
     absolute_gamma_strike: Number = Field(examples=[550])
     max_pain: Number = Field(examples=[550])
     net_gamma: Number = Field(examples=[-1250000])

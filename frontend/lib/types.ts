@@ -150,8 +150,13 @@ export type GammaResponse = {
   // rather than fabricates a value for the null case -- see
   // pre-session-panel.tsx and price-chart.tsx/gravity-map.tsx.
   gamma_flip: number | null;
-  call_wall: number;
-  put_wall: number;
+  // Null means "no valid wall candidate found on that side" (e.g. every
+  // in-range strike nets the same sign) -- a real, distinct outcome from
+  // "the wall is at strike 0". Same coordinated null-handling decision
+  // as gamma_flip above -- see GammaAggregate.call_wall's own comment on
+  // the backend.
+  call_wall: number | null;
+  put_wall: number | null;
   absolute_gamma_strike: number;
   max_pain: number;
   net_gamma: number;
@@ -173,8 +178,8 @@ export type GammaHistoryItem = {
   // See GammaResponse.gamma_flip above -- same field, same coordinated
   // null-handling decision.
   gamma_flip: number | null;
-  call_wall: number;
-  put_wall: number;
+  call_wall: number | null;
+  put_wall: number | null;
   absolute_gamma_strike: number;
   max_pain: number;
   net_gamma: number;

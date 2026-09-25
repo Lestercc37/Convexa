@@ -101,9 +101,21 @@ function gammaLevels(gamma: GammaResponse): GammaLevel[] {
   // own comment; the empty-state message this produces is rendered
   // separately (see the levelMode==="static" effect below).
   if (!gamma.has_data) return [];
-  const range = gamma.call_wall - gamma.put_wall;
+  // call_wall/put_wall are null when CalculateWallsUseCase found no
+  // valid candidate on that side (e.g. every in-range strike nets the
+  // same sign) -- a real, distinct outcome from "the wall is at strike
+  // 0", same coordinated null-handling as gamma_flip. range can only be
+  // computed with both walls present; the merge check below is simply
+  // skipped otherwise (each level still renders on its own, or is
+  // hidden individually if its own price is null -- see the returned
+  // array below).
+  const range =
+    gamma.call_wall !== null && gamma.put_wall !== null
+      ? gamma.call_wall - gamma.put_wall
+      : null;
   const mergeFlipAndAbsolute =
     gamma.gamma_flip !== null &&
+    range !== null &&
     range > 0 &&
     Math.abs(gamma.gamma_flip - gamma.absolute_gamma_strike) <
       LEVEL_MERGE_THRESHOLD * range;

@@ -1190,14 +1190,17 @@ class PostgreSQLStorage:
             symbol=str(mapping["symbol"]),
             as_of=mapping["time"],
             view=str(mapping["view"]),
-            # NULL means "no sign crossing found" -- a real, distinct
-            # outcome from a flip found at strike 0 (see GammaAggregate's
-            # own field comment). Every other field here stays required.
+            # NULL means "no sign crossing found"/"no valid wall
+            # candidate" -- a real, distinct outcome from a value of 0
+            # (see GammaAggregate's own field comments). Every other
+            # field here stays required.
             gamma_flip=(
                 Decimal(mapping["gamma_flip"]) if mapping["gamma_flip"] is not None else None
             ),
-            call_wall=Decimal(mapping["call_wall"]),
-            put_wall=Decimal(mapping["put_wall"]),
+            call_wall=(
+                Decimal(mapping["call_wall"]) if mapping["call_wall"] is not None else None
+            ),
+            put_wall=(Decimal(mapping["put_wall"]) if mapping["put_wall"] is not None else None),
             max_pain=Decimal(mapping["max_pain"]),
             net_gamma=Decimal(mapping["net_gamma"]),
             dealer_gamma_notional=Decimal(mapping["dealer_gamma_notional"]),

@@ -193,8 +193,8 @@ def test_execute_tactical_with_nothing_in_the_0_2_dte_window_is_an_honest_empty_
 
     assert tactical.view == "tactical"
     assert tactical.items == ()
-    assert tactical.call_wall == Decimal("0")
-    assert tactical.put_wall == Decimal("0")
+    assert tactical.call_wall is None
+    assert tactical.put_wall is None
     assert tactical.gamma_flip is None
 
 
