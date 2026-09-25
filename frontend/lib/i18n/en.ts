@@ -21,6 +21,8 @@ export const en: Translations = {
     tacticalButton: "Tactical",
     structuralOnlyBadge: "(Structural)",
     noTacticalDataLabel: "No 0-2 DTE contracts today for this symbol",
+    structuralAsOfLabel: (minutesAgo) =>
+      minutesAgo <= 0 ? "Structural: just now" : `Structural: ${minutesAgo}m ago`,
     exposureGroupAriaLabel: "Charm and Vanna Exposure",
     aggregatedGreeksEyebrow: "Aggregated Greeks",
     loadingRegime: "Loading regime and levels…",

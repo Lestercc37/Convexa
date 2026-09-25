@@ -19,6 +19,7 @@ export type Translations = {
     tacticalButton: string;
     structuralOnlyBadge: string;
     noTacticalDataLabel: string;
+    structuralAsOfLabel: (minutesAgo: number) => string;
     exposureGroupAriaLabel: string;
     aggregatedGreeksEyebrow: string;
     loadingRegime: string;

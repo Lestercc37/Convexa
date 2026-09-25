@@ -196,3 +196,101 @@ def test_execute_tactical_with_nothing_in_the_0_2_dte_window_is_an_honest_empty_
     assert tactical.call_wall == Decimal("0")
     assert tactical.put_wall == Decimal("0")
     assert tactical.gamma_flip is None
+
+
+def test_structural_is_not_rebuilt_before_the_refresh_interval_elapses() -> None:
+    """Added 2026-09-25 per the user's own trading style (a scalper/day
+    trader reads Tactical as their working set, Structural as slower
+    background macro context) -- STRUCTURAL_REFRESH_INTERVAL throttles
+    Structural's own rebuild+persist, Tactical stays on the full
+    scheduler cadence every call."""
+    storage = InMemoryStorage()
+    contracts = (
+        _contract(
+            "SPY260115C00550000", ContractType.CALL, Decimal(550), TODAY_ET,
+            open_interest=100, gamma="0.02",
+        ),
+        _contract(
+            "SPY260115P00550000", ContractType.PUT, Decimal(550), TODAY_ET,
+            open_interest=100, gamma="0.02",
+        ),
+    )
+    storage.save_chain_snapshot(
+        OptionChain(symbol="SPY", as_of=AS_OF, spot_price=SPOT_PRICE, contracts=contracts)
+    )
+    orchestrator = _orchestrator(storage)
+
+    first_structural, first_tactical = orchestrator.execute_both("SPY")
+
+    second_as_of = AS_OF + timedelta(minutes=5)
+    storage.save_chain_snapshot(
+        OptionChain(symbol="SPY", as_of=second_as_of, spot_price=SPOT_PRICE, contracts=contracts)
+    )
+
+    second_structural, second_tactical = orchestrator.execute_both("SPY")
+
+    # Structural is exactly the row from the first call -- not rebuilt.
+    assert second_structural.as_of == first_structural.as_of == AS_OF
+    # Tactical is never throttled -- rebuilt every call.
+    assert second_tactical.as_of == second_as_of
+    assert second_tactical.as_of != first_tactical.as_of
+    # And no second structural row silently landed in storage either.
+    persisted_structural = storage.get_latest_gamma_aggregate("SPY", view="structural")
+    assert persisted_structural is not None
+    assert persisted_structural.as_of == AS_OF
+
+
+def test_structural_is_rebuilt_once_the_refresh_interval_elapses() -> None:
+    storage = InMemoryStorage()
+    contracts = (
+        _contract(
+            "SPY260115C00550000", ContractType.CALL, Decimal(550), TODAY_ET,
+            open_interest=100, gamma="0.02",
+        ),
+        _contract(
+            "SPY260115P00550000", ContractType.PUT, Decimal(550), TODAY_ET,
+            open_interest=100, gamma="0.02",
+        ),
+    )
+    storage.save_chain_snapshot(
+        OptionChain(symbol="SPY", as_of=AS_OF, spot_price=SPOT_PRICE, contracts=contracts)
+    )
+    orchestrator = _orchestrator(storage)
+
+    first_structural, _ = orchestrator.execute_both("SPY")
+
+    later_as_of = AS_OF + timedelta(minutes=16)
+    storage.save_chain_snapshot(
+        OptionChain(symbol="SPY", as_of=later_as_of, spot_price=SPOT_PRICE, contracts=contracts)
+    )
+
+    second_structural, second_tactical = orchestrator.execute_both("SPY")
+
+    assert second_structural.as_of == later_as_of
+    assert second_structural.as_of != first_structural.as_of
+    assert second_tactical.as_of == later_as_of
+
+
+def test_structural_always_builds_fresh_on_the_first_call_for_a_symbol() -> None:
+    # No prior persisted structural row -- existing_structural is None,
+    # must never be mistaken for "fresh enough to skip".
+    storage = InMemoryStorage()
+    contracts = (
+        _contract(
+            "SPY260115C00550000", ContractType.CALL, Decimal(550), TODAY_ET,
+            open_interest=100, gamma="0.02",
+        ),
+        _contract(
+            "SPY260115P00550000", ContractType.PUT, Decimal(550), TODAY_ET,
+            open_interest=100, gamma="0.02",
+        ),
+    )
+    storage.save_chain_snapshot(
+        OptionChain(symbol="SPY", as_of=AS_OF, spot_price=SPOT_PRICE, contracts=contracts)
+    )
+    orchestrator = _orchestrator(storage)
+
+    structural, _ = orchestrator.execute_both("SPY")
+
+    assert structural.as_of == AS_OF
+    assert structural.items != ()

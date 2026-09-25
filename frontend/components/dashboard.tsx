@@ -146,6 +146,18 @@ export function Dashboard() {
     [candles, timeframe],
   );
   const latestCandle = displayedCandles.at(-1) ?? null;
+  // Structural now refreshes on its own slower cadence on the backend
+  // (STRUCTURAL_REFRESH_INTERVAL, gamma.py) -- a scalper/day trader's
+  // own request (2026-09-25): Tactical is the working set and needs
+  // every cycle's freshness, Structural is background macro context
+  // that doesn't. This surfaces gamma.as_of next to the toggle so an
+  // unmoving Call Wall/Put Wall under Structural reads as "intentionally
+  // slower," not "stuck." Only shown for Structural -- Tactical is
+  // always as fresh as the latest poll, same as every other panel.
+  const structuralMinutesAgo =
+    gamma && gammaView === "structural"
+      ? Math.max(0, Math.floor((Date.now() - Date.parse(gamma.as_of)) / 60_000))
+      : null;
 
   useEffect(() => {
     const controller = new AbortController();
@@ -434,6 +446,11 @@ export function Dashboard() {
             {t.dashboard.tacticalButton}
           </button>
         </div>
+        {structuralMinutesAgo !== null && (
+          <span className="tv-structural-as-of" role="status">
+            {t.dashboard.structuralAsOfLabel(structuralMinutesAgo)}
+          </span>
+        )}
         <div className="tv-topbar-right">
           <button
             type="button"
