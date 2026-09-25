@@ -136,6 +136,41 @@ def test_internal_trigger_persists_consolidated_gamma_for_public_get() -> None:
     }
 
 
+def test_gamma_get_view_query_param_routes_to_the_tactical_aggregate() -> None:
+    """MockDataProvider's fixture chain (as_of 2026-01-15, its only
+    expiration 2026-02-20, 36 days out) lists nothing within 0-2 DTE of
+    its own as_of -- the honest-empty Tactical case, live end to end
+    through the real trigger-calculation -> get pipeline. Structural
+    picks up that same expiration fine (its own 36-day gap is still
+    inside the anchor-is-the-nearest-listing rule -- see
+    _filter_to_near_term_expirations' own docstring), so this also
+    proves the two views are actually independent, not the same read
+    twice under a different label."""
+    with TestClient(app) as client:
+        trigger = client.post("/internal/trigger-calculation/spy")
+        structural = client.get("/api/v1/gamma/spy")
+        tactical = client.get("/api/v1/gamma/spy?view=tactical")
+        default = client.get("/api/v1/gamma/spy")
+
+    assert trigger.status_code == 200
+    assert structural.status_code == 200
+    assert tactical.status_code == 200
+
+    assert structural.json()["view"] == "structural"
+    assert structural.json()["has_data"] is True
+
+    assert tactical.json()["view"] == "tactical"
+    assert tactical.json()["has_data"] is False
+    assert tactical.json()["call_wall"] == 0
+    assert tactical.json()["put_wall"] == 0
+    assert tactical.json()["gamma_flip"] is None
+
+    # Omitting the param must still return exactly today's structural
+    # numbers -- no regression for every consumer that predates this
+    # feature and never passes `view`.
+    assert default.json() == structural.json()
+
+
 def test_gamma_profile_get_is_read_only_and_returns_uniform_not_found() -> None:
     with TestClient(app) as client:
         response = client.get("/api/v1/gamma/spy/profile")

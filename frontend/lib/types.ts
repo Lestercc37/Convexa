@@ -122,10 +122,27 @@ export type DerivedMetrics = {
   volatility_regime: VolatilityRegimeMetric;
 };
 
+// Structural: the wider, symbol-tiered near-term window (Call Wall/Put
+// Wall/Gamma Flip/Net GEX/Max Pain -- the macro levels). Tactical: a
+// fixed 0-2 DTE window (today's own expiring flow), computed and
+// persisted as a fully independent aggregate, not a derived reading of
+// the structural one -- see CalculateGammaExposureOrchestrator.execute_both
+// on the backend. A symbol can legitimately have an EMPTY tactical
+// result (items: []) on a day it lists no 0-2 DTE contracts (most
+// individual stocks, most days) -- that's the honest result, not a bug.
+export type GammaView = "structural" | "tactical";
+
 export type GammaResponse = {
   schema_version: number;
   symbol: string;
   as_of: string;
+  view: GammaView;
+  // False only for the honest-empty Tactical case (no 0-2 DTE contracts
+  // listed today for this symbol) -- every other field here still comes
+  // back real/zeroed/null in that case, so this is the only way to tell
+  // "genuinely nothing to show" apart from "a real reading of 0". This
+  // response never carries a strike breakdown to infer it from.
+  has_data: boolean;
   // Genuinely nullable at the API boundary (no sign crossing found in
   // the current window, confirmed live 2026-09-14: GOOGL alone hit this
   // 71.6% of the time in a full-session sample, 0% for every other
@@ -151,6 +168,8 @@ export type GammaHistoryItem = {
   schema_version: number;
   symbol: string;
   as_of: string;
+  view: GammaView;
+  has_data: boolean;
   // See GammaResponse.gamma_flip above -- same field, same coordinated
   // null-handling decision.
   gamma_flip: number | null;
@@ -189,6 +208,8 @@ export type GammaAggregateResponse = {
   schema_version: number;
   symbol: string;
   as_of: string;
+  view: GammaView;
+  has_data: boolean;
   // See GammaResponse.gamma_flip above -- same field, same coordinated
   // null-handling decision.
   gamma_flip: number | null;

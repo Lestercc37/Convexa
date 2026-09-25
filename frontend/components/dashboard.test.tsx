@@ -343,7 +343,11 @@ describe("Dashboard", () => {
       await screen.findByLabelText("GEX por strike y flujo acumulado de Whale Alerts"),
     ).toBeInTheDocument();
     await waitFor(() =>
-      expect(apiMocks.getGammaProfile).toHaveBeenCalledWith("SPY", expect.any(AbortSignal)),
+      expect(apiMocks.getGammaProfile).toHaveBeenCalledWith(
+        "SPY",
+        "structural",
+        expect.any(AbortSignal),
+      ),
     );
     expect(await screen.findByLabelText("GEX por strike para SPY")).toBeInTheDocument();
   });
@@ -555,7 +559,11 @@ describe("Dashboard", () => {
     expect(await screen.findByText(/Congelado desde el cierre de/)).toBeInTheDocument();
     expect(screen.queryByLabelText("Chart de velas para SPY")).not.toBeInTheDocument();
     await waitFor(() =>
-      expect(apiMocks.getGammaProfile).toHaveBeenCalledWith("SPY", expect.any(AbortSignal)),
+      expect(apiMocks.getGammaProfile).toHaveBeenCalledWith(
+        "SPY",
+        "structural",
+        expect.any(AbortSignal),
+      ),
     );
 
     await user.click(screen.getByRole("button", { name: "En vivo" }));

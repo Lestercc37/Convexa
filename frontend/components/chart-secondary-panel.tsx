@@ -5,9 +5,20 @@ import { getAlerts, getGammaProfile } from "@/lib/api";
 import { describeError } from "@/lib/i18n/describe-error";
 import { useLanguage } from "@/lib/i18n/language-context";
 import { POLLING_INTERVAL_MS } from "@/lib/polling";
-import type { GammaAggregateItem, GammaAggregateResponse, GammaResponse, WhaleAlert } from "@/lib/types";
+import type {
+  GammaAggregateItem,
+  GammaAggregateResponse,
+  GammaResponse,
+  GammaView,
+  WhaleAlert,
+} from "@/lib/types";
 
-type ChartSecondaryPanelProps = { symbol: string; spotPrice: number; gamma: GammaResponse };
+type ChartSecondaryPanelProps = {
+  symbol: string;
+  spotPrice: number;
+  gamma: GammaResponse;
+  gammaView?: GammaView;
+};
 type SecondaryView = "gex" | "flow";
 type NetGexColorClass = "positive" | "negative" | "zero";
 
@@ -68,6 +79,9 @@ function netGexColorClass(netGamma: number): NetGexColorClass {
 // value under a different provider name -- one line covers both labels
 // instead of a second, redundant one at an identical position.
 function gexLevels(gamma: GammaResponse): GexLevel[] {
+  // Honest-empty Tactical case (see GammaResponse.has_data's own
+  // comment) -- same gating as price-chart.tsx's own gammaLevels().
+  if (!gamma.has_data) return [];
   const levels: GexLevel[] = [
     { key: "call-wall", label: "Call Wall", value: gamma.call_wall, className: "call-wall" },
     { key: "put-wall", label: "Put Wall", value: gamma.put_wall, className: "put-wall" },
@@ -89,7 +103,12 @@ function gexLevels(gamma: GammaResponse): GexLevel[] {
   return levels;
 }
 
-export function ChartSecondaryPanel({ symbol, spotPrice, gamma }: ChartSecondaryPanelProps) {
+export function ChartSecondaryPanel({
+  symbol,
+  spotPrice,
+  gamma,
+  gammaView = "structural",
+}: ChartSecondaryPanelProps) {
   const { t } = useLanguage();
   const [view, setView] = useState<SecondaryView>("gex");
   const [profile, setProfile] = useState<GammaAggregateResponse | null>(null);
@@ -109,7 +128,7 @@ export function ChartSecondaryPanel({ symbol, spotPrice, gamma }: ChartSecondary
     const controller = new AbortController();
     const refresh = async () => {
       try {
-        const response = await getGammaProfile(symbol, controller.signal);
+        const response = await getGammaProfile(symbol, gammaView, controller.signal);
         setProfile(response);
         setProfileError(null);
       } catch (reason: unknown) {
@@ -122,7 +141,7 @@ export function ChartSecondaryPanel({ symbol, spotPrice, gamma }: ChartSecondary
       controller.abort();
       window.clearInterval(interval);
     };
-  }, [symbol]);
+  }, [symbol, gammaView]);
 
   useEffect(() => {
     if (!symbol) return;
@@ -392,7 +411,11 @@ export function ChartSecondaryPanel({ symbol, spotPrice, gamma }: ChartSecondary
           </div>
           </>
         ) : profile ? (
-          <p className="chart-secondary-status">{t.chartSecondaryPanel.gexNoBreakdown}</p>
+          <p className="chart-secondary-status">
+            {gammaView === "tactical" && !profile.has_data
+              ? t.dashboard.noTacticalDataLabel
+              : t.chartSecondaryPanel.gexNoBreakdown}
+          </p>
         ) : (
           <p className="chart-secondary-status">{t.chartSecondaryPanel.gexLoading}</p>
         )

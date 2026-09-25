@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 from dataclasses import replace
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 
-from backend.domain.entities import GammaAggregate, OptionChain
+from backend.domain.entities import DailyBar, GammaAggregate, GammaView, OptionChain
 from backend.domain.ports import IAsyncMarketReadStorage, IStorage
 from backend.domain.use_cases.calculate_atr_range import REQUIRED_DAILY_BARS
 from backend.domain.use_cases.calculate_gamma_aggregate import (
@@ -21,26 +21,32 @@ from backend.domain.use_cases.errors import NotFoundError
 from backend.domain.use_cases.market_hours import EASTERN_TIME
 
 
-def get_gamma_exposure(storage: IStorage, underlying: str) -> GammaAggregate:
-    gamma = storage.get_latest_gamma_aggregate(underlying)
+def get_gamma_exposure(
+    storage: IStorage, underlying: str, view: GammaView = "structural"
+) -> GammaAggregate:
+    gamma = storage.get_latest_gamma_aggregate(underlying, view=view)
     if gamma is None:
         raise NotFoundError(f"No gamma aggregate found for {underlying.upper()}")
     return gamma
 
 
 async def get_gamma_exposure_async(
-    storage: IAsyncMarketReadStorage, underlying: str
+    storage: IAsyncMarketReadStorage, underlying: str, view: GammaView = "structural"
 ) -> GammaAggregate:
-    gamma = await storage.get_latest_gamma_aggregate(underlying)
+    gamma = await storage.get_latest_gamma_aggregate(underlying, view=view)
     if gamma is None:
         raise NotFoundError(f"No gamma aggregate found for {underlying.upper()}")
     return gamma
 
 
 def get_gamma_history(
-    storage: IStorage, underlying: str, start: datetime, end: datetime
+    storage: IStorage,
+    underlying: str,
+    start: datetime,
+    end: datetime,
+    view: GammaView = "structural",
 ) -> list[GammaAggregate]:
-    return storage.get_gamma_history(underlying, start, end)
+    return storage.get_gamma_history(underlying, start, end, view=view)
 
 
 class CalculateGammaExposureOrchestrator:
@@ -63,10 +69,72 @@ class CalculateGammaExposureOrchestrator:
         self._max_pain = max_pain
 
     def execute(self, underlying: str) -> GammaAggregate:
+        """Structural view only -- see this class's own execute_both()
+        for why most real callers want that instead. Kept as its own
+        focused method (not execute_both()[0]) so it stays independently
+        callable/testable without paying for a tactical build it doesn't
+        need, and so every existing caller/test of the pre-2026-09-25
+        public contract keeps working unchanged."""
+        chain = self._fetch_chain(underlying)
+        daily_bars = self._storage.get_daily_bars(underlying, REQUIRED_DAILY_BARS)
+        result = self._build_view(
+            underlying, chain, daily_bars, _structural_window_days(underlying), None, "structural"
+        )
+        self._storage.save_gamma_aggregate(result)
+        return result
+
+    def execute_tactical(self, underlying: str) -> GammaAggregate:
+        """Tactical view only -- see execute()'s own docstring for why
+        this stays a separate, focused method from execute_both()."""
+        chain = self._fetch_chain(underlying)
+        daily_bars = self._storage.get_daily_bars(underlying, REQUIRED_DAILY_BARS)
+        anchor = chain.as_of.astimezone(EASTERN_TIME).date()
+        result = self._build_view(
+            underlying, chain, daily_bars, TACTICAL_WINDOW_DAYS, anchor, "tactical"
+        )
+        self._storage.save_gamma_aggregate(result)
+        return result
+
+    def execute_both(self, underlying: str) -> tuple[GammaAggregate, GammaAggregate]:
+        """The real entry point for the periodic refresh cycle (see
+        RefreshUnderlyingSnapshotUseCase) -- builds and persists BOTH the
+        structural and tactical GammaAggregate for `underlying` from a
+        single chain/daily-bars fetch. Fetching once and building twice
+        (rather than calling execute() then execute_tactical(), which
+        would fetch the same storage rows a second time for no reason)
+        is the whole justification for this method existing separately
+        from the two single-view ones above -- the expiration-window
+        filter is a pure in-memory operation on an already-fetched
+        chain, so there's nothing view-specific about the fetch itself.
+        """
+        chain = self._fetch_chain(underlying)
+        daily_bars = self._storage.get_daily_bars(underlying, REQUIRED_DAILY_BARS)
+        structural = self._build_view(
+            underlying, chain, daily_bars, _structural_window_days(underlying), None, "structural"
+        )
+        anchor = chain.as_of.astimezone(EASTERN_TIME).date()
+        tactical = self._build_view(
+            underlying, chain, daily_bars, TACTICAL_WINDOW_DAYS, anchor, "tactical"
+        )
+        self._storage.save_gamma_aggregate(structural)
+        self._storage.save_gamma_aggregate(tactical)
+        return structural, tactical
+
+    def _fetch_chain(self, underlying: str) -> OptionChain:
         chain = self._storage.get_latest_chain_snapshot(underlying)
         if chain is None:
             raise NotFoundError(f"No option chain found for {underlying.upper()}")
+        return chain
 
+    def _build_view(
+        self,
+        underlying: str,
+        chain: OptionChain,
+        daily_bars: list[DailyBar],
+        window_days: int,
+        anchor: date | None,
+        view: GammaView,
+    ) -> GammaAggregate:
         # Near-term only, not the full chain -- confirmed live, 2026-09-21,
         # against a real reference platform's own numbers (SPY/SPX): summing
         # gamma exposure across every expiration a symbol lists (P1's own
@@ -80,9 +148,20 @@ class CalculateGammaExposureOrchestrator:
         # consumer of this orchestrator's result already implicitly expected
         # -- Gamma Flip/Walls/Max Pain were never designed to average across
         # a LEAPS contract 5 years out diluting today's real dealer exposure.
-        near_term_chain = _filter_to_near_term_expirations(
-            chain, NEAR_TERM_GAMMA_PROFILE_WINDOW_DAYS
-        )
+        near_term_chain = _filter_to_near_term_expirations(chain, window_days, anchor=anchor)
+        if not near_term_chain.contracts:
+            # Honest empty result, tactical-only in practice (the
+            # structural window is wide enough that every active symbol
+            # has always had something in range) -- e.g. an individual
+            # stock that only lists Friday weeklies, on a day that isn't
+            # within 2 real calendar days of one. Deliberately NOT the
+            # same "fall back to the full chain" trick the narrow-width
+            # guard below uses for a degenerate ATR width -- that guard
+            # exists because an empty STRIKE range is almost certainly a
+            # data anomaly, but an empty TACTICAL EXPIRATION range is a
+            # normal, expected, honest outcome. Falling back would
+            # silently show structural numbers under the tactical label.
+            return GammaAggregate(symbol=chain.symbol, as_of=chain.as_of, view=view)
         enriched_chain = self._greeks.execute(near_term_chain)
 
         # Gamma Flip needs to search wherever dealer net gamma actually
@@ -97,7 +176,6 @@ class CalculateGammaExposureOrchestrator:
         wide_aggregate = self._aggregate.execute(enriched_chain)
         gamma_flip = self._gamma_flip.execute(wide_aggregate, enriched_chain.spot_price)
 
-        daily_bars = self._storage.get_daily_bars(underlying, REQUIRED_DAILY_BARS)
         narrow_width = calculate_near_the_money_width(
             underlying, daily_bars, enriched_chain.spot_price
         )
@@ -116,32 +194,41 @@ class CalculateGammaExposureOrchestrator:
 
         aggregate = self._aggregate.execute(narrow_chain)
 
-        # Call Wall/Put Wall exclude 0DTE (expiring "today" in ET, the
-        # market's own trading day, not UTC), same documented precedent as
-        # NEAR_TERM_GAMMA_PROFILE_WINDOW_DAYS above: ExpireWorthless
-        # explicitly excludes 0DTE from its own wall calculation so one
-        # expiring strike can't distort the levels. Confirmed live,
-        # 2026-09-23, SPX: a single 0DTE contract at a near-the-money
-        # strike (539 calls / 2,793 puts open interest -- thin, nowhere
-        # near this chain's largest OI strikes) carried enough dealer
-        # gamma to hijack both walls onto its own strike and away from a
-        # stable reference level, because BSM gamma diverges as an ATM
-        # option's time-to-expiry approaches zero -- a real property of
-        # the formula, not a data error, but not what a "wall" (an
-        # inventory concentration dealers actually have to hedge across
-        # more than a few remaining hours) is meant to represent either.
-        # Net GEX/Gamma Flip/the GEX-by-strike histogram (`aggregate`
-        # itself, used below) keep including 0DTE unchanged -- only wall
-        # *selection* excludes it.
-        today_et = enriched_chain.as_of.astimezone(EASTERN_TIME).date()
-        walls_contracts = tuple(
-            contract for contract in narrow_chain.contracts if contract.expiration != today_et
-        )
-        # Degenerate guard, same reasoning as the narrow-width fallback
-        # above: if every near-the-money contract happens to expire today
-        # (a real possibility on 0DTE-heavy underlyings like SPX), excluding
-        # it entirely would leave nothing to select a wall from.
-        walls_chain = replace(narrow_chain, contracts=walls_contracts or narrow_chain.contracts)
+        if view == "structural":
+            # Call Wall/Put Wall exclude 0DTE (expiring "today" in ET, the
+            # market's own trading day, not UTC), same documented precedent
+            # as the structural window above: ExpireWorthless explicitly
+            # excludes 0DTE from its own wall calculation so one expiring
+            # strike can't distort the levels. Confirmed live, 2026-09-23,
+            # SPX: a single 0DTE contract at a near-the-money strike (539
+            # calls / 2,793 puts open interest -- thin, nowhere near this
+            # chain's largest OI strikes) carried enough dealer gamma to
+            # hijack both walls onto its own strike and away from a stable
+            # reference level, because BSM gamma diverges as an ATM
+            # option's time-to-expiry approaches zero -- a real property of
+            # the formula, not a data error, but not what a "wall" (an
+            # inventory concentration dealers actually have to hedge across
+            # more than a few remaining hours) is meant to represent either.
+            # Net GEX/Gamma Flip/the GEX-by-strike histogram (`aggregate`
+            # itself, above) keep including 0DTE unchanged -- only wall
+            # *selection* excludes it, and only for the structural view:
+            # tactical's entire purpose is measuring today's own expiring
+            # flow, so excluding 0DTE from ITS walls would exclude the
+            # exact contracts it exists to read.
+            today_et = enriched_chain.as_of.astimezone(EASTERN_TIME).date()
+            walls_contracts = tuple(
+                contract for contract in narrow_chain.contracts if contract.expiration != today_et
+            )
+            # Degenerate guard, same reasoning as the narrow-width fallback
+            # above: if every near-the-money contract happens to expire
+            # today (a real possibility on 0DTE-heavy underlyings like
+            # SPX), excluding it entirely would leave nothing to select a
+            # wall from.
+            walls_chain = replace(
+                narrow_chain, contracts=walls_contracts or narrow_chain.contracts
+            )
+        else:
+            walls_chain = narrow_chain
         walls_aggregate = self._aggregate.execute(walls_chain)
         walls = self._walls.execute(walls_aggregate)
         max_pain = self._max_pain.execute(narrow_chain)
@@ -218,8 +305,9 @@ class CalculateGammaExposureOrchestrator:
             Decimal(0),
         )
 
-        result = replace(
+        return replace(
             aggregate,
+            view=view,
             # Not `gamma_flip.gamma_flip_price or aggregate.gamma_flip` --
             # that `or` collapsed a legitimate "no sign crossing found"
             # (gamma_flip_price is None, flip_found=False) into whatever
@@ -265,8 +353,6 @@ class CalculateGammaExposureOrchestrator:
             vanna_exposure=vanna_exposure,
             delta_exposure=delta_exposure,
         )
-        self._storage.save_gamma_aggregate(result)
-        return result
 
 
 def calculate_gamma_exposure(
@@ -309,15 +395,95 @@ def calculate_gamma_exposure(
 # that was itself deliberate and verified (see this comment's own
 # history) -- this is a considered adjustment, to be revisited based on
 # what live data actually shows.
-NEAR_TERM_GAMMA_PROFILE_WINDOW_DAYS = 90
+#
+# Replaced with a per-symbol tiered window, 2026-09-25: a methodology
+# document from a domain expert (shared and reviewed with the user the
+# same day) specifically recommends 0-30 DTE for liquid indices/ETFs and
+# 0-45 DTE for individual stocks -- narrower than the flat 90 days above
+# for every symbol, and tiered by liquidity/listing cadence rather than
+# uniform. This also connects to a real, measured cost of the flat-90
+# window found the same day: /market/SPX taking 7-8s (vs 2-3s for other
+# symbols) because SPX's own near-term chain snapshot had grown
+# proportionally larger. UnderlyingKind (EQUITY/INDEX/FUTURE) does NOT
+# distinguish a liquid ETF (SPY/QQQ/IWM/DIA, all EQUITY) from an
+# individual stock (AAPL/TSLA, also EQUITY) -- this table classifies
+# explicitly per symbol instead, same pattern as FIXED_WIDTH_BY_SYMBOL in
+# calculate_near_the_money_width.py (a different, orthogonal axis --
+# strike-price width, not expiration-date window -- but the same
+# "most symbols follow a rule, a few need an explicit table" shape).
+STRUCTURAL_WINDOW_DAYS_BY_SYMBOL: dict[str, int] = {
+    # Liquid indices/ETFs -- 30 days.
+    "SPX": 30,
+    "NDX": 30,
+    "VIX": 30,
+    "SPY": 30,
+    "QQQ": 30,
+    "IWM": 30,
+    "DIA": 30,
+    # ES has no single-name listing cadence of its own -- it tracks the
+    # S&P 500 in index points (see calculate_near_the_money_width.py's
+    # own comment on ES's fixed strike width), so it takes the index
+    # tier, not the individual-stock one.
+    "ES": 30,
+    # Individual stocks -- 45 days.
+    "AAPL": 45,
+    "MSFT": 45,
+    "NVDA": 45,
+    "TSLA": 45,
+    "META": 45,
+    "AMZN": 45,
+    "GOOGL": 45,
+}
+# Defensive fallback for a symbol added to ACTIVE_UNDERLYINGS later
+# without an entry above -- defaults to the wider, more conservative
+# individual-stock tier rather than silently narrowing an unclassified
+# symbol's window.
+_DEFAULT_STRUCTURAL_WINDOW_DAYS = 45
 
 
-def _filter_to_near_term_expirations(chain: OptionChain, window_days: int) -> OptionChain:
+def _structural_window_days(symbol: str) -> int:
+    return STRUCTURAL_WINDOW_DAYS_BY_SYMBOL.get(symbol.upper(), _DEFAULT_STRUCTURAL_WINDOW_DAYS)
+
+
+# Tactical: today's own expiring flow ("fuerza intradia" per the same
+# methodology document) -- fixed at 0-2 DTE for every symbol, no tiering
+# (unlike the structural window above). Anchored to `chain.as_of`
+# converted to Eastern time (see execute_tactical/execute_both), not the
+# nearest LISTED expiration the way the structural window is -- most
+# individual stocks only list Friday weeklies, so on most days their
+# nearest listed expiration is NOT within 2 real calendar days of today.
+# Anchoring to the nearest listing instead of real "today" would silently
+# turn "0-2 DTE" into "0-2 days from whatever's listed, however far that
+# really is" for those symbols -- confirmed with the user this is the
+# WRONG tradeoff: an empty tactical result on days a symbol lists nothing
+# within 0-2 real days is the honest answer, not a bug to route around.
+TACTICAL_WINDOW_DAYS = 2
+
+
+def _filter_to_near_term_expirations(
+    chain: OptionChain, window_days: int, anchor: date | None = None
+) -> OptionChain:
+    """Filters `chain` to contracts within `window_days` of `anchor`.
+
+    `anchor=None` (every structural caller): the window's own lower
+    bound is implicitly satisfied by using the nearest LISTED expiration
+    as the anchor itself -- unchanged behavior from before this function
+    gained an explicit anchor parameter.
+
+    `anchor=<a real date>` (tactical only): the window is anchored to
+    that date regardless of what's actually listed -- see
+    TACTICAL_WINDOW_DAYS' own comment for why this distinction matters.
+    The explicit lower bound (`anchor <= expiration`) only does real work
+    in this branch; for the anchor-is-the-minimum case it's always true.
+    """
     if not chain.contracts:
         return chain
-    nearest_expiration = min(contract.expiration for contract in chain.contracts)
-    cutoff = nearest_expiration + timedelta(days=window_days)
+    if anchor is None:
+        anchor = min(contract.expiration for contract in chain.contracts)
+    cutoff = anchor + timedelta(days=window_days)
     near_term_contracts = tuple(
-        contract for contract in chain.contracts if contract.expiration <= cutoff
+        contract
+        for contract in chain.contracts
+        if anchor <= contract.expiration <= cutoff
     )
     return replace(chain, contracts=near_term_contracts)
