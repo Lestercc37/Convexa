@@ -690,3 +690,12 @@ class LoginRequest(BaseModel):
 class SessionUserResponse(BaseModel):
     username: str
     is_admin: bool
+
+
+class InvitePreviewResponse(BaseModel):
+    username: str
+
+
+class AcceptInviteRequest(BaseModel):
+    token: str = Field(min_length=1)
+    password: str = Field(min_length=8)

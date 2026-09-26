@@ -322,4 +322,16 @@ export const es: Translations = {
     invalidCredentials: "Usuario o contraseña incorrectos",
     genericError: "No se pudo iniciar sesión, intenta de nuevo",
   },
+  signup: {
+    title: "Convexa",
+    creatingAccountFor: (username) => `Creando cuenta para: ${username}`,
+    passwordLabel: "Contraseña",
+    confirmPasswordLabel: "Confirmar contraseña",
+    submitButton: "Crear cuenta",
+    passwordMismatch: "Las contraseñas no coinciden",
+    passwordTooShort: "La contraseña debe tener al menos 8 caracteres",
+    invalidOrExpiredInvite: "Este enlace de invitación no es válido o ya expiró",
+    genericError: "No se pudo crear la cuenta, intenta de nuevo",
+    loading: "Cargando…",
+  },
 };

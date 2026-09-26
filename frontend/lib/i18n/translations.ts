@@ -207,4 +207,16 @@ export type Translations = {
     invalidCredentials: string;
     genericError: string;
   };
+  signup: {
+    title: string;
+    creatingAccountFor: (username: string) => string;
+    passwordLabel: string;
+    confirmPasswordLabel: string;
+    submitButton: string;
+    passwordMismatch: string;
+    passwordTooShort: string;
+    invalidOrExpiredInvite: string;
+    genericError: string;
+    loading: string;
+  };
 };

@@ -27,6 +27,7 @@ from backend.domain.entities import (
     MaxPain,
     OptionChain,
     QuoteEvent,
+    Invite,
     ScreenerPreset,
     ScreenerPresetSettings,
     Underlying,
@@ -113,6 +114,11 @@ class IStorage(Protocol):
     def create_user(
         self, username: str, password_hash: str, salt: str, is_admin: bool = False
     ) -> User: ...
+    def create_invite(
+        self, token: str, username: str, is_admin: bool, expires_at: datetime
+    ) -> Invite: ...
+    def get_invite_by_token(self, token: str) -> Invite | None: ...
+    def mark_invite_used(self, token: str) -> None: ...
     def save_screener_preset_settings(
         self, preset: ScreenerPreset, settings: ScreenerPresetSettings
     ) -> None: ...
