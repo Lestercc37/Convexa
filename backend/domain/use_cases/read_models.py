@@ -249,16 +249,26 @@ async def get_vwap_history_async(
     compute once both sides have a reading. Permissive like
     get_price_history's own route: no readings yet (or not_applicable)
     just means an empty series, never an error.
+
+    Anchored to the latest stored price's OWN `as_of`, not wall-clock
+    `now`, same as `build_market_snapshot`/`_async` already do and for
+    the same reason `get_price_history`'s own route now is (see that
+    route's docstring) -- anchoring to `now` silently returned an empty
+    series over a weekend, since "today" (Saturday/Sunday) never had a
+    real 09:30 ET session to anchor to in the first place.
     """
-    now = datetime.now(timezone.utc)
-    session_open = calculate_session_open(now)
     proxy_symbol = VWAP_PROXY_SYMBOL_BY_INDEX.get(underlying.upper())
-    if proxy_symbol is not None:
-        index_history = await storage.get_price_history(underlying, session_open, now)
-        proxy_history = await storage.get_price_history(proxy_symbol, session_open, now)
-        series = calculate_proxy_anchored_vwap_series(index_history, proxy_history, now)
-        return series, False
-    if _is_pure_index(underlying):
+    if proxy_symbol is None and _is_pure_index(underlying):
         return [], True
-    price_history = await storage.get_price_history(underlying, session_open, now)
-    return calculate_anchored_vwap_series(price_history, now), False
+    latest_price = await storage.get_latest_price(underlying)
+    if latest_price is None:
+        return [], False
+    as_of = latest_price.as_of
+    session_open = calculate_session_open(as_of)
+    if proxy_symbol is not None:
+        index_history = await storage.get_price_history(underlying, session_open, as_of)
+        proxy_history = await storage.get_price_history(proxy_symbol, session_open, as_of)
+        series = calculate_proxy_anchored_vwap_series(index_history, proxy_history, as_of)
+        return series, False
+    price_history = await storage.get_price_history(underlying, session_open, as_of)
+    return calculate_anchored_vwap_series(price_history, as_of), False

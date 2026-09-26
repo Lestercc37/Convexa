@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
-
 from fastapi import APIRouter, Request
 
 from backend.api.schemas import MarketSnapshotResponse, PriceHistoryResponse, VwapHistoryResponse
@@ -41,18 +39,29 @@ async def get_market_snapshot(symbol: str, request: Request) -> MarketSnapshotRe
     summary="Get today's session price history",
 )
 async def get_price_history(symbol: str, request: Request) -> PriceHistoryResponse:
-    """Every point `market_snapshots` holds for `symbol` since today's
-    09:30 ET session open -- the same data `build_market_snapshot`
-    already reads internally for anchored VWAP/ATR, just exposed
-    directly this time. Lets the frontend seed the chart's candles with
-    everything already formed today instead of starting from an empty
-    chart on mount/symbol change (see dashboard.tsx's own comment on
-    `pricePoints`).
+    """Every point `market_snapshots` holds for `symbol` since its most
+    recently traded session's 09:30 ET open -- the same data
+    `build_market_snapshot` already reads internally for anchored
+    VWAP/ATR, just exposed directly this time. Lets the frontend seed the
+    chart's candles with everything already formed that session instead
+    of starting from an empty chart on mount/symbol change (see
+    dashboard.tsx's own comment on `pricePoints`).
+
+    Anchored to the latest stored price's OWN `as_of`, not wall-clock
+    `now`, same as `build_market_snapshot`/`_async` already do -- fixes a
+    real bug found live, 2026-09-26: anchoring to `now` meant a weekend
+    visit computed "today" (Saturday/Sunday)'s own 09:30 ET open, a
+    session that never happened, so the query window held zero real
+    readings and Friday's candles silently vanished until Monday's first
+    real one arrived. A symbol's actual last session -- whenever that
+    was -- is always the right thing to show, not "today" specifically.
     """
     container: Container = request.app.state.container
-    now = datetime.now(timezone.utc)
+    latest_price = await container.async_market_storage.get_latest_price(symbol)
+    if latest_price is None:
+        return PriceHistoryResponse.model_validate(price_history_response(symbol, []))
     points = await container.async_market_storage.get_price_history(
-        symbol, calculate_session_open(now), now
+        symbol, calculate_session_open(latest_price.as_of), latest_price.as_of
     )
     return PriceHistoryResponse.model_validate(price_history_response(symbol, points))
 

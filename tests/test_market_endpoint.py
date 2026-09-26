@@ -1,5 +1,5 @@
 from dataclasses import replace
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, date, datetime, time, timedelta
 from decimal import Decimal
 
 import pytest
@@ -140,11 +140,14 @@ def test_vwap_history_endpoint_seeds_a_full_series_not_just_the_latest_point() -
     # seeds pricePoints from /market/{symbol}/history.
     with TestClient(app) as client:
         storage = client.app.state.container.storage
-        # Relative to the real "now" (this endpoint uses the real clock,
-        # same as /market/{symbol}/history), never a fixed wall-clock
-        # hour -- avoids the test spuriously running before today's real
-        # 09:30 ET session open, which would exclude both readings.
-        now = datetime.now(UTC)
+        # Both readings' own `as_of` is what actually anchors this query
+        # (see get_vwap_history_async's own docstring). A fixed, safely
+        # mid-session time of day (real production data is only ever
+        # written 09:30-16:00 ET anyway, via the live price stream) --
+        # see test_vwap_history_endpoint_anchors_to_the_last_real_session_not_wall_clock_now's
+        # own comment for why a plain datetime.now(UTC) here would make
+        # this test's pass/fail depend on what time it happens to run.
+        now = datetime.combine(date.today(), time(19, 0), UTC)
         storage.save_market_price(
             MarketPrice(symbol="SPY", as_of=now - timedelta(minutes=10), price=Decimal(550), volume=800)
         )
@@ -164,6 +167,96 @@ def test_vwap_history_endpoint_seeds_a_full_series_not_just_the_latest_point() -
     assert payload["points"][1]["value"] == 552
 
 
+def test_vwap_history_endpoint_anchors_to_the_last_real_session_not_wall_clock_now() -> None:
+    """Regression test for a real bug found live, 2026-09-26: teammates
+    reported Friday's candles/VWAP vanishing over the weekend. Root
+    cause was anchoring to `datetime.now(UTC)` -- on a Saturday/Sunday,
+    `calculate_session_open(now)` computes that day's own (nonexistent)
+    09:30 ET open, so the query window held zero real readings no matter
+    how much real data Friday actually had. Simulates that exact
+    scenario: readings from 2 real days ago (whatever `now` was when
+    this test runs, that's still "stale" relative to it, the same way
+    Friday's readings are "stale" relative to a real Saturday) must
+    still come back, proving the anchor is the data's own `as_of`, not
+    wall-clock now."""
+    with TestClient(app) as client:
+        storage = client.app.state.container.storage
+        # A fixed, safely-mid-session time of day (19:00 UTC = 2-3pm ET
+        # depending on DST, always inside 09:30-16:00 ET) -- only the
+        # DATE is relative to real "today", so this test never depends
+        # on what time of day it happens to run, unlike a plain
+        # `datetime.now(UTC) - timedelta(days=2)` would.
+        stale_day = date.today() - timedelta(days=2)
+        stale_now = datetime.combine(stale_day, time(19, 0), UTC)
+        storage.save_market_price(
+            MarketPrice(symbol="SPY", as_of=stale_now - timedelta(minutes=10), price=Decimal(550), volume=800)
+        )
+        storage.save_market_price(
+            MarketPrice(symbol="SPY", as_of=stale_now - timedelta(minutes=5), price=Decimal(560), volume=1000)
+        )
+        response = client.get("/api/v1/market/SPY/vwap-history")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["not_applicable"] is False
+    assert len(payload["points"]) == 2
+
+
+def test_price_history_endpoint_seeds_todays_candles() -> None:
+    with TestClient(app) as client:
+        storage = client.app.state.container.storage
+        # Fixed, safely-mid-session time of day -- see
+        # test_vwap_history_endpoint_anchors_to_the_last_real_session_not_wall_clock_now's
+        # own comment on why a plain datetime.now(UTC) here would make
+        # this test's pass/fail depend on what time it happens to run.
+        session_now = datetime.combine(date.today(), time(19, 0), UTC)
+        storage.save_market_price(
+            MarketPrice(symbol="SPY", as_of=session_now - timedelta(minutes=10), price=Decimal(550), volume=800)
+        )
+        storage.save_market_price(
+            MarketPrice(symbol="SPY", as_of=session_now - timedelta(minutes=5), price=Decimal(560), volume=1000)
+        )
+        response = client.get("/api/v1/market/SPY/history")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["symbol"] == "SPY"
+    assert len(payload["points"]) == 2
+    assert payload["points"][0]["price"] == 550
+    assert payload["points"][1]["price"] == 560
+
+
+def test_price_history_endpoint_anchors_to_the_last_real_session_not_wall_clock_now() -> None:
+    """Same real bug and fix as
+    test_vwap_history_endpoint_anchors_to_the_last_real_session_not_wall_clock_now,
+    for the sibling endpoint that actually seeds the chart's candles."""
+    with TestClient(app) as client:
+        storage = client.app.state.container.storage
+        stale_day = date.today() - timedelta(days=2)
+        stale_now = datetime.combine(stale_day, time(19, 0), UTC)
+        storage.save_market_price(
+            MarketPrice(symbol="SPY", as_of=stale_now - timedelta(minutes=10), price=Decimal(550), volume=800)
+        )
+        storage.save_market_price(
+            MarketPrice(symbol="SPY", as_of=stale_now - timedelta(minutes=5), price=Decimal(560), volume=1000)
+        )
+        response = client.get("/api/v1/market/SPY/history")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert len(payload["points"]) == 2
+
+
+def test_price_history_endpoint_returns_an_empty_series_when_nothing_has_ever_been_saved() -> None:
+    with TestClient(app) as client:
+        response = client.get("/api/v1/market/QQQ/history")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["symbol"] == "QQQ"
+    assert payload["points"] == []
+
+
 def test_vwap_history_endpoint_marks_not_applicable_for_pure_indices() -> None:
     with TestClient(app) as client:
         response = client.get("/api/v1/market/VIX/vwap-history")
@@ -177,7 +270,7 @@ def test_vwap_history_endpoint_marks_not_applicable_for_pure_indices() -> None:
 def test_vwap_history_endpoint_approximates_from_the_proxy_etf_for_ndx() -> None:
     with TestClient(app) as client:
         storage = client.app.state.container.storage
-        now = datetime.now(UTC)
+        now = datetime.combine(date.today(), time(19, 0), UTC)
         storage.save_market_price(
             MarketPrice(symbol="NDX", as_of=now - timedelta(minutes=5), price=Decimal(19000), volume=0)
         )
