@@ -80,6 +80,14 @@ export function getMe(signal?: AbortSignal) {
   return getJson<SessionUser>("/auth/me", signal);
 }
 
+export function getInvitePreview(token: string, signal?: AbortSignal) {
+  return getJson<{ username: string }>(`/auth/invites/${encodeURIComponent(token)}`, signal);
+}
+
+export function acceptInvite(token: string, password: string, signal?: AbortSignal) {
+  return postJson<SessionUser>("/auth/accept-invite", { token, password }, signal);
+}
+
 export function getUnderlyings(signal?: AbortSignal) {
   return getJson<UnderlyingsResponse>("/underlyings", signal);
 }

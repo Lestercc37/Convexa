@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import date, datetime
 from decimal import Decimal
 
@@ -9,6 +10,7 @@ from backend.domain.entities import (
     ExposureLeadersSettings,
     FlowEvent,
     GammaAggregate,
+    Invite,
     MarketPrice,
     NegativeGammaBoardSettings,
     OptionChain,
@@ -37,6 +39,8 @@ class InMemoryStorage:
         self._daily_bars: dict[str, dict[date, DailyBar]] = {}
         self._users: dict[str, User] = {}
         self._next_user_id = 1
+        self._invites: dict[str, Invite] = {}
+        self._next_invite_id = 1
         self._whale_alerts: dict[str, list[WhaleAlert]] = {}
         self._symbol_flow_pressure: dict[str, SymbolFlowPressure] = {}
         self._cumulative_volumes: dict[str, int] = {}
@@ -87,6 +91,29 @@ class InMemoryStorage:
         self._next_user_id += 1
         self._users[user.username] = user
         return user
+
+    def create_invite(
+        self, token: str, username: str, is_admin: bool, expires_at: datetime
+    ) -> Invite:
+        invite = Invite(
+            id=self._next_invite_id,
+            token=token,
+            username=username,
+            is_admin=is_admin,
+            created_at=utc_now(),
+            expires_at=expires_at,
+        )
+        self._next_invite_id += 1
+        self._invites[invite.token] = invite
+        return invite
+
+    def get_invite_by_token(self, token: str) -> Invite | None:
+        return self._invites.get(token)
+
+    def mark_invite_used(self, token: str) -> None:
+        invite = self._invites.get(token)
+        if invite is not None:
+            self._invites[token] = replace(invite, used_at=utc_now())
 
     def save_screener_preset_settings(
         self, preset: ScreenerPreset, settings: ScreenerPresetSettings

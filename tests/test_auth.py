@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import timedelta
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -7,7 +9,9 @@ from backend.adapters.storage.memory import InMemoryStorage
 from backend.core.sessions import create_session_token, verify_session_token
 from backend.domain.entities import User, utc_now
 from backend.domain.use_cases.auth import (
+    AcceptInviteUseCase,
     AuthenticateUserUseCase,
+    generate_invite_token,
     hash_password,
     verify_password,
 )
@@ -143,3 +147,91 @@ def test_non_admin_session_gets_403_on_admin_only_routes() -> None:
             },
         )
         assert blocked.status_code == 403
+
+
+def test_accept_invite_use_case_creates_the_user_with_the_invites_own_fields() -> None:
+    storage = InMemoryStorage()
+    token = generate_invite_token()
+    storage.create_invite(
+        token=token, username="teammate1", is_admin=True, expires_at=utc_now() + timedelta(days=7)
+    )
+    use_case = AcceptInviteUseCase(storage=storage)
+
+    user = use_case.execute(token, "a brand new password")
+
+    assert user is not None
+    assert user.username == "teammate1"
+    assert user.is_admin is True
+    assert storage.get_user_by_username("teammate1") is not None
+
+
+def test_accept_invite_use_case_rejects_an_already_used_invite() -> None:
+    storage = InMemoryStorage()
+    token = generate_invite_token()
+    storage.create_invite(
+        token=token, username="teammate1", is_admin=False, expires_at=utc_now() + timedelta(days=7)
+    )
+    use_case = AcceptInviteUseCase(storage=storage)
+    assert use_case.execute(token, "first password") is not None
+
+    # Same token again -- must not create a second account or let anyone
+    # else redeem an already-consumed link.
+    assert use_case.execute(token, "a different password") is None
+
+
+def test_accept_invite_use_case_rejects_an_expired_invite() -> None:
+    storage = InMemoryStorage()
+    token = generate_invite_token()
+    storage.create_invite(
+        token=token, username="teammate1", is_admin=False, expires_at=utc_now() - timedelta(seconds=1)
+    )
+    use_case = AcceptInviteUseCase(storage=storage)
+
+    assert use_case.execute(token, "a password") is None
+
+
+def test_accept_invite_use_case_rejects_an_unknown_token() -> None:
+    storage = InMemoryStorage()
+    use_case = AcceptInviteUseCase(storage=storage)
+
+    assert use_case.execute("not-a-real-token", "a password") is None
+
+
+def test_signup_routes_are_public_and_accept_invite_logs_the_user_in() -> None:
+    app = create_app()
+    with TestClient(app) as client:
+        storage = app.state.container.storage
+        token = generate_invite_token()
+        storage.create_invite(
+            token=token, username="teammate1", is_admin=False,
+            expires_at=utc_now() + timedelta(days=7),
+        )
+
+        # Both routes must be reachable with no session cookie at all.
+        preview = client.get(f"/api/v1/auth/invites/{token}")
+        assert preview.status_code == 200
+        assert preview.json() == {"username": "teammate1"}
+
+        accept = client.post(
+            "/api/v1/auth/accept-invite", json={"token": token, "password": "a fresh password"}
+        )
+        assert accept.status_code == 200
+        assert accept.json() == {"username": "teammate1", "is_admin": False}
+
+        # accept-invite logged them in immediately, same as /login.
+        me = client.get("/api/v1/auth/me")
+        assert me.status_code == 200
+        assert me.json()["username"] == "teammate1"
+
+        # The link is single-use -- a second redemption must fail.
+        second_attempt = client.post(
+            "/api/v1/auth/accept-invite", json={"token": token, "password": "whatever"}
+        )
+        assert second_attempt.status_code == 404
+
+
+def test_preview_invite_404s_for_an_unknown_token() -> None:
+    app = create_app()
+    with TestClient(app) as client:
+        response = client.get("/api/v1/auth/invites/not-a-real-token")
+        assert response.status_code == 404

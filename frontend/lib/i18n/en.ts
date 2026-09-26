@@ -319,4 +319,16 @@ export const en: Translations = {
     invalidCredentials: "Invalid username or password",
     genericError: "Could not log in, please try again",
   },
+  signup: {
+    title: "Convexa",
+    creatingAccountFor: (username) => `Creating account for: ${username}`,
+    passwordLabel: "Password",
+    confirmPasswordLabel: "Confirm password",
+    submitButton: "Create account",
+    passwordMismatch: "Passwords do not match",
+    passwordTooShort: "Password must be at least 8 characters",
+    invalidOrExpiredInvite: "This invite link is invalid or has expired",
+    genericError: "Could not create the account, please try again",
+    loading: "Loading…",
+  },
 };

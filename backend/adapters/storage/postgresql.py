@@ -27,6 +27,7 @@ from backend.domain.entities import (
     OptionContract,
     ScreenerPreset,
     ScreenerPresetSettings,
+    Invite,
     Underlying,
     UnderlyingKind,
     User,
@@ -179,6 +180,61 @@ class PostgreSQLStorage:
                 salt=str(row["salt"]),
                 is_admin=bool(row["is_admin"]),
                 created_at=row["created_at"],
+            )
+
+    def create_invite(
+        self, token: str, username: str, is_admin: bool, expires_at: datetime
+    ) -> Invite:
+        with self.session_factory.begin() as session:
+            row = session.execute(
+                text(
+                    """
+                    INSERT INTO invites (token, username, is_admin, expires_at)
+                    VALUES (:token, :username, :is_admin, :expires_at)
+                    RETURNING id, token, username, is_admin, created_at, expires_at, used_at
+                    """
+                ),
+                {
+                    "token": token,
+                    "username": username.strip().lower(),
+                    "is_admin": is_admin,
+                    "expires_at": expires_at,
+                },
+            ).mappings().first()
+            assert row is not None  # RETURNING always yields the inserted row
+            return self._invite_from_row(row)
+
+    def get_invite_by_token(self, token: str) -> Invite | None:
+        with self.session_factory() as session:
+            row = session.execute(
+                text(
+                    """
+                    SELECT id, token, username, is_admin, created_at, expires_at, used_at
+                    FROM invites
+                    WHERE token = :token
+                    """
+                ),
+                {"token": token},
+            ).mappings().first()
+            return None if row is None else self._invite_from_row(row)
+
+    @staticmethod
+    def _invite_from_row(row: RowMapping) -> Invite:
+        return Invite(
+            id=int(row["id"]),
+            token=str(row["token"]),
+            username=str(row["username"]),
+            is_admin=bool(row["is_admin"]),
+            created_at=row["created_at"],
+            expires_at=row["expires_at"],
+            used_at=row["used_at"],
+        )
+
+    def mark_invite_used(self, token: str) -> None:
+        with self.session_factory.begin() as session:
+            session.execute(
+                text("UPDATE invites SET used_at = now() WHERE token = :token"),
+                {"token": token},
             )
 
     def save_screener_preset_settings(

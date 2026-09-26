@@ -115,6 +115,34 @@ class User:
         object.__setattr__(self, "username", self.username.strip().lower())
 
 
+@dataclass(frozen=True, slots=True)
+class Invite:
+    """A one-time signup link the owner generates for a teammate (see
+    backend/scripts/create_invite.py) -- the username and admin flag are
+    fixed by the owner at creation time, not chosen by whoever redeems
+    the token, so an invite link can't be used to grant more access than
+    intended even if it leaked."""
+
+    id: int
+    token: str
+    username: str
+    is_admin: bool
+    created_at: datetime
+    expires_at: datetime
+    used_at: datetime | None = None
+
+    def __post_init__(self) -> None:
+        if not self.token or not self.token.strip():
+            raise InvalidOptionError("invite token is required")
+        if not self.username or not self.username.strip():
+            raise InvalidOptionError("username is required")
+        object.__setattr__(self, "username", self.username.strip().lower())
+
+    @property
+    def is_valid(self) -> bool:
+        return self.used_at is None and self.expires_at > utc_now()
+
+
 class ScreenerPreset(StrEnum):
     UNUSUAL_OPTIONS_ACTIVITY = "unusual-options-activity"
     NEGATIVE_GAMMA_BOARD = "negative-gamma-board"
