@@ -54,6 +54,32 @@ async function patchJson<T>(path: string, body: unknown, signal?: AbortSignal): 
   return (await response.json()) as T;
 }
 
+async function postJson<T>(path: string, body: unknown, signal?: AbortSignal): Promise<T> {
+  const response = await fetch(`${API_PREFIX}${path}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+    cache: "no-store",
+    signal,
+  });
+  if (!response.ok) throw new ApiError(response.status);
+  return (await response.json()) as T;
+}
+
+export type SessionUser = { username: string; is_admin: boolean };
+
+export function login(username: string, password: string, signal?: AbortSignal) {
+  return postJson<SessionUser>("/auth/login", { username, password }, signal);
+}
+
+export function logout(signal?: AbortSignal) {
+  return postJson<{ ok: boolean }>("/auth/logout", {}, signal);
+}
+
+export function getMe(signal?: AbortSignal) {
+  return getJson<SessionUser>("/auth/me", signal);
+}
+
 export function getUnderlyings(signal?: AbortSignal) {
   return getJson<UnderlyingsResponse>("/underlyings", signal);
 }

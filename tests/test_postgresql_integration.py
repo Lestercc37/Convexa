@@ -1221,6 +1221,29 @@ def _delete_test_option_chain_data(engine: Engine, symbol: str) -> None:
         )
 
 
+def test_user_round_trip_against_postgresql(
+    postgresql_storage: tuple[PostgreSQLStorage, Engine, str],
+) -> None:
+    storage, engine, _ = postgresql_storage
+    username = f"test_{uuid4().hex[:8]}"
+    try:
+        created = storage.create_user(
+            username=username,
+            password_hash="deadbeef",
+            salt="cafef00d",
+            is_admin=True,
+        )
+        assert created.username == username
+        assert created.is_admin is True
+
+        loaded = storage.get_user_by_username(username)
+        assert loaded == created
+        assert storage.get_user_by_username("nobody-with-this-name") is None
+    finally:
+        with engine.begin() as connection:
+            connection.execute(text("DELETE FROM users WHERE username = :username"), {"username": username})
+
+
 def _delete_test_data(engine: Engine, symbol: str) -> None:
     with engine.begin() as connection:
         underlying_id = connection.execute(

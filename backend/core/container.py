@@ -49,6 +49,7 @@ from backend.domain.use_cases import (
     RefreshUnderlyingSnapshotUseCase,
     WhaleAlertsEngine,
 )
+from backend.domain.use_cases.auth import AuthenticateUserUseCase
 
 
 @dataclass(frozen=True)
@@ -88,6 +89,7 @@ class Container:
     calculate_derived_metrics_use_case: CalculateDerivedMetricsUseCase
     whale_alerts_engine: WhaleAlertsEngine
     refresh_underlying_snapshot_use_case: RefreshUnderlyingSnapshotUseCase
+    authenticate_user_use_case: AuthenticateUserUseCase
     price_notification_hub: PriceNotificationHub
     # None without a real Postgres behind DATABASE_URL (tests, sqlite) --
     # asyncpg.connect() has nothing to LISTEN on there. The hub above is
@@ -221,6 +223,7 @@ def build_container() -> Container:
         gamma_exposure_orchestrator=calculate_gamma_exposure_orchestrator,
         derived_metrics_use_case=calculate_derived_metrics_use_case,
     )
+    authenticate_user_use_case = AuthenticateUserUseCase(storage=storage)
     return Container(
         settings=settings,
         database_engine=database_engine,
@@ -248,6 +251,7 @@ def build_container() -> Container:
         calculate_derived_metrics_use_case=calculate_derived_metrics_use_case,
         whale_alerts_engine=whale_alerts_engine,
         refresh_underlying_snapshot_use_case=refresh_underlying_snapshot_use_case,
+        authenticate_user_use_case=authenticate_user_use_case,
         price_notification_hub=price_notification_hub,
         price_notification_listener=price_notification_listener,
     )

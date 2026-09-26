@@ -22,6 +22,71 @@
 
 * { box-sizing: border-box; }
 
+.login-page {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.login-form {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  width: 100%;
+  max-width: 320px;
+  padding: 32px;
+  background: var(--tv-panel);
+  border: 1px solid var(--tv-border);
+  border-radius: 8px;
+}
+
+.login-title {
+  margin: 0 0 8px;
+  font-size: 20px;
+  font-weight: 700;
+  text-align: center;
+  color: var(--accent);
+}
+
+.login-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--tv-text-dim);
+}
+
+.login-field input {
+  padding: 8px 10px;
+  background: var(--tv-panel-raised);
+  border: 1px solid var(--tv-border);
+  border-radius: 4px;
+  color: var(--tv-text);
+  font-size: 14px;
+}
+
+.login-error {
+  margin: 0;
+  color: var(--risk);
+  font-size: 13px;
+}
+
+.login-submit {
+  padding: 10px;
+  background: var(--accent);
+  border: none;
+  border-radius: 4px;
+  color: var(--tv-bg);
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.login-submit:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
 html { color-scheme: dark; }
 
 body {
@@ -585,6 +650,19 @@ button, select { font: inherit; }
   padding: 5px 9px;
 }
 .tv-settings-button:hover { background: var(--tv-panel-raised); color: var(--tv-text); }
+
+.tv-logout-button {
+  border: 1px solid var(--tv-border);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--tv-text-dim);
+  cursor: pointer;
+  font-size: 0.8rem;
+  line-height: 1;
+  padding: 5px 9px;
+  margin-left: 6px;
+}
+.tv-logout-button:hover { background: var(--tv-panel-raised); color: var(--tv-text); }
 
 .modal-overlay {
   position: fixed;

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import secrets
 from functools import lru_cache
 from typing import Literal
 
@@ -39,6 +40,12 @@ class Settings(BaseSettings):
     # WebSocket connection. Never reaches the network beyond this machine.
     whale_alerts_relay_host: str = Field(default="127.0.0.1")
     whale_alerts_relay_port: int = Field(default=25599)
+    # Signs session cookies (see backend/core/sessions.py). The random
+    # default is fine for tests/a single dev process, but it's re-rolled
+    # on every restart -- anything meant to keep users logged in across
+    # restarts (Convexa, the production server) MUST set QLL_SESSION_SECRET
+    # explicitly in its own .env, not rely on this default.
+    session_secret: str = Field(default_factory=lambda: secrets.token_hex(32))
 
 
 @lru_cache

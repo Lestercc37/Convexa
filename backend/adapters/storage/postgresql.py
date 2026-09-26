@@ -29,6 +29,7 @@ from backend.domain.entities import (
     ScreenerPresetSettings,
     Underlying,
     UnderlyingKind,
+    User,
     WhaleThreshold,
 )
 from backend.domain.underlyings import ACTIVE_UNDERLYINGS_BY_SYMBOL
@@ -127,6 +128,58 @@ class PostgreSQLStorage:
                 )
                 for row in rows
             }
+
+    def get_user_by_username(self, username: str) -> User | None:
+        with self.session_factory() as session:
+            row = session.execute(
+                text(
+                    """
+                    SELECT id, username, password_hash, salt, is_admin, created_at
+                    FROM users
+                    WHERE username = :username
+                    """
+                ),
+                {"username": username.strip().lower()},
+            ).mappings().first()
+            if row is None:
+                return None
+            return User(
+                id=int(row["id"]),
+                username=str(row["username"]),
+                password_hash=str(row["password_hash"]),
+                salt=str(row["salt"]),
+                is_admin=bool(row["is_admin"]),
+                created_at=row["created_at"],
+            )
+
+    def create_user(
+        self, username: str, password_hash: str, salt: str, is_admin: bool = False
+    ) -> User:
+        with self.session_factory.begin() as session:
+            row = session.execute(
+                text(
+                    """
+                    INSERT INTO users (username, password_hash, salt, is_admin)
+                    VALUES (:username, :password_hash, :salt, :is_admin)
+                    RETURNING id, username, password_hash, salt, is_admin, created_at
+                    """
+                ),
+                {
+                    "username": username.strip().lower(),
+                    "password_hash": password_hash,
+                    "salt": salt,
+                    "is_admin": is_admin,
+                },
+            ).mappings().first()
+            assert row is not None  # RETURNING always yields the inserted row
+            return User(
+                id=int(row["id"]),
+                username=str(row["username"]),
+                password_hash=str(row["password_hash"]),
+                salt=str(row["salt"]),
+                is_admin=bool(row["is_admin"]),
+                created_at=row["created_at"],
+            )
 
     def save_screener_preset_settings(
         self, preset: ScreenerPreset, settings: ScreenerPresetSettings

@@ -25,6 +25,7 @@ export type Translations = {
     loadingRegime: string;
     settingsButtonAriaLabel: string;
     resizeSeparatorAriaLabel: string;
+    logoutButton: string;
   };
   regimeBadge: {
     ariaLabel: string;
@@ -197,5 +198,13 @@ export type Translations = {
     proprietaryBadge: string;
     citationLabel: string;
     engines: Record<string, { name: string; description: string }>;
+  };
+  login: {
+    title: string;
+    usernameLabel: string;
+    passwordLabel: string;
+    submitButton: string;
+    invalidCredentials: string;
+    genericError: string;
   };
 };

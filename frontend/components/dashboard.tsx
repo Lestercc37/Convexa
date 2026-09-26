@@ -1,9 +1,17 @@
 "use client";
 
 import Image from "next/image";
+import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Group, Panel, Separator, useDefaultLayout } from "react-resizable-panels";
-import { getGamma, getMarket, getMarketPriceHistory, getUnderlyings, getVwapHistory } from "@/lib/api";
+import {
+  getGamma,
+  getMarket,
+  getMarketPriceHistory,
+  getUnderlyings,
+  getVwapHistory,
+  logout,
+} from "@/lib/api";
 import {
   aggregateCandles,
   aggregateMinuteCandles,
@@ -109,6 +117,7 @@ const EXPOSURE_FORMAT = new Intl.NumberFormat("en-US", {
 
 export function Dashboard() {
   const { language, setLanguage, t } = useLanguage();
+  const router = useRouter();
   // `storage` is undefined during server rendering (and the very first
   // client render, pre-hydration) — `window` doesn't exist there. Same
   // "read the real stored value only after mount" tradeoff already
@@ -492,6 +501,15 @@ export function Dashboard() {
             onClick={() => setShowEnginesGuide(true)}
           >
             ☰
+          </button>
+          <button
+            type="button"
+            className="tv-logout-button"
+            onClick={() => {
+              void logout().finally(() => router.replace("/login"));
+            }}
+          >
+            {t.dashboard.logoutButton}
           </button>
         </div>
       </header>

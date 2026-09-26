@@ -680,3 +680,13 @@ class OptionChainRequest(BaseModel):
             spot_price=self.spot_price,
             contracts=tuple(contract.to_domain(self.symbol) for contract in self.contracts),
         )
+
+
+class LoginRequest(BaseModel):
+    username: str = Field(min_length=1)
+    password: str = Field(min_length=1)
+
+
+class SessionUserResponse(BaseModel):
+    username: str
+    is_admin: bool
