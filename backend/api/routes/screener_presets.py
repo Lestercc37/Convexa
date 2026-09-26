@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import asyncio
 
-from fastapi import APIRouter, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 
+from backend.api.deps import require_admin
 from backend.api.schemas import (
     ScreenerPresetResponse,
     ScreenerPresetSettingsListResponse,
@@ -146,6 +147,7 @@ def screener_preset_settings_list(request: Request) -> ScreenerPresetSettingsLis
 @router.patch(
     "/screener-preset-settings/{preset_name}",
     response_model=ScreenerPresetSettingsResponse,
+    dependencies=[Depends(require_admin)],
 )
 def update_screener_preset_settings(
     preset_name: str,

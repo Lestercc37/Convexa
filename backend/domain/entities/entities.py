@@ -100,6 +100,21 @@ class WhaleThreshold:
                 raise InvalidOptionError(f"{name} must be positive")
 
 
+@dataclass(frozen=True, slots=True)
+class User:
+    id: int
+    username: str
+    password_hash: str
+    salt: str
+    is_admin: bool
+    created_at: datetime
+
+    def __post_init__(self) -> None:
+        if not self.username or not self.username.strip():
+            raise InvalidOptionError("username is required")
+        object.__setattr__(self, "username", self.username.strip().lower())
+
+
 class ScreenerPreset(StrEnum):
     UNUSUAL_OPTIONS_ACTIVITY = "unusual-options-activity"
     NEGATIVE_GAMMA_BOARD = "negative-gamma-board"

@@ -77,6 +77,9 @@ vi.mock("@/lib/api", async () => {
   const actual = await vi.importActual<typeof import("@/lib/api")>("@/lib/api");
   return { ...actual, ...apiMocks };
 });
+vi.mock("next/navigation", () => ({
+  useRouter: () => ({ replace: vi.fn(), push: vi.fn() }),
+}));
 vi.mock("@/lib/market-price-stream", () => marketPriceStreamMocks);
 vi.mock("lightweight-charts", () => ({
   CandlestickSeries: "CandlestickSeries",

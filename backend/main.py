@@ -11,7 +11,7 @@ from backend.api.routes import api_router
 from backend.api.serializers import error_response
 from backend.core.container import build_container
 from backend.core.logging import configure_logging
-from backend.domain.use_cases.errors import QllError
+from backend.domain.use_cases.errors import ForbiddenError, QllError, UnauthorizedError
 
 logger = logging.getLogger(__name__)
 
@@ -98,7 +98,11 @@ def create_app() -> FastAPI:
     @app.exception_handler(QllError)
     async def qll_error_handler(request: Request, error: QllError) -> JSONResponse:
         del request
-        status_code = 404 if error.code == "NOT_FOUND" else 500
+        status_code = {
+            "NOT_FOUND": 404,
+            "UNAUTHORIZED": 401,
+            "FORBIDDEN": 403,
+        }.get(error.code, 500)
         return JSONResponse(status_code=status_code, content=error_response(error))
 
     app.include_router(api_router())

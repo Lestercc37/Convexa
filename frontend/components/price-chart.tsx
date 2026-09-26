@@ -94,8 +94,9 @@ type TrendlinePoint = { time: UTCTimestamp; price: number };
 type Trendline = { start: TrendlinePoint; end: TrendlinePoint };
 
 function gammaLevels(gamma: GammaResponse): GammaLevel[] {
-  // The honest-empty Tactical case (no 0-2 DTE contracts listed today)
-  // -- every field below still comes back a real 0/null in that case,
+  // The honest-empty Tactical case (no chain data fetched at all -- see
+  // GammaView's own comment in lib/types.ts) -- every field below still
+  // comes back a real 0/null in that case,
   // which would otherwise draw Call Wall/Put Wall/Gamma Flip pinned at
   // price 0 as if they were genuine levels. See GammaResponse.has_data's
   // own comment; the empty-state message this produces is rendered

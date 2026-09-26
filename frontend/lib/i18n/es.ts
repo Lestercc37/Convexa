@@ -20,7 +20,7 @@ export const es: Translations = {
     structuralButton: "Estructural",
     tacticalButton: "Táctico",
     structuralOnlyBadge: "(Estructural)",
-    noTacticalDataLabel: "Sin contratos 0-2 DTE hoy para este símbolo",
+    noTacticalDataLabel: "Sin datos de opciones disponibles para este símbolo",
     structuralAsOfLabel: (minutesAgo) =>
       minutesAgo <= 0 ? "Estructural: recién actualizado" : `Estructural: hace ${minutesAgo}m`,
     exposureGroupAriaLabel: "Charm y Vanna Exposure",
@@ -28,6 +28,7 @@ export const es: Translations = {
     loadingRegime: "Cargando régimen y niveles…",
     settingsButtonAriaLabel: "Configuración de umbrales de Whale Alerts",
     resizeSeparatorAriaLabel: "Redimensionar paneles",
+    logoutButton: "Cerrar sesión",
   },
   regimeBadge: {
     ariaLabel: "Régimen gamma",
@@ -312,5 +313,13 @@ export const es: Translations = {
           "Qué tan probable es que el precio quede \"clavado\" cerca de un strike específico al cierre, combinando concentración de Open Interest, cercanía al strike imán y tiempo restante de sesión.",
       },
     },
+  },
+  login: {
+    title: "Convexa",
+    usernameLabel: "Usuario",
+    passwordLabel: "Contraseña",
+    submitButton: "Entrar",
+    invalidCredentials: "Usuario o contraseña incorrectos",
+    genericError: "No se pudo iniciar sesión, intenta de nuevo",
   },
 };

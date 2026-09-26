@@ -131,12 +131,14 @@ def test_tactical_anchor_is_explicit_and_excludes_contracts_before_it() -> None:
 
 
 def test_tactical_anchor_with_nothing_listed_in_range_yields_an_empty_chain() -> None:
-    # The honest-empty-result case (e.g. an individual stock with only
-    # Friday weeklies, on a day that isn't within 2 real days of one) --
     # _filter_to_near_term_expirations itself just returns an empty
-    # chain; CalculateGammaExposureOrchestrator._build_view is what turns
-    # that into an honest empty GammaAggregate rather than falling back
-    # to the full chain (covered in test_gamma_aggregate_engine.py).
+    # chain when nothing falls within the anchored window (e.g. an
+    # individual stock with only Friday weeklies, on a day that isn't
+    # within 2 real days of one) -- it has no fallback logic of its own.
+    # CalculateGammaExposureOrchestrator._build_view is what retries this
+    # same function with anchor=None (nearest listed expiration) for the
+    # tactical view before giving up (see test_gamma_views.py's own
+    # test_execute_tactical_falls_back_to_nearest_listed_expiration_when_0_2_dte_is_empty).
     anchor = NEAREST_EXPIRATION
     chain = _chain_with_expirations(NEAREST_EXPIRATION + timedelta(days=10))
 

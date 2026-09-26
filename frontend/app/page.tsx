@@ -1,5 +1,10 @@
+import { AuthGate } from "@/components/auth-gate";
 import { Dashboard } from "@/components/dashboard";
 
 export default function Home() {
-  return <Dashboard />;
+  return (
+    <AuthGate>
+      <Dashboard />
+    </AuthGate>
+  );
 }

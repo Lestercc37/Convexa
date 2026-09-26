@@ -170,18 +170,26 @@ class CalculateGammaExposureOrchestrator:
         # -- Gamma Flip/Walls/Max Pain were never designed to average across
         # a LEAPS contract 5 years out diluting today's real dealer exposure.
         near_term_chain = _filter_to_near_term_expirations(chain, window_days, anchor=anchor)
+        if not near_term_chain.contracts and view == "tactical":
+            # See TACTICAL_FALLBACK_WINDOW_DAYS' own comment: retry
+            # anchored to the nearest LISTED expiration (same rule the
+            # structural window already uses) instead of real "today",
+            # before giving up. This always finds at least the nearest
+            # expiration if the chain has any contracts at all, however
+            # far out it is -- only a chain with zero contracts (no data
+            # fetched yet) reaches the honest-empty branch below.
+            near_term_chain = _filter_to_near_term_expirations(
+                chain, TACTICAL_FALLBACK_WINDOW_DAYS, anchor=None
+            )
         if not near_term_chain.contracts:
-            # Honest empty result, tactical-only in practice (the
-            # structural window is wide enough that every active symbol
-            # has always had something in range) -- e.g. an individual
-            # stock that only lists Friday weeklies, on a day that isn't
-            # within 2 real calendar days of one. Deliberately NOT the
-            # same "fall back to the full chain" trick the narrow-width
-            # guard below uses for a degenerate ATR width -- that guard
-            # exists because an empty STRIKE range is almost certainly a
-            # data anomaly, but an empty TACTICAL EXPIRATION range is a
-            # normal, expected, honest outcome. Falling back would
-            # silently show structural numbers under the tactical label.
+            # Honest empty result -- only reachable now when the chain
+            # itself has no contracts at all (nothing fetched yet for
+            # this symbol), for either view. Deliberately NOT the same
+            # "fall back to the full chain" trick the narrow-width guard
+            # below uses for a degenerate ATR width -- that guard exists
+            # because an empty STRIKE range on an otherwise-populated
+            # chain is almost certainly a data anomaly, not a real state
+            # to represent honestly.
             return GammaAggregate(symbol=chain.symbol, as_of=chain.as_of, view=view)
         enriched_chain = self._greeks.execute(near_term_chain)
 
@@ -481,15 +489,33 @@ def _structural_window_days(symbol: str) -> int:
 # methodology document) -- fixed at 0-2 DTE for every symbol, no tiering
 # (unlike the structural window above). Anchored to `chain.as_of`
 # converted to Eastern time (see execute_tactical/execute_both), not the
-# nearest LISTED expiration the way the structural window is -- most
-# individual stocks only list Friday weeklies, so on most days their
-# nearest listed expiration is NOT within 2 real calendar days of today.
-# Anchoring to the nearest listing instead of real "today" would silently
-# turn "0-2 DTE" into "0-2 days from whatever's listed, however far that
-# really is" for those symbols -- confirmed with the user this is the
-# WRONG tradeoff: an empty tactical result on days a symbol lists nothing
-# within 0-2 real days is the honest answer, not a bug to route around.
+# nearest LISTED expiration the way the structural window is -- see
+# TACTICAL_FALLBACK_WINDOW_DAYS just below for what happens when this
+# anchor lands on nothing.
 TACTICAL_WINDOW_DAYS = 2
+
+# Reversed 2026-09-25, the same day the feature shipped, once real listed
+# expirations (not assumptions) were pulled from the DB for every active
+# symbol: an honest-empty Tactical was originally the deliberate choice
+# (a stock's own nearest weekly is "however far that really is", and
+# silently anchoring to it would misrepresent 0-2 DTE as something it
+# isn't). But the real data showed this actually empties Tactical out for
+# 3 of the 15 active symbols on a meaningful fraction of trading days --
+# VIX (weekly Wednesday expirations: empty every Thu/Fri), DIA (weekly
+# Friday: empty every Mon/Tue), and ES (monthly/quarterly: empty
+# essentially always, its nearest listing routinely 20-90+ days out) --
+# not the rare edge case it was assumed to be. An empty Tactical panel is
+# not a defensible "honest" answer to a scalper checking it intraday; the
+# user's own words: "no me sirve". So _build_view now retries with
+# anchor=None (nearest LISTED expiration, same rule the structural window
+# already uses) and this much narrower window once the real anchor-to-
+# today window comes back with nothing. Because anchor=None sets the
+# anchor to the nearest expiration itself, this retry always finds at
+# least that one expiration, however far out it is -- ES's own Tactical
+# becomes "whatever ES's nearest listing is", not a permanent blank. 7
+# days (vs. structural's 30/45) keeps it capturing only the next weekly
+# or two for VIX/DIA, not drifting into structural's own macro window.
+TACTICAL_FALLBACK_WINDOW_DAYS = 7
 
 # Structural refresh throttle, added 2026-09-25 per the user's own
 # trading style: a scalper/day trader reads Tactical as their working

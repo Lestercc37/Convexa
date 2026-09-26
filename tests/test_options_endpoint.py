@@ -139,13 +139,13 @@ def test_internal_trigger_persists_consolidated_gamma_for_public_get() -> None:
 def test_gamma_get_view_query_param_routes_to_the_tactical_aggregate() -> None:
     """MockDataProvider's fixture chain (as_of 2026-01-15, its only
     expiration 2026-02-20, 36 days out) lists nothing within 0-2 DTE of
-    its own as_of -- the honest-empty Tactical case, live end to end
-    through the real trigger-calculation -> get pipeline. Structural
-    picks up that same expiration fine (its own 36-day gap is still
-    inside the anchor-is-the-nearest-listing rule -- see
-    _filter_to_near_term_expirations' own docstring), so this also
-    proves the two views are actually independent, not the same read
-    twice under a different label."""
+    its own as_of, so Tactical falls back to that same nearest listed
+    expiration (see TACTICAL_FALLBACK_WINDOW_DAYS' own comment) -- live
+    end to end through the real trigger-calculation -> get pipeline.
+    Both views land on the same single expiration here (the fixture only
+    has one), so they read identically; test_gamma_views.py's own
+    execute_both test covers the case where the two windows genuinely
+    diverge."""
     with TestClient(app) as client:
         trigger = client.post("/internal/trigger-calculation/spy")
         structural = client.get("/api/v1/gamma/spy")
@@ -160,10 +160,16 @@ def test_gamma_get_view_query_param_routes_to_the_tactical_aggregate() -> None:
     assert structural.json()["has_data"] is True
 
     assert tactical.json()["view"] == "tactical"
-    assert tactical.json()["has_data"] is False
-    assert tactical.json()["call_wall"] is None
-    assert tactical.json()["put_wall"] is None
-    assert tactical.json()["gamma_flip"] is None
+    assert tactical.json()["has_data"] is True
+    # Both views land on the exact same (only) expiration this fixture
+    # has, so every computed field matches structural's -- including
+    # call_wall/put_wall being None on both: the fixture's symmetric
+    # call+put open interest at every strike nets each strike's gamma to
+    # zero, a real "no candidate found" outcome (see
+    # test_tactical_walls_include_0dte_unlike_structural's own comment),
+    # not something this fallback should manufacture a value for.
+    assert tactical.json()["call_wall"] == structural.json()["call_wall"]
+    assert tactical.json()["put_wall"] == structural.json()["put_wall"]
 
     # Omitting the param must still return exactly today's structural
     # numbers -- no regression for every consumer that predates this

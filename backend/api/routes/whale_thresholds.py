@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Depends, Request
 
+from backend.api.deps import require_admin
 from backend.api.schemas import (
     WhaleThresholdResponse,
     WhaleThresholdsResponse,
@@ -50,7 +51,11 @@ def list_whale_thresholds(request: Request) -> WhaleThresholdsResponse:
 # this PR made WhaleAlertsEngine read thresholds live from storage on
 # every process() call specifically so this endpoint has an effect
 # without a restart.
-@router.patch("/whale-thresholds/{symbol}", response_model=WhaleThresholdResponse)
+@router.patch(
+    "/whale-thresholds/{symbol}",
+    response_model=WhaleThresholdResponse,
+    dependencies=[Depends(require_admin)],
+)
 def update_whale_threshold(
     symbol: str,
     body: WhaleThresholdUpdateRequest,

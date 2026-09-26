@@ -168,12 +168,14 @@ def test_tactical_walls_include_0dte_unlike_structural() -> None:
     assert tactical.put_wall == Decimal(545)
 
 
-def test_execute_tactical_with_nothing_in_the_0_2_dte_window_is_an_honest_empty_result() -> None:
-    """The case the user explicitly confirmed matters (2026-09-25): an
-    individual stock that only lists Friday weeklies, on a day that
-    isn't within 2 real calendar days of one, must show NO tactical data
-    -- not silently fall back to the structural numbers under the
-    tactical label."""
+def test_execute_tactical_falls_back_to_nearest_listed_expiration_when_0_2_dte_is_empty() -> None:
+    """Reversed 2026-09-25 (see TACTICAL_FALLBACK_WINDOW_DAYS' own
+    comment): real listed-expiration data pulled from the DB the same day
+    showed VIX/DIA/ES genuinely go empty under the strict 0-2 DTE window
+    on a meaningful fraction of trading days -- an individual stock that
+    only lists Friday weeklies, on a day that isn't within 2 real
+    calendar days of one, must now fall back to that nearest listing
+    instead of showing nothing."""
     storage = InMemoryStorage()
     contracts = (
         _contract(
@@ -186,6 +188,24 @@ def test_execute_tactical_with_nothing_in_the_0_2_dte_window_is_an_honest_empty_
         ),
     )
     chain = OptionChain(symbol="SPY", as_of=AS_OF, spot_price=SPOT_PRICE, contracts=contracts)
+    storage.save_chain_snapshot(chain)
+    orchestrator = _orchestrator(storage)
+
+    tactical = orchestrator.execute_tactical("SPY")
+
+    assert tactical.view == "tactical"
+    assert tactical.items != ()
+    assert {item.strike for item in tactical.items} == {Decimal(560), Decimal(540)}
+    assert tactical.call_wall is not None
+    assert tactical.put_wall is not None
+
+
+def test_execute_tactical_with_no_chain_contracts_at_all_is_an_honest_empty_result() -> None:
+    """The only remaining honest-empty case: nothing has been fetched
+    for this symbol yet at all (not even a nearest listed expiration to
+    fall back to)."""
+    storage = InMemoryStorage()
+    chain = OptionChain(symbol="SPY", as_of=AS_OF, spot_price=SPOT_PRICE, contracts=())
     storage.save_chain_snapshot(chain)
     orchestrator = _orchestrator(storage)
 

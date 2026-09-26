@@ -15,7 +15,9 @@ from backend.domain.entities import (
     ScreenerPreset,
     ScreenerPresetSettings,
     Underlying,
+    User,
     WhaleThreshold,
+    utc_now,
 )
 from backend.domain.underlyings import ACTIVE_UNDERLYINGS
 from backend.domain.use_cases.flow import SymbolFlowPressure, WhaleAlert
@@ -33,6 +35,8 @@ class InMemoryStorage:
         self._flow: dict[str, list[FlowEvent]] = {}
         self._daily_gamma: dict[str, dict[date, DailyGammaReference]] = {}
         self._daily_bars: dict[str, dict[date, DailyBar]] = {}
+        self._users: dict[str, User] = {}
+        self._next_user_id = 1
         self._whale_alerts: dict[str, list[WhaleAlert]] = {}
         self._symbol_flow_pressure: dict[str, SymbolFlowPressure] = {}
         self._cumulative_volumes: dict[str, int] = {}
@@ -65,6 +69,24 @@ class InMemoryStorage:
 
     def get_whale_thresholds(self) -> dict[str, WhaleThreshold]:
         return dict(self._whale_thresholds)
+
+    def get_user_by_username(self, username: str) -> User | None:
+        return self._users.get(username.strip().lower())
+
+    def create_user(
+        self, username: str, password_hash: str, salt: str, is_admin: bool = False
+    ) -> User:
+        user = User(
+            id=self._next_user_id,
+            username=username,
+            password_hash=password_hash,
+            salt=salt,
+            is_admin=is_admin,
+            created_at=utc_now(),
+        )
+        self._next_user_id += 1
+        self._users[user.username] = user
+        return user
 
     def save_screener_preset_settings(
         self, preset: ScreenerPreset, settings: ScreenerPresetSettings

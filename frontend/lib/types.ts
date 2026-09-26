@@ -124,12 +124,15 @@ export type DerivedMetrics = {
 
 // Structural: the wider, symbol-tiered near-term window (Call Wall/Put
 // Wall/Gamma Flip/Net GEX/Max Pain -- the macro levels). Tactical: a
-// fixed 0-2 DTE window (today's own expiring flow), computed and
+// fixed 0-2 DTE window (today's own expiring flow) that falls back to
+// the nearest LISTED expiration (a narrow 7-day window around it) when
+// nothing real falls within 0-2 calendar days -- see
+// TACTICAL_FALLBACK_WINDOW_DAYS on the backend (gamma.py). Computed and
 // persisted as a fully independent aggregate, not a derived reading of
 // the structural one -- see CalculateGammaExposureOrchestrator.execute_both
-// on the backend. A symbol can legitimately have an EMPTY tactical
-// result (items: []) on a day it lists no 0-2 DTE contracts (most
-// individual stocks, most days) -- that's the honest result, not a bug.
+// on the backend. A symbol can still legitimately have an EMPTY tactical
+// result (items: []), but only when no chain data has been fetched for
+// it at all -- that's the honest result, not a bug.
 export type GammaView = "structural" | "tactical";
 
 export type GammaResponse = {
@@ -137,11 +140,12 @@ export type GammaResponse = {
   symbol: string;
   as_of: string;
   view: GammaView;
-  // False only for the honest-empty Tactical case (no 0-2 DTE contracts
-  // listed today for this symbol) -- every other field here still comes
-  // back real/zeroed/null in that case, so this is the only way to tell
-  // "genuinely nothing to show" apart from "a real reading of 0". This
-  // response never carries a strike breakdown to infer it from.
+  // False only for the honest-empty Tactical case (no chain data
+  // fetched for this symbol at all -- see GammaView's own comment)
+  // -- every other field here still comes back real/zeroed/null in
+  // that case, so this is the only way to tell "genuinely nothing to
+  // show" apart from "a real reading of 0". This response never
+  // carries a strike breakdown to infer it from.
   has_data: boolean;
   // Genuinely nullable at the API boundary (no sign crossing found in
   // the current window, confirmed live 2026-09-14: GOOGL alone hit this

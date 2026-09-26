@@ -20,7 +20,7 @@ export const en: Translations = {
     structuralButton: "Structural",
     tacticalButton: "Tactical",
     structuralOnlyBadge: "(Structural)",
-    noTacticalDataLabel: "No 0-2 DTE contracts today for this symbol",
+    noTacticalDataLabel: "No option data available yet for this symbol",
     structuralAsOfLabel: (minutesAgo) =>
       minutesAgo <= 0 ? "Structural: just now" : `Structural: ${minutesAgo}m ago`,
     exposureGroupAriaLabel: "Charm and Vanna Exposure",
@@ -28,6 +28,7 @@ export const en: Translations = {
     loadingRegime: "Loading regime and levels…",
     settingsButtonAriaLabel: "Whale Alerts threshold settings",
     resizeSeparatorAriaLabel: "Resize panels",
+    logoutButton: "Log out",
   },
   regimeBadge: {
     ariaLabel: "Gamma regime",
@@ -309,5 +310,13 @@ export const en: Translations = {
           "How likely price is to get \"pinned\" near a specific strike at the close, combining Open Interest concentration, proximity to the magnet strike, and remaining session time.",
       },
     },
+  },
+  login: {
+    title: "Convexa",
+    usernameLabel: "Username",
+    passwordLabel: "Password",
+    submitButton: "Log in",
+    invalidCredentials: "Invalid username or password",
+    genericError: "Could not log in, please try again",
   },
 };
