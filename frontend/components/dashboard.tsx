@@ -77,6 +77,15 @@ const NOOP_LAYOUT_STORAGE: Pick<Storage, "getItem" | "setItem"> = {
   setItem: () => {},
 };
 
+// Confirmed with the user, 2026-09-26: the dashboard always opening on
+// AAPL (the first symbol alphabetically in the underlyings list) on
+// every fresh load/refresh was disorienting for a team that each
+// mostly watches one or two symbols. Remembers the last symbol chosen,
+// per browser (localStorage, not a server-side per-user preference) --
+// good enough for now since each teammate always uses their own
+// machine/browser profile.
+const LAST_SYMBOL_STORAGE_KEY = "convexa:last-symbol";
+
 // Same breakpoint the existing @media (max-width: 960px) rule already
 // uses to stack .tv-body into a column on narrow viewports.
 const NARROW_LAYOUT_QUERY = "(max-width: 960px)";
@@ -173,7 +182,12 @@ export function Dashboard() {
     getUnderlyings(controller.signal)
       .then(({ underlyings: items }) => {
         setUnderlyings(items);
-        setSymbol((current) => current || items[0]?.symbol || "");
+        setSymbol((current) => {
+          if (current) return current;
+          const stored = window.localStorage.getItem(LAST_SYMBOL_STORAGE_KEY);
+          const isStoredStillActive = stored && items.some((item) => item.symbol === stored);
+          return (isStoredStillActive ? stored : items[0]?.symbol) || "";
+        });
       })
       .catch((reason: unknown) => {
         if (!controller.signal.aborted) {
@@ -182,6 +196,11 @@ export function Dashboard() {
       });
     return () => controller.abort();
   }, []);
+
+  useEffect(() => {
+    if (!symbol) return;
+    window.localStorage.setItem(LAST_SYMBOL_STORAGE_KEY, symbol);
+  }, [symbol]);
 
   // `view` is an explicit parameter, not read off the `gammaView` state
   // closure -- this is what lets refresh() stay referentially stable
@@ -271,43 +290,53 @@ export function Dashboard() {
     const controller = new AbortController();
     let interval: number | undefined;
 
-    // Seeds pricePoints with today's session-so-far before the first live
-    // poll runs, instead of starting every symbol from an empty chart that
-    // has to wait for new ticks to rebuild candles already formed since
-    // the open (confirmed live, 2026-09: the backend already had this
-    // data via market_snapshots -- GET /market/{symbol}/history exposes
-    // it, this just seeds with it). A failed seed isn't fatal -- it just
-    // falls back to the old empty-then-accumulate behavior below.
+    // Seeds pricePoints (and vwapPoints, same reasoning -- Lester's
+    // report, 2026-09-17) with today's session-so-far before the first
+    // live poll runs, instead of starting every symbol from an empty
+    // chart that has to wait for new ticks to rebuild candles already
+    // formed since the open (confirmed live, 2026-09: the backend
+    // already had this data via market_snapshots -- GET
+    // /market/{symbol}/history and /vwap-history expose it, this just
+    // seeds with it). A failed seed isn't fatal -- it just falls back to
+    // the old empty-then-accumulate behavior for that one series.
+    //
+    // Promise.allSettled, not two sequential awaits (confirmed live,
+    // 2026-09-26: AAPL's own Friday session alone is 12,000+ raw price
+    // points -- fetching + parsing that, THEN starting the VWAP fetch
+    // only after it finished, was most of a real ~10s symbol-switch
+    // delay teammates reported). Settled, not Promise.all, so one
+    // endpoint failing still lets the other's real data apply instead of
+    // discarding it too.
     const seedThenPoll = async () => {
-      try {
-        const history = await getMarketPriceHistory(symbol, controller.signal);
-        if (controller.signal.aborted) return;
-        setPricePoints(
-          history.points.map((point) => ({ timestamp: point.timestamp, price: point.price })),
-        );
-      } catch (reason: unknown) {
-        if (!controller.signal.aborted) {
-          setError(reason);
-        }
-      }
+      const [historyResult, vwapResult] = await Promise.allSettled([
+        getMarketPriceHistory(symbol, controller.signal),
+        getVwapHistory(symbol, controller.signal),
+      ]);
       if (controller.signal.aborted) return;
-      // Same seed-from-history pattern as pricePoints above -- fixes VWAP
-      // resetting to empty (and restarting its climb from the very next
-      // poll) every time the symbol is switched away and back, instead of
-      // keeping the session-so-far line it already had (Lester's report,
-      // 2026-09-17).
-      try {
-        const vwapHistory = await getVwapHistory(symbol, controller.signal);
-        if (controller.signal.aborted) return;
-        setVwapNotApplicable(vwapHistory.not_applicable);
-        setVwapPoints(
-          vwapHistory.points.map((point) => ({ timestamp: point.timestamp, value: point.value })),
+
+      if (historyResult.status === "fulfilled") {
+        setPricePoints(
+          historyResult.value.points.map((point) => ({
+            timestamp: point.timestamp,
+            price: point.price,
+          })),
         );
-      } catch (reason: unknown) {
-        if (!controller.signal.aborted) {
-          setError(reason);
-        }
+      } else if (!controller.signal.aborted) {
+        setError(historyResult.reason);
       }
+
+      if (vwapResult.status === "fulfilled") {
+        setVwapNotApplicable(vwapResult.value.not_applicable);
+        setVwapPoints(
+          vwapResult.value.points.map((point) => ({
+            timestamp: point.timestamp,
+            value: point.value,
+          })),
+        );
+      } else if (!controller.signal.aborted) {
+        setError(vwapResult.reason);
+      }
+
       if (controller.signal.aborted) return;
       void refresh(symbol, gammaViewRef.current, controller.signal);
       interval = window.setInterval(

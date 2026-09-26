@@ -216,6 +216,13 @@ function marketFor(symbol: string) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // jsdom's localStorage persists across tests within this file (it's
+  // one shared `window`, not reset per-test) -- without clearing it, a
+  // symbol a later test's own assertions rely on defaulting to (SPY)
+  // can instead resolve to whatever an EARLIER test last picked, via
+  // the "remember the last symbol" feature (LAST_SYMBOL_STORAGE_KEY in
+  // dashboard.tsx) reading real leftover state from a previous test.
+  window.localStorage.clear();
   apiMocks.getUnderlyings.mockResolvedValue({
     schema_version: 1,
     underlyings: [
