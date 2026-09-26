@@ -47,6 +47,9 @@ vi.mock("lightweight-charts", () => ({
   // Real values from the library itself (lightweight-charts.development.mjs)
   // -- price-chart.tsx switches on these in tickMarkFormatter.
   TickMarkType: { Year: 0, Month: 1, DayOfMonth: 2, Time: 3, TimeWithSeconds: 4 },
+  // Real values from the library itself -- Normal: 0, Magnet: 1, Hidden: 2,
+  // MagnetOHLC: 3.
+  CrosshairMode: { Normal: 0, Magnet: 1, Hidden: 2, MagnetOHLC: 3 },
   createChart: chartMocks.createChart,
 }));
 

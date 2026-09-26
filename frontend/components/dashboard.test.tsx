@@ -86,6 +86,8 @@ vi.mock("lightweight-charts", () => ({
   LineSeries: "LineSeries",
   ColorType: { Solid: "solid" },
   LineStyle: { Dashed: 2, Solid: 0 },
+  TickMarkType: { Year: 0, Month: 1, DayOfMonth: 2, Time: 3, TimeWithSeconds: 4 },
+  CrosshairMode: { Normal: 0, Magnet: 1, Hidden: 2, MagnetOHLC: 3 },
   createChart: chartMocks.createChart,
 }));
 vi.mock("react-resizable-panels", () => ({

@@ -6,6 +6,7 @@ import {
   CandlestickSeries,
   ColorType,
   createChart,
+  CrosshairMode,
   LineSeries,
   LineStyle,
   LineType,
@@ -193,6 +194,26 @@ function tickMarkFormatter(timeSeconds: UTCTimestamp, tickMarkType: TickMarkType
       break;
   }
   return new Intl.DateTimeFormat(locale, options).format(date);
+}
+
+// The crosshair's own time label (top of the chart, follows the mouse)
+// has no relation to tickMarkFormatter above -- lightweight-charts calls
+// a *separate* localization.timeFormatter for it, which defaults to
+// UTC-based formatting if left unset (confirmed live, 2026-09-26: the
+// axis already read ET correctly, the crosshair label next to it still
+// read UTC). Same EASTERN_TIME_ZONE conversion, just always full
+// date+time since the crosshair label doesn't get the axis's own
+// zoom-dependent granularity to fall back on.
+function crosshairTimeFormatter(timeSeconds: UTCTimestamp): string {
+  const date = new Date(timeSeconds * 1000);
+  return new Intl.DateTimeFormat(undefined, {
+    timeZone: EASTERN_TIME_ZONE,
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).format(date);
 }
 
 // Prepends a whitespace point (a bar with only a `time`, no OHLC values --
@@ -448,6 +469,15 @@ export function PriceChart({
       },
       timeScale: { timeVisible: true, secondsVisible: false, tickMarkFormatter },
       rightPriceScale: { borderColor: "#2A2E39" },
+      localization: { timeFormatter: crosshairTimeFormatter },
+      // Per user request (2026-09-26): the default (Magnet) snaps the
+      // crosshair's horizontal line to each candle's own OHLC value
+      // instead of following the mouse's actual Y position -- exactly
+      // what makes it impossible to point at a real reversal that
+      // happened mid-wick, not at one of those four fixed prices.
+      // Normal lets it move freely, matching what a trader actually
+      // wants: read off whatever price level the mouse is really over.
+      crosshair: { mode: CrosshairMode.Normal },
     });
     // TradingView-native candle colors — never the Convexa brand pair above,
     // which is reserved for what Convexa itself calculates (Gamma levels).
