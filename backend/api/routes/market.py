@@ -7,7 +7,7 @@ from backend.api.serializers import market_response, price_history_response, vwa
 from backend.core.container import Container
 from backend.domain.use_cases import (
     build_market_snapshot_async,
-    calculate_session_open,
+    get_price_history_async,
     get_vwap_history_async,
 )
 
@@ -55,14 +55,13 @@ async def get_price_history(symbol: str, request: Request) -> PriceHistoryRespon
     readings and Friday's candles silently vanished until Monday's first
     real one arrived. A symbol's actual last session -- whenever that
     was -- is always the right thing to show, not "today" specifically.
+
+    ES/NQ go through get_price_history_async's own proxy branch instead
+    of reading their own (nonexistent) history -- see
+    PRICE_PROXY_SYMBOL_BY_FUTURE's docstring.
     """
     container: Container = request.app.state.container
-    latest_price = await container.async_market_storage.get_latest_price(symbol)
-    if latest_price is None:
-        return PriceHistoryResponse.model_validate(price_history_response(symbol, []))
-    points = await container.async_market_storage.get_price_history(
-        symbol, calculate_session_open(latest_price.as_of), latest_price.as_of
-    )
+    points = await get_price_history_async(container.async_market_storage, symbol)
     return PriceHistoryResponse.model_validate(price_history_response(symbol, points))
 
 

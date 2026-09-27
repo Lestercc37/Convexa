@@ -1,5 +1,6 @@
 import type {
   ChainExpirationsResponse,
+  FutureOpeningPriceResponse,
   GammaAggregateResponse,
   GammaHistoryResponse,
   GammaResponse,
@@ -57,6 +58,18 @@ async function patchJson<T>(path: string, body: unknown, signal?: AbortSignal): 
 async function postJson<T>(path: string, body: unknown, signal?: AbortSignal): Promise<T> {
   const response = await fetch(`${API_PREFIX}${path}`, {
     method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+    cache: "no-store",
+    signal,
+  });
+  if (!response.ok) throw new ApiError(response.status);
+  return (await response.json()) as T;
+}
+
+async function putJson<T>(path: string, body: unknown, signal?: AbortSignal): Promise<T> {
+  const response = await fetch(`${API_PREFIX}${path}`, {
+    method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
     cache: "no-store",
@@ -179,6 +192,25 @@ export function updateWhaleThreshold(
   return patchJson<WhaleThreshold>(
     `/whale-thresholds/${encodeURIComponent(symbol)}`,
     update,
+    signal,
+  );
+}
+
+export function getFutureOpeningPrice(symbol: string, signal?: AbortSignal) {
+  return getJson<FutureOpeningPriceResponse>(
+    `/futures/${encodeURIComponent(symbol)}/opening-price`,
+    signal,
+  );
+}
+
+export function setFutureOpeningPrice(
+  symbol: string,
+  openingPrice: number,
+  signal?: AbortSignal,
+) {
+  return putJson<FutureOpeningPriceResponse>(
+    `/futures/${encodeURIComponent(symbol)}/opening-price`,
+    { opening_price: openingPrice },
     signal,
   );
 }

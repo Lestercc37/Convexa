@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import asyncio
+from dataclasses import replace
 from datetime import UTC, date, datetime, timezone
 from decimal import Decimal
 
-from backend.domain.entities import MarketSnapshot, OptionChain, UnderlyingKind
+from backend.domain.entities import MarketPrice, MarketSnapshot, OptionChain, UnderlyingKind
 from backend.domain.ports import IAsyncMarketReadStorage, IDataProvider, IStorage
 from backend.domain.underlyings import ACTIVE_UNDERLYINGS_BY_SYMBOL
 from backend.domain.use_cases.calculate_anchored_vwap import (
@@ -44,7 +45,84 @@ VWAP_PROXY_SYMBOL_BY_INDEX: dict[str, str] = {
     "NDX": "QQQ",
 }
 
+# ES/NQ (UnderlyingKind.FUTURE) have no working ThetaData price
+# stream/OHLC/EOD endpoint at all (see provider.py's own documented gaps
+# on ES -- the same absence applies to NQ, never subscribed either), so
+# unlike SPX/NDX above (which have a real, streamed spot price and only
+# borrow SPY/QQQ's *volume* for VWAP) there is no real price series to
+# anchor a VWAP to in the first place -- the chart itself is empty.
+#
+# Confirmed with the user, 2026-09-27: ES and its cash index (SPX) move
+# in near lock-step intraday (same for NQ/NDX) but carry a "basis" -- a
+# few points of interest/dividend carry that drifts slowly and isn't
+# knowable from Convexa's own data. Rather than guess it, the owner
+# reads the real 9:30 ET opening print off their own live futures feed
+# (ThinkOrSwim) and enters it once a session (see the future_price_
+# anchors table / futures.py's opening-price endpoint); everything
+# after that is SPX/NDX's own real, already-streaming price history
+# shifted by one constant offset = anchor - proxy's own price at that
+# same 9:30 open. See future_price_offset()/get_price_history_async()
+# below.
+PRICE_PROXY_SYMBOL_BY_FUTURE: dict[str, str] = {
+    "ES": "SPX",
+    "NQ": "NDX",
+}
+
 DEFAULT_FRESHNESS_SECONDS = 60
+
+
+async def future_price_offset(
+    storage: IAsyncMarketReadStorage, future_symbol: str, proxy_symbol: str
+) -> tuple[Decimal, list[MarketPrice]] | None:
+    """(offset, proxy_session_history), or None while either the proxy
+    has no price yet this session or the owner hasn't entered today's
+    anchor yet -- see PRICE_PROXY_SYMBOL_BY_FUTURE's own docstring.
+    Shared by get_price_history_async and get_vwap_history_async so both
+    apply the exact same offset to the exact same session's data,
+    computed once."""
+    latest_proxy_price = await storage.get_latest_price(proxy_symbol)
+    if latest_proxy_price is None:
+        return None
+    session_open = calculate_session_open(latest_proxy_price.as_of)
+    anchor = await storage.get_future_price_anchor(future_symbol, session_open.date())
+    if anchor is None:
+        return None
+    proxy_history = await storage.get_price_history(
+        proxy_symbol, session_open, latest_proxy_price.as_of
+    )
+    if not proxy_history:
+        return None
+    offset = anchor - proxy_history[0].price
+    return offset, proxy_history
+
+
+async def get_price_history_async(
+    storage: IAsyncMarketReadStorage, underlying: str
+) -> list[MarketPrice]:
+    """Every point to plot for `underlying` since its most recently
+    traded session's 09:30 ET open -- GET /market/{symbol}/history's own
+    read model (kept here, not inlined in the route, so it's the one
+    thing get_vwap_history_async's own future-proxy branch below can
+    share). ES/NQ synthesize this from their proxy's own real history
+    (see future_price_offset) instead of reading their own (nonexistent)
+    MarketPrice rows."""
+    symbol = underlying.upper()
+    proxy_symbol = PRICE_PROXY_SYMBOL_BY_FUTURE.get(symbol)
+    if proxy_symbol is not None:
+        result = await future_price_offset(storage, symbol, proxy_symbol)
+        if result is None:
+            return []
+        offset, proxy_history = result
+        return [
+            replace(point, symbol=symbol, price=point.price + offset)
+            for point in proxy_history
+        ]
+    latest_price = await storage.get_latest_price(symbol)
+    if latest_price is None:
+        return []
+    return await storage.get_price_history(
+        symbol, calculate_session_open(latest_price.as_of), latest_price.as_of
+    )
 
 
 def get_option_chain(
@@ -257,6 +335,16 @@ async def get_vwap_history_async(
     series over a weekend, since "today" (Saturday/Sunday) never had a
     real 09:30 ET session to anchor to in the first place.
     """
+    symbol = underlying.upper()
+    future_proxy_symbol = PRICE_PROXY_SYMBOL_BY_FUTURE.get(symbol)
+    if future_proxy_symbol is not None:
+        result = await future_price_offset(storage, symbol, future_proxy_symbol)
+        if result is None:
+            return [], False
+        offset, _proxy_history = result
+        series, not_applicable = await get_vwap_history_async(storage, future_proxy_symbol)
+        return [(as_of, value + offset) for as_of, value in series], not_applicable
+
     proxy_symbol = VWAP_PROXY_SYMBOL_BY_INDEX.get(underlying.upper())
     if proxy_symbol is None and _is_pure_index(underlying):
         return [], True

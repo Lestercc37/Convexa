@@ -525,6 +525,22 @@ class AsyncPostgreSQLStorage:
                 {"channel": MARKET_PRICE_CHANNEL, "payload": payload},
             )
 
+    async def get_future_price_anchor(self, symbol: str, session_date: date) -> Decimal | None:
+        async with self.session_factory() as session:
+            result = await session.execute(
+                text(
+                    """
+                    SELECT a.anchor_price
+                    FROM future_price_anchors AS a
+                    JOIN underlyings AS u ON u.id = a.underlying_id
+                    WHERE u.symbol = :symbol AND a.session_date = :session_date
+                    """
+                ),
+                {"symbol": symbol.upper(), "session_date": session_date},
+            )
+            row = result.mappings().first()
+            return Decimal(str(row["anchor_price"])) if row is not None else None
+
     async def _ensure_underlying(self, session: AsyncSession, symbol: str) -> int:
         # Confirmed live, 2026-09-22: this UPSERT ran unconditionally on
         # *every* save_market_price call -- fine at the REST scheduler's

@@ -1237,6 +1237,43 @@ class PostgreSQLStorage:
                 },
             )
 
+    def set_future_price_anchor(
+        self, symbol: str, session_date: date, anchor_price: Decimal
+    ) -> None:
+        with self.session_factory.begin() as session:
+            underlying_id = self._ensure_underlying(session, symbol)
+            session.execute(
+                text(
+                    """
+                    INSERT INTO future_price_anchors (underlying_id, session_date, anchor_price)
+                    VALUES (:underlying_id, :session_date, :anchor_price)
+                    ON CONFLICT (underlying_id, session_date) DO UPDATE SET
+                        anchor_price = EXCLUDED.anchor_price,
+                        updated_at = now()
+                    """
+                ),
+                {
+                    "underlying_id": underlying_id,
+                    "session_date": session_date,
+                    "anchor_price": anchor_price,
+                },
+            )
+
+    def get_future_price_anchor(self, symbol: str, session_date: date) -> Decimal | None:
+        with self.session_factory() as session:
+            row = session.execute(
+                text(
+                    """
+                    SELECT a.anchor_price
+                    FROM future_price_anchors AS a
+                    JOIN underlyings AS u ON u.id = a.underlying_id
+                    WHERE u.symbol = :symbol AND a.session_date = :session_date
+                    """
+                ),
+                {"symbol": symbol.upper(), "session_date": session_date},
+            ).mappings().first()
+            return Decimal(str(row["anchor_price"])) if row is not None else None
+
     def _ensure_underlying(self, session: Session, symbol: str) -> int:
         # Confirmed live, 2026-09-24: this UPSERT used to run
         # unconditionally on *every* call -- save_whale_alert alone can

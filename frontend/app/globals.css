@@ -187,6 +187,31 @@ button, select { font: inherit; }
 .tv-price-readout strong { font-size: 0.94rem; font-variant-numeric: tabular-nums; }
 .tv-ohlc { color: var(--tv-text-dim); font-size: 0.74rem; font-variant-numeric: tabular-nums; }
 
+.tv-future-opening-price { display: flex; align-items: center; gap: 6px; white-space: nowrap; }
+.tv-future-opening-price input {
+  width: 88px;
+  border: 1px solid var(--tv-border);
+  border-radius: 6px;
+  background: var(--tv-panel-raised);
+  color: var(--tv-text);
+  padding: 5px 8px;
+  font-size: 0.82rem;
+  font-variant-numeric: tabular-nums;
+}
+.tv-future-opening-price button {
+  border: 1px solid var(--tv-border);
+  border-radius: 6px;
+  background: var(--tv-panel-raised);
+  color: var(--tv-text);
+  cursor: pointer;
+  font-size: 0.74rem;
+  font-weight: 700;
+  padding: 5px 9px;
+}
+.tv-future-opening-price button:disabled { opacity: 0.5; cursor: default; }
+.tv-future-opening-price-note { color: var(--tv-text-dim); font-size: 0.72rem; }
+.tv-future-opening-price-error { color: #ff9c84; font-size: 0.72rem; }
+
 .tv-timeframes { display: flex; align-items: center; gap: 2px; }
 .tv-timeframe {
   border: 0;

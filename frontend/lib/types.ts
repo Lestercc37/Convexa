@@ -4,6 +4,14 @@ export type Underlying = {
   is_priority: boolean;
 };
 
+export type FutureOpeningPriceResponse = {
+  schema_version: number;
+  symbol: string;
+  proxy_symbol: string;
+  session_date: string;
+  opening_price: number | null;
+};
+
 export type UnderlyingsResponse = {
   schema_version: number;
   underlyings: Underlying[];

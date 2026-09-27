@@ -33,6 +33,15 @@ export const en: Translations = {
   regimeBadge: {
     ariaLabel: "Gamma regime",
   },
+  futureOpeningPrice: {
+    label: "9:30 ET Open",
+    saveButton: "Save",
+    savingButton: "Saving…",
+    calibratedNote: (proxySymbol) => `Calibrated against ${proxySymbol}`,
+    notSetNote: (proxySymbol) =>
+      `Enter the opening price (proxy: ${proxySymbol}) to activate the chart`,
+    saveErrorNote: "Couldn't save the opening price.",
+  },
   derivedMetricsBar: {
     ariaLabel: "Derived metrics",
     volatilityWindowNote: "Window: 60 days",

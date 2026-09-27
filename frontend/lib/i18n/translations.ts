@@ -30,6 +30,14 @@ export type Translations = {
   regimeBadge: {
     ariaLabel: string;
   };
+  futureOpeningPrice: {
+    label: string;
+    saveButton: string;
+    savingButton: string;
+    calibratedNote: (proxySymbol: string) => string;
+    notSetNote: (proxySymbol: string) => string;
+    saveErrorNote: string;
+  };
   derivedMetricsBar: {
     ariaLabel: string;
     volatilityWindowNote: string;

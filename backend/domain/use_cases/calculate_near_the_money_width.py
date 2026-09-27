@@ -36,12 +36,15 @@ FIXED_WIDTH_BY_SYMBOL: dict[str, Decimal] = {
     # directly, only watches it as an NQ sentiment reference, so
     # precision here isn't worth chasing.
     "VIX": Decimal(6),
-    # ES has no daily-bar history to derive an ATR from at all, ever --
-    # ThetaDataProvider.get_daily_bars() returns [] unconditionally for
-    # futures (no working ThetaData futures EOD endpoint exists, see
-    # that method's own comment). Fixed width matched to the same order
-    # of magnitude as SPX, since ES tracks the S&P 500 in index points.
+    # ES/NQ have no daily-bar history to derive an ATR from at all, ever
+    # -- ThetaDataProvider.get_daily_bars() returns [] unconditionally
+    # for futures (no working ThetaData futures EOD endpoint exists, see
+    # that method's own comment). Fixed widths matched to the same order
+    # of magnitude as each one's own cash index (SPX for ES; NDX for NQ
+    # -- see GAMMA_FLIP_WIDTH_MULTIPLIER's own comment on NDX's real
+    # ~$512 1.5x-ATR width, the reference point for NQ's own fixed base).
     "ES": Decimal(100),
+    "NQ": Decimal(500),
 }
 
 # Defensive fallback only -- not expected to trigger for any of the 11
