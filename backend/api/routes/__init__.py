@@ -5,6 +5,7 @@ from fastapi import APIRouter, Depends
 from backend.api.deps import require_admin, require_session
 from backend.api.routes.alerts import router as alerts_router
 from backend.api.routes.auth import router as auth_router
+from backend.api.routes.futures import router as futures_router
 from backend.api.routes.health import router as health_router
 from backend.api.routes.internal import router as internal_router
 from backend.api.routes.market import router as market_router
@@ -39,6 +40,13 @@ def api_router() -> APIRouter:
     )
     router.include_router(
         alerts_router, prefix="/api/v1", dependencies=[Depends(require_session)]
+    )
+    # Carries a PUT route gated with require_admin directly on that
+    # route's own decorator (see futures.py), same as
+    # screener_presets_router/whale_thresholds_router below -- its GET
+    # route stays readable by every logged-in teammate.
+    router.include_router(
+        futures_router, prefix="/api/v1", dependencies=[Depends(require_session)]
     )
     # These two also carry a PATCH route each, additionally gated with
     # require_admin directly on that route's own decorator (see

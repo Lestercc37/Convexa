@@ -59,12 +59,15 @@ from backend.domain.use_cases.load_option_chain import LoadOptionChainUseCase
 from backend.domain.use_cases.market_hours import is_market_open
 from backend.domain.use_cases.market_snapshot import GetMarketSnapshotUseCase
 from backend.domain.use_cases.read_models import (
+    PRICE_PROXY_SYMBOL_BY_FUTURE,
     build_market_snapshot,
     build_market_snapshot_async,
+    future_price_offset,
     get_flow,
     get_option_chain,
     get_option_chain_async,
     get_option_chain_expirations,
+    get_price_history_async,
     get_symbol_flow_pressure_async,
     get_vwap_history_async,
 )
@@ -82,6 +85,7 @@ __all__ = [
     "ATR_WINDOW_DAYS",
     "CLOSING_WINDOW_THRESHOLD_PCT",
     "FIXED_WIDTH_BY_SYMBOL",
+    "PRICE_PROXY_SYMBOL_BY_FUTURE",
     "REQUIRED_DAILY_BARS",
     "BsmGreeks",
     "CalculateDerivedMetricsUseCase",
@@ -123,6 +127,7 @@ __all__ = [
     "calculate_vanna_interpretation",
     "capture_daily_gamma_reference",
     "classify_trade_side",
+    "future_price_offset",
     "get_flow",
     "get_gamma_exposure",
     "get_gamma_exposure_async",
@@ -130,6 +135,7 @@ __all__ = [
     "get_option_chain",
     "get_option_chain_async",
     "get_option_chain_expirations",
+    "get_price_history_async",
     "get_screener_preset",
     "get_symbol_flow_pressure_async",
     "get_vwap_history_async",

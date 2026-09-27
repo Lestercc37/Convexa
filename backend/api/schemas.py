@@ -363,6 +363,22 @@ class WhaleThresholdUpdateRequest(BaseModel):
     sustained_flow_min: Decimal = Field(gt=0, examples=[500000])
 
 
+class FuturePriceAnchorRequest(BaseModel):
+    """Body for PUT /futures/{symbol}/opening-price -- the owner's own
+    9:30 ET opening print for ES/NQ, read off their live futures feed
+    (ThinkOrSwim). See PRICE_PROXY_SYMBOL_BY_FUTURE's own docstring."""
+
+    opening_price: Decimal = Field(gt=0, examples=[5812.25])
+
+
+class FuturePriceAnchorResponse(BaseModel):
+    schema_version: int = Field(examples=[1])
+    symbol: str = Field(examples=["ES"])
+    proxy_symbol: str = Field(examples=["SPX"])
+    session_date: date = Field(examples=["2026-09-29"])
+    opening_price: Number | None = Field(examples=[5812.25])
+
+
 class ScreenerPresetSettingsResponse(BaseModel):
     """Flat, unioned shape (mirrors ScreenerPresetResult) — only the
     field(s) that apply to `preset` are non-null.

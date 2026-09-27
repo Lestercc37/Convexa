@@ -33,6 +33,15 @@ export const es: Translations = {
   regimeBadge: {
     ariaLabel: "Régimen gamma",
   },
+  futureOpeningPrice: {
+    label: "Apertura 9:30 ET",
+    saveButton: "Guardar",
+    savingButton: "Guardando…",
+    calibratedNote: (proxySymbol) => `Calibrado con ${proxySymbol}`,
+    notSetNote: (proxySymbol) =>
+      `Introduce el precio de apertura (proxy: ${proxySymbol}) para activar la gráfica`,
+    saveErrorNote: "No se pudo guardar el precio de apertura.",
+  },
   derivedMetricsBar: {
     ariaLabel: "Métricas derivadas",
     volatilityWindowNote: "Ventana: 60 días",

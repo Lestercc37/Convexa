@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import date, datetime
+from decimal import Decimal
 
 from backend.domain.entities import (
     DailyBar,
@@ -71,3 +72,6 @@ class SyncStorageAsyncReadAdapter:
 
     async def get_symbol_flow_pressure(self, underlying: str) -> SymbolFlowPressure | None:
         return self._storage.get_symbol_flow_pressure(underlying)
+
+    async def get_future_price_anchor(self, symbol: str, session_date: date) -> Decimal | None:
+        return self._storage.get_future_price_anchor(symbol, session_date)

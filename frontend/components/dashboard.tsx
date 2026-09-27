@@ -34,6 +34,7 @@ import { ClosingDynamicsPanel } from "./closing-dynamics-panel";
 import { DerivedMetricsBar } from "./derived-metrics-bar";
 import { EnginesGuidePanel } from "./engines-guide-panel";
 import { ExpectedMoveWidget } from "./expected-move-widget";
+import { FutureOpeningPriceControl } from "./future-opening-price-control";
 import { PreSessionPanel } from "./pre-session-panel";
 import { PriceChart } from "./price-chart";
 import { QuickScreener } from "./quick-screener";
@@ -176,6 +177,7 @@ export function Dashboard() {
     gamma && gammaView === "structural"
       ? Math.max(0, Math.floor((Date.now() - Date.parse(gamma.as_of)) / 60_000))
       : null;
+  const isFutureSymbol = underlyings.find((item) => item.symbol === symbol)?.kind === "future";
 
   useEffect(() => {
     const controller = new AbortController();
@@ -285,58 +287,66 @@ export function Dashboard() {
     gammaViewRef.current = gammaView;
   }, [gammaView]);
 
+  // Seeds pricePoints (and vwapPoints, same reasoning -- Lester's
+  // report, 2026-09-17) with today's session-so-far, instead of starting
+  // every symbol from an empty chart that has to wait for new ticks to
+  // rebuild candles already formed since the open (confirmed live,
+  // 2026-09: the backend already had this data via market_snapshots --
+  // GET /market/{symbol}/history and /vwap-history expose it, this just
+  // seeds with it). A failed seed isn't fatal -- it just falls back to
+  // the old empty-then-accumulate behavior for that one series.
+  //
+  // Extracted from the symbol-switch effect below so
+  // FutureOpeningPriceControl (ES/NQ) can also call it right after
+  // saving a new opening-price anchor, to repaint the chart/VWAP with
+  // the newly-calibrated proxy series immediately instead of waiting for
+  // the next 30s poll.
+  //
+  // Promise.allSettled, not two sequential awaits (confirmed live,
+  // 2026-09-26: AAPL's own Friday session alone is 12,000+ raw price
+  // points -- fetching + parsing that, THEN starting the VWAP fetch
+  // only after it finished, was most of a real ~10s symbol-switch
+  // delay teammates reported). Settled, not Promise.all, so one
+  // endpoint failing still lets the other's real data apply instead of
+  // discarding it too.
+  const seedPriceAndVwap = useCallback(async (activeSymbol: string, signal?: AbortSignal) => {
+    const [historyResult, vwapResult] = await Promise.allSettled([
+      getMarketPriceHistory(activeSymbol, signal),
+      getVwapHistory(activeSymbol, signal),
+    ]);
+    if (signal?.aborted) return;
+
+    if (historyResult.status === "fulfilled") {
+      setPricePoints(
+        historyResult.value.points.map((point) => ({
+          timestamp: point.timestamp,
+          price: point.price,
+        })),
+      );
+    } else if (!signal?.aborted) {
+      setError(historyResult.reason);
+    }
+
+    if (vwapResult.status === "fulfilled") {
+      setVwapNotApplicable(vwapResult.value.not_applicable);
+      setVwapPoints(
+        vwapResult.value.points.map((point) => ({
+          timestamp: point.timestamp,
+          value: point.value,
+        })),
+      );
+    } else if (!signal?.aborted) {
+      setError(vwapResult.reason);
+    }
+  }, []);
+
   useEffect(() => {
     if (!symbol) return;
     const controller = new AbortController();
     let interval: number | undefined;
 
-    // Seeds pricePoints (and vwapPoints, same reasoning -- Lester's
-    // report, 2026-09-17) with today's session-so-far before the first
-    // live poll runs, instead of starting every symbol from an empty
-    // chart that has to wait for new ticks to rebuild candles already
-    // formed since the open (confirmed live, 2026-09: the backend
-    // already had this data via market_snapshots -- GET
-    // /market/{symbol}/history and /vwap-history expose it, this just
-    // seeds with it). A failed seed isn't fatal -- it just falls back to
-    // the old empty-then-accumulate behavior for that one series.
-    //
-    // Promise.allSettled, not two sequential awaits (confirmed live,
-    // 2026-09-26: AAPL's own Friday session alone is 12,000+ raw price
-    // points -- fetching + parsing that, THEN starting the VWAP fetch
-    // only after it finished, was most of a real ~10s symbol-switch
-    // delay teammates reported). Settled, not Promise.all, so one
-    // endpoint failing still lets the other's real data apply instead of
-    // discarding it too.
     const seedThenPoll = async () => {
-      const [historyResult, vwapResult] = await Promise.allSettled([
-        getMarketPriceHistory(symbol, controller.signal),
-        getVwapHistory(symbol, controller.signal),
-      ]);
-      if (controller.signal.aborted) return;
-
-      if (historyResult.status === "fulfilled") {
-        setPricePoints(
-          historyResult.value.points.map((point) => ({
-            timestamp: point.timestamp,
-            price: point.price,
-          })),
-        );
-      } else if (!controller.signal.aborted) {
-        setError(historyResult.reason);
-      }
-
-      if (vwapResult.status === "fulfilled") {
-        setVwapNotApplicable(vwapResult.value.not_applicable);
-        setVwapPoints(
-          vwapResult.value.points.map((point) => ({
-            timestamp: point.timestamp,
-            value: point.value,
-          })),
-        );
-      } else if (!controller.signal.aborted) {
-        setError(vwapResult.reason);
-      }
-
+      await seedPriceAndVwap(symbol, controller.signal);
       if (controller.signal.aborted) return;
       void refresh(symbol, gammaViewRef.current, controller.signal);
       interval = window.setInterval(
@@ -350,7 +360,7 @@ export function Dashboard() {
       controller.abort();
       if (interval !== undefined) window.clearInterval(interval);
     };
-  }, [refresh, symbol]);
+  }, [refresh, seedPriceAndVwap, symbol]);
 
   // Real-time push, additive to the 30s poll above -- never a
   // replacement for it (see market-price-stream.ts's own comment). A
@@ -417,6 +427,13 @@ export function Dashboard() {
               ))}
             </select>
           </label>
+          {isFutureSymbol && (
+            <FutureOpeningPriceControl
+              key={`future-opening-price-${symbol}`}
+              symbol={symbol}
+              onSaved={() => void seedPriceAndVwap(symbol)}
+            />
+          )}
           <div
             className="tv-language-toggle"
             role="group"

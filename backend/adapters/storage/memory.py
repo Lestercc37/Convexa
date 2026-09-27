@@ -44,6 +44,7 @@ class InMemoryStorage:
         self._whale_alerts: dict[str, list[WhaleAlert]] = {}
         self._symbol_flow_pressure: dict[str, SymbolFlowPressure] = {}
         self._cumulative_volumes: dict[str, int] = {}
+        self._future_price_anchors: dict[tuple[str, date], Decimal] = {}
         self._whale_thresholds: dict[str, WhaleThreshold] = {
             underlying.symbol: WhaleThreshold(
                 symbol=underlying.symbol,
@@ -250,3 +251,11 @@ class InMemoryStorage:
 
     def save_cumulative_volumes(self, volumes: dict[str, int]) -> None:
         self._cumulative_volumes.update(volumes)
+
+    def set_future_price_anchor(
+        self, symbol: str, session_date: date, anchor_price: Decimal
+    ) -> None:
+        self._future_price_anchors[(symbol.upper(), session_date)] = anchor_price
+
+    def get_future_price_anchor(self, symbol: str, session_date: date) -> Decimal | None:
+        return self._future_price_anchors.get((symbol.upper(), session_date))
