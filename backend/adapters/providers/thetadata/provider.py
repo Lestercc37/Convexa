@@ -2159,11 +2159,24 @@ class ThetaDataProvider:
             # No working futures OHLC snapshot endpoint confirmed — same
             # documented gap as get_daily_bars' futures case below.
             return 0
-        endpoint = (
-            "/v3/index/snapshot/ohlc" if kind == UnderlyingKind.INDEX else "/v3/stock/snapshot/ohlc"
-        )
+        if kind == UnderlyingKind.INDEX:
+            # This method's own docstring already confirmed live (2026-09)
+            # that /v3/index/snapshot/ohlc always returns volume=0 for an
+            # index (no share volume of its own) -- that result never
+            # varies, so there is nothing a real call can tell us that we
+            # don't already know. Confirmed live, 2026-09-28 (real market
+            # open): ThetaData's REST endpoints were responding 10-20x
+            # slower than normal for 30+ minutes; every call spent on a
+            # guaranteed-0 answer for SPX/NDX/VIX -- the three most
+            # expensive symbols already, each needing dozens of separate
+            # per-expiration calls elsewhere in this same cycle -- was
+            # pure waste on the exact connection under the most real
+            # contention. Skip the network round-trip entirely.
+            return 0
+        # Only UnderlyingKind.EQUITY reaches here now (FUTURE/INDEX both
+        # return above without a network call).
         try:
-            body = self._get_json(endpoint, symbol=symbol, format="json")
+            body = self._get_json("/v3/stock/snapshot/ohlc", symbol=symbol, format="json")
             rows = body.get("response", [])
             if not rows:
                 return 0
