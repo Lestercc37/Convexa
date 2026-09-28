@@ -36,6 +36,11 @@ from backend.domain.entities import (
 from backend.domain.underlyings import ACTIVE_UNDERLYINGS_BY_SYMBOL
 from backend.domain.use_cases.flow import SymbolFlowPressure, WhaleAlert, WhaleAlertType
 
+# See get_latest_chain_snapshot's own comment -- how far back its fast
+# path looks before falling back to an unbounded (and much slower) scan
+# of the symbol's entire snapshot history.
+RECENT_CHAIN_SNAPSHOT_WINDOW_MINUTES = 15
+
 
 class PostgreSQLStorage:
     """Synchronous PostgreSQL implementation of the domain storage port."""
@@ -430,6 +435,10 @@ class PostgreSQLStorage:
         # underlying this system tracks) can hit this the same way, so the
         # guard now applies unconditionally whenever the read is unscoped
         # -- not just for indices.
+        parameters: dict[str, str | date | int] = {"symbol": underlying.upper()}
+        if expiration is not None:
+            parameters["expiration"] = expiration
+
         if expiration is None:
             # Prefer a multi-expiration write, but never end up with
             # nothing just because one hasn't landed yet -- a brand-new
@@ -440,7 +449,57 @@ class PostgreSQLStorage:
             # multi-expiration write) always wins over priority 1 (any
             # write at all) regardless of which is more recent, and only
             # falls back to priority 1 when no priority-0 row exists.
-            latest_cte_sql = """
+            #
+            # Tried with a recent-time window first, falling back to the
+            # unbounded version below only if that finds nothing --
+            # confirmed live, 2026-09-28: this CTE has to look at every
+            # option_contracts row for the symbol (11,698 for SPX alone,
+            # every expiration/strike ever seen, not just currently-listed
+            # ones) and every historical snapshot time for each, because
+            # nothing here was previously scoped by time at all. Profiled
+            # with cProfile against real production data: get_latest_
+            # chain_snapshot alone was 10.6 of 11.2s in
+            # CalculateGammaExposureOrchestrator.execute_both, confirmed
+            # with EXPLAIN (ANALYZE, BUFFERS) as an 11.3s plan dominated by
+            # disk-spilling sorts and a GroupAggregate over ~13M rows.
+            # A `WHERE s.time >= now() - <window>` predicate lets Postgres
+            # push the cutoff into the existing (contract_id, time DESC)
+            # index per contract and stop early instead of walking each
+            # contract's full history -- measured 832ms with a 15-minute
+            # window on the same real query, ~13.5x faster. The window is
+            # a pure performance knob, not a correctness one: every
+            # caller of this branch (scheduler cycles, ~30-130s apart
+            # during market hours; the manual trigger-calculation route)
+            # writes far more often than 15 minutes, so the fallback below
+            # is only ever expected to fire for a brand-new symbol before
+            # its first write, or once trading has gone quiet -- exactly
+            # where read_models.get_option_chain's own is_market_open
+            # check already means "serve whatever's stored, no matter how
+            # old" is the correct behavior anyway.
+            recent_cte_sql = """
+                WITH candidates AS (
+                    SELECT s.time, 0 AS priority
+                    FROM option_chain_snapshots AS s
+                    JOIN option_contracts AS oc ON oc.id = s.contract_id
+                    JOIN underlyings AS u ON u.id = oc.underlying_id
+                    WHERE u.symbol = :symbol
+                        AND s.time >= now() - make_interval(mins => :recent_window_minutes)
+                    GROUP BY s.time
+                    HAVING COUNT(DISTINCT oc.expiration) > 1
+                    UNION ALL
+                    SELECT s.time, 1 AS priority
+                    FROM option_chain_snapshots AS s
+                    JOIN option_contracts AS oc ON oc.id = s.contract_id
+                    JOIN underlyings AS u ON u.id = oc.underlying_id
+                    WHERE u.symbol = :symbol
+                        AND s.time >= now() - make_interval(mins => :recent_window_minutes)
+                    GROUP BY s.time
+                ),
+                latest AS (
+                    SELECT time FROM candidates ORDER BY priority ASC, time DESC LIMIT 1
+                )
+            """
+            full_cte_sql = """
                 WITH candidates AS (
                     SELECT s.time, 0 AS priority
                     FROM option_chain_snapshots AS s
@@ -462,7 +521,8 @@ class PostgreSQLStorage:
                 )
             """
         else:
-            latest_cte_sql = f"""
+            recent_cte_sql = None
+            full_cte_sql = f"""
                 WITH latest AS (
                     SELECT s.time
                     FROM option_chain_snapshots AS s
@@ -475,29 +535,36 @@ class PostgreSQLStorage:
                     LIMIT 1
                 )
             """
-        statement = text(
-            f"""
-            {latest_cte_sql}
-            SELECT
-                s.time, s.spot_price, oc.strike, oc.expiration,
-                oc.contract_type, oc.occ_symbol, s.bid, s.ask, s.last,
-                s.volume, s.open_interest, s.iv, s.delta, s.gamma,
-                s.theta, s.vega, s.charm, s.vanna
-            FROM option_chain_snapshots AS s
-            JOIN option_contracts AS oc ON oc.id = s.contract_id
-            JOIN underlyings AS u ON u.id = oc.underlying_id
-            JOIN latest ON latest.time = s.time
-            WHERE u.symbol = :symbol
-            {expiration_filter}
-            ORDER BY oc.expiration, oc.strike, oc.contract_type
-            """
-        )
-        parameters: dict[str, str | date] = {"symbol": underlying.upper()}
-        if expiration is not None:
-            parameters["expiration"] = expiration
 
-        with self.session_factory() as session:
-            rows = list(session.execute(statement, parameters).mappings())
+        def _select(cte_sql: str, query_parameters: dict[str, str | date | int]) -> list[RowMapping]:
+            statement = text(
+                f"""
+                {cte_sql}
+                SELECT
+                    s.time, s.spot_price, oc.strike, oc.expiration,
+                    oc.contract_type, oc.occ_symbol, s.bid, s.ask, s.last,
+                    s.volume, s.open_interest, s.iv, s.delta, s.gamma,
+                    s.theta, s.vega, s.charm, s.vanna
+                FROM option_chain_snapshots AS s
+                JOIN option_contracts AS oc ON oc.id = s.contract_id
+                JOIN underlyings AS u ON u.id = oc.underlying_id
+                JOIN latest ON latest.time = s.time
+                WHERE u.symbol = :symbol
+                {expiration_filter}
+                ORDER BY oc.expiration, oc.strike, oc.contract_type
+                """
+            )
+            with self.session_factory() as session:
+                return list(session.execute(statement, query_parameters).mappings())
+
+        rows: list[RowMapping] = []
+        if recent_cte_sql is not None:
+            rows = _select(
+                recent_cte_sql,
+                parameters | {"recent_window_minutes": RECENT_CHAIN_SNAPSHOT_WINDOW_MINUTES},
+            )
+        if not rows:
+            rows = _select(full_cte_sql, parameters)
         if not rows:
             return None
 
