@@ -121,6 +121,47 @@ def test_login_sets_a_cookie_and_gates_protected_routes_without_one() -> None:
         assert after_logout.status_code == 401
 
 
+def test_websocket_route_accepts_a_real_logged_in_session() -> None:
+    """require_session_ws, not require_session -- confirmed live,
+    2026-09-28: every /ws/market/{symbol} connection all day failed with
+    a 500 (`TypeError: require_session() missing 1 required positional
+    argument: 'request'`) because market_stream_router was gated with
+    plain require_session, which FastAPI can never satisfy for a
+    websocket ASGI scope. Every unit test for this route ran under
+    bypass_auth_for_unit_tests' dependency_overrides, which replaces the
+    dependency wholesale and so never actually called its body -- this
+    is the one test (real_auth, no override) that would have caught it,
+    same gap bypass_auth_for_unit_tests' own docstring already flags for
+    require_session/require_admin."""
+    app = create_app()
+    with TestClient(app) as client:
+        storage = app.state.container.storage
+        password_hash, salt = hash_password("correct horse battery staple")
+        storage.create_user(username="lester", password_hash=password_hash, salt=salt, is_admin=True)
+        client.post(
+            "/api/v1/auth/login",
+            json={"username": "lester", "password": "correct horse battery staple"},
+        )
+
+        with client.websocket_connect("/api/v1/ws/market/SPY") as websocket:
+            payload = '{"symbol": "SPY", "price": "552.25", "as_of": "2026-09-05T14:30:00+00:00"}'
+            app.state.container.price_notification_hub.publish("SPY", payload)
+            received = websocket.receive_text()
+
+        assert received == payload
+
+
+def test_websocket_route_rejects_a_connection_with_no_session() -> None:
+    from starlette.websockets import WebSocketDisconnect
+
+    app = create_app()
+    with TestClient(app) as client:
+        with pytest.raises(WebSocketDisconnect) as excinfo:
+            with client.websocket_connect("/api/v1/ws/market/SPY"):
+                pass
+        assert excinfo.value.code == 1008
+
+
 def test_non_admin_session_gets_403_on_admin_only_routes() -> None:
     app = create_app()
     with TestClient(app) as client:

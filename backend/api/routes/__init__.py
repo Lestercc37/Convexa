@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends
 
-from backend.api.deps import require_admin, require_session
+from backend.api.deps import require_admin, require_session, require_session_ws
 from backend.api.routes.alerts import router as alerts_router
 from backend.api.routes.auth import router as auth_router
 from backend.api.routes.futures import router as futures_router
@@ -32,8 +32,13 @@ def api_router() -> APIRouter:
     router.include_router(
         market_router, prefix="/api/v1", dependencies=[Depends(require_session)]
     )
+    # require_session_ws, not require_session -- market_stream_router is
+    # websocket-only, and require_session is typed on `Request`, which
+    # FastAPI never constructs for a websocket ASGI scope (see
+    # require_session_ws's own docstring for the live incident this
+    # fixes: every connection here failed outright, all day).
     router.include_router(
-        market_stream_router, prefix="/api/v1", dependencies=[Depends(require_session)]
+        market_stream_router, prefix="/api/v1", dependencies=[Depends(require_session_ws)]
     )
     router.include_router(
         options_router, prefix="/api/v1", dependencies=[Depends(require_session)]

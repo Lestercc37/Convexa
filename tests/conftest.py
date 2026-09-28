@@ -58,7 +58,7 @@ def bypass_auth_for_unit_tests(
         yield
         return
     import backend.main as main_module
-    from backend.api.deps import require_admin, require_session
+    from backend.api.deps import require_admin, require_session, require_session_ws
     from backend.core.sessions import SessionPayload
     from fastapi.testclient import TestClient
 
@@ -66,6 +66,7 @@ def bypass_auth_for_unit_tests(
 
     def _apply_overrides(app: main_module.FastAPI) -> None:
         app.dependency_overrides[require_session] = lambda: fake_session
+        app.dependency_overrides[require_session_ws] = lambda: fake_session
         app.dependency_overrides[require_admin] = lambda: fake_session
 
     _apply_overrides(main_module.app)
@@ -89,4 +90,5 @@ def bypass_auth_for_unit_tests(
     monkeypatch.setattr(TestClient, "__init__", patched_init)
     yield
     main_module.app.dependency_overrides.pop(require_session, None)
+    main_module.app.dependency_overrides.pop(require_session_ws, None)
     main_module.app.dependency_overrides.pop(require_admin, None)
