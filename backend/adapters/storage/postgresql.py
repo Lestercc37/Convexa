@@ -365,9 +365,9 @@ class PostgreSQLStorage:
                 contract_id_by_occ_symbol = {row.occ_symbol: row.id for row in contract_rows}
 
                 snapshot_values_sql = ", ".join(
-                    f"(:time_{i}, :contract_id_{i}, :bid_{i}, :ask_{i}, :last_{i}, :volume_{i}, "
-                    f":open_interest_{i}, :iv_{i}, :delta_{i}, :gamma_{i}, :theta_{i}, :vega_{i}, "
-                    f":charm_{i}, :vanna_{i}, :spot_price_{i})"
+                    f"(:time_{i}, :contract_id_{i}, :underlying_id_{i}, :bid_{i}, :ask_{i}, "
+                    f":last_{i}, :volume_{i}, :open_interest_{i}, :iv_{i}, :delta_{i}, "
+                    f":gamma_{i}, :theta_{i}, :vega_{i}, :charm_{i}, :vanna_{i}, :spot_price_{i})"
                     for i in range(len(batch))
                 )
                 snapshot_params: dict[str, object] = {}
@@ -376,6 +376,11 @@ class PostgreSQLStorage:
                     snapshot_params[f"contract_id_{i}"] = contract_id_by_occ_symbol[
                         contract.occ_symbol
                     ]
+                    # See migration 0036's own docstring -- lets
+                    # get_latest_chain_snapshot's fast path find a
+                    # symbol's recent rows with one indexed range scan
+                    # instead of probing every historical contract.
+                    snapshot_params[f"underlying_id_{i}"] = underlying_id
                     snapshot_params[f"bid_{i}"] = contract.bid
                     snapshot_params[f"ask_{i}"] = contract.ask
                     snapshot_params[f"last_{i}"] = contract.last
@@ -393,7 +398,7 @@ class PostgreSQLStorage:
                     text(
                         f"""
                         INSERT INTO option_chain_snapshots (
-                            time, contract_id, bid, ask, last, volume,
+                            time, contract_id, underlying_id, bid, ask, last, volume,
                             open_interest, iv, delta, gamma, theta, vega,
                             charm, vanna, spot_price
                         )
@@ -476,6 +481,52 @@ class PostgreSQLStorage:
             # where read_models.get_option_chain's own is_market_open
             # check already means "serve whatever's stored, no matter how
             # old" is the correct behavior anyway.
+            # Fastest tier, tried before recent_cte_sql -- reaches
+            # option_chain_snapshots directly via the (underlying_id,
+            # time DESC) index (migration 0036), scanning only the
+            # symbol's actual recent snapshot ROWS instead of probing the
+            # index once per historical CONTRACT the symbol has ever had
+            # (11,698 separate probes for SPX, even scoped to a recent
+            # window -- confirmed live, 2026-09-28: 15 symbols doing that
+            # concurrently every cycle kept ~10 Postgres backends
+            # genuinely CPU-bound, per pg_stat_activity, despite each
+            # individual query already being fast in isolation). Only
+            # every row `save_chain_snapshot` writes *after* migration
+            # 0036 deploys has underlying_id populated -- existing rows
+            # stay NULL, deliberately not backfilled (see that
+            # migration's own docstring) -- so this tier is skipped
+            # entirely (falls through to recent_cte_sql) whenever this
+            # process hasn't yet cached the symbol's id, which
+            # self._ensure_underlying only ever populates via a real
+            # write (save_chain_snapshot etc.), never here -- a read
+            # must never have the side effect of creating an underlying.
+            underlying_id = self._underlying_id_cache.get(parameters["symbol"])
+            fast_cte_sql = (
+                """
+                WITH recent_snapshots AS (
+                    SELECT s.time, s.contract_id
+                    FROM option_chain_snapshots AS s
+                    WHERE s.underlying_id = :underlying_id
+                        AND s.time >= now() - make_interval(mins => :recent_window_minutes)
+                ),
+                candidates AS (
+                    SELECT rs.time, 0 AS priority
+                    FROM recent_snapshots AS rs
+                    JOIN option_contracts AS oc ON oc.id = rs.contract_id
+                    GROUP BY rs.time
+                    HAVING COUNT(DISTINCT oc.expiration) > 1
+                    UNION ALL
+                    SELECT rs.time, 1 AS priority
+                    FROM recent_snapshots AS rs
+                    GROUP BY rs.time
+                ),
+                latest AS (
+                    SELECT time FROM candidates ORDER BY priority ASC, time DESC LIMIT 1
+                )
+            """
+                if underlying_id is not None
+                else None
+            )
             recent_cte_sql = """
                 WITH candidates AS (
                     SELECT s.time, 0 AS priority
@@ -521,6 +572,7 @@ class PostgreSQLStorage:
                 )
             """
         else:
+            fast_cte_sql = None
             recent_cte_sql = None
             full_cte_sql = f"""
                 WITH latest AS (
@@ -558,7 +610,16 @@ class PostgreSQLStorage:
                 return list(session.execute(statement, query_parameters).mappings())
 
         rows: list[RowMapping] = []
-        if recent_cte_sql is not None:
+        if fast_cte_sql is not None:
+            rows = _select(
+                fast_cte_sql,
+                parameters
+                | {
+                    "underlying_id": underlying_id,
+                    "recent_window_minutes": RECENT_CHAIN_SNAPSHOT_WINDOW_MINUTES,
+                },
+            )
+        if not rows and recent_cte_sql is not None:
             rows = _select(
                 recent_cte_sql,
                 parameters | {"recent_window_minutes": RECENT_CHAIN_SNAPSHOT_WINDOW_MINUTES},
