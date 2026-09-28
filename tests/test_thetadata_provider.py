@@ -1078,21 +1078,19 @@ class TestFetchUnderlyingVolume:
         assert seen_paths == ["/v3/stock/snapshot/ohlc"]
         assert volume == 16396508
 
-    def test_routes_indices_to_index_snapshot_ohlc(self) -> None:
-        seen_paths = []
-
+    def test_indices_return_zero_without_any_request(self) -> None:
+        # Confirmed live, 2026-09: an index's own OHLC snapshot volume is
+        # always 0 -- it has no share volume of its own, only its
+        # component stocks do -- that result never varies, so a real
+        # request buys nothing. Skipped entirely, 2026-09-28: this call
+        # was real, measured waste on SPX/NDX/VIX (already the most
+        # expensive symbols) during a real ThetaData slowdown at market
+        # open, same reasoning as futures below.
         def handler(request: httpx.Request) -> httpx.Response:
-            seen_paths.append(request.url.path)
-            # Confirmed live: an index's own OHLC snapshot volume is
-            # always 0 -- it has no share volume of its own, only its
-            # component stocks do.
-            return httpx.Response(200, json={"response": [{"volume": 0}]})
+            raise AssertionError("no request should be made for an index underlying")
 
         provider = _provider_with_transport(handler)
-        volume = provider._fetch_underlying_volume("SPX", UnderlyingKind.INDEX)
-
-        assert seen_paths == ["/v3/index/snapshot/ohlc"]
-        assert volume == 0
+        assert provider._fetch_underlying_volume("SPX", UnderlyingKind.INDEX) == 0
 
     def test_futures_return_zero_without_any_request(self) -> None:
         def handler(request: httpx.Request) -> httpx.Response:
