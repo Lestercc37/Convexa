@@ -36,6 +36,19 @@ an idempotent upsert, so Ctrl+C or a killed process loses nothing except
 that one in-flight day) well before the next regular session's 09:30 ET
 open. Never leave this running unattended into a live trading day.
 
+ONE PROCESS AT A TIME -- confirmed live, 2026-09-27: running two separate
+invocations of this script concurrently (split by symbol, to work around
+the interleaving bug this same commit fixes) overwhelmed something local
+-- most likely Theta Terminal's own request handling, not the account's
+documented 8-concurrent-requests limit itself, since the cross-process
+Postgres semaphore (theta_request_slots) was confirmed still fully free
+afterward -- and turned nearly the entire run (1,734 of 1,741 equity
+tasks, all 228 index tasks) into httpx.ReadTimeout failures within
+minutes. A single process honoring the same 8-slot budget internally,
+which is what the round-robin fix above exists to make sufficient, has
+been reliable in every real run so far; a second concurrent invocation
+has not.
+
 Usage: python -m backend.scripts.backfill_historical_gamma [--days 20] [--symbols SPX,NDX,VIX,SPY,QQQ,IWM,DIA,AAPL,NVDA,META]
 """
 
@@ -46,6 +59,7 @@ import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import replace
 from datetime import UTC, date, datetime, timedelta
+from itertools import zip_longest
 
 from backend.adapters.providers.thetadata.provider import ThetaDataProvider
 from backend.adapters.storage.postgresql import PostgreSQLStorage
@@ -130,14 +144,30 @@ def backfill(days: int, symbols: list[str]) -> None:
         len(symbols), len(candidates), candidates[-1], candidates[0],
     )
 
-    tasks: list[tuple[str, date]] = []
+    # Round-robin across symbols, not concatenated one symbol at a time --
+    # confirmed live, 2026-09-27: concatenating meant SPX's own ~90 pending
+    # days (each needing dozens of sequential per-expiration calls inside
+    # ONE task -- get_historical_gamma_snapshot's own near-the-money fetch
+    # loop is not itself parallelized) were submitted to the thread pool
+    # before a single cheap equity task, so all 8 workers spent hours
+    # entirely on SPX while NDX/VIX/every equity sat at zero. Interleaving
+    # means a mix of cheap and expensive symbols is always in flight
+    # together, so the cheap ones finish early instead of starving behind
+    # whichever expensive symbol happened to be listed first.
+    pending_by_symbol: dict[str, list[date]] = {}
     for symbol in symbols:
         if symbol not in ACTIVE_UNDERLYINGS_BY_SYMBOL:
             raise RuntimeError(f"Unknown symbol: {symbol}")
         already = _already_captured(backtest_storage, symbol, candidates)
         pending = [day for day in candidates if day not in already]
         logger.info("%s: %d already captured, %d pending", symbol, len(already), len(pending))
-        tasks.extend((symbol, day) for day in pending)
+        pending_by_symbol[symbol] = pending
+
+    tasks: list[tuple[str, date]] = []
+    for round_days in zip_longest(*pending_by_symbol.values()):
+        for symbol, day in zip(pending_by_symbol, round_days):
+            if day is not None:
+                tasks.append((symbol, day))
 
     if not tasks:
         logger.info("Nothing to do -- every requested (symbol, day) is already captured.")
