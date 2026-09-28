@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import logging
+import time
 from dataclasses import dataclass, replace
 
 from backend.domain.entities import DerivedMetrics, GammaAggregate, MarketPrice, OptionChain
@@ -10,6 +12,18 @@ from backend.domain.use_cases.calculate_derived_metrics import (
 )
 from backend.domain.use_cases.flow import WhaleAlertsEngine
 from backend.domain.use_cases.gamma import CalculateGammaExposureOrchestrator
+
+logger = logging.getLogger(__name__)
+
+# Real wall-clock threshold for the CPU-bound half of execute() (BSM
+# greeks + wide/narrow/walls aggregation, computed twice -- Structural
+# and Tactical both -- per RefreshUnderlyingSnapshotUseCase.execute()'s
+# own comment on execute_both). Added 2026-09-28 (real market open) to
+# settle, with real numbers, a live question of whether this doubled
+# computation (as opposed to REST latency, already measured separately
+# in ThetaDataProvider._get_json) is a meaningful contributor to slow
+# scheduler cycles -- not assumed either way until this logs real data.
+SLOW_COMPUTE_SECONDS = 2.0
 
 
 def _merge_cumulative_volume(chain: OptionChain, storage: IStorage) -> OptionChain:
@@ -109,6 +123,7 @@ class RefreshUnderlyingSnapshotUseCase:
         # this pipeline, it's read back later via the API's own
         # ?view=tactical query param -- so the return type stays
         # unchanged, Tactical is persisted purely as a side effect here.
+        compute_started_at = time.monotonic()
         aggregate, _tactical = self.gamma_exposure_orchestrator.execute_both(symbol)
         # Structural only, deliberately -- capture_daily_gamma_reference
         # feeds DerivedMetrics' own historical comparisons, which stay
@@ -118,4 +133,13 @@ class RefreshUnderlyingSnapshotUseCase:
         # anything under Tactical, materially more work than this pass).
         capture_daily_gamma_reference(self.storage, aggregate, market)
         derived_metrics = self.derived_metrics_use_case.execute(symbol)
+        compute_seconds = time.monotonic() - compute_started_at
+        if compute_seconds >= SLOW_COMPUTE_SECONDS:
+            logger.warning(
+                "%s: gamma compute (Structural+Tactical, BSM greeks + aggregation) took %.2fs "
+                "-- CPU-bound, not REST latency (see ThetaDataProvider's own separate timing)",
+                symbol, compute_seconds,
+            )
+        else:
+            logger.debug("%s: gamma compute took %.2fs", symbol, compute_seconds)
         return aggregate, derived_metrics
