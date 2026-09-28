@@ -460,13 +460,11 @@ STRUCTURAL_WINDOW_DAYS_BY_SYMBOL: dict[str, int] = {
     "QQQ": 30,
     "IWM": 30,
     "DIA": 30,
-    # ES/NQ have no single-name listing cadence of their own -- they
-    # track the S&P 500/Nasdaq-100 in index points (see
-    # calculate_near_the_money_width.py's own comment on ES's fixed
-    # strike width), so they take the index tier, not the
-    # individual-stock one.
+    # ES has no single-name listing cadence of its own -- it tracks the
+    # S&P 500 in index points (see calculate_near_the_money_width.py's
+    # own comment on ES's fixed strike width), so it takes the index
+    # tier, not the individual-stock one.
     "ES": 30,
-    "NQ": 30,
     # Individual stocks -- 45 days.
     "AAPL": 45,
     "MSFT": 45,

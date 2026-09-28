@@ -45,17 +45,26 @@ VWAP_PROXY_SYMBOL_BY_INDEX: dict[str, str] = {
     "NDX": "QQQ",
 }
 
-# ES/NQ (UnderlyingKind.FUTURE) have no working ThetaData price
-# stream/OHLC/EOD endpoint at all (see provider.py's own documented gaps
-# on ES -- the same absence applies to NQ, never subscribed either), so
-# unlike SPX/NDX above (which have a real, streamed spot price and only
-# borrow SPY/QQQ's *volume* for VWAP) there is no real price series to
-# anchor a VWAP to in the first place -- the chart itself is empty.
+# ES (UnderlyingKind.FUTURE) has no working ThetaData price stream/OHLC/
+# EOD endpoint at all (see provider.py's own documented gaps), so unlike
+# SPX/NDX above (which have a real, streamed spot price and only borrow
+# SPY/QQQ's *volume* for VWAP) there is no real price series to anchor a
+# VWAP to in the first place -- the chart itself is empty.
+#
+# NQ was added alongside ES, 2026-09-27, then removed the next morning
+# (2026-09-28, real market open): ThetaData's Options subscription does
+# not cover futures options at all -- NQ's own option-chain fetch failed
+# outright (500 "Expected exactly one quote; got 0"), never worked even
+# once in production. ES's own option-chain fetch does return a
+# (non-error) result, which is the only reason it's still here -- but see
+# the open investigation into whether that result is trustworthy at all
+# (its Gamma/Walls have sat at an implausibly small, collapsed scale
+# since 2026-09-02).
 #
 # Confirmed with the user, 2026-09-27: ES and its cash index (SPX) move
-# in near lock-step intraday (same for NQ/NDX) but carry a "basis" -- a
-# few points of interest/dividend carry that drifts slowly and isn't
-# knowable from Convexa's own data. Rather than guess it, the owner
+# in near lock-step intraday but carry a "basis" -- a few points of
+# interest/dividend carry that drifts slowly and isn't knowable from
+# Convexa's own data. Rather than guess it, the owner
 # reads the real 9:30 ET opening print off their own live futures feed
 # (ThinkOrSwim) and enters it once a session (see the future_price_
 # anchors table / futures.py's opening-price endpoint); everything
@@ -65,7 +74,6 @@ VWAP_PROXY_SYMBOL_BY_INDEX: dict[str, str] = {
 # below.
 PRICE_PROXY_SYMBOL_BY_FUTURE: dict[str, str] = {
     "ES": "SPX",
-    "NQ": "NDX",
 }
 
 DEFAULT_FRESHNESS_SECONDS = 60

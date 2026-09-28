@@ -31,7 +31,6 @@ def test_active_underlying_classification() -> None:
         "MSFT": Underlying("MSFT", UnderlyingKind.EQUITY, True),
         "DIA": Underlying("DIA", UnderlyingKind.EQUITY, True),
         "ES": Underlying("ES", UnderlyingKind.FUTURE, True),
-        "NQ": Underlying("NQ", UnderlyingKind.FUTURE, True),
     }
 
     assert {item.symbol: item for item in ACTIVE_UNDERLYINGS} == expected
