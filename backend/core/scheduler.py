@@ -16,6 +16,12 @@ logger = logging.getLogger(__name__)
 
 REFRESH_INTERVAL_SECONDS = 30.0
 
+# See UnderlyingRefreshScheduler's own docstring for why this exists --
+# spreads each cycle's per-symbol REST demand across roughly this many
+# seconds (15 symbols x 1.0s = ~14s, comfortably inside a 30s cycle)
+# instead of bursting it all in the first second or two.
+SYMBOL_DISPATCH_STAGGER_SECONDS = 1.0
+
 
 class UnderlyingRefreshScheduler:
     """Refreshes gamma/market data for every active underlying on a timer.
@@ -41,18 +47,35 @@ class UnderlyingRefreshScheduler:
     difference for it, but the scheduler is deliberately independent of
     which provider is behind it.
 
-    Symbols are dispatched concurrently (`asyncio.gather`), not one at a
-    time — measured against the real ATR-widened chain widths (2026-09
-    investigation): a fully sequential cycle across 11 symbols took
-    ~30 seconds, essentially the same as `interval_seconds` itself, so the
-    effective refresh cadence was closer to ~60s (`_run` sleeps *after*
-    a cycle finishes) than the intended 30s. Real REST-call safety against
-    ThetaData's actual account-wide concurrency cap is the
-    `threading.Semaphore` already living inside `ThetaDataProvider`
+    Symbols are dispatched concurrently, not one at a time — measured
+    against the real ATR-widened chain widths (2026-09 investigation): a
+    fully sequential cycle across 11 symbols took ~30 seconds, essentially
+    the same as `interval_seconds` itself, so the effective refresh
+    cadence was closer to ~60s (`_run` sleeps *after* a cycle finishes)
+    than the intended 30s. Real REST-call safety against ThetaData's
+    actual account-wide concurrency cap is the `threading.Semaphore`
+    already living inside `ThetaDataProvider`
     (`THETADATA_MAX_CONCURRENT_REQUESTS`) — it's the single real chokepoint
     every REST call passes through regardless of which symbol's worker
-    thread issued it, so the scheduler dispatching all symbols at once is
-    safe by construction and doesn't need its own separate throttle.
+    thread issued it, so no *correctness* problem comes from dispatching
+    every symbol at once.
+
+    Dispatch is staggered (`SYMBOL_DISPATCH_STAGGER_SECONDS` between each
+    symbol's kickoff), not a single `asyncio.gather` fired all at once --
+    confirmed live with ThetaData support, 2026-09-28 (real market open):
+    firing all 15+ symbols simultaneously meant far more than 8 REST calls
+    (several per symbol -- option chain, open interest, daily bars) wanting
+    a slot in the first second or two of every cycle. The semaphore above
+    never let more than 8 actually reach ThetaData at once, so nothing was
+    ever unsafe, but the queue behind it was real, and our own "slow
+    request" timer was (incorrectly) measuring time spent waiting in that
+    queue, not ThetaData's own server latency -- confirmed directly against
+    ThetaData's own server-side timing for the same window (150-250ms
+    throughout, per their support reply) once this was found. Staggering
+    spreads that same total demand across the cycle instead of bursting it
+    at the start -- each symbol still finishes well within the cycle, and
+    later symbols overlap with earlier ones still in flight, so this is
+    not the fully-sequential design already ruled out above.
     """
 
     def __init__(
@@ -119,7 +142,12 @@ class UnderlyingRefreshScheduler:
         symbols = [underlying.symbol for underlying in ACTIVE_UNDERLYINGS]
         logger.info("Scheduler cycle starting for %d symbols", len(symbols))
         started_at = time.monotonic()
-        outcomes = await asyncio.gather(*(self._refresh_symbol(symbol) for symbol in symbols))
+        tasks: list[asyncio.Task[bool]] = []
+        for index, symbol in enumerate(symbols):
+            if index > 0:
+                await asyncio.sleep(SYMBOL_DISPATCH_STAGGER_SECONDS)
+            tasks.append(asyncio.ensure_future(self._refresh_symbol(symbol)))
+        outcomes = await asyncio.gather(*tasks)
         # Elapsed time, not just success/failure counts -- added alongside
         # the all-expirations Gamma Aggregate rollout to every symbol
         # (2026-09-18, ThetaDataProvider.get_option_chain): that rollout's
