@@ -123,23 +123,45 @@ class RefreshUnderlyingSnapshotUseCase:
         # this pipeline, it's read back later via the API's own
         # ?view=tactical query param -- so the return type stays
         # unchanged, Tactical is persisted purely as a side effect here.
-        compute_started_at = time.monotonic()
+        #
+        # Split into 3 separately-timed phases, not one combined
+        # "compute" number -- confirmed live, 2026-09-28: the combined
+        # number alone (7-20s per symbol, every symbol, every cycle) was
+        # real and large, but conflated gamma computation itself with
+        # capture_daily_gamma_reference (a DB write) and
+        # derived_metrics_use_case.execute() (reads + percentile-ranks
+        # 20-60 days of historical daily_gamma_reference rows) -- three
+        # different kinds of cost with three different fixes, not
+        # diagnosable from one number.
+        gamma_started_at = time.monotonic()
         aggregate, _tactical = self.gamma_exposure_orchestrator.execute_both(symbol)
+        gamma_seconds = time.monotonic() - gamma_started_at
+
         # Structural only, deliberately -- capture_daily_gamma_reference
         # feeds DerivedMetrics' own historical comparisons, which stay
         # Structural-only for this feature's first version (confirmed
         # with the user, 2026-09-25: Dealer Impact Score/Signal Alignment
         # Score/Market Bias would need their own tactical history to mean
         # anything under Tactical, materially more work than this pass).
+        capture_started_at = time.monotonic()
         capture_daily_gamma_reference(self.storage, aggregate, market)
+        capture_seconds = time.monotonic() - capture_started_at
+
+        derived_started_at = time.monotonic()
         derived_metrics = self.derived_metrics_use_case.execute(symbol)
-        compute_seconds = time.monotonic() - compute_started_at
+        derived_seconds = time.monotonic() - derived_started_at
+
+        compute_seconds = gamma_seconds + capture_seconds + derived_seconds
         if compute_seconds >= SLOW_COMPUTE_SECONDS:
             logger.warning(
-                "%s: gamma compute (Structural+Tactical, BSM greeks + aggregation) took %.2fs "
+                "%s: compute took %.2fs total -- gamma (Structural+Tactical) %.2fs, "
+                "capture_daily_gamma_reference %.2fs, derived_metrics %.2fs "
                 "-- CPU-bound, not REST latency (see ThetaDataProvider's own separate timing)",
-                symbol, compute_seconds,
+                symbol, compute_seconds, gamma_seconds, capture_seconds, derived_seconds,
             )
         else:
-            logger.debug("%s: gamma compute took %.2fs", symbol, compute_seconds)
+            logger.debug(
+                "%s: compute took %.2fs total (gamma %.2fs, capture %.2fs, derived %.2fs)",
+                symbol, compute_seconds, gamma_seconds, capture_seconds, derived_seconds,
+            )
         return aggregate, derived_metrics
