@@ -262,14 +262,23 @@ async def test_start_is_idempotent_and_stop_before_start_is_a_no_op() -> None:
 
 
 @pytest.mark.asyncio
-async def test_run_cycle_dispatches_symbols_concurrently_not_sequentially() -> None:
+async def test_run_cycle_dispatches_symbols_concurrently_not_sequentially(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     # Measured live against real ATR-widened chain widths (2026-09
-    # investigation): a fully sequential cycle across these same 11
-    # symbols took ~30s — nearly the scheduler's own 30s interval, since
-    # `_run` sleeps *after* a cycle finishes, pushing the effective
-    # refresh cadence closer to ~60s. 11 symbols x a 0.15s per-symbol
-    # delay would take ~1.65s sequential; concurrent dispatch should
-    # finish close to a single delay, not eleven of them.
+    # investigation): a fully sequential cycle across these same symbols
+    # took ~30s — nearly the scheduler's own 30s interval, since `_run`
+    # sleeps *after* a cycle finishes, pushing the effective refresh
+    # cadence closer to ~60s. len(ACTIVE_SYMBOLS) x a 0.15s per-symbol
+    # delay would take well over a second sequential; concurrent dispatch
+    # should finish close to a single delay, not one per symbol.
+    #
+    # Stagger disabled here (see SYMBOL_DISPATCH_STAGGER_SECONDS's own
+    # docstring for why it exists) -- this test is specifically about
+    # concurrent-vs-sequential dispatch, a different question from
+    # whether kickoff is staggered, which test_run_cycle_staggers_
+    # symbol_dispatch below covers on its own.
+    monkeypatch.setattr("backend.core.scheduler.SYMBOL_DISPATCH_STAGGER_SECONDS", 0.0)
     scheduler, stub = _scheduler_with_stub(delay_seconds=0.15)
 
     start = time.monotonic()
@@ -277,9 +286,48 @@ async def test_run_cycle_dispatches_symbols_concurrently_not_sequentially() -> N
     elapsed = time.monotonic() - start
 
     assert sorted(stub.calls) == sorted(ACTIVE_SYMBOLS)
-    # Comfortably below 11 x 0.15s = 1.65s (sequential) and above a
-    # single 0.15s call, leaving real margin for thread-dispatch overhead.
+    # Comfortably below len(ACTIVE_SYMBOLS) x 0.15s (sequential) and above
+    # a single 0.15s call, leaving real margin for thread-dispatch overhead.
     assert elapsed < 0.6
+
+
+@pytest.mark.asyncio
+async def test_run_cycle_staggers_symbol_dispatch(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Confirmed live with ThetaData support, 2026-09-28 (real market
+    # open): firing every symbol's REST calls in the same instant created
+    # far more simultaneous demand than the account's 8-slot budget,
+    # producing a long local queue our own latency logging (incorrectly)
+    # attributed to ThetaData server latency. See
+    # UnderlyingRefreshScheduler's own docstring for the full story --
+    # this test only proves the stagger itself happens, not the
+    # concurrency behavior test_run_cycle_dispatches_symbols_
+    # concurrently_not_sequentially above already covers.
+    stagger_seconds = 0.05
+    monkeypatch.setattr("backend.core.scheduler.SYMBOL_DISPATCH_STAGGER_SECONDS", stagger_seconds)
+    call_times: dict[str, float] = {}
+    lock = threading.Lock()
+
+    class _TimestampingRefreshUseCase:
+        def execute(self, symbol: str) -> tuple[None, None]:
+            with lock:
+                call_times[symbol] = time.monotonic()
+            return (None, None)
+
+    container = replace(build_container(), refresh_underlying_snapshot_use_case=_TimestampingRefreshUseCase())
+    scheduler = UnderlyingRefreshScheduler(container)
+
+    await scheduler._run_cycle()
+
+    assert sorted(call_times) == sorted(ACTIVE_SYMBOLS)
+    ordered_times = [call_times[symbol] for symbol in ACTIVE_SYMBOLS]
+    # Each symbol's own kickoff (not necessarily its completion, since
+    # _refresh_symbol itself runs in a worker thread) lands at least
+    # `stagger_seconds` after the previous one -- real margin below the
+    # configured value tolerates scheduling jitter without allowing a
+    # regression back to "all at once" (which would cluster every
+    # timestamp within a few milliseconds of each other).
+    gaps = [later - earlier for earlier, later in zip(ordered_times, ordered_times[1:])]
+    assert all(gap >= stagger_seconds * 0.5 for gap in gaps)
 
 
 def _minimal_first_order_entry(symbol: str) -> dict[str, object]:
@@ -352,12 +400,18 @@ def _real_refresh_use_case_with_transport(handler) -> RefreshUnderlyingSnapshotU
 
 
 @pytest.mark.asyncio
-async def test_semaphore_still_caps_real_rest_concurrency_under_parallel_dispatch() -> None:
-    # The scheduler now fires every active symbol at once — this proves the
-    # real ThetaDataProvider semaphore (PR #86), not the scheduler, is
-    # what keeps concurrent REST calls at the documented account cap,
-    # exactly as intended: the scheduler no longer needs to know about
-    # that limit at all.
+async def test_semaphore_still_caps_real_rest_concurrency_under_parallel_dispatch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # This proves the real ThetaDataProvider semaphore (PR #86), not the
+    # scheduler, is what keeps concurrent REST calls at the documented
+    # account cap, exactly as intended: the scheduler doesn't need to
+    # know about that limit at all. Stagger disabled (see
+    # SYMBOL_DISPATCH_STAGGER_SECONDS's own docstring) so every symbol's
+    # kickoff still happens fast enough, within this test's own 5s
+    # deadline, to actually pile up against the 8-slot cap -- a separate
+    # question from whether dispatch is staggered in production.
+    monkeypatch.setattr("backend.core.scheduler.SYMBOL_DISPATCH_STAGGER_SECONDS", 0.0)
     in_flight = 0
     max_observed = 0
     lock = threading.Lock()
