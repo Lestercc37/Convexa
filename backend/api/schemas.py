@@ -160,6 +160,12 @@ class WhaleAlertResponse(BaseModel):
     # docstring (backend/domain/use_cases/flow.py). The frontend must
     # label this "Sin cotización", not "Mixto".
     quote_unavailable: bool
+    # See WhaleAlert.moneyness/near_gamma_level/repeat_count's own
+    # docstrings (backend/domain/use_cases/flow.py) for what each means
+    # and why they were added.
+    moneyness: Literal["ITM", "ATM", "OTM"]
+    near_gamma_level: Literal["Call Wall", "Put Wall", "Gamma Flip"] | None
+    repeat_count: int
 
 
 class WhaleAlertsResponse(BaseModel):

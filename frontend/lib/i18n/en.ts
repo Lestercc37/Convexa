@@ -146,6 +146,8 @@ export const en: Translations = {
     dominantSell: "Sell",
     dominantMixed: "Mixed",
     dominantQuoteUnavailable: "No quote",
+    nearLevelLabel: (level) => `Near ${level}`,
+    repeatCountLabel: (count) => `Same strike ×${count}`,
   },
   quickScreener: {
     eyebrow: "Convexa Presets",

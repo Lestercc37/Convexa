@@ -116,6 +116,9 @@ function alert(overrides: Partial<WhaleAlert> = {}): WhaleAlert {
     estimated_buy_volume: 1500,
     estimated_sell_volume: 500,
     quote_unavailable: false,
+    moneyness: "ATM",
+    near_gamma_level: null,
+    repeat_count: 1,
     ...overrides,
   };
 }

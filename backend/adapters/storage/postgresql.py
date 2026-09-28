@@ -34,7 +34,7 @@ from backend.domain.entities import (
     WhaleThreshold,
 )
 from backend.domain.underlyings import ACTIVE_UNDERLYINGS_BY_SYMBOL
-from backend.domain.use_cases.flow import SymbolFlowPressure, WhaleAlert, WhaleAlertType
+from backend.domain.use_cases.flow import Moneyness, SymbolFlowPressure, WhaleAlert, WhaleAlertType
 
 # See get_latest_chain_snapshot's own comment -- how far back its fast
 # path looks before falling back to an unbounded (and much slower) scan
@@ -1134,11 +1134,13 @@ class PostgreSQLStorage:
                     """
                     INSERT INTO whale_alerts (
                         time, underlying_id, occ_symbol, alert_type, amount,
-                        estimated_buy_volume, estimated_sell_volume, quote_unavailable
+                        estimated_buy_volume, estimated_sell_volume, quote_unavailable,
+                        moneyness, near_gamma_level, repeat_count
                     )
                     VALUES (
                         :time, :underlying_id, :occ_symbol, :alert_type, :amount,
-                        :estimated_buy_volume, :estimated_sell_volume, :quote_unavailable
+                        :estimated_buy_volume, :estimated_sell_volume, :quote_unavailable,
+                        :moneyness, :near_gamma_level, :repeat_count
                     )
                     """
                 ),
@@ -1151,6 +1153,9 @@ class PostgreSQLStorage:
                     "estimated_buy_volume": alert.estimated_buy_volume,
                     "estimated_sell_volume": alert.estimated_sell_volume,
                     "quote_unavailable": alert.quote_unavailable,
+                    "moneyness": alert.moneyness.value,
+                    "near_gamma_level": alert.near_gamma_level,
+                    "repeat_count": alert.repeat_count,
                 },
             )
 
@@ -1160,7 +1165,8 @@ class PostgreSQLStorage:
                 text(
                     """
                     SELECT w.time, u.symbol, w.occ_symbol, w.alert_type, w.amount,
-                           w.estimated_buy_volume, w.estimated_sell_volume, w.quote_unavailable
+                           w.estimated_buy_volume, w.estimated_sell_volume, w.quote_unavailable,
+                           w.moneyness, w.near_gamma_level, w.repeat_count
                     FROM whale_alerts AS w
                     JOIN underlyings AS u ON u.id = w.underlying_id
                     WHERE u.symbol = :symbol
@@ -1180,6 +1186,15 @@ class PostgreSQLStorage:
                     estimated_buy_volume=Decimal(row["estimated_buy_volume"]),
                     estimated_sell_volume=Decimal(row["estimated_sell_volume"]),
                     quote_unavailable=bool(row["quote_unavailable"]),
+                    # Nullable in Postgres, not in the dataclass -- see
+                    # migration 0038's own docstring: alerts persisted
+                    # before this column existed read back as "ATM"/1,
+                    # the same neutral defaults WhaleAlert's own fields
+                    # already default to, rather than None crashing
+                    # Moneyness(None) below.
+                    moneyness=Moneyness(str(row["moneyness"])) if row["moneyness"] is not None else Moneyness.ATM,
+                    near_gamma_level=row["near_gamma_level"],
+                    repeat_count=int(row["repeat_count"]) if row["repeat_count"] is not None else 1,
                 )
                 for row in rows
             ]

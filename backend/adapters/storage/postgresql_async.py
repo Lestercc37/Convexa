@@ -23,7 +23,7 @@ from backend.domain.entities import (
     UnderlyingKind,
 )
 from backend.domain.underlyings import ACTIVE_UNDERLYINGS_BY_SYMBOL
-from backend.domain.use_cases.flow import SymbolFlowPressure, WhaleAlert, WhaleAlertType
+from backend.domain.use_cases.flow import Moneyness, SymbolFlowPressure, WhaleAlert, WhaleAlertType
 
 # One shared channel for every symbol's live price ticks, not one
 # channel per symbol -- a single LISTEN on the API side covers every
@@ -429,7 +429,8 @@ class AsyncPostgreSQLStorage:
                 text(
                     """
                     SELECT w.time, u.symbol, w.occ_symbol, w.alert_type, w.amount,
-                           w.estimated_buy_volume, w.estimated_sell_volume, w.quote_unavailable
+                           w.estimated_buy_volume, w.estimated_sell_volume, w.quote_unavailable,
+                           w.moneyness, w.near_gamma_level, w.repeat_count
                     FROM whale_alerts AS w
                     JOIN underlyings AS u ON u.id = w.underlying_id
                     WHERE u.symbol = :symbol
@@ -450,6 +451,12 @@ class AsyncPostgreSQLStorage:
                 estimated_buy_volume=Decimal(row["estimated_buy_volume"]),
                 estimated_sell_volume=Decimal(row["estimated_sell_volume"]),
                 quote_unavailable=bool(row["quote_unavailable"]),
+                # See PostgreSQLStorage.get_recent_whale_alerts's identical
+                # comment -- pre-migration rows read back with neutral
+                # defaults rather than a null crashing Moneyness(None).
+                moneyness=Moneyness(str(row["moneyness"])) if row["moneyness"] is not None else Moneyness.ATM,
+                near_gamma_level=row["near_gamma_level"],
+                repeat_count=int(row["repeat_count"]) if row["repeat_count"] is not None else 1,
             )
             for row in rows
         ]

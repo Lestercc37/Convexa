@@ -39,6 +39,9 @@ describe("AlertsPanel", () => {
           estimated_buy_volume: 22500,
           estimated_sell_volume: 22500,
           quote_unavailable: false,
+          moneyness: "ATM",
+          near_gamma_level: null,
+          repeat_count: 1,
         },
       ]),
     );
@@ -75,6 +78,9 @@ describe("AlertsPanel", () => {
           estimated_buy_volume: 300000,
           estimated_sell_volume: 296745,
           quote_unavailable: false,
+          moneyness: "ATM",
+          near_gamma_level: null,
+          repeat_count: 1,
         },
         {
           symbol: "SPY",
@@ -85,6 +91,9 @@ describe("AlertsPanel", () => {
           estimated_buy_volume: 250000,
           estimated_sell_volume: 243889,
           quote_unavailable: false,
+          moneyness: "ATM",
+          near_gamma_level: null,
+          repeat_count: 1,
         },
       ]),
     );
@@ -116,6 +125,9 @@ describe("AlertsPanel", () => {
                 estimated_buy_volume: 22500,
                 estimated_sell_volume: 22500,
                 quote_unavailable: false,
+                moneyness: "ATM",
+                near_gamma_level: null,
+                repeat_count: 1,
               },
             ])
           : alertsResponse("QQQ", [
@@ -128,6 +140,9 @@ describe("AlertsPanel", () => {
                 estimated_buy_volume: 105000,
                 estimated_sell_volume: 105000,
                 quote_unavailable: false,
+                moneyness: "ATM",
+                near_gamma_level: null,
+                repeat_count: 1,
               },
             ]),
       ),
@@ -161,6 +176,9 @@ describe("AlertsPanel", () => {
           estimated_buy_volume: 22500,
           estimated_sell_volume: 22500,
           quote_unavailable: false,
+          moneyness: "ATM",
+          near_gamma_level: null,
+          repeat_count: 1,
         },
       ]),
     );
@@ -210,6 +228,9 @@ describe("AlertsPanel", () => {
           estimated_buy_volume: 60000,
           estimated_sell_volume: 150000,
           quote_unavailable: false,
+          moneyness: "ATM",
+          near_gamma_level: null,
+          repeat_count: 1,
         },
         {
           symbol: "SPY",
@@ -220,6 +241,9 @@ describe("AlertsPanel", () => {
           estimated_buy_volume: 30000,
           estimated_sell_volume: 15000,
           quote_unavailable: false,
+          moneyness: "ATM",
+          near_gamma_level: null,
+          repeat_count: 1,
         },
       ]),
     );
@@ -255,6 +279,9 @@ describe("AlertsPanel", () => {
           estimated_buy_volume: 30000,
           estimated_sell_volume: 15000,
           quote_unavailable: false,
+          moneyness: "ATM",
+          near_gamma_level: null,
+          repeat_count: 1,
         },
         {
           // 25% buy / 75% sell -- sell dominates.
@@ -266,6 +293,9 @@ describe("AlertsPanel", () => {
           estimated_buy_volume: 15000,
           estimated_sell_volume: 45000,
           quote_unavailable: false,
+          moneyness: "ATM",
+          near_gamma_level: null,
+          repeat_count: 1,
         },
       ]),
     );
@@ -292,6 +322,9 @@ describe("AlertsPanel", () => {
           estimated_buy_volume: 22500,
           estimated_sell_volume: 22500,
           quote_unavailable: false,
+          moneyness: "ATM",
+          near_gamma_level: null,
+          repeat_count: 1,
         },
       ]),
     );
@@ -320,6 +353,9 @@ describe("AlertsPanel", () => {
           estimated_buy_volume: 22500,
           estimated_sell_volume: 22500,
           quote_unavailable: true,
+          moneyness: "ATM",
+          near_gamma_level: null,
+          repeat_count: 1,
         },
       ]),
     );
@@ -341,6 +377,9 @@ describe("AlertsPanel", () => {
       estimated_buy_volume: 75_000,
       estimated_sell_volume: 75_000,
       quote_unavailable: false,
+      moneyness: "ATM" as const,
+      near_gamma_level: null,
+      repeat_count: 1,
     }));
     apiMocks.getAlerts.mockResolvedValue(alertsResponse("SPY", manyAlerts));
 

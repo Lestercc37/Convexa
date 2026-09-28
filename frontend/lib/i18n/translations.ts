@@ -131,6 +131,8 @@ export type Translations = {
     dominantSell: string;
     dominantMixed: string;
     dominantQuoteUnavailable: string;
+    nearLevelLabel: (level: string) => string;
+    repeatCountLabel: (count: number) => string;
   };
   quickScreener: {
     eyebrow: string;

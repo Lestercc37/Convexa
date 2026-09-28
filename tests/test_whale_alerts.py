@@ -16,12 +16,14 @@ from backend.domain.entities import (
     Side,
 )
 from backend.domain.use_cases import (
+    Moneyness,
     WhaleAlert,
     WhaleAlertsEngine,
     WhaleAlertType,
     calculate_bvc_split,
     calculate_price_volatility,
 )
+from backend.domain.entities import GammaAggregate, MarketPrice
 from backend.main import app
 
 
@@ -100,6 +102,160 @@ def test_engine_emits_whale_and_prioritizes_it_over_unusual() -> None:
     assert len(alerts) == 1
     assert alerts[0].alert_type is WhaleAlertType.WHALE
     assert alerts[0].amount == Decimal("160000.00")
+
+
+def test_alert_moneyness_is_itm_when_a_call_strike_sits_below_spot() -> None:
+    # IWM's mock chain contract strikes at 540 (call); spot stays 552.25
+    # (MockDataProvider's own fixed value -- _chain() only ever varies
+    # volume/last/as_of). 540 < 552.25 for a CALL is ITM by definition,
+    # well outside ATM_BAND_PCT's 1% band (~2.2% away).
+    storage = InMemoryStorage()
+    storage.save_market_price(
+        MarketPrice(symbol="IWM", as_of=datetime(2026, 1, 15, 14, 29, tzinfo=UTC),
+                    price=Decimal("552.25"), volume=0)
+    )
+    engine = WhaleAlertsEngine(storage)
+    base = MockDataProvider().get_option_chain("IWM")
+
+    cumulative = 100
+    engine.process(_chain(base, cumulative, 0))
+    for period in range(1, 6):
+        cumulative += 200
+        engine.process(_chain(base, cumulative, period))
+    cumulative += 1600
+    engine.process(_chain(base, cumulative, 6))
+    alerts = engine.process(_chain(base, cumulative, 7))
+
+    assert len(alerts) == 1
+    assert alerts[0].moneyness is Moneyness.ITM
+
+
+def test_alert_moneyness_is_atm_when_spot_sits_within_one_percent_of_the_strike() -> None:
+    # Same 540 strike, spot moved to 545 -- (545-540)/545 ~= 0.92%, inside
+    # ATM_BAND_PCT.
+    storage = InMemoryStorage()
+    storage.save_market_price(
+        MarketPrice(symbol="IWM", as_of=datetime(2026, 1, 15, 14, 29, tzinfo=UTC),
+                    price=Decimal("545"), volume=0)
+    )
+    engine = WhaleAlertsEngine(storage)
+    base = MockDataProvider().get_option_chain("IWM")
+
+    cumulative = 100
+    engine.process(_chain(base, cumulative, 0))
+    for period in range(1, 6):
+        cumulative += 200
+        engine.process(_chain(base, cumulative, period))
+    cumulative += 1600
+    engine.process(_chain(base, cumulative, 6))
+    alerts = engine.process(_chain(base, cumulative, 7))
+
+    assert len(alerts) == 1
+    assert alerts[0].moneyness is Moneyness.ATM
+
+
+def test_alert_moneyness_is_otm_when_a_call_strike_sits_above_spot() -> None:
+    # Same 540 strike, spot dropped to 500 -- 540 > 500 for a CALL is OTM.
+    storage = InMemoryStorage()
+    storage.save_market_price(
+        MarketPrice(symbol="IWM", as_of=datetime(2026, 1, 15, 14, 29, tzinfo=UTC),
+                    price=Decimal("500"), volume=0)
+    )
+    engine = WhaleAlertsEngine(storage)
+    base = MockDataProvider().get_option_chain("IWM")
+
+    cumulative = 100
+    engine.process(_chain(base, cumulative, 0))
+    for period in range(1, 6):
+        cumulative += 200
+        engine.process(_chain(base, cumulative, period))
+    cumulative += 1600
+    engine.process(_chain(base, cumulative, 6))
+    alerts = engine.process(_chain(base, cumulative, 7))
+
+    assert len(alerts) == 1
+    assert alerts[0].moneyness is Moneyness.OTM
+
+
+def test_alert_moneyness_defaults_to_atm_when_no_market_price_is_recorded_yet() -> None:
+    # No save_market_price call at all -- get_latest_price returns None,
+    # the documented "can't guess ITM/OTM from nothing" fallback.
+    engine = WhaleAlertsEngine(InMemoryStorage())
+    base = MockDataProvider().get_option_chain("IWM")
+
+    cumulative = 100
+    engine.process(_chain(base, cumulative, 0))
+    for period in range(1, 6):
+        cumulative += 200
+        engine.process(_chain(base, cumulative, period))
+    cumulative += 1600
+    engine.process(_chain(base, cumulative, 6))
+    alerts = engine.process(_chain(base, cumulative, 7))
+
+    assert len(alerts) == 1
+    assert alerts[0].moneyness is Moneyness.ATM
+
+
+def test_alert_tags_the_nearest_gamma_level_when_spot_is_within_band() -> None:
+    storage = InMemoryStorage()
+    storage.save_market_price(
+        MarketPrice(symbol="IWM", as_of=datetime(2026, 1, 15, 14, 29, tzinfo=UTC),
+                    price=Decimal("552.25"), volume=0)
+    )
+    storage.save_gamma_aggregate(
+        GammaAggregate(
+            symbol="IWM",
+            as_of=datetime(2026, 1, 15, 14, 29, tzinfo=UTC),
+            call_wall=Decimal("554"),  # (554-552.25)/552.25 ~= 0.32%, inside the 0.5% band
+            put_wall=Decimal("400"),
+            gamma_flip=Decimal("300"),
+        )
+    )
+    engine = WhaleAlertsEngine(storage)
+    base = MockDataProvider().get_option_chain("IWM")
+
+    cumulative = 100
+    engine.process(_chain(base, cumulative, 0))
+    for period in range(1, 6):
+        cumulative += 200
+        engine.process(_chain(base, cumulative, period))
+    cumulative += 1600
+    engine.process(_chain(base, cumulative, 6))
+    alerts = engine.process(_chain(base, cumulative, 7))
+
+    assert len(alerts) == 1
+    assert alerts[0].near_gamma_level == "Call Wall"
+
+
+def test_alert_near_gamma_level_is_none_when_spot_is_far_from_every_level() -> None:
+    storage = InMemoryStorage()
+    storage.save_market_price(
+        MarketPrice(symbol="IWM", as_of=datetime(2026, 1, 15, 14, 29, tzinfo=UTC),
+                    price=Decimal("552.25"), volume=0)
+    )
+    storage.save_gamma_aggregate(
+        GammaAggregate(
+            symbol="IWM",
+            as_of=datetime(2026, 1, 15, 14, 29, tzinfo=UTC),
+            call_wall=Decimal("700"),
+            put_wall=Decimal("400"),
+            gamma_flip=Decimal("450"),
+        )
+    )
+    engine = WhaleAlertsEngine(storage)
+    base = MockDataProvider().get_option_chain("IWM")
+
+    cumulative = 100
+    engine.process(_chain(base, cumulative, 0))
+    for period in range(1, 6):
+        cumulative += 200
+        engine.process(_chain(base, cumulative, period))
+    cumulative += 1600
+    engine.process(_chain(base, cumulative, 6))
+    alerts = engine.process(_chain(base, cumulative, 7))
+
+    assert len(alerts) == 1
+    assert alerts[0].near_gamma_level is None
 
 
 def test_bvc_split_on_a_real_alert_matches_the_pure_function_given_the_same_inputs() -> None:
@@ -346,6 +502,35 @@ def test_sustained_flow_fires_once_and_whale_still_classifies_independently() ->
     assert len(whale_alerts) == 1
     assert whale_alerts[0].alert_type is WhaleAlertType.WHALE
     assert whale_alerts[0].amount == Decimal("500000.00")
+
+
+def test_repeat_count_increments_across_alerts_for_the_same_contract() -> None:
+    # Same sequence as test_sustained_flow_fires_once_and_whale_still_
+    # classifies_independently above (Sustained Flow, then a separate
+    # Whale spike, both on IWM's own single mock contract) -- proof
+    # repeat_count tracks real accumulation at one strike across alert
+    # *types*, not just repeats of the same type.
+    engine = WhaleAlertsEngine(InMemoryStorage())
+    base = MockDataProvider().get_option_chain("IWM")
+    cumulative = 100
+    engine.process(_chain(base, cumulative, 0))
+
+    for period in range(1, 15):
+        cumulative += 400
+        engine.process(_chain(base, cumulative, period))
+
+    cumulative += 400
+    sustained_alerts = engine.process(_chain(base, cumulative, 15))
+    assert sustained_alerts[0].repeat_count == 1
+
+    cumulative += 400
+    engine.process(_chain(base, cumulative, 16))
+
+    cumulative += 5000
+    engine.process(_chain(base, cumulative, 17))
+    whale_alerts = engine.process(_chain(base, cumulative, 18))
+
+    assert whale_alerts[0].repeat_count == 2
 
 
 def test_sustained_flow_resets_and_refires_after_dropping_below_threshold() -> None:
