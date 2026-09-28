@@ -636,6 +636,20 @@ button, select { font: inherit; }
 .alert-amount { font-variant-numeric: tabular-nums; }
 .alert-time { color: var(--tv-text-dim); font-size: 0.66rem; }
 
+/* Moneyness/near-level/repeat-count (2026-09-28) -- context tags so a
+   card says something more useful than a raw dollar amount at a glance.
+   ITM stays muted deliberately: a deep-ITM print behaves almost like the
+   underlying itself, a materially weaker directional signal than the
+   same dollar amount hitting ATM/OTM (see WhaleAlert.moneyness's own
+   backend docstring) -- the color itself is the first cue, before the
+   reader even parses the letters. */
+.alert-moneyness { align-self: flex-start; font-size: 0.62rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; padding: 1px 5px; border-radius: 4px; background: var(--tv-panel); }
+.alert-moneyness-itm { color: var(--tv-text-dim); }
+.alert-moneyness-atm { color: var(--warning); }
+.alert-moneyness-otm { color: var(--calm); }
+.alert-near-level { align-self: flex-start; font-size: 0.66rem; font-weight: 600; color: var(--accent); }
+.alert-repeat-count { align-self: flex-start; font-size: 0.66rem; font-weight: 600; color: var(--tv-text-dim); }
+
 /* Call/Put, per card -- the only place this was visible before was the
    Calls/Puts tab context itself; now that the unified feed mixes both,
    this is the only remaining cue (same --calm/--risk pair the rest of

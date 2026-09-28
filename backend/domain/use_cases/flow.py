@@ -11,6 +11,7 @@ from enum import StrEnum
 from backend.domain.entities import (
     ContractType,
     FlowEvent,
+    GammaAggregate,
     LatestQuote,
     OptionChain,
     Side,
@@ -29,6 +30,77 @@ class WhaleAlertType(StrEnum):
     UNUSUAL = "UNUSUAL"
     WHALE = "WHALE"
     SUSTAINED_FLOW = "SUSTAINED_FLOW"
+
+
+class Moneyness(StrEnum):
+    ITM = "ITM"
+    ATM = "ATM"
+    OTM = "OTM"
+
+
+# How close a strike has to sit to spot (as a fraction of spot) to count as
+# ATM rather than ITM/OTM -- a fixed dollar/point band would be wrong across
+# symbols spanning $30 stocks to 7,000+-point indices, so this is relative.
+# 1% is a pragmatic first calibration (matches roughly one 0DTE SPX weekly
+# strike increment either side of spot at today's levels), not derived from
+# a backtest -- same "needs recalibration with real data" caveat
+# WhaleAlertThresholds' own docstring already carries for its five numbers.
+ATM_BAND_PCT = Decimal("0.01")
+
+# Same reasoning as ATM_BAND_PCT, tighter: "near a level" is meant to flag
+# spot genuinely testing Call Wall/Put Wall/Gamma Flip, not merely
+# somewhere in the same neighborhood.
+NEAR_GAMMA_LEVEL_BAND_PCT = Decimal("0.005")
+
+
+def _classify_moneyness(contract_type: ContractType, strike: Decimal, spot: Decimal | None) -> Moneyness:
+    """Strike vs. spot at the moment this alert fires -- a deep ITM call
+    (delta near 1, trades almost like the stock/index itself) carries a
+    very different signal than the same dollar amount hitting an ATM/OTM
+    strike (genuine leveraged directional exposure, the kind that forces
+    real dealer gamma hedging) -- see this module's own new docstring
+    addition on WhaleAlert.moneyness for why raw premium alone doesn't
+    distinguish these. `spot=None` (no market price recorded for this
+    symbol yet -- vanishingly rare in practice, since the REST scheduler
+    seeds market_snapshots well before any trade stream classification
+    starts) falls back to ATM rather than guessing ITM/OTM from nothing."""
+    if spot is None or spot <= 0:
+        return Moneyness.ATM
+    distance_pct = abs(strike - spot) / spot
+    if distance_pct <= ATM_BAND_PCT:
+        return Moneyness.ATM
+    in_the_money = strike < spot if contract_type == ContractType.CALL else strike > spot
+    return Moneyness.ITM if in_the_money else Moneyness.OTM
+
+
+def _nearest_gamma_level(spot: Decimal | None, gamma: GammaAggregate | None) -> str | None:
+    """Which of Call Wall/Put Wall/Gamma Flip (Structural view -- the
+    always-populated one; Tactical can legitimately be empty on a day/
+    symbol with no 0-2 DTE contracts, see GammaAggregate.view's own
+    docstring) spot is currently sitting within NEAR_GAMMA_LEVEL_BAND_PCT
+    of, if any -- ties the alert to the same levels the chart already
+    shows, instead of leaving the reader to cross-reference two panels by
+    eye. Closest level wins when spot happens to sit within band of more
+    than one (only possible for a very narrow/collapsed gamma landscape)."""
+    if spot is None or spot <= 0 or gamma is None:
+        return None
+    candidates: tuple[tuple[str, Decimal | None], ...] = (
+        ("Call Wall", gamma.call_wall),
+        ("Put Wall", gamma.put_wall),
+        ("Gamma Flip", gamma.gamma_flip),
+    )
+    best_label: str | None = None
+    best_distance_pct: Decimal | None = None
+    for label, level in candidates:
+        if level is None:
+            continue
+        distance_pct = abs(level - spot) / spot
+        if distance_pct > NEAR_GAMMA_LEVEL_BAND_PCT:
+            continue
+        if best_distance_pct is None or distance_pct < best_distance_pct:
+            best_distance_pct = distance_pct
+            best_label = label
+    return best_label
 
 
 @dataclass(frozen=True, slots=True)
@@ -66,6 +138,25 @@ class WhaleAlert:
     # cotización") for this, reserving "Mixto" for an exact split that
     # wasn't caused by missing quote data.
     quote_unavailable: bool = False
+    # Strike vs. spot at the moment this alert fired -- see
+    # _classify_moneyness's own docstring for why this matters: a deep-ITM
+    # call behaves like the underlying itself, not a leveraged directional
+    # bet, so it shouldn't read the same as an ATM/OTM alert of the same
+    # dollar size. Added 2026-09-28 alongside near_gamma_level/repeat_count
+    # so the panel can say something more useful than a raw premium.
+    moneyness: Moneyness = Moneyness.ATM
+    # Call Wall / Put Wall / Gamma Flip, whichever spot was within
+    # NEAR_GAMMA_LEVEL_BAND_PCT of when this alert fired -- None if spot
+    # wasn't near any of them. Ties this alert to the same levels the
+    # chart already computes, instead of two panels the reader has to
+    # reconcile by eye.
+    near_gamma_level: str | None = None
+    # How many WHALE/UNUSUAL/SUSTAINED_FLOW alerts this exact contract
+    # (occ_symbol) has produced so far this session, this one included --
+    # 1 the first time, 2 the second, etc. Flags real accumulation at one
+    # strike (repeat_count climbing) versus an isolated one-off print,
+    # which a bare list of dollar amounts doesn't distinguish at a glance.
+    repeat_count: int = 1
 
 
 @dataclass(frozen=True, slots=True)
@@ -112,6 +203,13 @@ def _contract_type_from_occ_symbol(occ_symbol: str) -> ContractType:
     15 trailing characters regardless of root length, so the call/put
     character is always exactly 9 characters from the end."""
     return ContractType.CALL if occ_symbol[-9] == "C" else ContractType.PUT
+
+
+def _parse_strike(occ_symbol: str) -> Decimal:
+    """Same fixed trailing-shape guarantee _contract_type_from_occ_symbol's
+    own comment documents -- the last 8 characters are always the strike,
+    x1000 (e.g. "07685000" -> 7685)."""
+    return Decimal(occ_symbol[-8:]) / 1000
 
 
 def _floor_to_minute(moment: datetime) -> datetime:
@@ -182,6 +280,11 @@ class _ContractState:
     # Same idea across the 15-bucket Sustained Flow window -- True only
     # if every one of those buckets was itself quote_unavailable.
     sustained_quote_unavailable: deque[bool] = field(default_factory=lambda: deque(maxlen=15))
+    # See WhaleAlert.repeat_count's own docstring -- incremented once per
+    # alert _emit() actually produces for this contract, session-lifetime
+    # (this state itself only lives as long as the engine process does,
+    # so "this session" in practice means "since this process started").
+    alert_count: int = 0
 
 
 @dataclass(slots=True)
@@ -275,6 +378,17 @@ class WhaleAlertsEngine:
         # the rest see the freshly-populated cache instead of each firing
         # their own redundant query at the same moment.
         self._thresholds_cache_lock = threading.Lock()
+        # Same cache-with-TTL shape as _cached_thresholds above, and for
+        # the same reason -- a per-trade Postgres round-trip (get_latest_
+        # price + get_latest_gamma_aggregate) would repeat that method's
+        # own documented incident (query cost dominating process_trade()'s
+        # own per-trade cost under concurrent load). Reuses the same TTL;
+        # moneyness/near_gamma_level are context tags, not the alert's own
+        # trigger condition, so a few seconds of staleness on spot/gamma
+        # levels is an acceptable tradeoff for not re-querying on every
+        # single trade across ~15 concurrent symbol threads.
+        self._market_context_cache: dict[str, tuple[float, tuple[Decimal | None, GammaAggregate | None]]] = {}
+        self._market_context_cache_lock = threading.Lock()
         self._states: dict[str, _ContractState] = {}
         # Separate from _states (process()/BVC) on purpose — process_trade()
         # (Lee-Ready) keeps its own per-contract bucketing state so the two
@@ -313,6 +427,25 @@ class WhaleAlertsEngine:
             whale_multiplier=persisted.whale_multiplier,
             sustained_flow_min=persisted.sustained_flow_min,
         )
+
+    def _cached_market_context(self, symbol: str) -> tuple[Decimal | None, GammaAggregate | None]:
+        """(latest spot price, latest Structural GammaAggregate) for
+        `symbol`, cached -- see this class's own __init__ comment on
+        _market_context_cache for why. Structural, not Tactical: always
+        populated for an actively-tracked symbol (Tactical can be
+        legitimately empty, see GammaAggregate.view's own docstring), and
+        Call Wall/Put Wall/Gamma Flip are the same levels the chart's
+        Structural view already shows by default."""
+        with self._market_context_cache_lock:
+            now = time.monotonic()
+            cached = self._market_context_cache.get(symbol)
+            if cached is not None and now - cached[0] < self._thresholds_cache_ttl_seconds:
+                return cached[1]
+            price = self._storage.get_latest_price(symbol)
+            gamma = self._storage.get_latest_gamma_aggregate(symbol, view="structural")
+            context = (price.price if price is not None else None, gamma)
+            self._market_context_cache[symbol] = (now, context)
+            return context
 
     def process(self, chain: OptionChain) -> tuple[WhaleAlert, ...]:
         generated: list[WhaleAlert] = []
@@ -558,6 +691,7 @@ class WhaleAlertsEngine:
             if alert_type is not None:
                 generated.append(
                     self._emit(
+                        state,
                         symbol,
                         occ_symbol,
                         as_of,
@@ -580,6 +714,7 @@ class WhaleAlertsEngine:
                     state.sustained_alerted = True
                     generated.append(
                         self._emit(
+                            state,
                             symbol,
                             occ_symbol,
                             as_of,
@@ -608,6 +743,7 @@ class WhaleAlertsEngine:
 
     def _emit(
         self,
+        state: _ContractState,
         symbol: str,
         occ_symbol: str,
         as_of: datetime,
@@ -617,6 +753,10 @@ class WhaleAlertsEngine:
         estimated_sell_volume: Decimal,
         quote_unavailable: bool = False,
     ) -> WhaleAlert:
+        spot, gamma = self._cached_market_context(symbol)
+        strike = _parse_strike(occ_symbol)
+        contract_type = _contract_type_from_occ_symbol(occ_symbol)
+        state.alert_count += 1
         alert = WhaleAlert(
             symbol=symbol,
             occ_symbol=occ_symbol,
@@ -626,6 +766,9 @@ class WhaleAlertsEngine:
             estimated_buy_volume=estimated_buy_volume,
             estimated_sell_volume=estimated_sell_volume,
             quote_unavailable=quote_unavailable,
+            moneyness=_classify_moneyness(contract_type, strike, spot),
+            near_gamma_level=_nearest_gamma_level(spot, gamma),
+            repeat_count=state.alert_count,
         )
         self._alerts.append(alert)
         # Dual-write, this phase only: whale_alerts now persists the same

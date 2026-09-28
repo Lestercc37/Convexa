@@ -40,6 +40,9 @@ async def get_alerts(
                     "estimated_buy_volume": alert.estimated_buy_volume,
                     "estimated_sell_volume": alert.estimated_sell_volume,
                     "quote_unavailable": alert.quote_unavailable,
+                    "moneyness": alert.moneyness.value,
+                    "near_gamma_level": alert.near_gamma_level,
+                    "repeat_count": alert.repeat_count,
                 }
                 for alert in alerts
             ],

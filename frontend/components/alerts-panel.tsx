@@ -100,6 +100,15 @@ function dominantSide(alert: WhaleAlert, buyPct: number): DominantSide {
   return buyPct > 50 ? "buy" : "sell";
 }
 
+// Deliberately not translated, same convention TYPE_LABEL/SIDE_LABEL
+// above already follow -- ITM/ATM/OTM is fixed options vocabulary, not UI
+// prose (see WhaleAlert.moneyness's own backend docstring).
+const MONEYNESS_LABEL: Record<WhaleAlert["moneyness"], string> = {
+  ITM: "ITM",
+  ATM: "ATM",
+  OTM: "OTM",
+};
+
 function AlertCard({ alert, t }: { alert: WhaleAlert; t: Translations }) {
   const buyPct = buyPercent(alert);
   const sellPct = 100 - buyPct;
@@ -117,6 +126,21 @@ function AlertCard({ alert, t }: { alert: WhaleAlert; t: Translations }) {
       {side && <span className={`alert-side alert-side-${side}`}>{SIDE_LABEL[side]}</span>}
       <span className="alert-contract">{alert.contract}</span>
       <span className="alert-type">{TYPE_LABEL[alert.type]}</span>
+      <span
+        className={`alert-moneyness alert-moneyness-${alert.moneyness.toLowerCase()}`}
+      >
+        {MONEYNESS_LABEL[alert.moneyness]}
+      </span>
+      {alert.near_gamma_level && (
+        <span className="alert-near-level">
+          {t.alertsPanel.nearLevelLabel(alert.near_gamma_level)}
+        </span>
+      )}
+      {alert.repeat_count > 1 && (
+        <span className="alert-repeat-count">
+          {t.alertsPanel.repeatCountLabel(alert.repeat_count)}
+        </span>
+      )}
       <span className="alert-amount">{CURRENCY_FORMAT.format(alert.amount)}</span>
       <span className="alert-time">{new Date(alert.timestamp).toLocaleTimeString()}</span>
       <span className="alert-bvc" title={t.alertsPanel.bvcLabel}>

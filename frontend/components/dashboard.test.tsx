@@ -655,6 +655,9 @@ describe("Dashboard", () => {
       type: (index % 2 === 0 ? "WHALE" : "UNUSUAL") as "WHALE" | "UNUSUAL",
       amount: 150_000 + index,
       timestamp: new Date(Date.UTC(2026, 7, 3, 14, 30, index)).toISOString(),
+      moneyness: "ATM" as const,
+      near_gamma_level: null,
+      repeat_count: 1,
     }));
     apiMocks.getAlerts.mockImplementation((symbol: string) =>
       Promise.resolve({
