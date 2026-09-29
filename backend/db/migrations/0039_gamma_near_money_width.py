@@ -16,16 +16,25 @@ Nullable, not backfilled -- old rows read back with the storage layer's
 existing flat-percentage fallback (same low-risk shape as 0038's three
 columns) until the next scheduler cycle writes a fresh aggregate.
 
-Revision ID: 0039_gamma_aggregates_near_the_money_width
+Revision ID: 0039_gamma_near_money_width
 Revises: 0038_whale_alerts_context_tags
 Create Date: 2026-09-29
+
+Note: the revision id is shorter than the filename/topic would suggest --
+alembic_version.version_num is varchar(32), and the descriptive id this
+migration first shipped with (0039_gamma_aggregates_near_the_money_width,
+43 chars) overflowed it. Confirmed live, 2026-09-29: `alembic upgrade
+head` failed with "value too long for type character varying(32)" on the
+final `UPDATE alembic_version SET version_num=...` -- caught before it
+reached any real database beyond the disposable attempt, transactional
+DDL rolled the ADD COLUMN back with it, nothing left half-applied.
 """
 
 from __future__ import annotations
 
 from alembic import op
 
-revision = "0039_gamma_aggregates_near_the_money_width"
+revision = "0039_gamma_near_money_width"
 down_revision = "0038_whale_alerts_context_tags"
 branch_labels = None
 depends_on = None
