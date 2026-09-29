@@ -162,6 +162,35 @@ def test_strike_selection_stops_after_two_consecutive_zero_bid_strikes() -> None
     assert with_gap.atm_iv == without_gap.atm_iv
 
 
+def test_falls_back_instead_of_a_wild_variance_right_at_0dte_expiration() -> None:
+    # Confirmed live, 2026-09-29: run against a real stored SPX chain
+    # from a few seconds before market close (0DTE, T essentially 0),
+    # the real variance formula produced atm_iv=205% -- dividing by a
+    # near-zero T amplifies ordinary bid/ask noise into a meaningless
+    # number, a known property of this formula (see MIN_YEAR_FRACTION's
+    # own comment). 3:59:58pm ET, 2 seconds before close.
+    as_of = datetime(2026, 8, 3, 19, 59, 58, tzinfo=UTC)
+    chain = OptionChain(
+        symbol="SPY",
+        as_of=as_of,
+        spot_price=Decimal(100),
+        contracts=(
+            _contract(Decimal(95), ContractType.PUT, Decimal("0.90"), Decimal("1.10"), expiration=date(2026, 8, 3), iv=Decimal("0.20")),
+            _contract(Decimal(100), ContractType.CALL, Decimal("2.90"), Decimal("3.10"), expiration=date(2026, 8, 3), iv=Decimal("0.20")),
+            _contract(Decimal(100), ContractType.PUT, Decimal("2.90"), Decimal("3.10"), expiration=date(2026, 8, 3), iv=Decimal("0.30")),
+            _contract(Decimal(105), ContractType.CALL, Decimal("0.90"), Decimal("1.10"), expiration=date(2026, 8, 3), iv=Decimal("0.20")),
+        ),
+    )
+
+    result = calculate_expected_move(chain, as_of)
+
+    # Falls back to the plain (call.iv + put.iv) / 2 approximation at the
+    # 100 strike (closest to spot=100) -- 0.25, not anything close to the
+    # unstable value the real variance formula would otherwise produce
+    # this close to expiration.
+    assert result.atm_iv == Decimal("0.25")
+
+
 def test_falls_back_to_atm_iv_average_when_the_chain_is_too_thin_to_select_strikes() -> None:
     # Only one strike in the whole chain -- no deltaK is possible
     # (_strike_interval needs at least 2 selected strikes), so this must
