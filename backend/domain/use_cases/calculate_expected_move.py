@@ -9,6 +9,11 @@ from backend.domain.entities import ContractType, ExpectedMove, OptionChain, Opt
 MARKET_MINUTES = Decimal(390)
 NEW_YORK = ZoneInfo("America/New_York")
 
+# See _calculate_variance's own docstring for the live incident (a real
+# 205% atm_iv) this exists to prevent -- 5 minutes, expressed as a
+# fraction of a 365-day year (minutes-per-year = 365 x 24 x 60).
+MIN_YEAR_FRACTION = Decimal(5) / Decimal(525_600)
+
 
 def calculate_time_to_close_pct(as_of: datetime) -> Decimal:
     local = as_of.astimezone(NEW_YORK)
@@ -153,8 +158,22 @@ def _calculate_variance(
     """sigma^2, Cboe VIX Mathematics Methodology formula (1):
     (2/T) x sum(deltaK_i / K_i^2 x Q(K_i)) - (1/T) x [(F/K0) - 1]^2.
     Requires at least 2 selected strikes (a single strike carries no
-    deltaK -- see _strike_interval) and a strictly positive T."""
-    if len(selected) < 2 or year_fraction <= 0:
+    deltaK -- see _strike_interval) and T no smaller than
+    MIN_YEAR_FRACTION.
+
+    That floor is deliberate, not arbitrary caution -- confirmed live,
+    2026-09-29: run against a real stored SPX chain from right at
+    yesterday's close (T for the 0DTE contract a few seconds from zero),
+    this produced atm_iv=205%, wildly outside anything real. Dividing by
+    T amplifies whatever noise sits in real bid/ask spreads -- the
+    smaller T gets, the worse, a known property of this formula (real
+    VIX itself never has to face it, since its own 30-day constant-
+    maturity design never lets T approach zero). MIN_YEAR_FRACTION is 5
+    minutes expressed as a year fraction -- comfortably inside "still a
+    real trading decision window," comfortably outside where this
+    instability starts to dominate. Below it, calculate_expected_move's
+    own fallback takes over."""
+    if len(selected) < 2 or year_fraction < MIN_YEAR_FRACTION:
         return None
     sorted_strikes = sorted(selected)
     contribution_sum = Decimal(0)
