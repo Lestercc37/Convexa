@@ -84,7 +84,7 @@ class AsyncPostgreSQLStorage:
                 text(
                     """
                     SELECT g.time, g.underlying_id, u.symbol, g.view, g.gamma_flip, g.call_wall,
-                           g.put_wall, g.max_pain, g.net_gamma,
+                           g.put_wall, g.near_the_money_width, g.max_pain, g.net_gamma,
                            g.dealer_gamma_notional, g.vega_exposure,
                            g.theta_exposure, g.charm_exposure,
                            g.vanna_exposure, g.delta_exposure,
@@ -114,6 +114,11 @@ class AsyncPostgreSQLStorage:
             gamma_flip=(Decimal(row["gamma_flip"]) if row["gamma_flip"] is not None else None),
             call_wall=(Decimal(row["call_wall"]) if row["call_wall"] is not None else None),
             put_wall=(Decimal(row["put_wall"]) if row["put_wall"] is not None else None),
+            near_the_money_width=(
+                Decimal(row["near_the_money_width"])
+                if row["near_the_money_width"] is not None
+                else None
+            ),
             max_pain=Decimal(row["max_pain"]),
             net_gamma=Decimal(row["net_gamma"]),
             dealer_gamma_notional=Decimal(row["dealer_gamma_notional"]),

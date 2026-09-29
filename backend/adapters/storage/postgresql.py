@@ -668,6 +668,7 @@ class PostgreSQLStorage:
                     """
                     INSERT INTO gamma_aggregates (
                         time, underlying_id, view, gamma_flip, call_wall, put_wall,
+                        near_the_money_width,
                         max_pain, net_gamma, dealer_gamma_notional,
                         vega_exposure, theta_exposure, charm_exposure,
                         vanna_exposure, delta_exposure,
@@ -677,6 +678,7 @@ class PostgreSQLStorage:
                     )
                     VALUES (
                         :time, :underlying_id, :view, :gamma_flip, :call_wall, :put_wall,
+                        :near_the_money_width,
                         :max_pain, :net_gamma, :dealer_gamma_notional,
                         :vega_exposure, :theta_exposure, :charm_exposure,
                         :vanna_exposure, :delta_exposure,
@@ -688,6 +690,7 @@ class PostgreSQLStorage:
                         gamma_flip = EXCLUDED.gamma_flip,
                         call_wall = EXCLUDED.call_wall,
                         put_wall = EXCLUDED.put_wall,
+                        near_the_money_width = EXCLUDED.near_the_money_width,
                         max_pain = EXCLUDED.max_pain,
                         net_gamma = EXCLUDED.net_gamma,
                         dealer_gamma_notional = EXCLUDED.dealer_gamma_notional,
@@ -710,6 +713,7 @@ class PostgreSQLStorage:
                     "gamma_flip": gamma.gamma_flip,
                     "call_wall": gamma.call_wall,
                     "put_wall": gamma.put_wall,
+                    "near_the_money_width": gamma.near_the_money_width,
                     "max_pain": gamma.max_pain,
                     "net_gamma": gamma.net_gamma,
                     "dealer_gamma_notional": gamma.dealer_gamma_notional,
@@ -775,7 +779,7 @@ class PostgreSQLStorage:
                     text(
                         """
                     SELECT g.time, g.underlying_id, u.symbol, g.view, g.gamma_flip, g.call_wall,
-                           g.put_wall, g.max_pain, g.net_gamma,
+                           g.put_wall, g.near_the_money_width, g.max_pain, g.net_gamma,
                            g.dealer_gamma_notional, g.vega_exposure,
                            g.theta_exposure, g.charm_exposure,
                            g.vanna_exposure, g.delta_exposure,
@@ -838,7 +842,7 @@ class PostgreSQLStorage:
                 text(
                     """
                     SELECT g.time, u.symbol, g.view, g.gamma_flip, g.call_wall,
-                           g.put_wall, g.max_pain, g.net_gamma,
+                           g.put_wall, g.near_the_money_width, g.max_pain, g.net_gamma,
                            g.dealer_gamma_notional, g.vega_exposure,
                            g.theta_exposure, g.charm_exposure,
                            g.vanna_exposure, g.delta_exposure,
@@ -1490,6 +1494,11 @@ class PostgreSQLStorage:
                 Decimal(mapping["call_wall"]) if mapping["call_wall"] is not None else None
             ),
             put_wall=(Decimal(mapping["put_wall"]) if mapping["put_wall"] is not None else None),
+            near_the_money_width=(
+                Decimal(mapping["near_the_money_width"])
+                if mapping["near_the_money_width"] is not None
+                else None
+            ),
             max_pain=Decimal(mapping["max_pain"]),
             net_gamma=Decimal(mapping["net_gamma"]),
             dealer_gamma_notional=Decimal(mapping["dealer_gamma_notional"]),

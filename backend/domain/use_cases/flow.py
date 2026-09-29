@@ -38,22 +38,51 @@ class Moneyness(StrEnum):
     OTM = "OTM"
 
 
-# How close a strike has to sit to spot (as a fraction of spot) to count as
-# ATM rather than ITM/OTM -- a fixed dollar/point band would be wrong across
-# symbols spanning $30 stocks to 7,000+-point indices, so this is relative.
-# 1% is a pragmatic first calibration (matches roughly one 0DTE SPX weekly
-# strike increment either side of spot at today's levels), not derived from
-# a backtest -- same "needs recalibration with real data" caveat
-# WhaleAlertThresholds' own docstring already carries for its five numbers.
+# Fallback only, used when no GammaAggregate (and therefore no ATR-based
+# GammaAggregate.near_the_money_width) is cached for this symbol yet -- see
+# _classify_moneyness/_nearest_gamma_level's own docstrings for the real
+# band. A fixed dollar/point band would be wrong across symbols spanning
+# $30 stocks to 7,000+-point indices, so this is relative -- but a FLAT
+# percentage has exactly that same problem one level up: 1% of a $230
+# stock is ~$2.30 (about one strike), while 1% of SPX at ~$7,682 is ~$77
+# (15+ of SPX's own $5-wide weekly strikes) -- confirmed live, 2026-09-29,
+# from a real SPXW put alert (strike 7655, spot ~7682, 0.35% away) the
+# user flagged as nonsensically tagged ATM. Kept only as a same-day,
+# gamma-not-cached-yet fallback, not the primary definition anymore.
 ATM_BAND_PCT = Decimal("0.01")
 
-# Same reasoning as ATM_BAND_PCT, tighter: "near a level" is meant to flag
-# spot genuinely testing Call Wall/Put Wall/Gamma Flip, not merely
-# somewhere in the same neighborhood.
+# Same reasoning as ATM_BAND_PCT, same fallback-only status, tighter:
+# "near a level" is meant to flag spot genuinely testing Call Wall/Put
+# Wall/Gamma Flip, not merely somewhere in the same neighborhood.
 NEAR_GAMMA_LEVEL_BAND_PCT = Decimal("0.005")
 
+# NEAR_GAMMA_LEVEL_BAND_PCT was half of ATM_BAND_PCT (0.005 vs. 0.01) --
+# same ratio applied to the real, ATR-based band now that one exists, so
+# "near a level" stays the tighter of the two even when both use
+# GammaAggregate.near_the_money_width instead of their own flat percentage.
+NEAR_GAMMA_LEVEL_WIDTH_RATIO = Decimal("0.5")
 
-def _classify_moneyness(contract_type: ContractType, strike: Decimal, spot: Decimal | None) -> Moneyness:
+
+def _atm_band(spot: Decimal, near_the_money_width: Decimal | None) -> Decimal:
+    """The real definition now lives on GammaAggregate.near_the_money_width
+    -- the same ATR-based, per-symbol-scale-aware half-width
+    CalculateGammaExposureOrchestrator already computes every cycle to
+    select Call Wall/Put Wall/Net GEX's own narrow strike window (see
+    calculate_near_the_money_width.py). Falls back to ATM_BAND_PCT's flat
+    percentage only when no GammaAggregate is cached for this symbol yet
+    (or it predates migration 0039) -- never worse than the old behavior,
+    just not volatility-aware in that narrow window."""
+    if near_the_money_width is not None and near_the_money_width > 0:
+        return near_the_money_width
+    return spot * ATM_BAND_PCT
+
+
+def _classify_moneyness(
+    contract_type: ContractType,
+    strike: Decimal,
+    spot: Decimal | None,
+    near_the_money_width: Decimal | None,
+) -> Moneyness:
     """Strike vs. spot at the moment this alert fires -- a deep ITM call
     (delta near 1, trades almost like the stock/index itself) carries a
     very different signal than the same dollar amount hitting an ATM/OTM
@@ -63,11 +92,12 @@ def _classify_moneyness(contract_type: ContractType, strike: Decimal, spot: Deci
     distinguish these. `spot=None` (no market price recorded for this
     symbol yet -- vanishingly rare in practice, since the REST scheduler
     seeds market_snapshots well before any trade stream classification
-    starts) falls back to ATM rather than guessing ITM/OTM from nothing."""
+    starts) falls back to ATM rather than guessing ITM/OTM from nothing.
+    See _atm_band for how close counts as ATM."""
     if spot is None or spot <= 0:
         return Moneyness.ATM
-    distance_pct = abs(strike - spot) / spot
-    if distance_pct <= ATM_BAND_PCT:
+    distance = abs(strike - spot)
+    if distance <= _atm_band(spot, near_the_money_width):
         return Moneyness.ATM
     in_the_money = strike < spot if contract_type == ContractType.CALL else strike > spot
     return Moneyness.ITM if in_the_money else Moneyness.OTM
@@ -77,28 +107,36 @@ def _nearest_gamma_level(spot: Decimal | None, gamma: GammaAggregate | None) -> 
     """Which of Call Wall/Put Wall/Gamma Flip (Structural view -- the
     always-populated one; Tactical can legitimately be empty on a day/
     symbol with no 0-2 DTE contracts, see GammaAggregate.view's own
-    docstring) spot is currently sitting within NEAR_GAMMA_LEVEL_BAND_PCT
-    of, if any -- ties the alert to the same levels the chart already
-    shows, instead of leaving the reader to cross-reference two panels by
-    eye. Closest level wins when spot happens to sit within band of more
-    than one (only possible for a very narrow/collapsed gamma landscape)."""
+    docstring) spot is currently sitting within band of, if any -- ties
+    the alert to the same levels the chart already shows, instead of
+    leaving the reader to cross-reference two panels by eye. Closest
+    level wins when spot happens to sit within band of more than one
+    (only possible for a very narrow/collapsed gamma landscape). Band is
+    NEAR_GAMMA_LEVEL_WIDTH_RATIO of gamma.near_the_money_width when
+    available, else the flat NEAR_GAMMA_LEVEL_BAND_PCT fallback -- see
+    _atm_band's own docstring for why a flat percentage alone is wrong
+    across symbols."""
     if spot is None or spot <= 0 or gamma is None:
         return None
+    if gamma.near_the_money_width is not None and gamma.near_the_money_width > 0:
+        band = gamma.near_the_money_width * NEAR_GAMMA_LEVEL_WIDTH_RATIO
+    else:
+        band = spot * NEAR_GAMMA_LEVEL_BAND_PCT
     candidates: tuple[tuple[str, Decimal | None], ...] = (
         ("Call Wall", gamma.call_wall),
         ("Put Wall", gamma.put_wall),
         ("Gamma Flip", gamma.gamma_flip),
     )
     best_label: str | None = None
-    best_distance_pct: Decimal | None = None
+    best_distance: Decimal | None = None
     for label, level in candidates:
         if level is None:
             continue
-        distance_pct = abs(level - spot) / spot
-        if distance_pct > NEAR_GAMMA_LEVEL_BAND_PCT:
+        distance = abs(level - spot)
+        if distance > band:
             continue
-        if best_distance_pct is None or distance_pct < best_distance_pct:
-            best_distance_pct = distance_pct
+        if best_distance is None or distance < best_distance:
+            best_distance = distance
             best_label = label
     return best_label
 
@@ -783,7 +821,12 @@ class WhaleAlertsEngine:
             estimated_buy_volume=estimated_buy_volume,
             estimated_sell_volume=estimated_sell_volume,
             quote_unavailable=quote_unavailable,
-            moneyness=_classify_moneyness(contract_type, strike, spot),
+            moneyness=_classify_moneyness(
+                contract_type,
+                strike,
+                spot,
+                gamma.near_the_money_width if gamma is not None else None,
+            ),
             near_gamma_level=_nearest_gamma_level(spot, gamma),
             repeat_count=state.alert_count,
         )
