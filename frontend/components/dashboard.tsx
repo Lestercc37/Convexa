@@ -376,44 +376,17 @@ export function Dashboard() {
   // onopen/onclose, never synchronously within this effect, so the
   // previous symbol's status is naturally overwritten the moment the
   // new connection attempt resolves either way.
-  // Buffers live ticks in a ref and flushes to pricePoints at most once
-  // per TICK_FLUSH_INTERVAL_MS, instead of one setPricePoints call per
-  // tick -- confirmed live, 2026-09-29: `candles` below recomputes via
-  // aggregateMinuteCandles over the FULL accumulated pricePoints array
-  // (every point since session open, unbounded) on every single
-  // setPricePoints call, since that's its own useMemo dependency. Calling
-  // setPricePoints per tick (as often as ~1/s, all session) meant that
-  // full-array recompute + chart re-render ran at that same rate,
-  // getting more expensive as pricePoints itself grew across the
-  // session. Confirmed against real Postgres data during the same
-  // window: backend ticks kept arriving every ~1s throughout, while the
-  // chart visibly froze on one stale value for ~25s then jumped, well
-  // into a session with 4+ hours of accumulated points -- a frontend
-  // rendering bottleneck, not a dropped connection. Buffering and
-  // flushing on a fixed interval caps how often that full recompute can
-  // fire regardless of how fast ticks arrive, giving real backpressure
-  // instead of one recompute per tick.
-  const TICK_FLUSH_INTERVAL_MS = 1_000;
-  const pendingTicksRef = useRef<PricePoint[]>([]);
-  useEffect(() => {
-    const interval = window.setInterval(() => {
-      if (pendingTicksRef.current.length === 0) return;
-      const flushed = pendingTicksRef.current;
-      pendingTicksRef.current = [];
-      setPricePoints((current) => [...current, ...flushed]);
-    }, TICK_FLUSH_INTERVAL_MS);
-    return () => window.clearInterval(interval);
-  }, []);
-
   const [streamStatus, setStreamStatus] = useState<MarketPriceStreamStatus>("fallback");
   useEffect(() => {
     if (!symbol) return;
-    pendingTicksRef.current = [];
     const disconnect = connectMarketPriceStream(
       symbol,
       (tick) => {
         if (!isWithinTheMostRecentSession(Date.parse(tick.as_of))) return;
-        pendingTicksRef.current.push({ timestamp: tick.as_of, price: Number(tick.price) });
+        setPricePoints((current) => [
+          ...current,
+          { timestamp: tick.as_of, price: Number(tick.price) },
+        ]);
       },
       setStreamStatus,
     );
