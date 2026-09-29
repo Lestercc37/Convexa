@@ -342,7 +342,13 @@ def test_market_endpoint_confirms_agreeing_dealer_mode_at_gamma_flip() -> None:
         "dealer_mode_confirmed": True,
         "gamma_as_of": "2026-08-03T14:30:00Z",
     }
-    assert payload["expected_move"]["atm_iv"] == 0.18
+    # 0.18 (the pre-2026-09-29 value) was the plain average of the two
+    # contracts closest to spot's own iv field -- calculate_expected_move
+    # now derives this from a full variance-swap-style calculation across
+    # the whole chain (see that function's own docstring and
+    # tests/test_expected_move.py), a different and more accurate number
+    # by construction, not a regression here.
+    assert payload["expected_move"]["atm_iv"] == 0.23139262449280418
     assert payload["anchored_vwap"] == {
         "value": 550,
         "provisional": False,
