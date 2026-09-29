@@ -85,8 +85,17 @@ class CalculateGammaExposureOrchestrator:
 
     def execute_tactical(self, underlying: str) -> GammaAggregate:
         """Tactical view only -- see execute()'s own docstring for why
-        this stays a separate, focused method from execute_both()."""
+        this stays a separate, focused method from execute_both(). Out-of-
+        scope symbols (see TACTICAL_ENABLED_SYMBOLS) still return an
+        honest-empty result rather than raising, same as a real 0-2 DTE
+        gap -- a manual trigger for e.g. AAPL should behave the same as
+        the scheduled one, not surface an internal scoping detail as an
+        error."""
         chain = self._fetch_chain(underlying)
+        if underlying.upper() not in TACTICAL_ENABLED_SYMBOLS:
+            result = GammaAggregate(symbol=chain.symbol, as_of=chain.as_of, view="tactical")
+            self._storage.save_gamma_aggregate(result)
+            return result
         daily_bars = self._storage.get_daily_bars(underlying, REQUIRED_DAILY_BARS)
         anchor = chain.as_of.astimezone(EASTERN_TIME).date()
         result = self._build_view(
@@ -115,14 +124,22 @@ class CalculateGammaExposureOrchestrator:
         re-fetch, just the same row every consumer already reads via
         get_latest_gamma_aggregate() the rest of the time between
         refreshes.
+
+        Tactical itself is skipped (honest-empty, still persisted so
+        get_latest_gamma_aggregate() never returns a permanently stale
+        row) for any symbol outside TACTICAL_ENABLED_SYMBOLS -- see that
+        constant's own comment for why.
         """
         chain = self._fetch_chain(underlying)
         daily_bars = self._storage.get_daily_bars(underlying, REQUIRED_DAILY_BARS)
 
         anchor = chain.as_of.astimezone(EASTERN_TIME).date()
-        tactical = self._build_view(
-            underlying, chain, daily_bars, TACTICAL_WINDOW_DAYS, anchor, "tactical"
-        )
+        if underlying.upper() not in TACTICAL_ENABLED_SYMBOLS:
+            tactical = GammaAggregate(symbol=chain.symbol, as_of=chain.as_of, view="tactical")
+        else:
+            tactical = self._build_view(
+                underlying, chain, daily_bars, TACTICAL_WINDOW_DAYS, anchor, "tactical"
+            )
         self._storage.save_gamma_aggregate(tactical)
 
         existing_structural = self._storage.get_latest_gamma_aggregate(underlying, view="structural")
@@ -494,6 +511,23 @@ def _structural_window_days(symbol: str) -> int:
 # TACTICAL_FALLBACK_WINDOW_DAYS just below for what happens when this
 # anchor lands on nothing.
 TACTICAL_WINDOW_DAYS = 2
+
+# The user's own intended scope for Tactical, never actually enforced in
+# code until now: indices, the four liquid ETFs, and NVDA -- confirmed
+# live, 2026-09-29, that ACTIVE_UNDERLYINGS had no such filter at all and
+# every one of the 15 active symbols was getting a full Tactical build
+# (BSM greeks, 3 aggregations, walls, max pain, 5 Greek exposures, plus
+# its own gamma_aggregates + gamma_aggregate_items writes) EVERY scheduler
+# cycle, unthrottled -- quantified at ~2,646 gamma_aggregate_items rows
+# written in 15 minutes for Tactical alone vs. 403 for Structural (which
+# has its own 15-minute throttle, STRUCTURAL_REFRESH_INTERVAL above).
+# Investigated as a likely contributor to real ThetaData WebSocket
+# keepalive-timeout reconnects appearing at market open, worsening
+# through the session -- this alone won't be enough if Theta Terminal
+# itself turns out to be the real bottleneck, but it restores the scope
+# that was actually agreed on regardless, and roughly halves Tactical's
+# total per-cycle cost either way.
+TACTICAL_ENABLED_SYMBOLS = frozenset({"SPX", "VIX", "NDX", "SPY", "QQQ", "IWM", "DIA", "NVDA"})
 
 # Reversed 2026-09-25, the same day the feature shipped, once real listed
 # expirations (not assumptions) were pulled from the DB for every active
