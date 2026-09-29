@@ -34,6 +34,19 @@ def _is_pure_index(underlying: str) -> bool:
     return active is not None and active.kind == UnderlyingKind.INDEX
 
 
+def _session_open_price(price_history: list[MarketPrice]) -> Decimal | None:
+    """The earliest recorded price this session -- same source
+    calculate_atr_range's own `today_open` already uses -- to anchor
+    calculate_expected_move's band, instead of letting it recompute
+    around whatever `chain.spot_price` is on every call (see that
+    function's own docstring). `None` when nothing has been recorded yet
+    this session (the same case AtrRange.today_open leaves as None),
+    which calculate_expected_move itself falls back on to chain.spot_price."""
+    if not price_history:
+        return None
+    return min(price_history, key=lambda reading: reading.as_of).price
+
+
 # Confirmed with the user, 2026-09-21: a real technique traders already
 # use for a pure index with no volume of its own -- a liquid, tightly
 # correlated ETF that tracks the same underlying basket. VIX deliberately
@@ -265,7 +278,9 @@ def build_market_snapshot(storage: IStorage, underlying: str) -> MarketSnapshot:
         price=price.price,
         volume=price.volume,
         gamma=gamma,
-        expected_move=calculate_expected_move(chain, price.as_of),
+        expected_move=calculate_expected_move(
+            chain, price.as_of, session_open_price=_session_open_price(price_history)
+        ),
         anchored_vwap=anchored_vwap,
         atr_range=calculate_atr_range(daily_bars, price_history),
         closing_dynamics=calculate_closing_dynamics(gamma, price.price, time_to_close_pct),
@@ -309,7 +324,9 @@ async def build_market_snapshot_async(
         price=price.price,
         volume=price.volume,
         gamma=gamma,
-        expected_move=calculate_expected_move(chain, price.as_of),
+        expected_move=calculate_expected_move(
+            chain, price.as_of, session_open_price=_session_open_price(price_history)
+        ),
         anchored_vwap=anchored_vwap,
         atr_range=calculate_atr_range(daily_bars, price_history),
         closing_dynamics=calculate_closing_dynamics(gamma, price.price, time_to_close_pct),
