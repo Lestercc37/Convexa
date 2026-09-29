@@ -430,6 +430,19 @@ class GammaAggregate:
     # exercised until now).
     call_wall: Decimal | None = None
     put_wall: Decimal | None = None
+    # The same ATR-based near-the-money half-width CalculateGammaExposure
+    # OrchestratorImpl already computes per view to select Call Wall/Put
+    # Wall/Net GEX's own narrow strike window (see
+    # calculate_near_the_money_width.py) -- exposed here so any consumer
+    # that needs "how close to spot counts as close, for THIS symbol at
+    # THIS volatility" doesn't have to hand-tune its own percentage (see
+    # WhaleAlertsEngine._classify_moneyness's own history: a flat 1% of
+    # spot was fine for a $230 stock but ~15 SPX strikes wide, confirmed
+    # live 2026-09-29 against a real alert the user flagged as
+    # nonsensically tagged ATM). None only for the same "no contracts in
+    # range yet" honest-empty case call_wall/put_wall/gamma_flip already
+    # allow.
+    near_the_money_width: Decimal | None = None
     max_pain: Decimal = Decimal("0")
     net_gamma: Decimal = Decimal("0")
     dealer_gamma_notional: Decimal = Decimal("0")

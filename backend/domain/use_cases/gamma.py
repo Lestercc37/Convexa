@@ -362,6 +362,7 @@ class CalculateGammaExposureOrchestrator:
             # every other level into a sliver at the top of the chart.
             call_wall=walls.call_wall.strike if walls.call_wall is not None else None,
             put_wall=walls.put_wall.strike if walls.put_wall is not None else None,
+            near_the_money_width=narrow_width,
             max_pain=max_pain.max_pain_strike,
             # Net GEX / dealer_position (the "gamma regime" the dashboard
             # badge shows) now sourced from wide_aggregate -- the same

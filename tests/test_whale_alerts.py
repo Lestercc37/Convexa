@@ -258,6 +258,80 @@ def test_alert_near_gamma_level_is_none_when_spot_is_far_from_every_level() -> N
     assert alerts[0].near_gamma_level is None
 
 
+def test_alert_moneyness_uses_the_gamma_aggregates_atr_width_over_the_flat_percentage() -> None:
+    # Same 540 call strike, spot 543 -- (543-540)/543 ~= 0.55%, INSIDE the
+    # old flat ATM_BAND_PCT (1%), which would have tagged this ATM (the
+    # exact class of bug a real SPXW alert surfaced live, 2026-09-29: a
+    # strike 0.35% from spot on SPX is 15+ strikes away, not "at the
+    # money"). A GammaAggregate with a real (narrow) near_the_money_width
+    # now takes priority: distance $3 > width $2, so this is ITM (540 <
+    # 543 for a call), not ATM.
+    storage = InMemoryStorage()
+    storage.save_market_price(
+        MarketPrice(symbol="IWM", as_of=datetime(2026, 1, 15, 14, 29, tzinfo=UTC),
+                    price=Decimal("543"), volume=0)
+    )
+    storage.save_gamma_aggregate(
+        GammaAggregate(
+            symbol="IWM",
+            as_of=datetime(2026, 1, 15, 14, 29, tzinfo=UTC),
+            near_the_money_width=Decimal("2"),
+        )
+    )
+    engine = WhaleAlertsEngine(storage)
+    base = MockDataProvider().get_option_chain("IWM")
+
+    cumulative = 100
+    engine.process(_chain(base, cumulative, 0))
+    for period in range(1, 6):
+        cumulative += 200
+        engine.process(_chain(base, cumulative, period))
+    cumulative += 1600
+    engine.process(_chain(base, cumulative, 6))
+    alerts = engine.process(_chain(base, cumulative, 7))
+
+    assert len(alerts) == 1
+    assert alerts[0].moneyness is Moneyness.ITM
+
+
+def test_alert_near_gamma_level_uses_the_gamma_aggregates_atr_width_over_the_flat_percentage() -> None:
+    # Same Call Wall (554) and spot (552.25) as
+    # test_alert_tags_the_nearest_gamma_level_when_spot_is_within_band --
+    # $1.75 away, inside the old flat NEAR_GAMMA_LEVEL_BAND_PCT (0.5%,
+    # ~$2.76), which tagged it "Call Wall". A GammaAggregate with a real
+    # near_the_money_width now takes priority: band becomes width x 0.5 =
+    # $1, and $1.75 > $1, so nothing is tagged.
+    storage = InMemoryStorage()
+    storage.save_market_price(
+        MarketPrice(symbol="IWM", as_of=datetime(2026, 1, 15, 14, 29, tzinfo=UTC),
+                    price=Decimal("552.25"), volume=0)
+    )
+    storage.save_gamma_aggregate(
+        GammaAggregate(
+            symbol="IWM",
+            as_of=datetime(2026, 1, 15, 14, 29, tzinfo=UTC),
+            call_wall=Decimal("554"),
+            put_wall=Decimal("400"),
+            gamma_flip=Decimal("300"),
+            near_the_money_width=Decimal("2"),
+        )
+    )
+    engine = WhaleAlertsEngine(storage)
+    base = MockDataProvider().get_option_chain("IWM")
+
+    cumulative = 100
+    engine.process(_chain(base, cumulative, 0))
+    for period in range(1, 6):
+        cumulative += 200
+        engine.process(_chain(base, cumulative, period))
+    cumulative += 1600
+    engine.process(_chain(base, cumulative, 6))
+    alerts = engine.process(_chain(base, cumulative, 7))
+
+    assert len(alerts) == 1
+    assert alerts[0].near_gamma_level is None
+
+
 def test_bvc_split_on_a_real_alert_matches_the_pure_function_given_the_same_inputs() -> None:
     # Same shape as the WHALE test above, but with a genuinely varying
     # price (not the constant "1.00" _chain defaults to) so BVC computes a
