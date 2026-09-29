@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import threading
 from dataclasses import replace
 from datetime import date, datetime, timedelta
 from decimal import Decimal
@@ -49,6 +50,19 @@ def get_gamma_history(
     return storage.get_gamma_history(underlying, start, end, view=view)
 
 
+# How many symbols may run CalculateGammaExposureOrchestrator's CPU-bound
+# section (BSM greeks, aggregation, walls, max pain, Greek exposures) at
+# once -- see CalculateGammaExposureOrchestrator.__init__'s own comment
+# for the GIL-contention problem this guards against. Not derived from a
+# measurement of the "right" number, just a first, deliberately
+# conservative calibration (same "needs recalibration with real data"
+# caveat this module's other tuned constants already carry) -- low
+# enough to leave the GIL free for REST I/O most of the time, high
+# enough that 15 symbols' worth of work still completes within one
+# scheduler cycle rather than serializing entirely.
+GAMMA_COMPUTE_CONCURRENCY = 3
+
+
 class CalculateGammaExposureOrchestrator:
     """Build and persist the consolidated gamma result from a stored chain."""
 
@@ -67,6 +81,29 @@ class CalculateGammaExposureOrchestrator:
         self._gamma_flip = gamma_flip
         self._walls = walls
         self._max_pain = max_pain
+        # Every symbol's refresh runs on its own OS thread (scheduler.py's
+        # own asyncio.to_thread dispatch), all sharing this one process's
+        # GIL -- THETADATA_MAX_CONCURRENT_REQUESTS/request_slots.py only
+        # gates concurrent REST calls, never the CPU-bound work below
+        # (BSM greeks, 3 aggregations, walls, max pain, 5 Greek exposures,
+        # now doing that work TWICE per symbol since Tactical shipped).
+        # Confirmed live, 2026-09-29: SPX alone measured 5.06s of pure
+        # compute (Structural+Tactical combined, see refresh_snapshot.py's
+        # own SLOW_COMPUTE_SECONDS logging) -- with up to
+        # TACTICAL_ENABLED_SYMBOLS-many threads each periodically holding
+        # the GIL for seconds at a time, any OTHER thread's REST call sits
+        # unable to even finish reading its own already-arrived response
+        # until the GIL frees up, inflating ThetaDataProvider's own
+        # measured request duration regardless of how fast Theta Terminal
+        # itself actually answered -- the same GIL-contention disease
+        # backend/whale_alerts_worker.py's own docstring already
+        # documents curing for trade classification (a full process
+        # split, there), just never applied here. A separate semaphore
+        # (not reusing request_slots -- that one's tied to ThetaData's own
+        # account-wide REST limit, a completely different constraint)
+        # caps how many symbols may run this CPU-bound section at once,
+        # so REST fetches for the rest can still overlap freely.
+        self._compute_semaphore = threading.Semaphore(GAMMA_COMPUTE_CONCURRENCY)
 
     def execute(self, underlying: str) -> GammaAggregate:
         """Structural view only -- see this class's own execute_both()
@@ -77,9 +114,10 @@ class CalculateGammaExposureOrchestrator:
         public contract keeps working unchanged."""
         chain = self._fetch_chain(underlying)
         daily_bars = self._storage.get_daily_bars(underlying, REQUIRED_DAILY_BARS)
-        result = self._build_view(
-            underlying, chain, daily_bars, _structural_window_days(underlying), None, "structural"
-        )
+        with self._compute_semaphore:
+            result = self._build_view(
+                underlying, chain, daily_bars, _structural_window_days(underlying), None, "structural"
+            )
         self._storage.save_gamma_aggregate(result)
         return result
 
@@ -98,9 +136,10 @@ class CalculateGammaExposureOrchestrator:
             return result
         daily_bars = self._storage.get_daily_bars(underlying, REQUIRED_DAILY_BARS)
         anchor = chain.as_of.astimezone(EASTERN_TIME).date()
-        result = self._build_view(
-            underlying, chain, daily_bars, TACTICAL_WINDOW_DAYS, anchor, "tactical"
-        )
+        with self._compute_semaphore:
+            result = self._build_view(
+                underlying, chain, daily_bars, TACTICAL_WINDOW_DAYS, anchor, "tactical"
+            )
         self._storage.save_gamma_aggregate(result)
         return result
 
@@ -137,9 +176,10 @@ class CalculateGammaExposureOrchestrator:
         if underlying.upper() not in TACTICAL_ENABLED_SYMBOLS:
             tactical = GammaAggregate(symbol=chain.symbol, as_of=chain.as_of, view="tactical")
         else:
-            tactical = self._build_view(
-                underlying, chain, daily_bars, TACTICAL_WINDOW_DAYS, anchor, "tactical"
-            )
+            with self._compute_semaphore:
+                tactical = self._build_view(
+                    underlying, chain, daily_bars, TACTICAL_WINDOW_DAYS, anchor, "tactical"
+                )
         self._storage.save_gamma_aggregate(tactical)
 
         existing_structural = self._storage.get_latest_gamma_aggregate(underlying, view="structural")
@@ -151,9 +191,10 @@ class CalculateGammaExposureOrchestrator:
             assert existing_structural is not None  # narrows for the type checker
             structural = existing_structural
         else:
-            structural = self._build_view(
-                underlying, chain, daily_bars, _structural_window_days(underlying), None, "structural"
-            )
+            with self._compute_semaphore:
+                structural = self._build_view(
+                    underlying, chain, daily_bars, _structural_window_days(underlying), None, "structural"
+                )
             self._storage.save_gamma_aggregate(structural)
 
         return structural, tactical
