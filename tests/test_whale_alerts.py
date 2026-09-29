@@ -595,6 +595,35 @@ def _trade(period: int, premium: str, size: int = 1) -> FlowEvent:
     )
 
 
+def test_process_trade_ignores_a_trade_outside_regular_market_hours() -> None:
+    # Confirmed live, 2026-09-29: real SPX 0DTE SUSTAINED_FLOW/UNUSUAL
+    # alerts (real dollar amounts) fired at 7:50am ET, an hour forty
+    # before the open -- ThetaData's real trade stream keeps printing
+    # premarket, same fact StreamUnderlyingPriceUseCase already gates on
+    # for the price stream, which process_trade() had no equivalent gate
+    # for. 7:00am ET premarket, same symbol/contract otherwise identical
+    # to the passing test below.
+    premarket = datetime(2026, 1, 15, 12, 0, tzinfo=UTC)  # 7:00am ET
+    engine = WhaleAlertsEngine(InMemoryStorage())
+    quote = LatestQuote(bid=Decimal("0.01"), ask=Decimal("0.02"), as_of=premarket)
+
+    for period in range(8):
+        trade = FlowEvent(
+            symbol=TRADE_SYMBOL,
+            occ_symbol=TRADE_OCC_SYMBOL,
+            as_of=premarket + timedelta(minutes=period),
+            event_type=FlowEventType.UNUSUAL,
+            premium=Decimal(45000) if period == 6 else Decimal(100),
+            size=1,
+            aggressor_side=Side.UNKNOWN,
+        )
+        assert engine.process_trade(trade, quote) == ()
+
+    # Nothing accumulated at all, in or out of a bucket -- not just "no
+    # alert fired yet".
+    assert engine.symbol_flow(TRADE_SYMBOL) is None
+
+
 def test_process_trade_emits_unusual_with_a_full_buy_classification() -> None:
     engine = WhaleAlertsEngine(InMemoryStorage())
 

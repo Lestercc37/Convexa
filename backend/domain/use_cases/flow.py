@@ -23,7 +23,7 @@ from backend.domain.use_cases.calculate_bvc import (
     calculate_price_volatility,
 )
 from backend.domain.use_cases.calculate_lee_ready import classify_trade_side
-from backend.domain.use_cases.market_hours import EASTERN_TIME
+from backend.domain.use_cases.market_hours import EASTERN_TIME, is_market_open
 
 
 class WhaleAlertType(StrEnum):
@@ -537,7 +537,24 @@ class WhaleAlertsEngine:
         across a session boundary. Swapping the classification mechanism
         was this change's only goal; rollover handling for the streaming
         path is a separate concern to revisit later.
+
+        Gated on is_market_open, same reasoning and same gate
+        StreamUnderlyingPriceUseCase._maybe_persist already uses: a real
+        pre/post-market options trade still arrives over ThetaData's
+        stream, but on much thinner, wider-spread liquidity than the
+        regular session -- confirmed live, 2026-09-29, real SPX 0DTE
+        SUSTAINED_FLOW/UNUSUAL alerts (real dollar amounts, $800K-$937K)
+        firing at 7:50am ET, an hour and forty minutes before the open.
+        Unlike process() (only ever called by the scheduler, which
+        already never runs a cycle outside market hours), this streaming
+        path has no other gate upstream of it. A dropped extended-hours
+        trade contributes nothing at all here -- not to the bucket, not
+        to symbol flow, not to the Lee-Ready tick-rule memory -- so the
+        first real trade of the regular session compares against the
+        previous regular session's own last price, not a premarket print.
         """
+        if not is_market_open(event.as_of):
+            return ()
         thresholds = self._resolve_thresholds(event.symbol)
         current_bucket_start = _floor_to_minute(event.as_of)
 
