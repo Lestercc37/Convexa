@@ -16,9 +16,26 @@ export type MarketPriceTick = {
 
 export type MarketPriceStreamStatus = "connected" | "fallback";
 
+// Not routed through the /backend/* rewrite (next.config.ts) like every
+// other API call -- confirmed live, 2026-09-29, straight from
+// cloudflared's own log: `error="...HTTP/1.x transport connection
+// broken: malformed HTTP status code \"Server\""` recurring
+// intermittently (not only at a backend restart boundary) specifically
+// for `dest=.../backend/api/v1/ws/market/{symbol} ... type=ws`, a real
+// protocol-level incompatibility between cloudflared's own WebSocket
+// upgrade handling and Next.js's rewrite-based proxying -- every other
+// (plain HTTP) route through the same rewrite is unaffected. Matched
+// this session's real symptom exactly: the chart worked in real time
+// for ~30-40s, stalled ~10s while market-price-stream.ts's own
+// reconnect backoff ran, then resumed -- repeating for as long as the
+// tab stayed open. cloudflared-config.yml (V:/Convexa/services on the
+// server, not tracked in this repo) now routes this exact path straight
+// to the backend's own port (8000), bypassing Next.js's rewrite/proxy
+// entirely for this one connection -- everything else still goes
+// through port 3000 unchanged.
 function marketPriceStreamUrl(symbol: string): string {
   const wsProtocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-  return `${wsProtocol}//${window.location.host}/backend/api/v1/ws/market/${encodeURIComponent(symbol)}`;
+  return `${wsProtocol}//${window.location.host}/api/v1/ws/market/${encodeURIComponent(symbol)}`;
 }
 
 const INITIAL_RECONNECT_DELAY_MS = 1_000;
