@@ -123,6 +123,71 @@ def test_execute_both_produces_independently_scoped_structural_and_tactical_aggr
     assert {item.strike for item in saved_tactical.items} == tactical_strikes
 
 
+def test_execute_both_skips_tactical_for_a_symbol_outside_the_enabled_scope() -> None:
+    """AAPL is not in TACTICAL_ENABLED_SYMBOLS (indices, the four liquid
+    ETFs, and NVDA -- see that constant's own comment) -- confirmed live,
+    2026-09-29, that this scope had never actually been enforced in code,
+    and every one of the 15 active symbols was getting a full Tactical
+    build (BSM greeks, 3 aggregations, walls, max pain, 5 Greek
+    exposures, plus its own two Postgres writes) every single scheduler
+    cycle, unthrottled. execute_both() must still return and persist an
+    honest-empty Tactical aggregate for AAPL (same has_data=False shape
+    the frontend already handles for a real 0-2 DTE gap), not skip
+    persisting entirely (which would leave get_latest_gamma_aggregate()
+    returning a permanently stale pre-fix row) -- but Structural must be
+    completely unaffected, since AAPL's own 45-day structural window was
+    never in scope for this restriction."""
+    storage = InMemoryStorage()
+    contracts = (
+        _contract(
+            "AAPL260115C00550000", ContractType.CALL, Decimal(550), TODAY_ET,
+            open_interest=100, gamma="0.02",
+        ),
+        _contract(
+            "AAPL260115P00550000", ContractType.PUT, Decimal(550), TODAY_ET,
+            open_interest=100, gamma="0.02",
+        ),
+    )
+    chain = OptionChain(symbol="AAPL", as_of=AS_OF, spot_price=SPOT_PRICE, contracts=contracts)
+    storage.save_chain_snapshot(chain)
+    orchestrator = _orchestrator(storage)
+
+    structural, tactical = orchestrator.execute_both("AAPL")
+
+    assert structural.view == "structural"
+    assert structural.items  # AAPL's structural computation is unaffected
+    assert tactical.view == "tactical"
+    assert tactical.items == ()
+    assert tactical.gamma_flip is None
+    assert tactical.call_wall is None
+
+    saved_tactical = storage.get_latest_gamma_aggregate("AAPL", view="tactical")
+    assert saved_tactical is not None
+    assert saved_tactical.items == ()
+
+
+def test_execute_tactical_alone_also_respects_the_enabled_scope() -> None:
+    """The single-view manual-trigger entry point (see execute_tactical's
+    own docstring) must behave the same as execute_both() for an
+    out-of-scope symbol -- an honest-empty result, not an error, and not
+    a full computation."""
+    storage = InMemoryStorage()
+    contracts = (
+        _contract(
+            "TSLA260115C00550000", ContractType.CALL, Decimal(550), TODAY_ET,
+            open_interest=100, gamma="0.02",
+        ),
+    )
+    chain = OptionChain(symbol="TSLA", as_of=AS_OF, spot_price=SPOT_PRICE, contracts=contracts)
+    storage.save_chain_snapshot(chain)
+    orchestrator = _orchestrator(storage)
+
+    tactical = orchestrator.execute_tactical("TSLA")
+
+    assert tactical.view == "tactical"
+    assert tactical.items == ()
+
+
 def test_tactical_walls_include_0dte_unlike_structural() -> None:
     """Structural excludes 0DTE from wall selection (see
     test_walls_exclude_0dte.py) because a single expiring-today strike's
