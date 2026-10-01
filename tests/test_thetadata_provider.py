@@ -18,6 +18,7 @@ import backend.adapters.providers.thetadata.provider as provider_module
 from backend.adapters.providers.thetadata.provider import (
     DAILY_BARS_CACHE_TTL_SECONDS,
     MARKET_HOLIDAYS_CACHE_TTL_SECONDS,
+    MAX_429_RETRIES,
     THETADATA_MAX_CONCURRENT_REQUESTS,
     WS_MAX_QUEUE,
     ThetaDataProvider,
@@ -3289,6 +3290,100 @@ class TestRequestConcurrencyLimit:
                 thread.join(timeout=5)
 
         assert in_flight == 0
+
+
+class TestRateLimitRetry:
+    """Confirmed live, 2026-10-01: a single backfill run logged 11,564 HTTP
+    429 responses, every one of them previously a permanent failure for
+    that REST call, since _get_json/_get_json_allow_no_data raised
+    immediately on any non-2xx/472 status with no retry at all -- see
+    MAX_429_RETRIES' own module-level comment."""
+
+    def test_retries_a_429_and_succeeds_once_the_server_recovers(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        attempts = 0
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            nonlocal attempts
+            attempts += 1
+            if attempts <= 2:
+                return httpx.Response(429, text="<html>rate limited</html>")
+            return httpx.Response(200, json={"response": ["ok"]})
+
+        sleep_calls: list[float] = []
+        monkeypatch.setattr(
+            "backend.adapters.providers.thetadata.provider.time.sleep",
+            lambda seconds: sleep_calls.append(seconds),
+        )
+
+        provider = _provider_with_transport(handler)
+        result = provider._get_json("/v3/some/path")
+
+        assert result == {"response": ["ok"]}
+        assert attempts == 3
+        assert len(sleep_calls) == 2  # one sleep per retried 429, none after the final success
+
+    def test_honors_the_servers_own_retry_after_header(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(429, headers={"Retry-After": "7"}, text="rate limited")
+
+        sleep_calls: list[float] = []
+        monkeypatch.setattr(
+            "backend.adapters.providers.thetadata.provider.time.sleep",
+            lambda seconds: sleep_calls.append(seconds),
+        )
+
+        provider = _provider_with_transport(handler)
+        with pytest.raises(RuntimeError, match="429"):
+            provider._get_json("/v3/some/path")
+
+        # One sleep per retry attempt (MAX_429_RETRIES of them -- the final
+        # attempt returns the 429 as a real failure instead of sleeping
+        # again), every one honoring the server's own requested delay
+        # instead of this process's own default backoff.
+        assert sleep_calls == [7.0] * MAX_429_RETRIES
+
+    def test_gives_up_after_max_retries_and_raises_like_any_other_failure(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        attempts = 0
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            nonlocal attempts
+            attempts += 1
+            return httpx.Response(429, text="still rate limited")
+
+        monkeypatch.setattr(
+            "backend.adapters.providers.thetadata.provider.time.sleep", lambda seconds: None
+        )
+
+        provider = _provider_with_transport(handler)
+        with pytest.raises(RuntimeError, match="429"):
+            provider._get_json("/v3/some/path")
+
+        assert attempts == MAX_429_RETRIES + 1  # the original attempt plus every retry
+
+    def test_does_not_retry_a_real_error_status(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        attempts = 0
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            nonlocal attempts
+            attempts += 1
+            return httpx.Response(500, text="internal error")
+
+        sleep_calls: list[float] = []
+        monkeypatch.setattr(
+            "backend.adapters.providers.thetadata.provider.time.sleep",
+            lambda seconds: sleep_calls.append(seconds),
+        )
+
+        provider = _provider_with_transport(handler)
+        with pytest.raises(RuntimeError, match="500"):
+            provider._get_json("/v3/some/path")
+
+        assert attempts == 1
+        assert sleep_calls == []
 
 
 class TestNearTheMoneyCaching:
