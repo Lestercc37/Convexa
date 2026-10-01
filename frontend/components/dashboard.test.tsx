@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import type { ReactNode } from "react";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { renderWithLanguage } from "@/lib/i18n/test-utils";
+import { POLLING_INTERVAL_MS } from "@/lib/polling";
 import { derivedMetricsFixture } from "@/test/fixtures";
 import { Dashboard } from "./dashboard";
 
@@ -436,6 +437,42 @@ describe("Dashboard", () => {
         expect.any(AbortSignal),
       ),
     );
+  });
+
+  it("aborts the interval's own refresh() calls on a symbol switch, not just the first one (regression)", async () => {
+    // Confirmed live, 2026-10-01: the initial refresh() call right after
+    // seeding passed controller.signal, but the window.setInterval callback
+    // that repeats it every POLLING_INTERVAL_MS did not. A poll tick
+    // already in flight when the user switched symbols had nothing
+    // aborting it, so its response -- the *old* symbol's gamma -- could
+    // land after the switch and overwrite setGamma() for the *new*
+    // symbol. gamma feeds PriceChart's own autoscale (every gamma level
+    // gets merged into the visible price range), so one stale
+    // cross-symbol Call Wall/Put Wall was enough to stretch the Y-axis to
+    // span both symbols' price scales at once -- reported live as an NDX
+    // chart showing a 6,000-36,000 range after a switch.
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const user = userEvent.setup({ delay: null });
+    renderWithLanguage(<Dashboard />);
+    await screen.findByLabelText("Chart de velas para SPY");
+
+    await vi.waitFor(() =>
+      expect(apiMocks.getGamma).toHaveBeenCalledWith("SPY", "structural", expect.any(AbortSignal)),
+    );
+
+    await vi.advanceTimersByTimeAsync(POLLING_INTERVAL_MS);
+    await vi.waitFor(() =>
+      expect(apiMocks.getGamma).toHaveBeenLastCalledWith(
+        "SPY",
+        "structural",
+        expect.any(AbortSignal),
+      ),
+    );
+
+    await user.selectOptions(screen.getByRole("combobox", { name: "Subyacente" }), "GOOGL");
+    await screen.findByLabelText("Chart de velas para GOOGL");
+
+    vi.useRealTimers();
   });
 
   it("seeds vwapPoints from the vwap-history endpoint before polling starts, per symbol (regression)", async () => {

@@ -381,8 +381,23 @@ export function Dashboard() {
       await seedPriceAndVwap(symbol, controller.signal);
       if (controller.signal.aborted) return;
       void refresh(symbol, gammaViewRef.current, controller.signal);
+      // controller.signal here too, not just the call above -- confirmed
+      // live, 2026-10-01: without it, a poll tick that was already in
+      // flight when the user switched symbols has nothing aborting it,
+      // so its response (the *old* symbol's gamma) can land after the
+      // switch and land in setGamma() for the *new* symbol. gamma feeds
+      // PriceChart's own autoscale (referenceLevelPrices/mergePriceRange
+      // merge every gamma level into the visible price range), so one
+      // stale cross-symbol Call Wall/Put Wall was enough to stretch the
+      // Y-axis to span both symbols' price scales at once -- the
+      // "velas comprimidas" symptom reported this session on an NDX
+      // switch. refresh()'s own setGamma()/setMarket() calls are already
+      // simple replaces (not merges, unlike pricePoints/vwapPoints
+      // above) because they're meant to always reflect the single most
+      // recent fetch for whichever symbol is currently selected --
+      // aborting the stale one is what keeps that true across a switch.
       interval = window.setInterval(
-        () => void refresh(symbol, gammaViewRef.current),
+        () => void refresh(symbol, gammaViewRef.current, controller.signal),
         POLLING_INTERVAL_MS,
       );
     };
