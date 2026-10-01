@@ -317,24 +317,56 @@ export function Dashboard() {
     if (signal?.aborted) return;
 
     if (historyResult.status === "fulfilled") {
-      setPricePoints(
-        historyResult.value.points.map((point) => ({
-          timestamp: point.timestamp,
-          price: point.price,
-        })),
-      );
+      const seeded = historyResult.value.points.map((point) => ({
+        timestamp: point.timestamp,
+        price: point.price,
+      }));
+      // A merge, not a replace -- this fetch runs concurrently with the
+      // WS tick effect below, which can append a live tick (via its own
+      // functional setPricePoints update) before this slower network
+      // round-trip resolves. Replacing outright here used to silently
+      // discard that tick, and also fooled PriceChart's own
+      // zero-to-nonzero transition guard (previousCandleCount) into
+      // thinking this was a steady-state single-bar update rather than
+      // a reseed, routing it through series.update() against internal
+      // chart state that no longer matched `candles` -- the exact
+      // precondition PriceChart's own comment documents for its
+      // uncaught "Value is null" crash. Confirmed live, 2026-10-01,
+      // right at market open, when the first live ticks are most likely
+      // to race ahead of this fetch. Keeping anything already in
+      // `current` that's newer than the seed's own last point preserves
+      // those ticks and keeps this a strict superset, so the chart only
+      // ever grows forward, never swaps out from under itself.
+      setPricePoints((current) => {
+        const lastSeededTimestamp = seeded.at(-1)?.timestamp;
+        const newerThanSeed = lastSeededTimestamp
+          ? current.filter(
+              (point) => Date.parse(point.timestamp) > Date.parse(lastSeededTimestamp),
+            )
+          : current;
+        return [...seeded, ...newerThanSeed];
+      });
     } else if (!signal?.aborted) {
       setError(historyResult.reason);
     }
 
     if (vwapResult.status === "fulfilled") {
       setVwapNotApplicable(vwapResult.value.not_applicable);
-      setVwapPoints(
-        vwapResult.value.points.map((point) => ({
-          timestamp: point.timestamp,
-          value: point.value,
-        })),
-      );
+      const seeded = vwapResult.value.points.map((point) => ({
+        timestamp: point.timestamp,
+        value: point.value,
+      }));
+      // Same race as pricePoints above -- the refresh() poll's own VWAP
+      // append is a functional update too and can land first.
+      setVwapPoints((current) => {
+        const lastSeededTimestamp = seeded.at(-1)?.timestamp;
+        const newerThanSeed = lastSeededTimestamp
+          ? current.filter(
+              (point) => Date.parse(point.timestamp) > Date.parse(lastSeededTimestamp),
+            )
+          : current;
+        return [...seeded, ...newerThanSeed];
+      });
     } else if (!signal?.aborted) {
       setError(vwapResult.reason);
     }
