@@ -6,6 +6,7 @@ import logging
 import threading
 import time
 from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor
 from collections.abc import AsyncIterator, Callable
 from datetime import date, datetime, timedelta
 from datetime import time as time_of_day
@@ -1560,72 +1561,107 @@ class ThetaStreamHub:
             "underlying TRADE",
         )
 
+    def _reconcile_one_contract(
+        self,
+        occ_symbol: str,
+        root: str,
+        expiration: date,
+        contract_type: ContractType,
+        strike: Decimal,
+    ) -> None:
+        try:
+            with self._request_slots.hold():
+                response = self._rest_client.get(
+                    "/v3/option/history/ohlc",
+                    params={
+                        "symbol": root,
+                        "expiration": expiration.strftime("%Y-%m-%d"),
+                        "strike": f"{strike:.2f}",
+                        "right": "call" if contract_type == ContractType.CALL else "put",
+                        "interval": "1m",
+                        "date": datetime.now(EASTERN_TIME).date().strftime("%Y-%m-%d"),
+                        "format": "json",
+                    },
+                )
+            # 472 ("no data found for your request") is the expected,
+            # normal outcome for a contract with no trades on file yet
+            # (far OTM/far-dated strikes especially) -- not a real
+            # failure worth a full stack trace. Same treatment as
+            # _get_json_allow_no_data(), which this call deliberately
+            # doesn't reuse: that method returns parsed JSON, but the
+            # volume sum below also needs the *count* of contracts with
+            # zero rest_volume to mean "no data", not "zero trades",
+            # and a quiet `return` here already gets that right without
+            # decoding a body only to discard it.
+            if response.status_code == 472:
+                return
+            response.raise_for_status()
+            bars = response.json().get("response", [])
+            rest_volume = sum(
+                bar.get("volume", 0) for entry in bars for bar in entry.get("data", [])
+            )
+        except (httpx.HTTPError, ValueError):
+            logger.exception("Reconciliation REST call failed for %s", occ_symbol)
+            return
+
+        stream_volume = self._cumulative_volume.get(occ_symbol, 0)
+        if rest_volume == 0:
+            return
+        discrepancy = abs(stream_volume - rest_volume) / rest_volume
+        if discrepancy > 0.10:
+            logger.warning(
+                "Trade stream volume reconciliation mismatch for %s: "
+                "stream=%d REST=%d (%.1f%% discrepancy)",
+                occ_symbol,
+                stream_volume,
+                rest_volume,
+                discrepancy * 100,
+            )
+        else:
+            logger.info(
+                "Trade stream volume reconciled for %s: stream=%d REST=%d",
+                occ_symbol,
+                stream_volume,
+                rest_volume,
+            )
+
     def _reconcile(self) -> None:
         # See _contracts_lock's own comment (__init__) -- snapshot under the
         # lock, then iterate the snapshot outside it. Runs in its own worker
-        # thread (asyncio.to_thread, see _run_reconcile_loop) and can take a
-        # while (one REST call per contract below) -- holding the lock for
-        # all of that would block register_contract()'s writes from other
-        # scheduler threads for the whole reconcile pass, not just the
-        # instant needed to copy references.
+        # thread (asyncio.to_thread, see _run_reconcile_loop), but that alone
+        # only keeps a slow pass from delaying websocket.recv() -- it does
+        # nothing about the pass itself being slow. Confirmed live,
+        # 2026-10-01: with the near-term window at 90 days (gamma.py's own
+        # TACTICAL_ENABLED_SYMBOLS/structural window), self._contracts had
+        # grown to 1,440 entries, and running this REST call one contract at
+        # a time took ~105s every RECONCILE_INTERVAL_SECONDS (20 min) --
+        # long and CPU-busy (JSON-decoding 1,440 responses) enough that GIL
+        # contention with the main thread's own websocket.recv() loop
+        # tripped ThetaStreamHub's 20-30s silence watchdog repeatedly during
+        # every single reconcile pass, forcing a stream reconnect each time.
+        # That's the dashboard's reported "se detiene y salta" pattern:
+        # ticks pause for the length of a reconnect, then arrive in a burst
+        # once it succeeds. _request_slots already exists to cap real
+        # concurrent ThetaData calls at THETADATA_MAX_CONCURRENT_REQUESTS --
+        # this loop just never actually used it for concurrency, only as a
+        # (no-op, since nothing else was in flight here) rate limiter around
+        # calls already made one at a time. Dispatching through a bounded
+        # thread pool instead keeps the same real ThetaData-side concurrency
+        # cap (_request_slots.hold() inside _reconcile_one_contract still
+        # gates it) while cutting this pass to roughly (sequential time /
+        # THETADATA_MAX_CONCURRENT_REQUESTS), comfortably under the
+        # watchdog's own thresholds.
         with self._contracts_lock:
             contracts_snapshot = list(self._contracts.items())
-        for occ_symbol, (root, expiration, contract_type, strike) in contracts_snapshot:
-            try:
-                with self._request_slots.hold():
-                    response = self._rest_client.get(
-                        "/v3/option/history/ohlc",
-                        params={
-                            "symbol": root,
-                            "expiration": expiration.strftime("%Y-%m-%d"),
-                            "strike": f"{strike:.2f}",
-                            "right": "call" if contract_type == ContractType.CALL else "put",
-                            "interval": "1m",
-                            "date": datetime.now(EASTERN_TIME).date().strftime("%Y-%m-%d"),
-                            "format": "json",
-                        },
-                    )
-                # 472 ("no data found for your request") is the expected,
-                # normal outcome for a contract with no trades on file yet
-                # (far OTM/far-dated strikes especially) -- not a real
-                # failure worth a full stack trace. Same treatment as
-                # _get_json_allow_no_data(), which this call deliberately
-                # doesn't reuse: that method returns parsed JSON, but the
-                # volume sum below also needs the *count* of contracts with
-                # zero rest_volume to mean "no data", not "zero trades",
-                # and a quiet `continue` here already gets that right
-                # without decoding a body only to discard it.
-                if response.status_code == 472:
-                    continue
-                response.raise_for_status()
-                bars = response.json().get("response", [])
-                rest_volume = sum(
-                    bar.get("volume", 0) for entry in bars for bar in entry.get("data", [])
+        with ThreadPoolExecutor(max_workers=THETADATA_MAX_CONCURRENT_REQUESTS) as pool:
+            futures = [
+                pool.submit(
+                    self._reconcile_one_contract, occ_symbol, root, expiration, contract_type, strike
                 )
-            except (httpx.HTTPError, ValueError):
-                logger.exception("Reconciliation REST call failed for %s", occ_symbol)
-                continue
-
-            stream_volume = self._cumulative_volume.get(occ_symbol, 0)
-            if rest_volume == 0:
-                continue
-            discrepancy = abs(stream_volume - rest_volume) / rest_volume
-            if discrepancy > 0.10:
-                logger.warning(
-                    "Trade stream volume reconciliation mismatch for %s: "
-                    "stream=%d REST=%d (%.1f%% discrepancy)",
-                    occ_symbol,
-                    stream_volume,
-                    rest_volume,
-                    discrepancy * 100,
-                )
-            else:
-                logger.info(
-                    "Trade stream volume reconciled for %s: stream=%d REST=%d",
-                    occ_symbol,
-                    stream_volume,
-                    rest_volume,
-                )
+                for occ_symbol, (root, expiration, contract_type, strike) in contracts_snapshot
+            ]
+            for future in futures:
+                future.result()
 
 
 class ThetaDataProvider:
