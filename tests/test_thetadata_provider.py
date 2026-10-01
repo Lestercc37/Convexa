@@ -1495,17 +1495,28 @@ class TestReqResponseHandling:
 
     def test_consume_routes_req_response_through_the_shared_helper(self) -> None:
         """Confirms the elif branch exists in ThetaStreamHub's own
-        message-loop method (not just that _log_req_response itself
+        message-processing method (not just that _log_req_response itself
         works) -- reads the compiled source directly rather than driving
         a full websocket loop, matching this file's own convention of
         testing _handle_option_trade/_handle_quote/_handle_underlying_trade
         directly instead of the recv() loop around them. All 3 logical
         streams share this one loop now (see ThetaStreamHub's own
         docstring for why: ThetaData's docs only support one connection
-        to this endpoint)."""
+        to this endpoint).
+
+        Checks _process_messages, not _consume -- confirmed live,
+        2026-10-01 with ThetaData support: _consume's own hot loop used
+        to json.loads() and dispatch every message inline, which was
+        exactly why a real burst of volume could leave it over 20s
+        behind reading the socket (Theta Terminal's own terminal-debug.log
+        independently confirmed "SLOW CONSUMER" drops at the same
+        moments). _consume now only reads a frame and queues it;
+        _process_messages, a separate task, does the json.loads() +
+        dispatch (including this REQ_RESPONSE routing) that used to live
+        inline here."""
         import inspect
 
-        source = inspect.getsource(ThetaStreamHub._consume)
+        source = inspect.getsource(ThetaStreamHub._process_messages)
         assert '"REQ_RESPONSE"' in source
         assert "_log_req_response" in source
 
@@ -2233,11 +2244,19 @@ class TestStreamHubReconnection:
         watchdog_task = stream._watchdog_task
         assert watchdog_task is not None
         assert not watchdog_task.done()
+        # _process_messages (2026-10-01, see its own docstring) is the
+        # same kind of whole-lifetime task as the watchdog -- started once
+        # by start(), must not leak past stop().
+        message_processor_task = stream._message_processor_task
+        assert message_processor_task is not None
+        assert not message_processor_task.done()
 
         await stream.stop()
 
         assert stream._watchdog_task is None
         assert watchdog_task.cancelled()
+        assert stream._message_processor_task is None
+        assert message_processor_task.cancelled()
 
     def test_request_reconnect_is_a_no_op_before_start(self) -> None:
         # The data-silence watchdog calls this unconditionally -- must
