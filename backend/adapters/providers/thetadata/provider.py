@@ -785,7 +785,17 @@ class ThetaStreamHub:
         self._last_quote_at: float | None = None
         self._last_option_trade_at: float | None = None
         self._last_underlying_trade_at: float | None = None
+        self._last_status_at: float | None = None
         self._watchdog_task: asyncio.Task[None] | None = None
+        # See _process_messages' own docstring -- _consume()'s hot loop
+        # only reads a raw frame and puts it here, never json.loads()s or
+        # dispatches it; a separate task drains this so a burst of real
+        # message volume can never delay the next websocket.recv() call.
+        # Bounded at the same size as the websockets library's own
+        # incoming-frame buffer (WS_MAX_QUEUE) -- no point buffering more
+        # here than the library itself would already be holding.
+        self._message_queue: asyncio.Queue[str] = asyncio.Queue(maxsize=WS_MAX_QUEUE)
+        self._message_processor_task: asyncio.Task[None] | None = None
         # See QUEUE_ALERT_COOLDOWN_SECONDS' own module-level comment.
         # Keyed by "{kind}:{symbol}" (e.g. "TRADE:QQQ") -- QUOTE and
         # TRADE queues for the same symbol are genuinely separate
@@ -837,8 +847,16 @@ class ThetaStreamHub:
         self._task = asyncio.create_task(self._run())
         self._watchdog_task = asyncio.create_task(self._watch_for_data_silence())
         self._reconcile_task = asyncio.create_task(self._run_reconcile_loop())
+        self._message_processor_task = asyncio.create_task(self._process_messages())
 
     async def stop(self) -> None:
+        if self._message_processor_task is not None:
+            self._message_processor_task.cancel()
+            try:
+                await self._message_processor_task
+            except asyncio.CancelledError:
+                pass
+            self._message_processor_task = None
         if self._watchdog_task is not None:
             self._watchdog_task.cancel()
             try:
@@ -990,9 +1008,29 @@ class ThetaStreamHub:
         """
         while True:
             await asyncio.sleep(DATA_SILENCE_CHECK_INTERVAL_SECONDS)
+            now = time.monotonic()
+            # STATUS checked unconditionally, not gated on is_market_open
+            # like the other three below -- Theta Terminal pushes a STATUS
+            # message every second around the clock (confirmed with
+            # ThetaData support, 2026-10-01), unlike real trade/quote
+            # flow, which genuinely only exists during market hours. This
+            # used to be an inline check in _consume() itself (raising
+            # ConnectionError straight out of the hot loop); moved here
+            # once _process_messages took over updating _last_status_at,
+            # so it's now just a fourth entry in the same recovery
+            # mechanism instead of its own separate code path.
+            last_status_at = self._last_status_at
+            if last_status_at is not None:
+                status_silence = now - last_status_at
+                if status_silence > STATUS_STALE_AFTER_SECONDS:
+                    logger.warning(
+                        "ThetaStreamHub: no STATUS message in %.0fs -- forcing a reconnect",
+                        status_silence,
+                    )
+                    self.request_reconnect()
+                    self._last_status_at = now
             if not is_market_open(utc_now()):
                 continue
-            now = time.monotonic()
             for name, attr in (
                 ("QUOTE", "_last_quote_at"),
                 ("option TRADE", "_last_option_trade_at"),
@@ -1143,8 +1181,30 @@ class ThetaStreamHub:
             await self._subscribe_option(websocket, root, expiration, contract_type, strike, "TRADE")
             await self._subscribe_option(websocket, root, expiration, contract_type, strike, "QUOTE")
 
-        last_status_at = utc_now()
-        queue_depths_logged_at = self._queue_depths_logged_at or utc_now()
+        # This loop does exactly two things: wait for a frame, hand it to
+        # _process_messages via the queue. No json.loads(), no handler
+        # calls, no dispatch -- those used to live inline here, and that
+        # was the bug. Confirmed live, 2026-10-01, with ThetaData support
+        # (Eduardo Comandulli): the recurring close code 1011 "keepalive
+        # ping timeout" is the `websockets` library's own ping going
+        # unanswered for 20s -- on a loopback connection, that means this
+        # process was over 20s behind reading the socket, not a network or
+        # Theta Terminal problem. Theta Terminal's own terminal-debug.log
+        # confirmed it independently the same session ("SLOW CONSUMER: N
+        # packets dropped" from FPSSClient.java, concurrent with the
+        # 1011s). WS_MAX_QUEUE's own comment (PR #178, 2026-09-24)
+        # already flagged this exact fix -- separating the read loop from
+        # per-message processing -- as the real, still-needed fix; that
+        # PR was only ever the symptom mitigation.
+        #
+        # put_nowait(), not put(): awaiting a full queue here would
+        # reintroduce the identical bug one level down (recv() cadence
+        # again tied to how fast something else drains a queue) --
+        # dropping the rare frame that arrives while _message_queue is
+        # already full (sized to WS_MAX_QUEUE, the same bound the
+        # `websockets` library itself uses for undelivered frames) is the
+        # same "must never block the shared reader" tradeoff already made
+        # for every subscriber queue in this class.
         while True:
             try:
                 raw = await asyncio.wait_for(
@@ -1154,12 +1214,33 @@ class ThetaStreamHub:
                 raise ConnectionError(
                     "No message from Theta Terminal within heartbeat window"
                 ) from exc
-            # Everything from here to the next websocket.recv() call is
-            # processing time this connection is unavailable for -- see
-            # LOOP_ITERATION_SLOW_THRESHOLD_SECONDS' own module-level
-            # comment for why this is measured as one span rather than
-            # trusting that no future addition to this loop can ever
-            # block it.
+            try:
+                self._message_queue.put_nowait(raw)
+            except asyncio.QueueFull:
+                logger.warning(
+                    "ThetaStreamHub: internal message queue full (maxsize=%d) -- "
+                    "dropping one raw message; _process_messages is falling "
+                    "behind real message volume",
+                    self._message_queue.maxsize,
+                )
+
+    async def _process_messages(self) -> None:
+        """Drains _message_queue -- json.loads(), per-message
+        classification/dispatch, and the periodic queue-depth log all
+        live here instead of in _consume()'s own hot loop. See that
+        loop's own comment for why this split exists. Runs for this
+        object's whole lifetime (started once by start()), transparent
+        to whichever connection happens to be live underneath _consume()
+        at any moment -- same pattern _watch_for_data_silence already
+        uses.
+        """
+        queue_depths_logged_at = self._queue_depths_logged_at or utc_now()
+        while True:
+            raw = await self._message_queue.get()
+            # Measured the same way LOOP_ITERATION_SLOW_THRESHOLD_SECONDS
+            # always was -- this span no longer delays websocket.recv(),
+            # only how promptly the *next* already-buffered message gets
+            # processed, but it's still worth knowing if it grows.
             iteration_started_at = time.perf_counter()
             message = json.loads(raw)
             header = message.get("header", {})
@@ -1167,8 +1248,18 @@ class ThetaStreamHub:
             msg_type = header.get("type")
             if msg_type == "STATUS":
                 if status != "CONNECTED":
-                    raise ConnectionError(f"Theta Terminal reported status: {status}")
-                last_status_at = utc_now()
+                    # Was a raise here when this ran inline in _consume();
+                    # this task has no connection of its own to unwind, so
+                    # it nudges the live one down the same way the
+                    # data-silence watchdog does.
+                    logger.warning(
+                        "ThetaStreamHub: Theta Terminal reported status: %s -- "
+                        "forcing a reconnect",
+                        status,
+                    )
+                    self.request_reconnect()
+                else:
+                    self._last_status_at = time.monotonic()
             elif msg_type == "QUOTE":
                 # Recorded before any filtering -- the watchdog's question
                 # is "is Theta Terminal sending this connection QUOTE
@@ -1191,8 +1282,6 @@ class ThetaStreamHub:
                 _log_req_response("ThetaStreamHub", message)
 
             now = utc_now()
-            if (now - last_status_at).total_seconds() > STATUS_STALE_AFTER_SECONDS:
-                raise ConnectionError("Heartbeat stale — no STATUS message recently")
             if (now - queue_depths_logged_at).total_seconds() > QUEUE_DEPTH_LOG_INTERVAL_SECONDS:
                 self._log_queue_depths()
                 queue_depths_logged_at = now
@@ -1201,10 +1290,9 @@ class ThetaStreamHub:
             iteration_elapsed = time.perf_counter() - iteration_started_at
             if iteration_elapsed > LOOP_ITERATION_SLOW_THRESHOLD_SECONDS:
                 logger.warning(
-                    "ThetaStreamHub: one loop iteration (message dispatch + "
-                    "housekeeping) took %.1fms before returning to websocket.recv() "
-                    "-- this delays every logical stream equally, since they all "
-                    "share the one connection",
+                    "ThetaStreamHub: processing one message took %.1fms -- "
+                    "this no longer delays websocket.recv(), only how "
+                    "promptly already-buffered messages get processed",
                     iteration_elapsed * 1000,
                 )
 
