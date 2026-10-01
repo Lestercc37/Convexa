@@ -15,10 +15,25 @@ Postgres's own row-level locking rules out two acquirers ever claiming
 the same row, the same guarantee a real semaphore gives, with no race
 window. A slot whose acquired_at is older than STALE_AFTER_SECONDS is
 treated as free too, recovering one a process crashed while holding
-(never ran its `finally`/release) -- the httpx client's own 10s timeout
-should make any real call finish or raise well before that, so this
-almost never triggers in normal operation; it's the crash backstop, not
-the common path.
+(never ran its `finally`/release).
+
+STALE_AFTER_SECONDS must stay above the longest real request this
+pool's own callers ever make, not just the httpx client's 10s default --
+confirmed live, 2026-10-01: _fetch_historical_near_the_money_entries
+(provider.py) explicitly overrides that default to 60s for the
+option/history/greeks/first_order calls the historical backfill relies
+on, and this value used to sit at 30s. A single genuinely-in-flight
+call past 30s (not a crash, not even an error -- within its own allowed
+window) had its slot reclaimed and handed to a second caller while the
+first was still using it, so the real number of simultaneous requests
+reaching ThetaData could exceed THETADATA_MAX_CONCURRENT_REQUESTS
+without this process ever believing it had. ThetaData's own REST API
+queues anything beyond the account's concurrent-request limit (default
+queue size 16) and returns 429 once that queue itself overflows -- a
+single backfill run logged 11,564 of them before this fix, the
+dominant failure by far. Kept comfortably above every known caller's
+real timeout, not tied 1:1 to it, so a future caller with its own
+longer override doesn't quietly reintroduce the same bug.
 
 Deliberately NOT `pg_advisory_lock`: an advisory lock only releases when
 its owning connection/transaction closes, so holding one for an entire
@@ -47,8 +62,10 @@ from sqlalchemy.orm import Session, sessionmaker
 
 # Kept in sync by hand with THETADATA_MAX_CONCURRENT_REQUESTS in
 # provider.py -- that constant's own comment carries the citation for
-# the real current value.
-STALE_AFTER_SECONDS = 30.0
+# the real current value. See this module's own docstring for why this
+# must stay above every real caller's own timeout override, not just
+# the httpx client's 10s default.
+STALE_AFTER_SECONDS = 90.0
 RETRY_INTERVAL_SECONDS = 0.1
 ACQUIRE_TIMEOUT_SECONDS = 15.0
 
