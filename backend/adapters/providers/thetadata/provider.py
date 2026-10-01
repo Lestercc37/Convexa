@@ -349,6 +349,21 @@ UNDERLYING_QUEUE_MAXSIZE = 10
 # Postgres is configured.
 THETADATA_MAX_CONCURRENT_REQUESTS = 8
 
+# ThetaData's own request-RATE limit -- distinct from
+# THETADATA_MAX_CONCURRENT_REQUESTS above, which only bounds how many
+# requests are in flight at once, never how many land per second. Confirmed
+# live, 2026-10-01: a single backfill_historical_gamma run logged 11,564
+# HTTP 429 responses (out of ~6,000 (symbol, day) pairs attempted, most
+# touched more than once) -- every one of them was, until this fix, a
+# permanent failure for that pair, since _get_json/_get_json_allow_no_data
+# raised immediately on any non-2xx/472 status with no retry at all. A 429
+# means "try again shortly", not "this data doesn't exist" (472, handled
+# separately) or "something is actually broken" (every other non-2xx code,
+# still a real failure once these retries are exhausted).
+MAX_429_RETRIES = 5
+RETRY_429_DEFAULT_DELAY_SECONDS = 2.0
+RETRY_429_MAX_DELAY_SECONDS = 30.0
+
 # Short-lived, in-process cache for the near-the-money chain, keyed by
 # (symbol, expiration) — get_option_chain() and get_underlying_snapshot()
 # both request the exact same near-the-money data for a symbol when
@@ -1902,17 +1917,60 @@ class ThetaDataProvider:
         await self._hub.stop()
         self._client.close()
 
+    def _send_with_rate_limit_retry(
+        self, path: str, *, timeout: float | None = None, **params: object
+    ) -> httpx.Response:
+        """The shared concurrency-slot-hold-and-GET step _get_json and
+        _get_json_allow_no_data both build on, now also retrying ThetaData's
+        own 429 (rate limit) with a bounded backoff instead of letting it
+        fall straight through as a permanent failure -- see
+        MAX_429_RETRIES' own module-level comment for the live evidence
+        this fixes. Honors the server's own Retry-After header when
+        present instead of guessing a delay. Every other status code
+        (200, 472, or any real error) is returned as-is after at most one
+        attempt -- only 429 loops here; every other outcome is still the
+        caller's own status-code handling to interpret, exactly as
+        before this existed."""
+        request_kwargs: dict[str, Any] = {"params": params}
+        if timeout is not None:
+            request_kwargs["timeout"] = timeout
+        delay = RETRY_429_DEFAULT_DELAY_SECONDS
+        response: httpx.Response | None = None
+        for attempt in range(MAX_429_RETRIES + 1):
+            wait_started_at = time.monotonic()
+            with self._request_slots.hold():
+                request_started_at = time.monotonic()
+                response = self._client.get(path, **request_kwargs)
+            now = time.monotonic()
+            _log_thetadata_latency(path, request_started_at - wait_started_at, now - request_started_at)
+            if response.status_code != 429 or attempt == MAX_429_RETRIES:
+                return response
+            retry_after = response.headers.get("Retry-After")
+            if retry_after is not None:
+                try:
+                    sleep_for = float(retry_after)
+                except ValueError:
+                    sleep_for = delay
+            else:
+                sleep_for = delay
+            logger.warning(
+                "ThetaData rate limit (429) for GET %s -- retrying in %.1fs (attempt %d/%d)",
+                path,
+                sleep_for,
+                attempt + 1,
+                MAX_429_RETRIES,
+            )
+            time.sleep(sleep_for)
+            delay = min(delay * 2, RETRY_429_MAX_DELAY_SECONDS)
+        assert response is not None  # loop always runs at least once
+        return response
+
     def _get_json(self, path: str, **params: object) -> dict[str, Any]:
         # The one chokepoint every REST call passes through — bounding
         # it here covers get_option_chain, get_underlying_snapshot,
         # get_daily_bars, and the open-interest/rate lookups uniformly,
         # without touching each of them individually.
-        wait_started_at = time.monotonic()
-        with self._request_slots.hold():
-            request_started_at = time.monotonic()
-            response = self._client.get(path, params=params)
-        now = time.monotonic()
-        _log_thetadata_latency(path, request_started_at - wait_started_at, now - request_started_at)
+        response = self._send_with_rate_limit_retry(path, **params)
         if response.status_code != 200:
             raise RuntimeError(
                 f"ThetaData request failed: GET {path} {params} -> "
@@ -1943,15 +2001,7 @@ class ThetaDataProvider:
         entries), confirmed live to genuinely take 30-40s per call
         regardless of payload size, which the client's default would
         abort as a false failure."""
-        request_kwargs: dict[str, Any] = {"params": params}
-        if timeout is not None:
-            request_kwargs["timeout"] = timeout
-        wait_started_at = time.monotonic()
-        with self._request_slots.hold():
-            request_started_at = time.monotonic()
-            response = self._client.get(path, **request_kwargs)
-        now = time.monotonic()
-        _log_thetadata_latency(path, request_started_at - wait_started_at, now - request_started_at)
+        response = self._send_with_rate_limit_retry(path, timeout=timeout, **params)
         if response.status_code == 472:
             return {"response": []}
         if response.status_code != 200:
