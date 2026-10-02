@@ -1249,6 +1249,22 @@ class ThetaStreamHub:
             await self._subscribe_option(websocket, root, expiration, contract_type, strike, "TRADE")
             await self._subscribe_option(websocket, root, expiration, contract_type, strike, "QUOTE")
 
+        # Always both, deliberately, for every contract -- considered and
+        # rejected, 2026-10-02 (Eduardo/ThetaData support's suggestion
+        # while investigating the SLOW CONSUMER/keepalive-timeout
+        # incidents): skip QUOTE for contracts that only feed Whale
+        # Alerts, since quotes vastly outnumber trades. Would reduce real
+        # message volume, but Lee-Ready (calculate_lee_ready.py, the
+        # actual trade-direction classifier WhaleAlertsEngine depends on)
+        # needs the last known bid/ask per contract to classify a trade at
+        # all -- see stream_whale_alerts.py's own docstring. Dropping
+        # QUOTE for a contract doesn't just thin out unused data, it
+        # silently degrades that contract's own trades to Side.UNKNOWN
+        # (flow.py's own comment on this exact fallback) -- for whichever
+        # contracts got the cut, which is precisely the contracts NOT
+        # feeding the chart and therefore the easiest to overlook. Not
+        # revisited unless Whale Alerts' own classification need changes.
+
         # This loop does exactly two things: wait for a frame, hand it to
         # _process_messages via the queue. No json.loads(), no handler
         # calls, no dispatch -- those used to live inline here, and that
