@@ -43,14 +43,16 @@ def _first_order_entry(
     expiration: str = "2026-09-18",
     underlying_price: str = "769.36",
     root: str = "SPY",
+    delta: float | None = None,
+    implied_vol: float = 0.16,
 ) -> dict[str, object]:
     return {
         "contract": {"symbol": root, "expiration": expiration, "right": right, "strike": float(strike)},
         "data": [
             {
                 "underlying_price": float(underlying_price),
-                "delta": 0.5 if right == "CALL" else -0.5,
-                "implied_vol": 0.16,
+                "delta": delta if delta is not None else (0.5 if right == "CALL" else -0.5),
+                "implied_vol": implied_vol,
                 "theta": -2.5,
                 "vega": 8.2,
                 "bid": 1.08,
@@ -1061,8 +1063,97 @@ class TestGetUnderlyingSnapshot:
         # All open interest sampled above is CALL-side (no puts in this
         # response) -> put_oi is 0 -> documented pc_oi_ratio fallback.
         assert snapshot.pc_oi_ratio == Decimal(0)
-        # No 25-delta strikes fetched -> documented as 0, not guessed.
+        # No PUT entries at all in this fixture -> no 25-delta put side
+        # to pair with the call side -> documented fallback, not guessed.
         assert snapshot.skew_25d == Decimal(0)
+
+    def test_computes_real_skew_25d_from_the_wider_overfetch_range(self) -> None:
+        # ATM entries (delta +/-0.5) sit inside the regular ATR-filtered
+        # near-the-money band and must NOT be what skew is computed
+        # from -- only the two strikes further out, at the true 25-delta
+        # strikes, carry the IVs this test expects back.
+        near = _safe_future_expirations()[0].isoformat()
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            if "greeks/first_order" in str(request.url):
+                return httpx.Response(
+                    200,
+                    json={
+                        "response": [
+                            _first_order_entry(
+                                "769.00", "CALL", expiration=near, delta=0.50, implied_vol=0.16
+                            ),
+                            _first_order_entry(
+                                "769.00", "PUT", expiration=near, delta=-0.50, implied_vol=0.16
+                            ),
+                            _first_order_entry(
+                                "800.00", "CALL", expiration=near, delta=0.25, implied_vol=0.14
+                            ),
+                            _first_order_entry(
+                                "740.00", "PUT", expiration=near, delta=-0.25, implied_vol=0.22
+                            ),
+                        ]
+                    },
+                )
+            if "open_interest" in str(request.url):
+                return httpx.Response(200, json={"response": []})
+            if "stock/history/eod" in str(request.url):
+                return httpx.Response(200, json=_daily_bars_response())
+            if "stock/snapshot/ohlc" in str(request.url):
+                return httpx.Response(200, json={"response": [{"volume": 16396508}]})
+            raise AssertionError(f"unexpected request: {request.url}")
+
+        provider = _provider_with_transport(handler)
+        snapshot = provider.get_underlying_snapshot("SPY")
+
+        # IV(25-delta put) - IV(25-delta call) = 0.22 - 0.14.
+        assert snapshot.skew_25d == Decimal("0.08")
+
+    def test_skew_25d_ignores_a_zero_iv_contract_even_when_its_delta_is_closest(self) -> None:
+        # Matches the known ThetaData data-quality gap (a high-OI
+        # contract occasionally reports IV=0) -- the zero-IV contract's
+        # delta is the literal closest match to the target, but must be
+        # skipped in favor of the next-closest contract with usable data.
+        near = _safe_future_expirations()[0].isoformat()
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            if "greeks/first_order" in str(request.url):
+                return httpx.Response(
+                    200,
+                    json={
+                        "response": [
+                            _first_order_entry(
+                                "769.00", "CALL", expiration=near, delta=0.50, implied_vol=0.16
+                            ),
+                            _first_order_entry(
+                                "769.00", "PUT", expiration=near, delta=-0.50, implied_vol=0.16
+                            ),
+                            _first_order_entry(
+                                "800.00", "CALL", expiration=near, delta=0.25, implied_vol=0.0
+                            ),
+                            _first_order_entry(
+                                "810.00", "CALL", expiration=near, delta=0.20, implied_vol=0.13
+                            ),
+                            _first_order_entry(
+                                "740.00", "PUT", expiration=near, delta=-0.25, implied_vol=0.22
+                            ),
+                        ]
+                    },
+                )
+            if "open_interest" in str(request.url):
+                return httpx.Response(200, json={"response": []})
+            if "stock/history/eod" in str(request.url):
+                return httpx.Response(200, json=_daily_bars_response())
+            if "stock/snapshot/ohlc" in str(request.url):
+                return httpx.Response(200, json={"response": [{"volume": 16396508}]})
+            raise AssertionError(f"unexpected request: {request.url}")
+
+        provider = _provider_with_transport(handler)
+        snapshot = provider.get_underlying_snapshot("SPY")
+
+        # IV(25-delta put, 0.22) - IV(next-usable call, 0.13), not the
+        # zero-IV 0.25-delta call that would otherwise win on distance alone.
+        assert snapshot.skew_25d == Decimal("0.09")
 
 
 class TestFetchUnderlyingVolume:
