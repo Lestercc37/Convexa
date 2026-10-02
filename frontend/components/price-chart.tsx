@@ -216,6 +216,29 @@ function crosshairTimeFormatter(timeSeconds: UTCTimestamp): string {
   }).format(date);
 }
 
+// fitContent() fits the *whole session-open-to-now time span* into the
+// container width (withSessionOpenAnchor below always anchors the left
+// edge at 09:30 ET) -- at 1m that's ~390 real bars, so each gets only a
+// few px and the candles read as a dense, "joined" wall. At 5m/15m the
+// same time span has 1/5th or 1/15th as many real bars, so fitContent()
+// hands each one 5x-15x the pixel width instead, turning routine candles
+// into widely-spaced, fat rectangles -- confirmed live, 2026-10-02 (user
+// report: 5m/15m candles "muy separadas," and the opposite complaint,
+// "una raya," for the wick-only look a handful of multi-hundred-point
+// candles get once the autoscale range is dominated by the day's real
+// high/low). Capping barSpacing after every fitContent() call keeps
+// candle width visually consistent with 1m regardless of timeframe --
+// coarser timeframes just show less total width filled (blank space to
+// the right of the last bar) rather than stretching individual candles.
+const MAX_BAR_SPACING_PX = 6;
+
+function fitContentCappingBarSpacing(chart: IChartApi): void {
+  chart.timeScale().fitContent();
+  if (chart.timeScale().options().barSpacing > MAX_BAR_SPACING_PX) {
+    chart.timeScale().applyOptions({ barSpacing: MAX_BAR_SPACING_PX });
+  }
+}
+
 // Prepends a whitespace point (a bar with only a `time`, no OHLC values --
 // lightweight-charts renders nothing for it) one second before the
 // session's 09:30 ET open. Confirmed live against the real library: a
@@ -491,7 +514,7 @@ export function PriceChart({
         mergePriceRange(original(), referenceLevelsRef.current),
     });
     series.setData(withSessionOpenAnchor(initialCandlesRef.current, sessionOpenSecondsRef.current));
-    chart.timeScale().fitContent();
+    fitContentCappingBarSpacing(chart);
     chartRef.current = chart;
     seriesRef.current = series;
 
@@ -532,7 +555,7 @@ export function PriceChart({
       // keep re-fitting and fighting the user's own pan/zoom.
       if (!hasRefitAfterRealSizeRef.current && width > 0) {
         hasRefitAfterRealSizeRef.current = true;
-        chart.timeScale().fitContent();
+        fitContentCappingBarSpacing(chart);
       }
       // Works around a real, confirmed lightweight-charts (5.2.0) resize bug
       // -- live, 2026-09-23: after some resizes, the candlestick series and
@@ -671,7 +694,8 @@ export function PriceChart({
       candles.length - previousCandleCount > 1 &&
       Date.now() - mountedAtRef.current < CANDLE_SEED_SETTLING_WINDOW_MS
     ) {
-      chartRef.current?.timeScale().fitContent();
+      const chart = chartRef.current;
+      if (chart) fitContentCappingBarSpacing(chart);
     }
   }, [candles]);
 
