@@ -230,13 +230,35 @@ function crosshairTimeFormatter(timeSeconds: UTCTimestamp): string {
 // candle width visually consistent with 1m regardless of timeframe --
 // coarser timeframes just show less total width filled (blank space to
 // the right of the last bar) rather than stretching individual candles.
+//
+// A one-shot cap right after fitContent() is NOT enough on its own --
+// confirmed live, 2026-10-02 (first deploy attempt): the dashboard's
+// resizable side panels keep resizing this chart's container after mount
+// as react-resizable-panels' own layout settles, and separately,
+// handleSizeChange below deliberately forces two more real resizes of
+// its own (the width-nudge repaint workaround). Each of those is a real
+// resize the library's own autoSize machinery reacts to independently of
+// this component's JS -- it preserves the *visible logical range* set by
+// fitContent() (still "every bar"), not the explicit barSpacing value,
+// so it recomputes barSpacing = containerWidth / barCount again on every
+// one of them, silently re-stretching candles back out well after the
+// one-shot cap ran. capBarSpacing must be re-applied on every real resize
+// this component observes, not just the first -- see its call inside
+// handleSizeChange below, outside the one-shot hasRefitAfterRealSizeRef
+// gate that (correctly) still limits the *fitContent()* re-fit itself to
+// once, so this doesn't fight the user's own pan/zoom on an unrelated
+// resize.
 const MAX_BAR_SPACING_PX = 6;
 
-function fitContentCappingBarSpacing(chart: IChartApi): void {
-  chart.timeScale().fitContent();
+function capBarSpacing(chart: IChartApi): void {
   if (chart.timeScale().options().barSpacing > MAX_BAR_SPACING_PX) {
     chart.timeScale().applyOptions({ barSpacing: MAX_BAR_SPACING_PX });
   }
+}
+
+function fitContentCappingBarSpacing(chart: IChartApi): void {
+  chart.timeScale().fitContent();
+  capBarSpacing(chart);
 }
 
 // Prepends a whitespace point (a bar with only a `time`, no OHLC values --
@@ -556,6 +578,14 @@ export function PriceChart({
       if (!hasRefitAfterRealSizeRef.current && width > 0) {
         hasRefitAfterRealSizeRef.current = true;
         fitContentCappingBarSpacing(chart);
+      } else {
+        // Not the one-shot re-fit (that already capped barSpacing above),
+        // but still a real resize the library's own autoSize machinery
+        // just reacted to on its own -- re-clamp without calling
+        // fitContent() again, which would also reset the user's own
+        // pan/zoom (see this effect's own comment on why the re-fit above
+        // is deliberately one-shot).
+        capBarSpacing(chart);
       }
       // Works around a real, confirmed lightweight-charts (5.2.0) resize bug
       // -- live, 2026-09-23: after some resizes, the candlestick series and
@@ -608,6 +638,18 @@ export function PriceChart({
           // it's safe to let a genuinely new resize back in.
           window.setTimeout(() => {
             forcingRepaintRef.current = false;
+            // The two resizes this nudge just forced (width-1px, then
+            // restored) went through the library's own internal autoSize
+            // path directly, bypassing handleSizeChange's early return
+            // above (that's the whole point of forcingRepaintRef) -- so
+            // the capBarSpacing() branch above never ran for either of
+            // them. Confirmed live, 2026-10-02: the library preserves the
+            // *visible logical range* across a resize, not the explicit
+            // barSpacing value, so it recomputes barSpacing = width /
+            // barCount again on each one, silently undoing the cap a
+            // moment after the chart first painted correctly. Re-clamp
+            // once more here, now that both synthetic resizes are done.
+            if (chartRef.current) capBarSpacing(chartRef.current);
           }, 50);
         }, 0);
       }
