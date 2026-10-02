@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import logging
 import threading
@@ -2836,6 +2837,263 @@ class TestMessageLagDiagnostic:
         stream = ThetaStreamHub(WS_URL, httpx.Client(base_url=REST_URL))
         stream._log_message_lag()
         assert stream._message_lag_count == 0
+
+
+class _FakeProcessorRelay:
+    """A minimal stand-in for StreamProcessorRelayServer, duck-typed the
+    same way ThetaStreamHub._processor_relay itself is (see that
+    attribute's own comment) -- only publish_raw is ever called."""
+
+    def __init__(self, accepts: bool) -> None:
+        self.accepts = accepts
+        self.published_raw: list[str] = []
+
+    def publish_raw(self, raw: str) -> bool:
+        self.published_raw.append(raw)
+        return self.accepts
+
+
+class TestProcessorRelayRouting:
+    """2026-10-02: ThetaStreamHub._process_messages routes QUOTE/TRADE
+    through a connected stream processor process instead of handling them
+    in-process -- see backend/core/stream_processor_relay.py's own
+    docstring for why (the GIL-contention diagnosis) and
+    set_processor_relay's own comment for the graceful-degradation
+    contract these tests check."""
+
+    @staticmethod
+    async def _run_one_message(stream: ThetaStreamHub, raw: str) -> None:
+        stream._message_queue.put_nowait(raw)
+        task = asyncio.create_task(stream._process_messages())
+        try:
+            await asyncio.sleep(0.05)
+        finally:
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
+
+    @pytest.mark.asyncio
+    async def test_quote_relayed_to_a_connected_processor_instead_of_handled_in_process(
+        self,
+    ) -> None:
+        stream = ThetaStreamHub(WS_URL, httpx.Client(base_url=REST_URL))
+        queue = stream.subscribe_quote_queue("SPY")
+        relay = _FakeProcessorRelay(accepts=True)
+        stream.set_processor_relay(relay)
+        raw = json.dumps(
+            {
+                "header": {"type": "QUOTE", "status": "CONNECTED"},
+                "contract": {
+                    "security_type": "OPTION",
+                    "root": "SPY",
+                    "expiration": 20260918,
+                    "strike": 770000,
+                    "right": "C",
+                },
+                "quote": {"bid": 1.08, "ask": 1.09},
+            }
+        )
+
+        await self._run_one_message(stream, raw)
+
+        assert relay.published_raw == [raw]
+        assert queue.empty()  # not dispatched locally -- that's _handle_processed_event's job
+
+    @pytest.mark.asyncio
+    async def test_quote_handled_in_process_when_no_processor_is_connected(self) -> None:
+        stream = ThetaStreamHub(WS_URL, httpx.Client(base_url=REST_URL))
+        queue = stream.subscribe_quote_queue("SPY")
+        raw = json.dumps(
+            {
+                "header": {"type": "QUOTE", "status": "CONNECTED"},
+                "contract": {
+                    "security_type": "OPTION",
+                    "root": "SPY",
+                    "expiration": 20260918,
+                    "strike": 770000,
+                    "right": "C",
+                },
+                "quote": {"bid": 1.08, "ask": 1.09},
+            }
+        )
+
+        await self._run_one_message(stream, raw)
+
+        event = queue.get_nowait()
+        assert event.bid == Decimal("1.08")
+
+    @pytest.mark.asyncio
+    async def test_quote_handled_in_process_when_processor_relay_rejects_it(self) -> None:
+        # has_client flips False (processor disconnected) -- publish_raw
+        # itself returns False in that case, same fallback as "never set".
+        stream = ThetaStreamHub(WS_URL, httpx.Client(base_url=REST_URL))
+        queue = stream.subscribe_quote_queue("SPY")
+        stream.set_processor_relay(_FakeProcessorRelay(accepts=False))
+        raw = json.dumps(
+            {
+                "header": {"type": "QUOTE", "status": "CONNECTED"},
+                "contract": {
+                    "security_type": "OPTION",
+                    "root": "SPY",
+                    "expiration": 20260918,
+                    "strike": 770000,
+                    "right": "C",
+                },
+                "quote": {"bid": 1.08, "ask": 1.09},
+            }
+        )
+
+        await self._run_one_message(stream, raw)
+
+        event = queue.get_nowait()
+        assert event.bid == Decimal("1.08")
+
+    @pytest.mark.asyncio
+    async def test_option_trade_relayed_to_a_connected_processor(self) -> None:
+        stream = ThetaStreamHub(WS_URL, httpx.Client(base_url=REST_URL))
+        relay = _FakeProcessorRelay(accepts=True)
+        stream.set_processor_relay(relay)
+        raw = json.dumps(
+            {
+                "header": {"type": "TRADE", "status": "CONNECTED"},
+                "contract": {
+                    "security_type": "OPTION",
+                    "root": "SPY",
+                    "expiration": 20260918,
+                    "strike": 770000,
+                    "right": "C",
+                },
+                "trade": {"size": 10, "price": 1.09},
+            }
+        )
+
+        await self._run_one_message(stream, raw)
+
+        assert relay.published_raw == [raw]
+        assert stream.cumulative_volume("SPY260918C00770000") == 0  # not updated yet
+
+    @pytest.mark.asyncio
+    async def test_underlying_trade_relayed_to_a_connected_processor(self) -> None:
+        stream = ThetaStreamHub(WS_URL, httpx.Client(base_url=REST_URL))
+        stream.register_symbol("AAPL", UnderlyingKind.EQUITY)
+        queue = stream.subscribe_underlying_queue("AAPL")
+        relay = _FakeProcessorRelay(accepts=True)
+        stream.set_processor_relay(relay)
+        raw = json.dumps(
+            {
+                "header": {"type": "TRADE", "status": "CONNECTED"},
+                "contract": {"security_type": "STOCK", "root": "AAPL"},
+                "trade": {"size": 500, "price": 184.51},
+            }
+        )
+
+        await self._run_one_message(stream, raw)
+
+        assert relay.published_raw == [raw]
+        assert queue.empty()
+
+
+class TestProcessedEventDispatch:
+    """_handle_processed_event -- the tail end _process_messages' relay
+    path feeds from a classified result sent back by the stream
+    processor. Same assertions TestQuoteHandling/TestOptionTradeHandling/
+    TestUnderlyingTradeHandling already make for the in-process path,
+    proving both paths produce identical dispatched events."""
+
+    def test_dispatches_a_quote_event_from_an_encoded_payload(self) -> None:
+        stream = ThetaStreamHub(WS_URL, httpx.Client(base_url=REST_URL))
+        queue = stream.subscribe_quote_queue("SPY")
+        payload = {
+            "k": "quote",
+            "exchange_ts": None,
+            "underlying_symbol": "SPY",
+            "symbol": "SPY",
+            "occ_symbol": "SPY260918C00770000",
+            "bid": "1.08",
+            "ask": "1.09",
+        }
+
+        stream._handle_processed_event(payload)
+
+        event = queue.get_nowait()
+        assert event.bid == Decimal("1.08")
+        assert event.ask == Decimal("1.09")
+
+    def test_dispatches_an_option_trade_and_updates_cumulative_volume(self) -> None:
+        stream = ThetaStreamHub(WS_URL, httpx.Client(base_url=REST_URL))
+        queue = stream.subscribe_trade_queue("SPY")
+        payload = {
+            "k": "option_trade",
+            "exchange_ts": None,
+            "occ_symbol": "SPY260918C00770000",
+            "size": 10,
+            "underlying_symbol": "SPY",
+            "event": {
+                "symbol": "SPY",
+                "occ_symbol": "SPY260918C00770000",
+                "premium": "1090.00",
+                "size": 10,
+            },
+        }
+
+        stream._handle_processed_event(payload)
+
+        assert stream.cumulative_volume("SPY260918C00770000") == 10
+        event = queue.get_nowait()
+        assert event.premium == Decimal("1090.00")
+
+    def test_option_trade_with_no_price_still_updates_volume_but_does_not_dispatch(self) -> None:
+        stream = ThetaStreamHub(WS_URL, httpx.Client(base_url=REST_URL))
+        queue = stream.subscribe_trade_queue("SPY")
+        payload = {
+            "k": "option_trade",
+            "exchange_ts": None,
+            "occ_symbol": "SPY260918C00770000",
+            "size": 10,
+            "underlying_symbol": "SPY",
+            "event": None,
+        }
+
+        stream._handle_processed_event(payload)
+
+        assert stream.cumulative_volume("SPY260918C00770000") == 10
+        assert queue.empty()
+
+    def test_dispatches_an_underlying_trade_event(self) -> None:
+        stream = ThetaStreamHub(WS_URL, httpx.Client(base_url=REST_URL))
+        queue = stream.subscribe_underlying_queue("AAPL")
+        payload = {
+            "k": "underlying_trade",
+            "exchange_ts": None,
+            "symbol": "AAPL",
+            "price": "184.51",
+            "size": 500,
+        }
+
+        stream._handle_processed_event(payload)
+
+        event = queue.get_nowait()
+        assert event.price == Decimal("184.51")
+        assert event.size == 500
+
+    def test_records_message_lag_when_exchange_ts_present(self) -> None:
+        stream = ThetaStreamHub(WS_URL, httpx.Client(base_url=REST_URL))
+        stream.subscribe_quote_queue("SPY")
+        past = (datetime.now(EASTERN_TIME) - timedelta(seconds=5)).isoformat()
+        payload = {
+            "k": "quote",
+            "exchange_ts": past,
+            "underlying_symbol": "SPY",
+            "symbol": "SPY",
+            "occ_symbol": "SPY260918C00770000",
+            "bid": "1.08",
+            "ask": "1.09",
+        }
+
+        stream._handle_processed_event(payload)
+
+        assert stream._message_lag_count == 1
+        assert stream._message_lag_max_seconds > 4
 
 
 class _FakeMonotonicClock:

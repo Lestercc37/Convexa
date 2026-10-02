@@ -66,8 +66,10 @@ from __future__ import annotations
 import asyncio
 import logging
 
+from backend.adapters.providers.thetadata.provider import ThetaDataProvider
 from backend.core.container import build_container
 from backend.core.logging import configure_logging
+from backend.core.stream_processor_relay import StreamProcessorRelayServer
 from backend.core.stream_state_export import StreamStateExporter
 from backend.core.underlying_price_stream import UnderlyingPriceStreamManager
 from backend.core.whale_alerts_relay import WhaleAlertsRelayPublisher, WhaleAlertsRelayServer
@@ -90,6 +92,32 @@ async def run() -> None:
         logger.warning("enable_scheduler is False -- worker has nothing to start, exiting")
         return
 
+    # Constructed and started BEFORE market_data_provider.start() so
+    # set_processor_relay() is wired in before _process_messages (part
+    # of that start()) ever runs its first iteration -- no window where
+    # a message is handled before the Hub even knows the relay exists.
+    # has_client is simply False until backend/stream_processor_worker.py
+    # actually connects, which _process_messages already treats as "fall
+    # back to in-process handling" (see StreamProcessorRelayServer's own
+    # docstring on graceful degradation), so this ordering never blocks
+    # startup waiting for that other process.
+    #
+    # set_processor_relay/handle_processed_stream_event are ThetaDataProvider-
+    # specific (not part of IDataProvider -- every other provider, e.g.
+    # MockDataProvider under QLL_DATA_PROVIDER=mock, has no WS stream to
+    # offload parsing from in the first place), so this stays guarded,
+    # same pattern backfill_daily_gamma_reference.py's own isinstance
+    # check already established for the same reason.
+    stream_processor_relay: StreamProcessorRelayServer | None = None
+    if isinstance(container.market_data_provider, ThetaDataProvider):
+        stream_processor_relay = StreamProcessorRelayServer(
+            container.settings.stream_processor_relay_host,
+            container.settings.stream_processor_relay_port,
+            on_event=container.market_data_provider.handle_processed_stream_event,
+        )
+        await stream_processor_relay.start()
+        container.market_data_provider.set_processor_relay(stream_processor_relay)
+
     await container.market_data_provider.start()
     whale_alerts_relay_server = WhaleAlertsRelayServer(
         container.settings.whale_alerts_relay_host, container.settings.whale_alerts_relay_port
@@ -104,8 +132,10 @@ async def run() -> None:
     underlying_price_stream.start()
     stream_state_exporter.start()
     logger.info(
-        "Worker running: whale-alerts relay, underlying-price stream, state exporter -- "
-        "also run backend.whale_alerts_worker for whale alerts to actually process"
+        "Worker running: stream processor relay, whale-alerts relay, underlying-price "
+        "stream, state exporter -- also run backend.stream_processor_worker for QUOTE/"
+        "TRADE parsing to happen off this process, and backend.whale_alerts_worker for "
+        "whale alerts to actually process"
     )
 
     try:
@@ -120,6 +150,8 @@ async def run() -> None:
         await underlying_price_stream.stop()
         await stream_state_exporter.stop()
         await container.market_data_provider.stop()
+        if stream_processor_relay is not None:
+            await stream_processor_relay.stop()
         if container.storage_engine is not None:
             container.storage_engine.dispose()
         if container.whale_alerts_storage_engine is not None:

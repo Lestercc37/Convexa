@@ -21,6 +21,19 @@ from backend.adapters.providers.thetadata.request_slots import (
     InProcessThetaRequestSlots,
     PostgresThetaRequestSlots,
 )
+from backend.adapters.providers.thetadata.stream_parsing import (
+    _WEEKLY_ROOT_BY_SYMBOL,
+    ParsedOptionTrade,
+    ParsedQuote,
+    ParsedUnderlyingTrade,
+    _build_occ_symbol,
+    _parse_stream_tick_timestamp,
+    _underlying_symbol_for_root,
+    decode_parsed_event,
+    parse_option_trade_message,
+    parse_quote_message,
+    parse_underlying_trade_message,
+)
 from backend.domain.entities import (
     ContractType,
     DailyBar,
@@ -467,54 +480,9 @@ MARKET_HOLIDAYS_CACHE_TTL_SECONDS = 24 * 60 * 60.0
 # both roots' contracts side by side" reasoning above still holds as a
 # defensive default, but for VIX specifically there is currently no
 # shared expiration where it would ever actually matter.
-_WEEKLY_ROOT_BY_SYMBOL: dict[str, str] = {
-    "SPX": "SPXW",
-    "NDX": "NDXP",
-    "VIX": "VIXW",
-}
-
-
 def _roots_for_symbol(symbol: str) -> tuple[str, ...]:
     weekly_root = _WEEKLY_ROOT_BY_SYMBOL.get(symbol)
     return (symbol, weekly_root) if weekly_root else (symbol,)
-
-
-# Reverse of _WEEKLY_ROOT_BY_SYMBOL -- confirmed live, 2026-09-25: every
-# incoming trade/quote message's own `contract.root` field is whichever
-# specific root the contract actually trades under (e.g. "SPXW" for a
-# near-dated/0DTE SPX contract, not "SPX" itself -- see
-# _WEEKLY_ROOT_BY_SYMBOL's own comment for why these are genuinely
-# separate, both-real roots, not aliases). subscribe_trade_queue()/
-# subscribe_quote_queue() are only ever called with the outer logical
-# symbol ("SPX"), from ACTIVE_UNDERLYINGS -- nothing subscribes to
-# "SPXW" directly. Dispatching by the raw message root instead of
-# resolving it back through this map means every SPXW/NDXP/VIXW trade
-# and quote silently reaches zero subscribers (an empty list, no error,
-# no log) -- confirmed live with a direct relay client: SPX/NDX/VIX
-# produced exactly zero trade and quote messages over a 15s window while
-# every other symbol flowed normally. This is what actually starves
-# WhaleAlertsEngine.process_trade() for these three symbols; the
-# REST-scheduler's own process() path (a separate, unaffected
-# mechanism) is why they ever appeared to work at all.
-_SYMBOL_BY_WEEKLY_ROOT: dict[str, str] = {
-    weekly_root: symbol for symbol, weekly_root in _WEEKLY_ROOT_BY_SYMBOL.items()
-}
-
-
-def _underlying_symbol_for_root(root: str) -> str:
-    """Resolves a raw ThetaData contract root (already upper-cased, e.g.
-    "SPXW") back to the logical underlying symbol subscribers key on
-    (e.g. "SPX"). A plain pass-through for every symbol without a
-    weekly-root split (SPY, QQQ, AAPL, ...) -- their own root already IS
-    the logical symbol."""
-    return _SYMBOL_BY_WEEKLY_ROOT.get(root, root)
-
-
-def _build_occ_symbol(
-    root: str, expiration: date, contract_type: ContractType, strike: Decimal
-) -> str:
-    suffix = "C" if contract_type == ContractType.CALL else "P"
-    return f"{root}{expiration:%y%m%d}{suffix}{int(strike * 1000):08d}"
 
 
 def _parse_et_timestamp(raw: str) -> datetime:
@@ -523,23 +491,6 @@ def _parse_et_timestamp(raw: str) -> datetime:
     system clock during real market hours) — never call `.astimezone()`
     on the naive result without attaching this tzinfo first."""
     return datetime.fromisoformat(raw).replace(tzinfo=EASTERN_TIME)
-
-
-def _parse_stream_tick_timestamp(date_int: int, ms_of_day: int) -> datetime:
-    """The WS QUOTE/TRADE stream's own `date` (YYYYMMDD) + `ms_of_day`
-    (milliseconds since midnight ET) fields, combined into the real
-    exchange-side timestamp of that tick -- not the REST snapshot
-    endpoints' `timestamp` string field `_parse_et_timestamp` handles.
-    Added 2026-10-02 to measure consumer lag (now() minus this) directly,
-    per Eduardo/ThetaData support's point: on a loopback connection a
-    1011 keepalive-ping-timeout specifically indicates OUR reader fell
-    behind live messages, not a remote network/server issue -- this
-    settles whether that's literally happening, instead of arguing from
-    the `websockets` library's documented behavior alone."""
-    date_digits = str(date_int)
-    tick_date = date(int(date_digits[:4]), int(date_digits[4:6]), int(date_digits[6:8]))
-    midnight = datetime.combine(tick_date, time_of_day(0, 0), tzinfo=EASTERN_TIME)
-    return midnight + timedelta(milliseconds=ms_of_day)
 
 
 def _time_to_expiration_years(expiration_date: date, now_et: datetime) -> Decimal:
@@ -864,6 +815,19 @@ class ThetaStreamHub:
         # here than the library itself would already be holding.
         self._message_queue: asyncio.Queue[str] = asyncio.Queue(maxsize=WS_MAX_QUEUE)
         self._message_processor_task: asyncio.Task[None] | None = None
+        # Set by worker.py via set_processor_relay(), after construction
+        # -- see backend/core/stream_processor_relay.py's own docstring.
+        # Duck-typed on purpose (`Any`, not StreamProcessorRelayServer):
+        # this adapter package never imports from backend.core, same
+        # layering every other adapter in this codebase already keeps.
+        # Only `.has_client` (bool) and `.publish_raw(str) -> bool` are
+        # ever used. None (the default, and the only option for every
+        # non-worker.py caller: tests, the API process's standalone
+        # ThetaDataProvider) means _process_messages always handles
+        # QUOTE/TRADE in-process itself, exactly as before this split
+        # existed -- never a behavior change just from this being wired
+        # in optionally.
+        self._processor_relay: Any = None
         # See QUEUE_ALERT_COOLDOWN_SECONDS' own module-level comment.
         # Keyed by "{kind}:{symbol}" (e.g. "TRADE:QQQ") -- QUOTE and
         # TRADE queues for the same symbol are genuinely separate
@@ -907,6 +871,13 @@ class ThetaStreamHub:
         # mutation to race against between statements, only interleaving
         # at await points, which a synchronous dict() copy has none of.
         return dict(self._cumulative_volume)
+
+    def set_processor_relay(self, relay: Any) -> None:
+        """See _processor_relay's own comment for the duck-typed
+        contract. Safe to call before or after start() -- _process_messages
+        only ever reads self._processor_relay fresh on each message, no
+        caching that would miss a relay set afterward."""
+        self._processor_relay = relay
 
     def start(self) -> None:
         if self._task is not None:
@@ -1349,7 +1320,17 @@ class ThetaStreamHub:
                 # is "is Theta Terminal sending this connection QUOTE
                 # messages at all", not "are any of them ours".
                 self._last_quote_at = time.monotonic()
-                self._handle_quote(message)
+                # Offload the actual parsing/classification to a stream
+                # processor process when one is connected -- see
+                # set_processor_relay's own comment and
+                # backend/core/stream_processor_relay.py's module
+                # docstring. publish_raw() returns False (no client, or
+                # no relay set at all) exactly when there's nowhere to
+                # send this, so this always falls back to the
+                # known-working in-process path rather than silently
+                # dropping the message.
+                if self._processor_relay is None or not self._processor_relay.publish_raw(raw):
+                    self._handle_quote(message)
             elif msg_type == "TRADE":
                 # security_type is what tells an option trade apart from
                 # its underlying's own trade when they share a root --
@@ -1358,10 +1339,12 @@ class ThetaStreamHub:
                 security_type = message.get("contract", {}).get("security_type")
                 if security_type == "OPTION":
                     self._last_option_trade_at = time.monotonic()
-                    self._handle_option_trade(message)
+                    if self._processor_relay is None or not self._processor_relay.publish_raw(raw):
+                        self._handle_option_trade(message)
                 elif security_type in ("STOCK", "INDEX"):
                     self._last_underlying_trade_at = time.monotonic()
-                    self._handle_underlying_trade(message)
+                    if self._processor_relay is None or not self._processor_relay.publish_raw(raw):
+                        self._handle_underlying_trade(message)
             elif msg_type == "REQ_RESPONSE":
                 _log_req_response("ThetaStreamHub", message)
 
@@ -1637,145 +1620,98 @@ class ThetaStreamHub:
         self._message_lag_sum_seconds = 0.0
         self._message_lag_max_seconds = 0.0
 
-    def _handle_quote(self, message: dict[str, Any]) -> None:
-        contract = message.get("contract", {})
-        quote = message.get("quote", {})
-        root = contract.get("root")
-        expiration_raw = contract.get("expiration")
-        strike_raw = contract.get("strike")
-        right = contract.get("right")
-        bid = quote.get("bid")
-        ask = quote.get("ask")
-        if (
-            root is None
-            or expiration_raw is None
-            or strike_raw is None
-            or bid is None
-            or ask is None
-        ):
-            return
-        quote_date = quote.get("date")
-        quote_ms_of_day = quote.get("ms_of_day")
-        if quote_date is not None and quote_ms_of_day is not None:
-            self._record_message_lag(_parse_stream_tick_timestamp(quote_date, quote_ms_of_day))
-        expiration_digits = str(expiration_raw)
-        expiration = date(
-            int(expiration_digits[:4]), int(expiration_digits[4:6]), int(expiration_digits[6:8])
-        )
-        contract_type = ContractType.CALL if right == "C" else ContractType.PUT
-        strike = Decimal(strike_raw) / Decimal(1000)
-        occ_symbol = _build_occ_symbol(root, expiration, contract_type, strike)
-        # occ_symbol keeps the real traded root (e.g. "SPXW...") -- only
-        # the dispatch key/event symbol resolve to the logical underlying
-        # subscribers actually key on. See _underlying_symbol_for_root's
-        # own comment.
-        underlying_symbol = _underlying_symbol_for_root(root.upper())
+    def _handle_processed_event(self, payload: dict[str, Any]) -> None:
+        """StreamProcessorRelayServer's on_event callback -- a classified
+        result relayed back from the stream processor process. Does
+        exactly the same tail-end work _handle_quote/_handle_option_trade/
+        _handle_underlying_trade do after their own in-process parsing:
+        record lag, update cumulative volume, dispatch to the same
+        subscriber queues. Any exception here is caught by
+        StreamProcessorRelayServer's own reader loop (one bad payload
+        must never take down the relay connection)."""
+        parsed = decode_parsed_event(payload)
+        if parsed.exchange_ts is not None:
+            self._record_message_lag(parsed.exchange_ts)
+        if isinstance(parsed, ParsedQuote):
+            self._dispatch_critical(
+                self._quote_subscribers.get(parsed.underlying_symbol, []),
+                parsed.event,
+                "QUOTE",
+                parsed.underlying_symbol,
+            )
+        elif isinstance(parsed, ParsedOptionTrade):
+            self._cumulative_volume[parsed.occ_symbol] = (
+                self._cumulative_volume.get(parsed.occ_symbol, 0) + parsed.size
+            )
+            if parsed.event is not None:
+                self._dispatch_critical(
+                    self._trade_subscribers.get(parsed.underlying_symbol, []),
+                    parsed.event,
+                    "option TRADE",
+                    parsed.underlying_symbol,
+                )
+        elif isinstance(parsed, ParsedUnderlyingTrade):
+            self._dispatch_dropping(
+                self._underlying_subscribers.get(parsed.event.symbol, []),
+                parsed.event,
+                "underlying TRADE",
+            )
 
+    def _handle_quote(self, message: dict[str, Any]) -> None:
+        """Thin wrapper around parse_quote_message (stream_parsing.py) --
+        the in-process path, used when no stream processor is connected
+        (StreamProcessorRelayServer.has_client is False) and by every
+        existing test that calls this directly. The real production path
+        under a connected processor never calls this: _process_messages
+        relays the raw frame out instead and _handle_processed_quote
+        below picks up the already-parsed result. Both paths end at the
+        exact same dispatch call, so a disconnected/crashed processor
+        degrades back to today's known-working in-process behavior, never
+        below it -- see StreamProcessorRelayServer's own docstring."""
+        parsed = parse_quote_message(message)
+        if parsed is None:
+            return
+        if parsed.exchange_ts is not None:
+            self._record_message_lag(parsed.exchange_ts)
         self._dispatch_critical(
-            self._quote_subscribers.get(underlying_symbol, []),
-            QuoteEvent(
-                symbol=underlying_symbol,
-                occ_symbol=occ_symbol,
-                as_of=utc_now(),
-                bid=Decimal(str(bid)),
-                ask=Decimal(str(ask)),
-            ),
+            self._quote_subscribers.get(parsed.underlying_symbol, []),
+            parsed.event,
             "QUOTE",
-            underlying_symbol,
+            parsed.underlying_symbol,
         )
 
     def _handle_option_trade(self, message: dict[str, Any]) -> None:
-        contract = message.get("contract", {})
-        trade = message.get("trade", {})
-        root = contract.get("root")
-        expiration_raw = contract.get("expiration")
-        strike_raw = contract.get("strike")
-        right = contract.get("right")
-        size = trade.get("size")
-        sequence = trade.get("sequence")
-        if root is None or expiration_raw is None or strike_raw is None or size is None:
+        """Thin wrapper around parse_option_trade_message -- see
+        _handle_quote's own docstring for the in-process-fallback-vs-
+        processor split this is part of."""
+        parsed = parse_option_trade_message(message)
+        if parsed is None:
             return
-        trade_date = trade.get("date")
-        trade_ms_of_day = trade.get("ms_of_day")
-        if trade_date is not None and trade_ms_of_day is not None:
-            self._record_message_lag(_parse_stream_tick_timestamp(trade_date, trade_ms_of_day))
-        expiration_digits = str(expiration_raw)
-        expiration = date(
-            int(expiration_digits[:4]), int(expiration_digits[4:6]), int(expiration_digits[6:8])
+        if parsed.exchange_ts is not None:
+            self._record_message_lag(parsed.exchange_ts)
+        self._cumulative_volume[parsed.occ_symbol] = (
+            self._cumulative_volume.get(parsed.occ_symbol, 0) + parsed.size
         )
-        contract_type = ContractType.CALL if right == "C" else ContractType.PUT
-        strike = Decimal(strike_raw) / Decimal(1000)
-        occ_symbol = _build_occ_symbol(root, expiration, contract_type, strike)
-        self._cumulative_volume[occ_symbol] = self._cumulative_volume.get(occ_symbol, 0) + int(size)
-        logger.debug("Trade stream message for %s: size=%s sequence=%s", occ_symbol, size, sequence)
-        # occ_symbol keeps the real traded root (e.g. "SPXW...") -- only
-        # the dispatch key/event symbol resolve to the logical underlying
-        # subscribers actually key on. See _underlying_symbol_for_root's
-        # own comment.
-        underlying_symbol = _underlying_symbol_for_root(root.upper())
-
-        price = trade.get("price")
-        # `stream_trades` (IDataProvider) has no consumer anywhere in this
-        # codebase yet (confirmed before writing this adapter) — raw OPRA
-        # trade ticks carry no buy/sell-aggressor or sweep/block/unusual
-        # classification of their own, so this reports every tick as
-        # FlowEventType.UNUSUAL / Side.UNKNOWN as an honest placeholder,
-        # not a real classification. Revisit once something consumes it.
-        if price is not None:
+        if parsed.event is not None:
             self._dispatch_critical(
-                self._trade_subscribers.get(underlying_symbol, []),
-                FlowEvent(
-                    symbol=underlying_symbol,
-                    occ_symbol=occ_symbol,
-                    as_of=utc_now(),
-                    event_type=FlowEventType.UNUSUAL,
-                    premium=Decimal(str(price)) * Decimal(size) * Decimal(100),
-                    size=int(size),
-                    aggressor_side=Side.UNKNOWN,
-                ),
+                self._trade_subscribers.get(parsed.underlying_symbol, []),
+                parsed.event,
                 "option TRADE",
-                underlying_symbol,
+                parsed.underlying_symbol,
             )
 
     def _handle_underlying_trade(self, message: dict[str, Any]) -> None:
-        contract = message.get("contract", {})
-        trade = message.get("trade", {})
-        root = contract.get("root")
-        price = trade.get("price")
-        size = trade.get("size")
-        if root is None or price is None or size is None:
+        """Thin wrapper around parse_underlying_trade_message -- see
+        _handle_quote's own docstring for the in-process-fallback-vs-
+        processor split this is part of."""
+        parsed = parse_underlying_trade_message(message, self._symbols)
+        if parsed is None:
             return
-        trade_date = trade.get("date")
-        trade_ms_of_day = trade.get("ms_of_day")
-        if trade_date is not None and trade_ms_of_day is not None:
-            self._record_message_lag(_parse_stream_tick_timestamp(trade_date, trade_ms_of_day))
-        symbol = root.upper()
-        # Already routed here as security_type in (STOCK, INDEX) by
-        # _consume(), but that alone doesn't confirm it matches THIS
-        # symbol's own registered kind (e.g. a STOCK-shaped trade for a
-        # root only ever registered as INDEX would still reach here) --
-        # confirmed live, 2026-09-03, back when this was still a
-        # dedicated connection: an OPTION trade sharing this root (e.g. a
-        # VIX call/put) used to leak in from the separate Trade Stream
-        # connection on the same Terminal and get published as if it were
-        # the underlying's own price (option premiums ~$0.40-$1.57 vs
-        # VIX's real ~$14.87-$14.89 at the same moment) before this check
-        # existed. See TestUnderlyingTradeStream's own docstring in
-        # tests/test_thetadata_provider.py.
-        kind = self._symbols.get(symbol)
-        if kind is None:
-            return
-        expected_security_type = "INDEX" if kind == UnderlyingKind.INDEX else "STOCK"
-        if contract.get("security_type") != expected_security_type:
-            return
+        if parsed.exchange_ts is not None:
+            self._record_message_lag(parsed.exchange_ts)
         self._dispatch_dropping(
-            self._underlying_subscribers.get(symbol, []),
-            UnderlyingTradeEvent(
-                symbol=symbol,
-                as_of=utc_now(),
-                price=Decimal(str(price)),
-                size=int(size),
-            ),
+            self._underlying_subscribers.get(parsed.event.symbol, []),
+            parsed.event,
             "underlying TRADE",
         )
 
@@ -3199,3 +3135,15 @@ class ThetaDataProvider:
 
     def cumulative_volumes(self) -> dict[str, int]:
         return self._hub.cumulative_volumes()
+
+    def set_processor_relay(self, relay: Any) -> None:
+        """Passthrough to ThetaStreamHub.set_processor_relay -- see that
+        method's own docstring. worker.py is the only real caller."""
+        self._hub.set_processor_relay(relay)
+
+    def handle_processed_stream_event(self, payload: dict[str, Any]) -> None:
+        """Passthrough to ThetaStreamHub._handle_processed_event -- the
+        public name a relay server constructed outside this package
+        (worker.py) can wire its on_event callback to without reaching
+        into a private attribute."""
+        self._hub._handle_processed_event(payload)

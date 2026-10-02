@@ -40,6 +40,16 @@ class Settings(BaseSettings):
     # WebSocket connection. Never reaches the network beyond this machine.
     whale_alerts_relay_host: str = Field(default="127.0.0.1")
     whale_alerts_relay_port: int = Field(default=25599)
+    # Local-only TCP link (see backend/core/stream_processor_relay.py):
+    # worker.py forwards raw QUOTE/TRADE WS frames to
+    # backend/stream_processor_worker.py's own process over this, and
+    # gets the classified result back over the same connection, so
+    # parsing/classification (confirmed live, 2026-10-02: 100-150ms per
+    # message under real volume) never again shares a GIL with the
+    # process that owns the real ThetaData WebSocket connection. Never
+    # reaches the network beyond this machine.
+    stream_processor_relay_host: str = Field(default="127.0.0.1")
+    stream_processor_relay_port: int = Field(default=25601)
     # Signs session cookies (see backend/core/sessions.py). The random
     # default is fine for tests/a single dev process, but it's re-rolled
     # on every restart -- anything meant to keep users logged in across
