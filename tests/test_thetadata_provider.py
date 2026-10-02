@@ -2897,7 +2897,12 @@ class TestProcessorRelayRouting:
         await self._run_one_message(stream, raw)
 
         assert relay.published_raw == [raw]
-        assert queue.empty()  # not dispatched locally -- that's _handle_processed_event's job
+        # Never dispatched locally when a processor is connected (v2,
+        # 2026-10-02) -- the processor publishes directly to its own
+        # destinations (WhaleAlertsRelayServer, Postgres), never reports
+        # back here. See backend/core/stream_processor_relay.py's own
+        # docstring.
+        assert queue.empty()
 
     @pytest.mark.asyncio
     async def test_quote_handled_in_process_when_no_processor_is_connected(self) -> None:
@@ -2991,109 +2996,6 @@ class TestProcessorRelayRouting:
 
         assert relay.published_raw == [raw]
         assert queue.empty()
-
-
-class TestProcessedEventDispatch:
-    """_handle_processed_event -- the tail end _process_messages' relay
-    path feeds from a classified result sent back by the stream
-    processor. Same assertions TestQuoteHandling/TestOptionTradeHandling/
-    TestUnderlyingTradeHandling already make for the in-process path,
-    proving both paths produce identical dispatched events."""
-
-    def test_dispatches_a_quote_event_from_an_encoded_payload(self) -> None:
-        stream = ThetaStreamHub(WS_URL, httpx.Client(base_url=REST_URL))
-        queue = stream.subscribe_quote_queue("SPY")
-        payload = {
-            "k": "quote",
-            "exchange_ts": None,
-            "underlying_symbol": "SPY",
-            "symbol": "SPY",
-            "occ_symbol": "SPY260918C00770000",
-            "bid": "1.08",
-            "ask": "1.09",
-        }
-
-        stream._handle_processed_event(payload)
-
-        event = queue.get_nowait()
-        assert event.bid == Decimal("1.08")
-        assert event.ask == Decimal("1.09")
-
-    def test_dispatches_an_option_trade_and_updates_cumulative_volume(self) -> None:
-        stream = ThetaStreamHub(WS_URL, httpx.Client(base_url=REST_URL))
-        queue = stream.subscribe_trade_queue("SPY")
-        payload = {
-            "k": "option_trade",
-            "exchange_ts": None,
-            "occ_symbol": "SPY260918C00770000",
-            "size": 10,
-            "underlying_symbol": "SPY",
-            "event": {
-                "symbol": "SPY",
-                "occ_symbol": "SPY260918C00770000",
-                "premium": "1090.00",
-                "size": 10,
-            },
-        }
-
-        stream._handle_processed_event(payload)
-
-        assert stream.cumulative_volume("SPY260918C00770000") == 10
-        event = queue.get_nowait()
-        assert event.premium == Decimal("1090.00")
-
-    def test_option_trade_with_no_price_still_updates_volume_but_does_not_dispatch(self) -> None:
-        stream = ThetaStreamHub(WS_URL, httpx.Client(base_url=REST_URL))
-        queue = stream.subscribe_trade_queue("SPY")
-        payload = {
-            "k": "option_trade",
-            "exchange_ts": None,
-            "occ_symbol": "SPY260918C00770000",
-            "size": 10,
-            "underlying_symbol": "SPY",
-            "event": None,
-        }
-
-        stream._handle_processed_event(payload)
-
-        assert stream.cumulative_volume("SPY260918C00770000") == 10
-        assert queue.empty()
-
-    def test_dispatches_an_underlying_trade_event(self) -> None:
-        stream = ThetaStreamHub(WS_URL, httpx.Client(base_url=REST_URL))
-        queue = stream.subscribe_underlying_queue("AAPL")
-        payload = {
-            "k": "underlying_trade",
-            "exchange_ts": None,
-            "symbol": "AAPL",
-            "price": "184.51",
-            "size": 500,
-        }
-
-        stream._handle_processed_event(payload)
-
-        event = queue.get_nowait()
-        assert event.price == Decimal("184.51")
-        assert event.size == 500
-
-    def test_records_message_lag_when_exchange_ts_present(self) -> None:
-        stream = ThetaStreamHub(WS_URL, httpx.Client(base_url=REST_URL))
-        stream.subscribe_quote_queue("SPY")
-        past = (datetime.now(EASTERN_TIME) - timedelta(seconds=5)).isoformat()
-        payload = {
-            "k": "quote",
-            "exchange_ts": past,
-            "underlying_symbol": "SPY",
-            "symbol": "SPY",
-            "occ_symbol": "SPY260918C00770000",
-            "bid": "1.08",
-            "ask": "1.09",
-        }
-
-        stream._handle_processed_event(payload)
-
-        assert stream._message_lag_count == 1
-        assert stream._message_lag_max_seconds > 4
 
 
 class _FakeMonotonicClock:
