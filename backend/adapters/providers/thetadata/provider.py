@@ -70,6 +70,11 @@ NEAR_THE_MONEY_OVERFETCH_STRIKE_RANGE = 100
 # closest strikes to spot, same order of magnitude as the old fixed
 # n=1 baseline (3 strikes x 2 contract types), never nothing.
 MINIMUM_NEAR_THE_MONEY_ENTRIES = 6
+# The delta MarketSnapshot.skew_25d's "25-delta" risk reversal is
+# defined against -- see ThetaDataProvider._compute_skew_25d. Positive
+# for the call side, negated for the put side by that method's own
+# caller (a put's delta is reported negative).
+TARGET_SKEW_DELTA = Decimal("0.25")
 
 # Data sources per field, confirmed with real ThetaData responses before
 # this adapter was written (see docs/use-cases.md):
@@ -123,10 +128,16 @@ MINIMUM_NEAR_THE_MONEY_ENTRIES = 6
 # - atm_iv/pc_oi_ratio on MarketSnapshot: approximated from the same
 #   near-the-money contracts already fetched for the chain (mean
 #   implied_vol; put/call open interest ratio) — genuinely an
-#   approximation, not the true market-wide ATM IV or 25-delta skew a
-#   full chain would give. skew_25d stays `0`, documented: computing it
-#   for real would need 25-delta strikes specifically, outside the
-#   near-the-money range already confirmed for this adapter's scope.
+#   approximation, not the true market-wide ATM IV a full chain would
+#   give.
+# - skew_25d on MarketSnapshot: IV(25-delta put) - IV(25-delta call),
+#   found via the wider NEAR_THE_MONEY_OVERFETCH_STRIKE_RANGE entries
+#   already fetched alongside the chain (not the narrower ATR-filtered
+#   band the chain's other fields come from) — see
+#   ThetaDataProvider._compute_skew_25d. Previously hardcoded to `0`
+#   (confirmed, 2026-10-01 audit: this silently zeroed out Market
+#   Bias's documented skew component every day) because the narrower
+#   band alone never reaches a genuine 25-delta strike.
 
 RATE_SYMBOL = "SOFR"
 RECONCILE_INTERVAL_SECONDS = 20 * 60
@@ -623,11 +634,28 @@ def _log_req_response(stream_name: str, message: dict[str, Any]) -> None:
 
 class _NearTheMoneyChain:
     """One near-the-money snapshot: nearest expiration's first-order
-    greeks entries, keyed by (strike, right) for open-interest lookup."""
+    greeks entries, keyed by (strike, right) for open-interest lookup.
 
-    def __init__(self, expiration: date, entries: list[dict[str, Any]]) -> None:
+    `wide_entries` -- when the caller has one to offer -- is the same
+    expiration's entries before the regular ATR-width client-side filter
+    narrows them down to `entries`, i.e. the full
+    NEAR_THE_MONEY_OVERFETCH_STRIKE_RANGE-wide set ThetaData already
+    returned for this call. Only get_underlying_snapshot's 25-delta skew
+    lookup needs this: a genuine 25-delta strike is, by definition,
+    farther from spot than the near-the-money band `entries` is filtered
+    to, so it routinely isn't in there. Every other caller only ever
+    reads `entries`. Defaults to `entries` itself when nothing wider was
+    fetched, so `.wide_entries` is always safe to read."""
+
+    def __init__(
+        self,
+        expiration: date,
+        entries: list[dict[str, Any]],
+        wide_entries: list[dict[str, Any]] | None = None,
+    ) -> None:
         self.expiration = expiration
         self.entries = entries
+        self.wide_entries = wide_entries if wide_entries is not None else entries
 
 
 class HistoricalGammaSnapshot:
@@ -1772,7 +1800,7 @@ class ThetaDataProvider:
 
     See the module-level comment above for the confirmed data source per
     field, and every documented gap (Stocks/Indices subscription not
-    active, futures daily bars, skew_25d approximation).
+    active, futures daily bars).
     """
 
     def __init__(
@@ -2079,6 +2107,49 @@ class ThetaDataProvider:
             key=lambda entry: abs(Decimal(str(entry["contract"]["strike"])) - spot_price),
         )[:MINIMUM_NEAR_THE_MONEY_ENTRIES]
 
+    def _closest_by_delta(
+        self, entries: list[dict[str, Any]], right: str, target_delta: Decimal
+    ) -> dict[str, Any] | None:
+        """The `right`-side (CALL/PUT) entry whose reported delta is
+        closest to target_delta, skipping any entry with implied_vol <=
+        0 -- the same known ThetaData data-quality gap already watched
+        for elsewhere (a high-OI contract occasionally reports IV=0,
+        which would otherwise silently feed a garbage 0% IV into the
+        skew below just because its delta happened to land close to the
+        target)."""
+        best: dict[str, Any] | None = None
+        best_diff: Decimal | None = None
+        for entry in entries:
+            if entry["contract"]["right"] != right:
+                continue
+            data = entry["data"][0]
+            iv = Decimal(str(data["implied_vol"]))
+            if iv <= 0:
+                continue
+            diff = abs(Decimal(str(data["delta"])) - target_delta)
+            if best_diff is None or diff < best_diff:
+                best_diff = diff
+                best = data
+        return best
+
+    def _compute_skew_25d(self, wide_entries: list[dict[str, Any]]) -> Decimal:
+        """25-delta risk-reversal skew: IV(25-delta put) - IV(25-delta
+        call) -- the standard equity-vol skew convention (positive means
+        puts are bid up relative to calls, the usual downside-protection
+        shape). Needs `wide_entries` (see _NearTheMoneyChain's own
+        docstring), not the regular ATR-width-filtered near-the-money
+        set: a genuine 25-delta strike is, almost by definition, farther
+        from spot than that narrower band. Falls back to 0 (matching
+        this adapter's previous permanent value) on the rare cycle where
+        no clean 25-delta contract is found on one side -- e.g. a
+        strike grid too sparse near that delta, or every nearby contract
+        currently reporting a zero/stale IV."""
+        call_25d = self._closest_by_delta(wide_entries, "CALL", TARGET_SKEW_DELTA)
+        put_25d = self._closest_by_delta(wide_entries, "PUT", -TARGET_SKEW_DELTA)
+        if call_25d is None or put_25d is None:
+            return Decimal(0)
+        return Decimal(str(put_25d["implied_vol"])) - Decimal(str(call_25d["implied_vol"]))
+
     def _fetch_near_the_money(self, symbol: str, expiration: date | None) -> _NearTheMoneyChain:
         cache_key = (symbol, expiration)
         cached = self._near_the_money_cache.get(cache_key)
@@ -2105,7 +2176,9 @@ class ThetaDataProvider:
         if not entries:
             raise RuntimeError(f"ThetaData returned no near-the-money contracts for {symbol}")
         if expiration is not None:
-            result = _NearTheMoneyChain(expiration, self._filter_near_the_money(symbol, entries))
+            result = _NearTheMoneyChain(
+                expiration, self._filter_near_the_money(symbol, entries), wide_entries=entries
+            )
         else:
             # ThetaData's snapshot endpoint keeps returning an already-
             # expired contract's last-known quote for a while after it
@@ -2135,7 +2208,11 @@ class ThetaDataProvider:
                 for entry in unexpired_entries
                 if date.fromisoformat(entry["contract"]["expiration"]) == nearest
             ]
-            result = _NearTheMoneyChain(nearest, self._filter_near_the_money(symbol, nearest_entries))
+            result = _NearTheMoneyChain(
+                nearest,
+                self._filter_near_the_money(symbol, nearest_entries),
+                wide_entries=nearest_entries,
+            )
 
         self._near_the_money_cache[cache_key] = (time.monotonic(), result)
         return result
@@ -2621,10 +2698,14 @@ class ThetaDataProvider:
             # permanently provisional.
             volume=volume,
             pc_oi_ratio=pc_oi_ratio,
-            # No 25-delta strikes in the near-the-money range this
-            # adapter fetches — computing a real skew would need
-            # additional, out-of-scope contracts.
-            skew_25d=Decimal(0),
+            # Real 25-delta risk-reversal skew -- see _compute_skew_25d.
+            # Uses chain.wide_entries (the full overfetch range, not the
+            # narrower ATR-filtered chain.entries this method's other
+            # fields come from), since a genuine 25-delta strike
+            # routinely sits outside that narrower band. No additional
+            # REST call: wide_entries is already-fetched data from the
+            # same call that produced chain itself.
+            skew_25d=self._compute_skew_25d(chain.wide_entries),
             atm_iv=atm_iv,
         )
 
