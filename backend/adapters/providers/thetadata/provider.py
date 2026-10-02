@@ -525,6 +525,23 @@ def _parse_et_timestamp(raw: str) -> datetime:
     return datetime.fromisoformat(raw).replace(tzinfo=EASTERN_TIME)
 
 
+def _parse_stream_tick_timestamp(date_int: int, ms_of_day: int) -> datetime:
+    """The WS QUOTE/TRADE stream's own `date` (YYYYMMDD) + `ms_of_day`
+    (milliseconds since midnight ET) fields, combined into the real
+    exchange-side timestamp of that tick -- not the REST snapshot
+    endpoints' `timestamp` string field `_parse_et_timestamp` handles.
+    Added 2026-10-02 to measure consumer lag (now() minus this) directly,
+    per Eduardo/ThetaData support's point: on a loopback connection a
+    1011 keepalive-ping-timeout specifically indicates OUR reader fell
+    behind live messages, not a remote network/server issue -- this
+    settles whether that's literally happening, instead of arguing from
+    the `websockets` library's documented behavior alone."""
+    date_digits = str(date_int)
+    tick_date = date(int(date_digits[:4]), int(date_digits[4:6]), int(date_digits[6:8]))
+    midnight = datetime.combine(tick_date, time_of_day(0, 0), tzinfo=EASTERN_TIME)
+    return midnight + timedelta(milliseconds=ms_of_day)
+
+
 def _time_to_expiration_years(expiration_date: date, now_et: datetime) -> Decimal:
     """Real elapsed seconds to 4:00pm ET / 86400 / 365 (ACT/365).
 
@@ -830,6 +847,14 @@ class ThetaStreamHub:
         self._last_underlying_trade_at: float | None = None
         self._last_status_at: float | None = None
         self._watchdog_task: asyncio.Task[None] | None = None
+        # Message-lag diagnostic (added 2026-10-02) -- see
+        # _parse_stream_tick_timestamp's own docstring and
+        # _log_message_lag below. Reset every QUEUE_DEPTH_LOG_INTERVAL_
+        # SECONDS, same cadence as the queue-depth log it's reported
+        # alongside.
+        self._message_lag_count = 0
+        self._message_lag_sum_seconds = 0.0
+        self._message_lag_max_seconds = 0.0
         # See _process_messages' own docstring -- _consume()'s hot loop
         # only reads a raw frame and puts it here, never json.loads()s or
         # dispatches it; a separate task drains this so a burst of real
@@ -1327,6 +1352,7 @@ class ThetaStreamHub:
             now = utc_now()
             if (now - queue_depths_logged_at).total_seconds() > QUEUE_DEPTH_LOG_INTERVAL_SECONDS:
                 self._log_queue_depths()
+                self._log_message_lag()
                 queue_depths_logged_at = now
                 self._queue_depths_logged_at = now
 
@@ -1562,6 +1588,39 @@ class ThetaStreamHub:
                 fullest_symbol,
             )
 
+    def _record_message_lag(self, exchange_ts: datetime) -> None:
+        """One sample for _log_message_lag below -- the real gap between
+        a QUOTE/TRADE's own exchange timestamp (`date` + `ms_of_day`,
+        see _parse_stream_tick_timestamp) and the moment this process
+        actually handles it. On a loopback (127.0.0.1) connection this
+        gap is a direct measure of whether this reader is keeping up
+        with live volume, not network latency -- see
+        _parse_stream_tick_timestamp's own docstring for why this was
+        added."""
+        lag_seconds = (utc_now() - exchange_ts).total_seconds()
+        self._message_lag_count += 1
+        self._message_lag_sum_seconds += lag_seconds
+        if lag_seconds > self._message_lag_max_seconds:
+            self._message_lag_max_seconds = lag_seconds
+
+    def _log_message_lag(self) -> None:
+        """Logged on the same QUEUE_DEPTH_LOG_INTERVAL_SECONDS cadence as
+        _log_queue_depths, from _process_messages. Counters reset after
+        every log so each line reports only that interval, not a
+        lifetime average that would hide a lag spike inside an otherwise
+        healthy day."""
+        if self._message_lag_count:
+            avg_seconds = self._message_lag_sum_seconds / self._message_lag_count
+            logger.info(
+                "ThetaStreamHub message lag: max=%.3fs avg=%.3fs (%d samples)",
+                self._message_lag_max_seconds,
+                avg_seconds,
+                self._message_lag_count,
+            )
+        self._message_lag_count = 0
+        self._message_lag_sum_seconds = 0.0
+        self._message_lag_max_seconds = 0.0
+
     def _handle_quote(self, message: dict[str, Any]) -> None:
         contract = message.get("contract", {})
         quote = message.get("quote", {})
@@ -1579,6 +1638,10 @@ class ThetaStreamHub:
             or ask is None
         ):
             return
+        quote_date = quote.get("date")
+        quote_ms_of_day = quote.get("ms_of_day")
+        if quote_date is not None and quote_ms_of_day is not None:
+            self._record_message_lag(_parse_stream_tick_timestamp(quote_date, quote_ms_of_day))
         expiration_digits = str(expiration_raw)
         expiration = date(
             int(expiration_digits[:4]), int(expiration_digits[4:6]), int(expiration_digits[6:8])
@@ -1616,6 +1679,10 @@ class ThetaStreamHub:
         sequence = trade.get("sequence")
         if root is None or expiration_raw is None or strike_raw is None or size is None:
             return
+        trade_date = trade.get("date")
+        trade_ms_of_day = trade.get("ms_of_day")
+        if trade_date is not None and trade_ms_of_day is not None:
+            self._record_message_lag(_parse_stream_tick_timestamp(trade_date, trade_ms_of_day))
         expiration_digits = str(expiration_raw)
         expiration = date(
             int(expiration_digits[:4]), int(expiration_digits[4:6]), int(expiration_digits[6:8])
@@ -1662,6 +1729,10 @@ class ThetaStreamHub:
         size = trade.get("size")
         if root is None or price is None or size is None:
             return
+        trade_date = trade.get("date")
+        trade_ms_of_day = trade.get("ms_of_day")
+        if trade_date is not None and trade_ms_of_day is not None:
+            self._record_message_lag(_parse_stream_tick_timestamp(trade_date, trade_ms_of_day))
         symbol = root.upper()
         # Already routed here as security_type in (STOCK, INDEX) by
         # _consume(), but that alone doesn't confirm it matches THIS

@@ -27,6 +27,7 @@ from backend.adapters.providers.thetadata.provider import (
     _log_req_response,
     _nearest_expiration_cutoff,
     _parse_et_timestamp,
+    _parse_stream_tick_timestamp,
     _roots_for_symbol,
     _time_to_expiration_years,
 )
@@ -120,6 +121,14 @@ def _safe_future_expirations() -> tuple[date, date, date]:
     on the tests that use this)."""
     today = datetime.now(EASTERN_TIME).date()
     return today + timedelta(days=14), today + timedelta(days=28), today + timedelta(days=90)
+
+
+def _ms_of_day(moment: datetime) -> int:
+    """The inverse of _parse_stream_tick_timestamp's own ms_of_day math --
+    milliseconds since midnight ET for an ET-aware `moment`, for building
+    QUOTE/TRADE test fixtures with a real, controllable lag."""
+    midnight = moment.replace(hour=0, minute=0, second=0, microsecond=0)
+    return int((moment - midnight).total_seconds() * 1000)
 
 
 class TestHelpers:
@@ -2748,6 +2757,85 @@ class TestQuoteHandling:
         payload = json.loads(sent[0])
         assert payload["req_type"] == "QUOTE"
         assert payload["sec_type"] == "OPTION"
+
+
+class TestMessageLagDiagnostic:
+    """Added 2026-10-02 alongside _parse_stream_tick_timestamp/
+    _record_message_lag/_log_message_lag -- see that function's own
+    docstring for why (Eduardo/ThetaData support's point that a 1011
+    keepalive timeout on loopback means OUR reader fell behind)."""
+
+    def test_parses_date_and_ms_of_day_into_a_real_et_timestamp(self) -> None:
+        # 26622025ms = 7h23m42.025s after midnight ET.
+        result = _parse_stream_tick_timestamp(20261219, 26622025)
+        assert result == datetime(2026, 12, 19, 7, 23, 42, 25000, tzinfo=EASTERN_TIME)
+
+    def test_handle_quote_records_lag_when_date_and_ms_of_day_present(self) -> None:
+        stream = ThetaStreamHub(WS_URL, httpx.Client(base_url=REST_URL))
+        now_et = datetime.now(EASTERN_TIME)
+        tick_time = now_et - timedelta(seconds=3)
+        message = {
+            "header": {"type": "QUOTE", "status": "CONNECTED"},
+            "contract": {
+                "security_type": "OPTION",
+                "root": "SPY",
+                "expiration": 20260918,
+                "strike": 770000,
+                "right": "C",
+            },
+            "quote": {
+                "ms_of_day": _ms_of_day(tick_time),
+                "bid": 1.08,
+                "ask": 1.09,
+                "date": int(tick_time.strftime("%Y%m%d")),
+            },
+        }
+
+        stream._handle_quote(message)
+
+        assert stream._message_lag_count == 1
+        # Real elapsed test time adds a little on top of the 3s gap built
+        # into the fixture -- bounded loosely, not pinned to the exact 3s.
+        assert 2.5 < stream._message_lag_max_seconds < 30
+
+    def test_handle_quote_skips_lag_recording_when_date_or_ms_of_day_missing(self) -> None:
+        # Older/different fixtures (or a future payload shape ThetaData
+        # changes without warning) must not crash just because this
+        # diagnostic-only field is absent.
+        stream = ThetaStreamHub(WS_URL, httpx.Client(base_url=REST_URL))
+        message = {
+            "header": {"type": "QUOTE", "status": "CONNECTED"},
+            "contract": {
+                "security_type": "OPTION",
+                "root": "SPY",
+                "expiration": 20260918,
+                "strike": 770000,
+                "right": "C",
+            },
+            "quote": {"bid": 1.08, "ask": 1.09},
+        }
+
+        stream._handle_quote(message)
+
+        assert stream._message_lag_count == 0
+
+    def test_log_message_lag_resets_counters_after_logging(self) -> None:
+        stream = ThetaStreamHub(WS_URL, httpx.Client(base_url=REST_URL))
+        stream._message_lag_count = 5
+        stream._message_lag_sum_seconds = 12.5
+        stream._message_lag_max_seconds = 4.2
+
+        stream._log_message_lag()
+
+        assert stream._message_lag_count == 0
+        assert stream._message_lag_sum_seconds == 0.0
+        assert stream._message_lag_max_seconds == 0.0
+
+    def test_log_message_lag_is_a_no_op_with_no_samples(self) -> None:
+        # No ZeroDivisionError computing an average over zero samples.
+        stream = ThetaStreamHub(WS_URL, httpx.Client(base_url=REST_URL))
+        stream._log_message_lag()
+        assert stream._message_lag_count == 0
 
 
 class _FakeMonotonicClock:
