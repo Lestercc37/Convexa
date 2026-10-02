@@ -23,13 +23,9 @@ from backend.adapters.providers.thetadata.request_slots import (
 )
 from backend.adapters.providers.thetadata.stream_parsing import (
     _WEEKLY_ROOT_BY_SYMBOL,
-    ParsedOptionTrade,
-    ParsedQuote,
-    ParsedUnderlyingTrade,
     _build_occ_symbol,
     _parse_stream_tick_timestamp,
     _underlying_symbol_for_root,
-    decode_parsed_event,
     parse_option_trade_message,
     parse_quote_message,
     parse_underlying_trade_message,
@@ -1620,54 +1616,21 @@ class ThetaStreamHub:
         self._message_lag_sum_seconds = 0.0
         self._message_lag_max_seconds = 0.0
 
-    def _handle_processed_event(self, payload: dict[str, Any]) -> None:
-        """StreamProcessorRelayServer's on_event callback -- a classified
-        result relayed back from the stream processor process. Does
-        exactly the same tail-end work _handle_quote/_handle_option_trade/
-        _handle_underlying_trade do after their own in-process parsing:
-        record lag, update cumulative volume, dispatch to the same
-        subscriber queues. Any exception here is caught by
-        StreamProcessorRelayServer's own reader loop (one bad payload
-        must never take down the relay connection)."""
-        parsed = decode_parsed_event(payload)
-        if parsed.exchange_ts is not None:
-            self._record_message_lag(parsed.exchange_ts)
-        if isinstance(parsed, ParsedQuote):
-            self._dispatch_critical(
-                self._quote_subscribers.get(parsed.underlying_symbol, []),
-                parsed.event,
-                "QUOTE",
-                parsed.underlying_symbol,
-            )
-        elif isinstance(parsed, ParsedOptionTrade):
-            self._cumulative_volume[parsed.occ_symbol] = (
-                self._cumulative_volume.get(parsed.occ_symbol, 0) + parsed.size
-            )
-            if parsed.event is not None:
-                self._dispatch_critical(
-                    self._trade_subscribers.get(parsed.underlying_symbol, []),
-                    parsed.event,
-                    "option TRADE",
-                    parsed.underlying_symbol,
-                )
-        elif isinstance(parsed, ParsedUnderlyingTrade):
-            self._dispatch_dropping(
-                self._underlying_subscribers.get(parsed.event.symbol, []),
-                parsed.event,
-                "underlying TRADE",
-            )
-
     def _handle_quote(self, message: dict[str, Any]) -> None:
         """Thin wrapper around parse_quote_message (stream_parsing.py) --
         the in-process path, used when no stream processor is connected
         (StreamProcessorRelayServer.has_client is False) and by every
         existing test that calls this directly. The real production path
-        under a connected processor never calls this: _process_messages
-        relays the raw frame out instead and _handle_processed_quote
-        below picks up the already-parsed result. Both paths end at the
-        exact same dispatch call, so a disconnected/crashed processor
-        degrades back to today's known-working in-process behavior, never
-        below it -- see StreamProcessorRelayServer's own docstring."""
+        under a connected processor never calls this at all -- the
+        processor reaches every real destination directly (Postgres,
+        its own WhaleAlertsRelayServer instance, see
+        backend/stream_processor_worker.py's own docstring) instead of
+        reporting back here; see backend/core/stream_processor_relay.py's
+        own docstring for why v2 (2026-10-02) removed that return path
+        entirely rather than just making it fire-and-forget in name. A
+        disconnected/crashed processor degrades back to today's
+        known-working in-process behavior, never below it -- see
+        StreamProcessorRelayServer's own docstring."""
         parsed = parse_quote_message(message)
         if parsed is None:
             return
@@ -3140,10 +3103,3 @@ class ThetaDataProvider:
         """Passthrough to ThetaStreamHub.set_processor_relay -- see that
         method's own docstring. worker.py is the only real caller."""
         self._hub.set_processor_relay(relay)
-
-    def handle_processed_stream_event(self, payload: dict[str, Any]) -> None:
-        """Passthrough to ThetaStreamHub._handle_processed_event -- the
-        public name a relay server constructed outside this package
-        (worker.py) can wire its on_event callback to without reaching
-        into a private attribute."""
-        self._hub._handle_processed_event(payload)

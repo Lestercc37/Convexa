@@ -18,7 +18,7 @@ message shapes and a real, still-open gap found in that verification
 filtered out) that can corrupt the price this use case persists for an
 affected symbol until that gap is fixed.
 
-Gated on is_market_open (see _maybe_persist): ThetaData's real Trade
+Gated on is_market_open (see persist_if_due): ThetaData's real Trade
 Stream keeps printing outside 09:30-16:00 ET (extended hours), and
 persisting one of those ticks was the one path that put an
 extended-hours point on the chart, since dashboard.tsx has no filter
@@ -102,9 +102,18 @@ class StreamUnderlyingPriceUseCase:
         (MockDataProvider's stream_underlying_trades is an immediately-
         exhausted async generator)."""
         async for event in self._provider.stream_underlying_trades(underlying):
-            await self._maybe_persist(event)
+            await self.persist_if_due(event)
 
-    async def _maybe_persist(self, event: UnderlyingTradeEvent) -> None:
+    async def persist_if_due(self, event: UnderlyingTradeEvent) -> None:
+        """Public (was _maybe_persist until 2026-10-02): the exact same
+        market-hours gate + per-symbol debounce + volume-carry-forward
+        logic, now also called directly by
+        backend/stream_processor_worker.py for each UnderlyingTradeEvent
+        it classifies -- that process has no provider.
+        stream_underlying_trades() of its own to iterate (it never owns a
+        live stream, see that module's own docstring), it just has one
+        event at a time already in hand. run() above is unchanged for
+        worker.py's own in-process fallback path."""
         # Nothing gated this stream on market hours -- confirmed live,
         # 2026-09: a real tick with as_of past 16:00 ET still got written,
         # and dashboard.tsx appends every MarketPrice.as_of it polls onto

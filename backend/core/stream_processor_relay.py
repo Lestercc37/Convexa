@@ -21,6 +21,21 @@ same incidents (1,062,092 dropped packets, 2026-10-02 9:50-11:55am ET).
 Only a genuinely separate OS process -- its own interpreter, its own GIL
 -- gives the read loop and this parsing work real concurrency.
 
+v2 (2026-10-02), one-way only -- see docs/stream-processor-split-
+postmortem-2026-10-02.md for the full postmortem on why v1 (PR #226)
+collapsed in ~2.3 minutes under real volume. v1 had the processor send a
+classified result back to worker.py for every raw frame -- structurally
+TWO full-volume flows (raw frames out, classified results back) sharing
+the same real ~20,000 msgs/sec rate, each needing its own queue, doubling
+the total IPC/serialization burden regardless of whether either side
+technically "waited" for anything. v2 removes the return flow entirely:
+the stream processor process reaches every real destination directly
+(Postgres for price/volume, its own WhaleAlertsRelayServer instance for
+Whale Alerts -- see backend/stream_processor_worker.py's own docstring)
+instead of reporting back to worker.py. This module now only ever moves
+data in ONE direction, worker.py -> the processor, and worker.py never
+reads anything from that connection at all.
+
 The split:
 - `StreamProcessorRelayServer` runs inside worker.py, right where
   _process_messages() used to do the heavy lifting itself. It still does
@@ -36,45 +51,36 @@ The split:
   parse_quote_message/parse_option_trade_message/
   parse_underlying_trade_message -- the exact same logic
   ThetaStreamHub._handle_quote/_handle_option_trade/
-  _handle_underlying_trade call when running in-process), and sends the
-  already-classified result back over the SAME connection.
-- Back in worker.py, StreamProcessorRelayServer's own reader task takes
-  that classified result and does ONLY the cheap tail end
-  (ThetaStreamHub._handle_processed_quote/_trade/_underlying_trade --
-  record message lag, update _cumulative_volume, dispatch to the exact
-  same subscriber queues _handle_quote/etc. already dispatch to) --
-  PriceNotificationHub, WhaleAlertsRelayPublisher, StreamStateExporter
-  and the watchdog all keep reading from those same queues/state,
-  completely unaware anything moved.
+  _handle_underlying_trade call when running in-process), and publishes
+  each result directly to wherever it's actually consumed. Nothing is
+  ever sent back over this connection.
 
-Deliberately duplex over ONE TCP connection, not two -- raw frames
-flow server->client, classified events flow client->server, both
-directions cheap JSON-per-line, matching whale_alerts_relay.py's own
-wire-format convention (newline-delimited JSON) and localhost-only
-scope (127.0.0.1, see Settings) for the same reason: this never crosses
-a real network boundary and never carries anything ThetaData itself
-didn't already put on the wire.
-
-Graceful degradation, both ways, same principle as WhaleAlertsRelayServer:
+Graceful degradation, same principle as WhaleAlertsRelayServer:
 - No stream-processor client connected: StreamProcessorRelayServer.
   publish_raw() returns False, and ThetaStreamHub._process_messages()
   falls back to calling _handle_quote/_handle_option_trade/
   _handle_underlying_trade itself, in-process -- today's current,
   known-working (if GIL-contended) behavior. Never silently drops
-  market data just because the new process isn't up yet.
-- Processor connected but falling behind: same bounded-queue-plus-drop
-  pattern as every other queue in this codebase (RELAY_QUEUE_MAXSIZE,
-  CRITICAL log, no block) in both directions.
+  market data just because the new process isn't up yet. In this
+  fallback mode, worker.py's own (unchanged) UnderlyingPriceStreamManager/
+  WhaleAlertsRelayServer/StreamStateExporter keep working exactly as
+  before this split existed, reading from ThetaStreamHub's own
+  subscriber queues -- see worker.py's own comment on this tradeoff
+  (fallback mode loses nothing for market data; Whale Alerts and
+  cumulative-volume export pause only while the stream processor
+  process itself is down, the same acceptable-degradation story this
+  codebase already has for whale_alerts_worker.py's own downtime).
+- Processor connected but falling behind reading raw frames: same
+  bounded-queue-plus-drop pattern as every other queue in this codebase
+  (RELAY_QUEUE_MAXSIZE, CRITICAL log, no block).
 """
 
 from __future__ import annotations
 
 import asyncio
 import contextlib
-import json
 import logging
 from collections.abc import Callable
-from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -94,14 +100,14 @@ class StreamProcessorRelayServer:
     """Runs inside worker.py. Accepts exactly one connection from
     backend/stream_processor_worker.py (in practice; a second connection
     is accepted and used the same way, nothing here assumes exclusivity,
-    but only one is ever started). `on_event` is called for every
-    classified result the processor sends back -- wired to
-    ThetaStreamHub._handle_processed_event."""
+    but only one is ever started). One-way only (server -> client) --
+    nothing the client ever sends back is read for its content, same
+    "only watch for EOF" shape as WhaleAlertsRelayServer's own
+    _handle_client."""
 
-    def __init__(self, host: str, port: int, on_event: Callable[[dict[str, Any]], None]) -> None:
+    def __init__(self, host: str, port: int) -> None:
         self._host = host
         self._port = port
-        self._on_event = on_event
         self._server: asyncio.base_events.Server | None = None
         self._clients: set["_ConnectedProcessor"] = set()
 
@@ -139,17 +145,11 @@ class StreamProcessorRelayServer:
         self._clients.add(client)
         logger.info("Stream processor worker connected to the relay")
         try:
-            while True:
-                line = await reader.readline()
-                if not line:
-                    break
-                try:
-                    self._on_event(json.loads(line))
-                except Exception:
-                    logger.exception(
-                        "Stream processor relay server: failed to handle one classified "
-                        "event, dropping it and continuing"
-                    )
+            # One-way (server -> client): nothing the client sends is
+            # ever meaningful, so the only thing worth reading for is
+            # EOF (an empty read), the signal this connection just
+            # closed. Same shape as WhaleAlertsRelayServer._handle_client.
+            await reader.read()
         except (ConnectionError, OSError):
             pass
         finally:
@@ -218,33 +218,22 @@ class _ConnectedProcessor:
 
 class StreamProcessorRelayClient:
     """Runs inside backend/stream_processor_worker.py. Connects to
-    StreamProcessorRelayServer, yields raw frames as they arrive
-    (`raw_frames()`), and sends classified results back (`publish_event`).
-    Reconnects with the same exponential-backoff shape as every other
-    reconnect supervisor in this codebase."""
+    StreamProcessorRelayServer and calls `on_raw_frame` for every raw
+    frame as it arrives. One-way only -- there is no method here to send
+    anything back to worker.py; see this module's own docstring for why
+    v2 (2026-10-02) deliberately removed that direction entirely rather
+    than just making it "fire-and-forget" in name. Reconnects with the
+    same exponential-backoff shape as every other reconnect supervisor in
+    this codebase."""
 
     def __init__(self, host: str, port: int) -> None:
         self._host = host
         self._port = port
-        self._outbound: asyncio.Queue[bytes] = asyncio.Queue(maxsize=RELAY_QUEUE_MAXSIZE)
-
-    def publish_event(self, payload: dict[str, Any]) -> None:
-        data = (json.dumps(payload) + "\n").encode("utf-8")
-        try:
-            self._outbound.put_nowait(data)
-        except asyncio.QueueFull:
-            logger.critical(
-                "Stream processor relay client: outbound (classified event) queue "
-                "full (maxsize=%s) -- dropping one message. This process's own "
-                "connection back to worker.py is falling behind.",
-                RELAY_QUEUE_MAXSIZE,
-            )
 
     async def run(self, on_raw_frame: Callable[[str], None]) -> None:
         """Connects and stays connected for this process's whole
         lifetime, reconnecting with backoff on any failure. `on_raw_frame`
-        is called for every raw WS frame the server relays -- wired to
-        the processor's own parse-and-republish loop."""
+        is called for every raw WS frame the server relays."""
         delay = RECONNECT_BASE_DELAY_SECONDS
         while True:
             try:
@@ -264,7 +253,6 @@ class StreamProcessorRelayClient:
     async def _connect_and_relay(self, on_raw_frame: Callable[[str], None]) -> None:
         reader, writer = await asyncio.open_connection(self._host, self._port)
         logger.info("Connected to the stream processor relay at %s:%s", self._host, self._port)
-        send_task = asyncio.create_task(self._drain_outbound(writer))
         try:
             while True:
                 line = await reader.readline()
@@ -272,20 +260,6 @@ class StreamProcessorRelayClient:
                     raise ConnectionError("Stream processor relay server closed the connection")
                 on_raw_frame(line.decode("utf-8").rstrip("\n"))
         finally:
-            send_task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await send_task
             writer.close()
             with contextlib.suppress(ConnectionError, OSError):
                 await writer.wait_closed()
-
-    async def _drain_outbound(self, writer: asyncio.StreamWriter) -> None:
-        try:
-            while True:
-                data = await self._outbound.get()
-                writer.write(data)
-                while not self._outbound.empty():
-                    writer.write(self._outbound.get_nowait())
-                await writer.drain()
-        except (ConnectionError, OSError):
-            pass
