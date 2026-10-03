@@ -2518,10 +2518,17 @@ class TestStreamHubResubscribeOrder:
         sec_types: list[str] = []
 
         class _FakeWebsocket:
+            def __init__(self) -> None:
+                self._frames = [json.dumps({"header": {"type": "STATUS", "status": "CONNECTED"}})]
+
             async def send(self, raw: str) -> None:
                 sec_types.append(json.loads(raw)["sec_type"])
 
             async def recv(self) -> str:
+                # The Terminal's CONNECTED status first (_consume waits for
+                # it before subscribing), then stop right after resubscribing.
+                if self._frames:
+                    return self._frames.pop(0)
                 raise ConnectionError("stop right after resubscribing")
 
         with pytest.raises(ConnectionError):
