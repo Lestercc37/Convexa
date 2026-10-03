@@ -154,6 +154,37 @@ STATUS_STALE_AFTER_SECONDS = 15
 RECONNECT_BASE_DELAY_SECONDS = 2
 RECONNECT_MAX_DELAY_SECONDS = 60
 
+# Theta Terminal's own upstream (FPSS) link to ThetaData drops and
+# reconnects on its own, silently, several times a day (2026-10-03: 7 times
+# between 02:03 and 07:37 ET, market closed). The local WebSocket this hub
+# talks to stays up and just starts reporting STATUS DISCONNECTED, then
+# CONNECTED again 1-2s later. Subscribing during that gap is what failed at
+# 04:25:33 that day: every one of the 1,635 subscribe messages got
+# `response='ERROR'` (Terminal-side NullPointerException, `this.io is
+# null`), nothing retried, and the subscriptions stayed dead until the next
+# drop ~3h later. See ThetaStreamHub._wait_for_terminal_connected and
+# _verify_subscriptions.
+#
+# How long a fresh connection waits for the Terminal to report CONNECTED
+# before giving up and letting _run()'s normal backoff retry.
+TERMINAL_CONNECTED_WAIT_SECONDS = 20
+# How long after a subscribe burst to wait for the Terminal's per-request
+# responses before counting which ones were rejected.
+SUBSCRIPTION_VERIFY_WAIT_SECONDS = 5
+# One entry per retry round for rejected subscriptions: seconds to wait
+# before re-sending them (after the Terminal reports CONNECTED again).
+SUBSCRIPTION_RETRY_DELAYS_SECONDS: tuple[float, ...] = (2, 5, 10)
+# After the retry rounds above still leave rejections, the hub forces one
+# full reconnect (which re-waits for CONNECTED and resubscribes everything).
+# This many consecutive verifications ending that way stops escalating --
+# a rejection that keeps coming back is not the transient kind this
+# handles, and reconnecting forever would be its own storm (see
+# request_reconnect()'s docstring).
+MAX_CONSECUTIVE_FAILED_SUBSCRIPTION_CHECKS = 3
+# Only this response is treated as transient and retried. Anything else
+# (INVALID_PERMS, MAX_STREAMS_REACHED, ...) is not fixed by re-sending.
+RETRYABLE_SUBSCRIPTION_RESPONSE = "ERROR"
+
 # The `websockets` library's own incoming-frame buffer, separate from and
 # far smaller than every one of this module's own per-symbol app-level
 # queues (ThetaStreamHub's TRADE_QUEUE_MAXSIZE etc., 5000) -- defaults to
@@ -829,6 +860,25 @@ class ThetaStreamHub:
         # TRADE queues for the same symbol are genuinely separate
         # problems, tracked independently.
         self._last_queue_alert_at: dict[str, float] = {}
+        # Subscribe requests sent on the current connection that have no
+        # response yet, keyed by req_id -> ("option", args) / ("underlying",
+        # args), so a rejected one can be re-sent. Cleared on every new
+        # connection.
+        self._subscription_requests: dict[int, tuple[str, tuple[Any, ...]]] = {}
+        self._failed_subscriptions: list[tuple[str, tuple[Any, ...]]] = []
+        self._failed_subscription_checks = 0
+        # True once the Terminal has reported STATUS CONNECTED on the live
+        # connection; _verify_subscriptions waits on it before re-sending.
+        self._terminal_connected = False
+        # Frame counters, so a STATUS frame still sitting in _message_queue
+        # from a connection that already died is not mistaken for news
+        # about the new one (it would force a second, pointless reconnect).
+        # A frame is stale iff its 1-based dequeue position is <=
+        # _stale_frames_before, set to _frames_enqueued when a new
+        # connection is ready to subscribe.
+        self._frames_enqueued = 0
+        self._frames_dequeued = 0
+        self._stale_frames_before = 0
 
     def register_contract(
         self,
@@ -1162,6 +1212,14 @@ class ThetaStreamHub:
                 self._active_websocket = None
 
     async def _consume(self, websocket: websockets.ClientConnection) -> None:
+        self._subscription_requests.clear()
+        self._failed_subscriptions.clear()
+        self._terminal_connected = False
+        await self._wait_for_terminal_connected(websocket)
+        self._terminal_connected = True
+        # Anything already in _message_queue was read from the previous
+        # connection (nothing from this one has been enqueued yet).
+        self._stale_frames_before = self._frames_enqueued
         # Same race as _contracts_lock's own comment (__init__) describes --
         # this runs on the event loop thread, register_contract() can run
         # concurrently from a scheduler worker thread. The lock's held only
@@ -1256,24 +1314,167 @@ class ThetaStreamHub:
         # `websockets` library itself uses for undelivered frames) is the
         # same "must never block the shared reader" tradeoff already made
         # for every subscriber queue in this class.
+        verifier = asyncio.create_task(self._verify_subscriptions(websocket))
+        try:
+            while True:
+                try:
+                    raw = await asyncio.wait_for(
+                        websocket.recv(), timeout=STATUS_STALE_AFTER_SECONDS
+                    )
+                except TimeoutError as exc:
+                    raise ConnectionError(
+                        "No message from Theta Terminal within heartbeat window"
+                    ) from exc
+                try:
+                    self._message_queue.put_nowait(raw)
+                    self._frames_enqueued += 1
+                except asyncio.QueueFull:
+                    logger.warning(
+                        "ThetaStreamHub: internal message queue full (maxsize=%d) -- "
+                        "dropping one raw message; _process_messages is falling "
+                        "behind real message volume",
+                        self._message_queue.maxsize,
+                    )
+        finally:
+            verifier.cancel()
+
+    async def _wait_for_terminal_connected(self, websocket: websockets.ClientConnection) -> None:
+        """Blocks until Theta Terminal reports STATUS CONNECTED on this
+        fresh local connection, before anything is subscribed. The local
+        WebSocket reconnects in milliseconds, but the Terminal's own
+        upstream link to ThetaData takes 1-2s longer after a drop -- and a
+        STREAM add sent in that gap is answered with an ERROR (a
+        Terminal-side NullPointerException on its not-yet-reconnected
+        link), for every contract. A fixed delay can't hit the gap
+        reliably: the 2s this hub used to sleep matched the Terminal's own
+        reconnect delay, so it landed inside the gap on 2026-10-03 04:25
+        and missed it on the other drops that night.
+
+        Reads frames directly (nothing is subscribed yet, so none of them
+        can be market data) rather than going through _message_queue, so
+        DISCONNECTED statuses seen here are waited out, not treated as a
+        reason to tear this connection down again. Raises ConnectionError
+        if the Terminal never reports CONNECTED within
+        TERMINAL_CONNECTED_WAIT_SECONDS, which hands the retry to _run()'s
+        normal backoff.
+        """
+        deadline = time.monotonic() + TERMINAL_CONNECTED_WAIT_SECONDS
+        announced = False
         while True:
-            try:
-                raw = await asyncio.wait_for(
-                    websocket.recv(), timeout=STATUS_STALE_AFTER_SECONDS
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise ConnectionError(
+                    f"Theta Terminal did not report CONNECTED within "
+                    f"{TERMINAL_CONNECTED_WAIT_SECONDS}s of the connection opening"
                 )
+            try:
+                raw = await asyncio.wait_for(websocket.recv(), timeout=remaining)
             except TimeoutError as exc:
                 raise ConnectionError(
-                    "No message from Theta Terminal within heartbeat window"
+                    f"Theta Terminal did not report CONNECTED within "
+                    f"{TERMINAL_CONNECTED_WAIT_SECONDS}s of the connection opening"
                 ) from exc
             try:
-                self._message_queue.put_nowait(raw)
-            except asyncio.QueueFull:
-                logger.warning(
-                    "ThetaStreamHub: internal message queue full (maxsize=%d) -- "
-                    "dropping one raw message; _process_messages is falling "
-                    "behind real message volume",
-                    self._message_queue.maxsize,
+                header = json.loads(raw).get("header", {})
+            except (ValueError, AttributeError):
+                continue
+            if header.get("type") != "STATUS":
+                continue
+            if header.get("status") == "CONNECTED":
+                self._last_status_at = time.monotonic()
+                return
+            if not announced:
+                announced = True
+                logger.info(
+                    "ThetaStreamHub: Theta Terminal reports %s on the new connection -- "
+                    "waiting for CONNECTED before resubscribing",
+                    header.get("status"),
                 )
+
+    def _note_subscription_response(self, message: dict[str, Any]) -> None:
+        header = message.get("header", {})
+        spec = self._subscription_requests.pop(header.get("req_id"), None)
+        if spec is None or header.get("response") == "SUBSCRIBED":
+            return
+        if header.get("response") == RETRYABLE_SUBSCRIPTION_RESPONSE:
+            self._failed_subscriptions.append(spec)
+
+    def _take_failed_subscriptions(self) -> list[tuple[str, tuple[Any, ...]]]:
+        failed, self._failed_subscriptions = self._failed_subscriptions, []
+        return failed
+
+    async def _wait_until_terminal_connected_flag(self) -> None:
+        deadline = time.monotonic() + TERMINAL_CONNECTED_WAIT_SECONDS
+        while not self._terminal_connected and time.monotonic() < deadline:
+            await asyncio.sleep(0.05)
+
+    async def _verify_subscriptions(self, websocket: websockets.ClientConnection) -> None:
+        """Safety net behind _wait_for_terminal_connected (not a substitute
+        for it): after a subscribe burst, counts the requests the Terminal
+        answered with ERROR and re-sends exactly those, up to
+        len(SUBSCRIPTION_RETRY_DELAYS_SECONDS) rounds, each only once the
+        Terminal reports CONNECTED. If rejections remain, forces one full
+        reconnect (which resubscribes everything), but not more than
+        MAX_CONSECUTIVE_FAILED_SUBSCRIPTION_CHECKS times in a row.
+
+        Runs regardless of market hours: the data-silence watchdog only
+        notices dead subscriptions while the market is open, which is why
+        the 2026-10-03 04:25 failure stayed unnoticed for ~3h. Runs as a
+        task beside the read loop, since only that loop may call
+        websocket.recv().
+        """
+        try:
+            await asyncio.sleep(SUBSCRIPTION_VERIFY_WAIT_SECONDS)
+            failed = self._take_failed_subscriptions()
+            rounds = len(SUBSCRIPTION_RETRY_DELAYS_SECONDS)
+            for round_number, delay in enumerate(SUBSCRIPTION_RETRY_DELAYS_SECONDS, start=1):
+                if not failed:
+                    break
+                logger.error(
+                    "ThetaStreamHub: %d subscription(s) were rejected after resubscribing -- "
+                    "retrying in %ss (round %d/%d)",
+                    len(failed),
+                    delay,
+                    round_number,
+                    rounds,
+                )
+                await asyncio.sleep(delay)
+                await self._wait_until_terminal_connected_flag()
+                for kind, args in failed:
+                    if kind == "option":
+                        await self._subscribe_option(websocket, *args)
+                    else:
+                        await self._subscribe_underlying(websocket, *args)
+                await asyncio.sleep(SUBSCRIPTION_VERIFY_WAIT_SECONDS)
+                failed = self._take_failed_subscriptions()
+            if not failed:
+                self._failed_subscription_checks = 0
+                logger.info("ThetaStreamHub: all subscriptions confirmed")
+                return
+            self._failed_subscription_checks += 1
+            if self._failed_subscription_checks >= MAX_CONSECUTIVE_FAILED_SUBSCRIPTION_CHECKS:
+                logger.critical(
+                    "ThetaStreamHub: %d subscription(s) still rejected after %d retry round(s), "
+                    "and this is the %d-th verification in a row to end that way -- not "
+                    "reconnecting again, a persistent rejection is not what a reconnect fixes",
+                    len(failed),
+                    rounds,
+                    self._failed_subscription_checks,
+                )
+                return
+            logger.error(
+                "ThetaStreamHub: %d subscription(s) still rejected after %d retry round(s) -- "
+                "forcing a full reconnect",
+                len(failed),
+                rounds,
+            )
+            self.request_reconnect()
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            # The connection died mid-verification; _run() already handles
+            # that and the next connection verifies again.
+            logger.warning("ThetaStreamHub: subscription verification interrupted", exc_info=True)
 
     async def _process_messages(self) -> None:
         """Drains _message_queue -- json.loads(), per-message
@@ -1288,6 +1489,8 @@ class ThetaStreamHub:
         queue_depths_logged_at = self._queue_depths_logged_at or utc_now()
         while True:
             raw = await self._message_queue.get()
+            self._frames_dequeued += 1
+            frame_is_stale = self._frames_dequeued <= self._stale_frames_before
             # Measured the same way LOOP_ITERATION_SLOW_THRESHOLD_SECONDS
             # always was -- this span no longer delays websocket.recv(),
             # only how promptly the *next* already-buffered message gets
@@ -1299,18 +1502,30 @@ class ThetaStreamHub:
             msg_type = header.get("type")
             if msg_type == "STATUS":
                 if status != "CONNECTED":
-                    # Was a raise here when this ran inline in _consume();
-                    # this task has no connection of its own to unwind, so
-                    # it nudges the live one down the same way the
-                    # data-silence watchdog does.
-                    logger.warning(
-                        "ThetaStreamHub: Theta Terminal reported status: %s -- "
-                        "forcing a reconnect",
-                        status,
-                    )
-                    self.request_reconnect()
+                    if frame_is_stale:
+                        # Queued before the current connection existed --
+                        # about a link state the wait in _consume() already
+                        # saw the Terminal recover from.
+                        logger.debug(
+                            "ThetaStreamHub: ignoring stale STATUS %s from a previous connection",
+                            status,
+                        )
+                    else:
+                        # Was a raise here when this ran inline in _consume();
+                        # this task has no connection of its own to unwind, so
+                        # it nudges the live one down the same way the
+                        # data-silence watchdog does.
+                        logger.warning(
+                            "ThetaStreamHub: Theta Terminal reported status: %s -- "
+                            "forcing a reconnect",
+                            status,
+                        )
+                        self._terminal_connected = False
+                        self.request_reconnect()
                 else:
                     self._last_status_at = time.monotonic()
+                    if not frame_is_stale:
+                        self._terminal_connected = True
             elif msg_type == "QUOTE":
                 # Recorded before any filtering -- the watchdog's question
                 # is "is Theta Terminal sending this connection QUOTE
@@ -1343,6 +1558,7 @@ class ThetaStreamHub:
                         self._handle_underlying_trade(message)
             elif msg_type == "REQ_RESPONSE":
                 _log_req_response("ThetaStreamHub", message)
+                self._note_subscription_response(message)
 
             now = utc_now()
             if (now - queue_depths_logged_at).total_seconds() > QUEUE_DEPTH_LOG_INTERVAL_SECONDS:
@@ -1369,6 +1585,10 @@ class ThetaStreamHub:
         strike: Decimal,
         req_type: str,
     ) -> None:
+        self._subscription_requests[self._next_request_id] = (
+            "option",
+            (root, expiration, contract_type, strike, req_type),
+        )
         payload = {
             "msg_type": "STREAM",
             "sec_type": "OPTION",
@@ -1393,6 +1613,7 @@ class ThetaStreamHub:
         # right. sec_type is the only field that differs between the
         # stock and index variants of this stream.
         sec_type = "INDEX" if kind == UnderlyingKind.INDEX else "STOCK"
+        self._subscription_requests[self._next_request_id] = ("underlying", (symbol, kind))
         payload = {
             "msg_type": "STREAM",
             "sec_type": sec_type,
