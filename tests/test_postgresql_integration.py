@@ -632,6 +632,45 @@ async def test_async_postgresql_storage_ignores_fresher_narrow_write_for_index(
 
 
 @pytest.mark.asyncio
+async def test_async_latest_chain_snapshot_fast_path_matches_the_exhaustive_query(
+    postgresql_storage: tuple[PostgreSQLStorage, Engine, str],
+) -> None:
+    """The fast tier (underlying_id index, newest distinct times) must give
+    the same chain as the exhaustive candidates CTE -- including when rows
+    predate migration 0036 and have no underlying_id, which forces the
+    fallback. A multi-expiration write followed by a fresher narrow one is
+    the case where picking the wrong time silently returns a tiny slice."""
+    storage, engine, symbol = postgresql_storage
+    near = MockDataProvider().get_option_chain(symbol)
+    far = MockDataProvider().get_option_chain(symbol, date(2026, 3, 20))
+    full = replace(near, contracts=near.contracts + far.contracts)
+    storage.save_chain_snapshot(full)
+    storage.save_chain_snapshot(replace(near, as_of=full.as_of + timedelta(minutes=1)))
+
+    async_engine = create_engine(_require_test_database_url())
+    try:
+        async_storage = AsyncPostgreSQLStorage(create_session_factory(async_engine))
+
+        assert await async_storage._latest_multi_expiration_snapshot_time(symbol) == full.as_of
+        fast = await async_storage.get_latest_chain_snapshot(symbol)
+
+        with engine.begin() as connection:
+            connection.execute(
+                text("UPDATE option_chain_snapshots SET underlying_id = NULL WHERE time >= :t"),
+                {"t": full.as_of},
+            )
+        assert await async_storage._latest_multi_expiration_snapshot_time(symbol) is None
+        fallback = await async_storage.get_latest_chain_snapshot(symbol)
+    finally:
+        await async_engine.dispose()
+
+    assert fast is not None and fallback is not None
+    assert fast.as_of == fallback.as_of == full.as_of
+    assert fast.contracts == fallback.contracts
+    assert len({contract.expiration for contract in fast.contracts}) > 1
+
+
+@pytest.mark.asyncio
 async def test_async_postgresql_storage_filters_gamma_aggregate_by_view(
     postgresql_storage: tuple[PostgreSQLStorage, Engine, str],
 ) -> None:

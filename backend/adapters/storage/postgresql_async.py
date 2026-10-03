@@ -34,6 +34,13 @@ from backend.domain.use_cases.flow import Moneyness, SymbolFlowPressure, WhaleAl
 # never drift out of sync on the channel name.
 MARKET_PRICE_CHANNEL = "market_price_updates"
 
+# How many of a symbol's newest distinct snapshot times the fast tier of
+# get_latest_chain_snapshot inspects when looking for the latest multi-
+# expiration write. Narrow single-expiration writes (the Volatility Smile
+# panel) can sit on the newest few times; 20 is far more than that, and the
+# search falls back to the exhaustive query if none of them qualifies.
+FAST_LATEST_SNAPSHOT_CANDIDATES = 20
+
 
 class AsyncPostgreSQLStorage:
     """Async counterpart to `PostgreSQLStorage`, covering the handful of
@@ -280,9 +287,27 @@ class AsyncPostgreSQLStorage:
                     LIMIT 1
                 )
             """
-        parameters: dict[str, str | date] = {"symbol": underlying.upper()}
+        parameters: dict[str, str | date | datetime] = {"symbol": underlying.upper()}
         if expiration is not None:
             parameters["expiration"] = expiration
+        else:
+            # Fast tier -- same answer as the candidates CTE above (the
+            # newest snapshot time with more than one expiration), found
+            # through the (underlying_id, time DESC) index (migration 0036)
+            # instead of grouping every historical snapshot row the symbol
+            # has: measured 2026-10-03 on the production tables, that CTE
+            # took 11.0s for SPX (18.9M rows) and 2.3s for SPY (4.2M), vs
+            # 0.03s / 0.01s here, and it is what made /market/{symbol} --
+            # and so the dashboard's whole chart view after a symbol switch
+            # -- wait. PostgreSQLStorage.get_latest_chain_snapshot got this
+            # kind of fast path on 2026-09-28; this async twin never did.
+            # Falls through to the CTE above, unchanged, when nothing
+            # qualifies (rows written before migration 0036 have no
+            # underlying_id).
+            fast_time = await self._latest_multi_expiration_snapshot_time(parameters["symbol"])
+            if fast_time is not None:
+                latest_cte_sql = "WITH latest AS (SELECT CAST(:fast_time AS timestamptz) AS time)"
+                parameters["fast_time"] = fast_time
         async with self.session_factory() as session:
             result = await session.execute(
                 text(
@@ -552,6 +577,51 @@ class AsyncPostgreSQLStorage:
             )
             row = result.mappings().first()
             return Decimal(str(row["anchor_price"])) if row is not None else None
+
+    async def _lookup_underlying_id(self, symbol: str) -> int | None:
+        # Read-only counterpart to _ensure_underlying: reuses its cache but
+        # never inserts -- a read must not create an underlying.
+        cached = self._underlying_id_cache.get(symbol)
+        if cached is not None:
+            return cached
+        async with self.session_factory() as session:
+            result = await session.execute(
+                text("SELECT id FROM underlyings WHERE symbol = :symbol"), {"symbol": symbol}
+            )
+            underlying_id = result.scalar()
+        if underlying_id is not None:
+            self._underlying_id_cache[symbol] = underlying_id
+        return underlying_id
+
+    async def _latest_multi_expiration_snapshot_time(self, symbol: str) -> datetime | None:
+        underlying_id = await self._lookup_underlying_id(symbol)
+        if underlying_id is None:
+            return None
+        async with self.session_factory() as session:
+            result = await session.execute(
+                text(
+                    """
+                    WITH recent_times AS (
+                        SELECT DISTINCT s.time
+                        FROM option_chain_snapshots AS s
+                        WHERE s.underlying_id = :underlying_id
+                        ORDER BY s.time DESC
+                        LIMIT :candidates
+                    )
+                    SELECT s.time
+                    FROM option_chain_snapshots AS s
+                    JOIN recent_times AS rt ON rt.time = s.time
+                    JOIN option_contracts AS oc ON oc.id = s.contract_id
+                    WHERE s.underlying_id = :underlying_id
+                    GROUP BY s.time
+                    HAVING COUNT(DISTINCT oc.expiration) > 1
+                    ORDER BY s.time DESC
+                    LIMIT 1
+                    """
+                ),
+                {"underlying_id": underlying_id, "candidates": FAST_LATEST_SNAPSHOT_CANDIDATES},
+            )
+            return result.scalar()
 
     async def _ensure_underlying(self, session: AsyncSession, symbol: str) -> int:
         # Confirmed live, 2026-09-22: this UPSERT ran unconditionally on
