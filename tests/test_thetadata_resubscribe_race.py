@@ -39,6 +39,12 @@ class FakeTerminal:
         self.fpss = "up"  # "up" | "down"
         self.reject_budget = 0  # reject this many requests even while "up"
         self.reject_everything = False
+        # Real cold-start behaviour (measured 2026-10-03): until the first
+        # STREAM add arrives the Terminal reports DISCONNECTED and has not
+        # logged in to ThetaData; the add triggers the login, is held until
+        # it completes, then answered SUBSCRIBED.
+        self.lazy_fpss_login = False
+        self.lazy_login_delay = 0.2
         self.connections = 0
         self.subscribe_requests = 0
         self.rejected = 0
@@ -85,6 +91,9 @@ class FakeTerminal:
                 if message.get("msg_type") != "STREAM":
                     continue
                 self.subscribe_requests += 1
+                if self.lazy_fpss_login and self.fpss == "down":
+                    await asyncio.sleep(self.lazy_login_delay)
+                    self.fpss = "up"
                 accepted = self.fpss == "up" and not self.reject_everything
                 if accepted and self.reject_budget > 0:
                     self.reject_budget -= 1
@@ -184,16 +193,39 @@ class TestResubscribeRaceAgainstFakeTerminal:
             await hub.stop()
 
     @pytest.mark.asyncio
-    async def test_no_subscribe_is_sent_while_the_terminal_never_reports_connected(
-        self, terminal: FakeTerminal
+    async def test_a_freshly_started_terminal_that_only_logs_in_on_first_subscribe_is_not_deadlocked(
+        self, terminal: FakeTerminal, monkeypatch: pytest.MonkeyPatch
     ) -> None:
+        """Regression for the first version of the wait (deployed 2026-10-03
+        12:13, found 12:51): a cold-started Terminal stays DISCONNECTED until
+        its first STREAM add, so waiting for CONNECTED forever never
+        subscribed and the worker looped in backoff. The wait must give up
+        after its grace period and subscribe."""
+        monkeypatch.setattr(provider_module, "TERMINAL_CONNECTED_WAIT_SECONDS", 0.5)
         terminal.fpss = "down"
+        terminal.lazy_fpss_login = True
         hub = _hub(terminal.url)
         hub.start()
         try:
-            await asyncio.sleep(1.0)  # several connect attempts, each waiting out the 3s limit
-            assert terminal.connections >= 1
-            assert terminal.subscribe_requests == 0
+            assert await _until(lambda: terminal.latest_accepted == EXPECTED_SUBSCRIPTIONS)
+            assert terminal.rejected == 0
+            # One extra reconnect is the pre-existing cold-start behaviour
+            # (the Terminal keeps reporting DISCONNECTED until its login
+            # completes, which the hub treats as a reason to reconnect once);
+            # what must not happen is never subscribing.
+            assert terminal.connections <= 2
+        finally:
+            await hub.stop()
+
+    @pytest.mark.asyncio
+    async def test_the_wait_is_short_when_the_terminal_reports_connected_at_once(
+        self, terminal: FakeTerminal, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(provider_module, "TERMINAL_CONNECTED_WAIT_SECONDS", 30)
+        hub = _hub(terminal.url)
+        hub.start()
+        try:
+            assert await _until(lambda: terminal.latest_accepted == EXPECTED_SUBSCRIPTIONS, timeout=3)
         finally:
             await hub.stop()
 
