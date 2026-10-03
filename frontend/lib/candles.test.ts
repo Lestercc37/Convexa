@@ -3,6 +3,7 @@ import {
   aggregateCandles,
   aggregateMinuteCandles,
   aggregateMinuteVwapPoints,
+  aggregateVwapPoints,
   type MinuteCandle,
 } from "./candles";
 
@@ -118,5 +119,39 @@ describe("aggregateCandles", () => {
       { time: 0, open: 200, high: 207, low: 198, close: 203 },
       { time: 3_600, open: 203, high: 206, low: 201, close: 204 },
     ]);
+  });
+});
+
+describe("aggregateVwapPoints", () => {
+  // One VWAP point every 30s across 16 minutes starting at the epoch's
+  // 00:00:00Z -- value grows with time so the last point in each bucket is
+  // distinguishable.
+  const points = Array.from({ length: 32 }, (_, i) => ({
+    timestamp: new Date(i * 30_000).toISOString(),
+    value: 100 + i,
+  }));
+
+  it("buckets to the candle timeframe so the line shares the candles' time grid (5m)", () => {
+    const result = aggregateVwapPoints(points, "5m");
+    expect(result.map((p) => p.timestamp)).toEqual([
+      "1970-01-01T00:00:00.000Z",
+      "1970-01-01T00:05:00.000Z",
+      "1970-01-01T00:10:00.000Z",
+      "1970-01-01T00:15:00.000Z",
+    ]);
+    // last value observed inside each bucket
+    expect(result.map((p) => p.value)).toEqual([109, 119, 129, 131]);
+  });
+
+  it("buckets to 15 minutes", () => {
+    expect(aggregateVwapPoints(points, "15m").map((p) => p.timestamp)).toEqual([
+      "1970-01-01T00:00:00.000Z",
+      "1970-01-01T00:15:00.000Z",
+    ]);
+  });
+
+  it("defaults to 1-minute buckets, matching aggregateMinuteVwapPoints", () => {
+    expect(aggregateVwapPoints(points)).toEqual(aggregateMinuteVwapPoints(points));
+    expect(aggregateVwapPoints(points)).toHaveLength(16);
   });
 });

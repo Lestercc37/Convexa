@@ -75,22 +75,39 @@ export function aggregateCandles(candles: MinuteCandle[], timeframe: Timeframe):
 // `timestamp` is normalized to the bucket's own minute boundary (not the
 // last raw tick's exact second) so a VWAP point and its same-minute
 // candle land on the *exact* same logical time-grid position.
-export function aggregateMinuteVwapPoints(points: VwapPoint[]): VwapPoint[] {
+//
+// `timeframe` extends the same rule to the coarser candle timeframes: the
+// VWAP line must land on the *same* time grid as the candles it shares an
+// axis with, not a finer one. Confirmed live, 2026-10-03 (user report:
+// 5m/15m candles "muy separadas" / "una raya"), measured against the real
+// lightweight-charts 5.2.0: 78 5m candles plus a 1-per-minute VWAP series
+// give ~391 logical slots, so fitContent() sizes a slot for the 1-minute
+// grid (3.4px in a 1400px chart) and each 5m candle -- one slot wide --
+// ends up ~2.7px thick with ~17px of empty axis to its neighbour (15m:
+// ~51px apart). Bucketing the VWAP to the candle timeframe makes
+// candle-to-candle distance equal the slot width again (17px / 50px, bodies
+// touching), the same joined look 1m has.
+export function aggregateVwapPoints(points: VwapPoint[], timeframe: Timeframe = "1m"): VwapPoint[] {
+  const bucketSeconds = TIMEFRAME_MINUTES[timeframe] * SECONDS_PER_MINUTE;
   const sortedPoints = points
     .map((point, index) => ({ ...point, index, time: Date.parse(point.timestamp) }))
     .filter((point) => Number.isFinite(point.time) && Number.isFinite(point.value))
     .sort((left, right) => left.time - right.time || left.index - right.index);
-  const lastValueByMinute = new Map<number, number>();
+  const lastValueByBucket = new Map<number, number>();
 
   for (const point of sortedPoints) {
-    const minute = Math.floor(point.time / 1000 / SECONDS_PER_MINUTE) * SECONDS_PER_MINUTE;
-    lastValueByMinute.set(minute, point.value);
+    const bucket = Math.floor(point.time / 1000 / bucketSeconds) * bucketSeconds;
+    lastValueByBucket.set(bucket, point.value);
   }
 
-  return [...lastValueByMinute.entries()].map(([minute, value]) => ({
-    timestamp: new Date(minute * 1000).toISOString(),
+  return [...lastValueByBucket.entries()].map(([bucket, value]) => ({
+    timestamp: new Date(bucket * 1000).toISOString(),
     value,
   }));
+}
+
+export function aggregateMinuteVwapPoints(points: VwapPoint[]): VwapPoint[] {
+  return aggregateVwapPoints(points, "1m");
 }
 
 export function aggregateMinuteCandles(points: PricePoint[]): MinuteCandle[] {

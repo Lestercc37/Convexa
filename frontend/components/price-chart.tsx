@@ -18,8 +18,7 @@ import {
   type UTCTimestamp,
 } from "lightweight-charts";
 import { getGammaHistory } from "@/lib/api";
-import { fitContentCappingBarSpacing } from "@/lib/chart-bar-spacing";
-import { aggregateMinuteVwapPoints, type MinuteCandle, type Timeframe, type VwapPoint } from "@/lib/candles";
+import { aggregateVwapPoints, type MinuteCandle, type Timeframe, type VwapPoint } from "@/lib/candles";
 import { useLanguage } from "@/lib/i18n/language-context";
 import type { MarketPriceStreamStatus } from "@/lib/market-price-stream";
 import { EASTERN_TIME_ZONE, mostRecentSessionRange } from "@/lib/market-session";
@@ -492,7 +491,7 @@ export function PriceChart({
         mergePriceRange(original(), referenceLevelsRef.current),
     });
     series.setData(withSessionOpenAnchor(initialCandlesRef.current, sessionOpenSecondsRef.current));
-    fitContentCappingBarSpacing(chart, series.data().length - 1);
+    chart.timeScale().fitContent();
     chartRef.current = chart;
     seriesRef.current = series;
 
@@ -533,7 +532,7 @@ export function PriceChart({
       // keep re-fitting and fighting the user's own pan/zoom.
       if (!hasRefitAfterRealSizeRef.current && width > 0) {
         hasRefitAfterRealSizeRef.current = true;
-        fitContentCappingBarSpacing(chart, series.data().length - 1, width);
+        chart.timeScale().fitContent();
       }
       // Works around a real, confirmed lightweight-charts (5.2.0) resize bug
       // -- live, 2026-09-23: after some resizes, the candlestick series and
@@ -672,8 +671,7 @@ export function PriceChart({
       candles.length - previousCandleCount > 1 &&
       Date.now() - mountedAtRef.current < CANDLE_SEED_SETTLING_WINDOW_MS
     ) {
-      const chart = chartRef.current;
-      if (chart) fitContentCappingBarSpacing(chart, series.data().length - 1);
+      chartRef.current?.timeScale().fitContent();
     }
   }, [candles]);
 
@@ -917,7 +915,7 @@ export function PriceChart({
     // regress this again regardless of what a future caller passes it.
     line.setData(
       dedupeAscendingByTime(
-        aggregateMinuteVwapPoints(vwapPoints).map((point) => ({
+        aggregateVwapPoints(vwapPoints, timeframe).map((point) => ({
           time: Math.floor(Date.parse(point.timestamp) / 1000) as UTCTimestamp,
           value: point.value,
         })),
@@ -931,7 +929,7 @@ export function PriceChart({
     // renders it on its own canvas, not as React JSX) picks up a language
     // switch by recreating the series — the title can't be patched in
     // place without also re-touching `applyOptions` bookkeeping here.
-  }, [vwapPoints, showVwap, vwapProxySymbol, t]);
+  }, [vwapPoints, showVwap, vwapProxySymbol, t, timeframe]);
 
   useEffect(() => {
     const series = seriesRef.current;
