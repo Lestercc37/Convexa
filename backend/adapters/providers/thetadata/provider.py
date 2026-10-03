@@ -166,8 +166,16 @@ RECONNECT_MAX_DELAY_SECONDS = 60
 # _verify_subscriptions.
 #
 # How long a fresh connection waits for the Terminal to report CONNECTED
-# before giving up and letting _run()'s normal backoff retry.
-TERMINAL_CONNECTED_WAIT_SECONDS = 20
+# before subscribing anyway. NOT a hard requirement: after a cold start the
+# Terminal keeps reporting STATUS DISCONNECTED and only logs in to ThetaData
+# when it receives its first STREAM add (measured 2026-10-03: DISCONNECTED
+# for as long as a raw client stayed silent; one STREAM add later, FPSS
+# logged in, STATUS flipped to CONNECTED ~1s after and the request was
+# answered SUBSCRIBED). Requiring CONNECTED first deadlocked the worker after
+# a Terminal restart. The wait only needs to outlast the Terminal's own
+# reconnect after a drop (1.1-2.0s until it starts, up to ~0.9s more to log
+# in, observed 2026-10-03), so it is short.
+TERMINAL_CONNECTED_WAIT_SECONDS = 6
 # How long after a subscribe burst to wait for the Terminal's per-request
 # responses before counting which ones were rejected.
 SUBSCRIPTION_VERIFY_WAIT_SECONDS = 5
@@ -1353,35 +1361,39 @@ class ThetaStreamHub:
         Reads frames directly (nothing is subscribed yet, so none of them
         can be market data) rather than going through _message_queue, so
         DISCONNECTED statuses seen here are waited out, not treated as a
-        reason to tear this connection down again. Raises ConnectionError
-        if the Terminal never reports CONNECTED within
-        TERMINAL_CONNECTED_WAIT_SECONDS, which hands the retry to _run()'s
-        normal backoff.
+        reason to tear this connection down again.
+
+        Gives up waiting after TERMINAL_CONNECTED_WAIT_SECONDS and returns
+        anyway, so the caller subscribes: a Terminal that has just started
+        stays DISCONNECTED until it gets its first subscription (see that
+        constant), and blocking here would never send one.
         """
         deadline = time.monotonic() + TERMINAL_CONNECTED_WAIT_SECONDS
         announced = False
         while True:
             remaining = deadline - time.monotonic()
             if remaining <= 0:
-                raise ConnectionError(
-                    f"Theta Terminal did not report CONNECTED within "
-                    f"{TERMINAL_CONNECTED_WAIT_SECONDS}s of the connection opening"
+                logger.warning(
+                    "ThetaStreamHub: Theta Terminal still not CONNECTED %ss after the "
+                    "connection opened -- subscribing anyway (a freshly started Terminal "
+                    "only logs in to ThetaData on its first subscription)",
+                    TERMINAL_CONNECTED_WAIT_SECONDS,
                 )
+                return
             try:
                 raw = await asyncio.wait_for(websocket.recv(), timeout=remaining)
-            except TimeoutError as exc:
-                raise ConnectionError(
-                    f"Theta Terminal did not report CONNECTED within "
-                    f"{TERMINAL_CONNECTED_WAIT_SECONDS}s of the connection opening"
-                ) from exc
+            except TimeoutError:
+                continue
             try:
                 header = json.loads(raw).get("header", {})
             except (ValueError, AttributeError):
                 continue
             if header.get("type") != "STATUS":
                 continue
+            # Any STATUS frame shows the Terminal is alive; keep the
+            # no-STATUS watchdog from judging this connection meanwhile.
+            self._last_status_at = time.monotonic()
             if header.get("status") == "CONNECTED":
-                self._last_status_at = time.monotonic()
                 return
             if not announced:
                 announced = True
