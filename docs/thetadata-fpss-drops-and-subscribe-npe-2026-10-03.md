@@ -106,10 +106,17 @@ after the close) | 10-02 4 | 10-03 16 | 10-04 until 11:00: 4. This is a correlat
 fixed period. **Questions: what changed in 202609301 around FPSS? Is there a supported way to pin the core
 version (the launcher's JarLibraryManager re-fetches the latest on every start)?**
 
-**Two long outages on 10-03.** 13:13:32.322 `Connection lost`, next `Attempting login` at 13:17:19.432
-(3 min 47 s); and 15:03:40.928 -> 15:06:16.265 (2 min 35 s). Every other drop re-logged in within 0.1-0.9 s. On
-2026-10-04 08:11:47.560 the re-login took 4.4 s and connected to `nj-b.thetadata.us:20000`; all others reconnected
-to `nj-a`.
+**Two long outages on 10-03, both inside the announced maintenance window.** 13:13:32.322 `Connection lost`, next
+`Attempting login` at 13:17:19.432 (3 min 47 s); and 15:03:40.928 -> 15:06:16.265 (2 min 35 s). David
+(ThetaData) wrote on 2026-10-02 10:28 AM: "We are going to take a maintenance window tomorrow from 12 to 4 PM.
+There may be intermittent connectivity during that window." Five of the 16 drops on 10-03 fall inside it
+(12:21, 13:13, 13:55, 14:04, 15:03), including both long outages, so we do not report those as faults. The other 11
+on 10-03 (02:03, 02:10, 03:20 x2, 04:25, 07:28, 07:37, 11:01, 11:05, 11:34, 11:39) and the 10-04 ones before
+the 14:00 server reboot (01:14, 01:34, 08:11, 09:29, 13:55) are outside any window we were told about.
+**Question: were there other maintenance windows or server restarts on 10-01 evening (the 118-drop burst from 18:14),
+10-02, or early 10-04?** On 2026-10-04 08:11:47.560 the re-login took 4.4 s and connected to
+`nj-b.thetadata.us:20000`; all other reconnects went to `nj-a`. Every drop outside the long outages re-logged in
+within 0.1-0.9 s.
 
 **Cold start.** After a Terminal restart the log shows `Starting server at ...` but no `[FPSS]` line until a
 WebSocket client sends its first `STREAM add`; until then every `STATUS` frame says `DISCONNECTED`. Measured
@@ -119,7 +126,7 @@ SUBSCRIBED. **Question: is login-on-first-subscription intended, and is `STATUS`
 (It broke a client that waited for CONNECTED before subscribing.)
 
 **After the client-side fixes (2026-10-03 11:13 on).** Natural drops at 11:34, 11:39, 12:21, 13:55 and 14:04 were
-handled with zero rejected subscriptions. During the two long outages above the Terminal itself is not logged in to
+handled with zero rejected subscriptions. During the two long outages above (the maintenance window) the Terminal itself is not logged in to
 FPSS, so subscriptions sent then are rejected until it is back (nothing a client can do). The 04:25 and 11:05
 rejections reported above happened before the fix. A deliberate 3-minute Terminal stop on 2026-10-04 (11:13-11:16)
 recovered by itself in about 80 s.
