@@ -93,3 +93,30 @@ for the first request of a burst, then accepted the rest.
 
 Logs for every timestamp above are available on request (`terminal-latest.log`, the daily zips,
 and our worker log).
+
+---
+
+## Update 2026-10-04 (add to the report when it is sent)
+
+**Version correlation.** The launcher (`ThetaTerminalv3.jar`, dated 2026-09-26) fetched and started a newer
+core on 2026-10-01 12:33: `lib/202609241.jar` -> `lib/202609301.jar` (Terminal reports `20260930:18f1199`).
+FPSS "Connection lost" per day: 09-26 0, 09-27 0, 09-28 2, 09-29 2, 09-30 1 | **10-01 118** (burst from 18:14,
+after the close) | 10-02 4 | 10-03 13 | 10-04 until 11:00: 4. This is a correlation only (the pairs of drops
+4-9 minutes apart already existed on 09-28/09-29). Intervals between drops range from 4 minutes to 15 hours; no
+fixed period. **Questions: what changed in 202609301 around FPSS? Is there a supported way to pin the core
+version (the launcher's JarLibraryManager re-fetches the latest on every start)?**
+
+**One long outage.** 2026-10-03 15:03:40.928 `Connection lost`, next `Attempting login` only at 15:06:16.265
+(2 min 35 s). Every other drop re-logged in within 0.1-0.9 s. On 2026-10-04 08:11:47.560 the re-login took 4.4 s and
+connected to `nj-b.thetadata.us:20000`; all others reconnected to `nj-a`.
+
+**Cold start.** After a Terminal restart the log shows `Starting server at ...` but no `[FPSS]` line until a
+WebSocket client sends its first `STREAM add`; until then every `STATUS` frame says `DISCONNECTED`. Measured
+2026-10-03 12:51-12:52: a client that connected and stayed silent saw DISCONNECTED indefinitely; one STREAM add
+later FPSS logged in (12:52:28), STATUS became CONNECTED about 1 s later, and the request was answered
+SUBSCRIBED. **Question: is login-on-first-subscription intended, and is `STATUS` meant to reflect FPSS state?**
+(It broke a client that waited for CONNECTED before subscribing.)
+
+**After the client-side fixes (2026-10-03 11:13 on).** Natural drops at 11:34, 11:39, 12:21 and 13:55, 14:04,
+15:03 were handled with zero rejected subscriptions; the 11:05 and 04:25 rejections above happened before the
+fix. A deliberate 3-minute Terminal stop on 2026-10-04 (11:13-11:16) recovered by itself in about 80 s.
