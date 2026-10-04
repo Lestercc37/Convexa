@@ -98,7 +98,7 @@ class TestAlertDecision:
     def test_recovery_is_announced_once(self) -> None:
         _, state = shc.decide_alert(MARKET_NOW, list(self.FAIL), {})
         message, state = shc.decide_alert(MARKET_NOW + timedelta(minutes=2), [], state)
-        assert message and "recovered" in message
+        assert message and "back to normal" in message
         message, _ = shc.decide_alert(MARKET_NOW + timedelta(minutes=3), [], state)
         assert message is None
 
@@ -112,3 +112,47 @@ class TestToast:
 
         assert (tmp_path / "stream_alert_message.txt").read_text(encoding="utf-8") == "CONVEXA STREAM PROBLEM: stalled"
         assert calls == [["schtasks", "/Run", "/TN", "ConvexaStreamAlertToast"]]
+
+
+RESUBSCRIBE_764 = "2026-10-05 09:31:00,000 INFO [x] ThetaStreamHub: resubscribing 764 contracts (1528 messages) on reconnect"
+WIDENED_SPY_30 = "2026-10-05 09:40:00,000 INFO [x] Near-the-money set for SPY widened, live-subscribing 30 new contract(s)"
+WIDENED_QQQ_12 = "2026-10-05 09:50:00,000 INFO [x] Near-the-money set for QQQ widened, live-subscribing 12 new contract(s)"
+RESUBSCRIBE_810 = "2026-10-05 10:00:00,000 INFO [x] ThetaStreamHub: resubscribing 810 contracts (1620 messages) on reconnect"
+
+
+class TestContractCountNotice:
+    def test_count_is_the_last_resubscribe_plus_contracts_added_since(self) -> None:
+        log = "\n".join([RESUBSCRIBE_764, WIDENED_SPY_30, WIDENED_QQQ_12])  # noqa: FLY002
+        assert shc.count_registered_contracts(log) == 764 + 30 + 12
+
+    def test_a_later_resubscribe_replaces_the_running_count(self) -> None:
+        log = "\n".join([RESUBSCRIBE_764, WIDENED_SPY_30, RESUBSCRIBE_810])  # noqa: FLY002
+        assert shc.count_registered_contracts(log) == 810
+
+    def test_additions_before_any_resubscribe_are_not_counted(self) -> None:
+        assert shc.count_registered_contracts(WIDENED_SPY_30) is None
+
+    def test_below_the_notice_limit_is_fine(self) -> None:
+        check = shc.check_contract_count(764)
+        assert check.ok and check.severity == "notice"
+
+    def test_close_to_the_plan_limit_is_a_notice_not_an_outage(self) -> None:
+        check = shc.check_contract_count(shc.CONTRACT_NOTICE_LIMIT)
+        assert not check.ok and check.severity == "notice"
+        assert "close to" in check.detail
+
+    def test_over_the_plan_limit_says_so(self) -> None:
+        check = shc.check_contract_count(1524)
+        assert not check.ok
+        assert "over the plan" in check.detail
+
+    def test_an_unreadable_log_is_not_an_alert(self) -> None:
+        assert shc.check_contract_count(None).ok
+
+    def test_a_notice_alone_is_labelled_notice_and_a_mix_is_a_problem(self) -> None:
+        notice = shc.check_contract_count(1200)
+        message, _ = shc.decide_alert(MARKET_NOW, [notice], {})
+        assert message and message.startswith("CONVEXA STREAM NOTICE")
+        outage = shc.Check("services", False, "down")
+        message, _ = shc.decide_alert(MARKET_NOW, [notice, outage], {})
+        assert message and message.startswith("CONVEXA STREAM PROBLEM")
