@@ -15,6 +15,20 @@ blind spot cannot hide an outage:
                   RECONNECT_LOOP_WINDOW_MINUTES -- the signature of both the
                   04-Oct lock-step loop and a Terminal flapping.
 
+And one informational notice (not an outage):
+
+  contract_count  The worker streams TRADE and QUOTE for every registered
+                  contract and the plan (Options: STANDARD) documents 1,000
+                  streamable contracts for each. The registered set only
+                  grows during a session (and roughly doubles around the 16:00
+                  close); it was 1,440-1,668 on several mornings when the
+                  worker carried it over. Reconstructed from worker.log (last
+                  "resubscribing N contracts" plus every later "widened,
+                  live-subscribing K new contract(s)") and noticed at
+                  CONTRACT_NOTICE_LIMIT. The Terminal has never answered
+                  MAX_STREAMS_REACHED in our logs, so what happens past the
+                  cap (rejected, or silently not delivered) is unknown.
+
 Alerts go to logs/stream_health.log always, and optionally to:
   --toast-task NAME   a Windows toast on the server's desktop: the message is
                       written to logs/stream_alert_message.txt and the
@@ -49,6 +63,8 @@ from zoneinfo import ZoneInfo
 from backend.domain.use_cases.market_hours import is_market_open
 
 EASTERN = ZoneInfo("America/New_York")
+CONTRACT_NOTICE_LIMIT = 950
+CONTRACT_PLAN_LIMIT = 1000
 STALL_MINUTES = 3
 GRACE_AFTER_OPEN_MINUTES = 10
 RECONNECT_LOOP_COUNT = 6
@@ -64,6 +80,7 @@ class Check:
     name: str
     ok: bool
     detail: str
+    severity: str = "alert"  # "notice" = informational, never called an outage
 
 
 # ---------------------------------------------------------------- pure logic
@@ -125,6 +142,47 @@ def check_reconnect_loop(reconnects: int) -> Check:
     return Check("reconnect_loop", True, f"{reconnects} reconnects in the last {RECONNECT_LOOP_WINDOW_MINUTES} min")
 
 
+_RESUBSCRIBE = re.compile(r"resubscribing (\d+) contracts")
+_WIDENED = re.compile(r"widened, live-subscribing (\d+) new contract")
+
+
+def count_registered_contracts(log_text: str) -> int | None:
+    """Contracts the worker has registered right now: the count at its last
+    resubscribe plus every contract live-added since. None if the log has no
+    resubscribe line at all."""
+    registered: int | None = None
+    for line in log_text.splitlines():
+        match = _RESUBSCRIBE.search(line)
+        if match:
+            registered = int(match.group(1))
+            continue
+        match = _WIDENED.search(line)
+        if match and registered is not None:
+            registered += int(match.group(1))
+    return registered
+
+
+def check_contract_count(count: int | None) -> Check:
+    if count is None:
+        return Check("contract_count", True, "unknown (no resubscribe line in the log)", "notice")
+    if count > CONTRACT_PLAN_LIMIT:
+        return Check(
+            "contract_count",
+            False,
+            f"{count} contracts registered, over the plan's {CONTRACT_PLAN_LIMIT} streamable per type "
+            "(what the Terminal does past the cap is unknown)",
+            "notice",
+        )
+    if count >= CONTRACT_NOTICE_LIMIT:
+        return Check(
+            "contract_count",
+            False,
+            f"{count} contracts registered, close to the plan's {CONTRACT_PLAN_LIMIT} streamable per type",
+            "notice",
+        )
+    return Check("contract_count", True, f"{count} contracts registered (plan {CONTRACT_PLAN_LIMIT})", "notice")
+
+
 def decide_alert(now: datetime, failing: list[Check], state: dict) -> tuple[str | None, dict]:
     """(message or None, new state). Alerts on a new/changed failure set, again
     every REALERT_MINUTES while failing, and once on recovery."""
@@ -139,14 +197,35 @@ def decide_alert(now: datetime, failing: list[Check], state: dict) -> tuple[str 
         )
         if not due:
             return None, state
-        message = "CONVEXA STREAM PROBLEM: " + "; ".join(f"{c.name}: {c.detail}" for c in failing)
+        label = "NOTICE" if all(c.severity == "notice" for c in failing) else "PROBLEM"
+        message = f"CONVEXA STREAM {label}: " + "; ".join(f"{c.name}: {c.detail}" for c in failing)
         return message, {**state, "alerting_names": names, "last_alert_at": now.isoformat()}
     if last_names:
-        return "Convexa stream recovered (all checks passing).", {**state, "alerting_names": [], "last_alert_at": None}
+        return "Convexa stream: all checks back to normal.", {**state, "alerting_names": [], "last_alert_at": None}
     return None, state
 
 
 # ------------------------------------------------------------------ impure
+def read_log_text(path: Path, max_bytes: int = 12 * 1024 * 1024) -> str:
+    """Up to the last max_bytes of a log; worker.log rotates at ~9.5 MB so this
+    is normally the whole file."""
+    if not path.exists():
+        return ""
+    with path.open("rb") as handle:
+        handle.seek(0, os.SEEK_END)
+        size = handle.tell()
+        handle.seek(max(0, size - max_bytes))
+        return handle.read().decode("utf-8", "replace")
+
+
+def registered_contracts_from_logs(logs_dir: Path) -> int | None:
+    current = count_registered_contracts(read_log_text(logs_dir / "worker.log"))
+    if current is not None:
+        return current
+    # worker.log just rotated: the last resubscribe line is in the previous file
+    return count_registered_contracts(read_log_text(logs_dir / "worker.log.1") + read_log_text(logs_dir / "worker.log"))
+
+
 def read_log_tail(path: Path) -> str:
     if not path.exists():
         return ""
@@ -217,6 +296,7 @@ def run_once(logs_dir: Path, state_path: Path, toast_task: str | None = None) ->
                 RECONNECT_LOOP_WINDOW_MINUTES,
             )
         ),
+        check_contract_count(registered_contracts_from_logs(logs_dir)),
     ]
     failing = [c for c in checks if not c.ok]
     message, state = decide_alert(now, failing, state)
