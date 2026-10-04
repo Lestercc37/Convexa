@@ -832,6 +832,11 @@ class ThetaStreamHub:
         self._last_option_trade_at: float | None = None
         self._last_underlying_trade_at: float | None = None
         self._last_status_at: float | None = None
+        # When the live connection was opened (monotonic). The no-STATUS
+        # watchdog measures silence from here at the earliest, so a freshly
+        # opened connection is never judged against a STATUS timestamp left
+        # over from before the outage -- see _watch_for_data_silence.
+        self._connection_opened_at = 0.0
         self._watchdog_task: asyncio.Task[None] | None = None
         # Message-lag diagnostic (added 2026-10-02) -- see
         # _parse_stream_tick_timestamp's own docstring and
@@ -1113,8 +1118,18 @@ class ThetaStreamHub:
             # so it's now just a fourth entry in the same recovery
             # mechanism instead of its own separate code path.
             last_status_at = self._last_status_at
-            if last_status_at is not None:
-                status_silence = now - last_status_at
+            # Only while a connection is live, and measured from when it
+            # opened: found 2026-10-04 -- the stream sat dead for ~20 hours
+            # (15:04 on 10-03 to 11:05 on 10-04) in a lock-step loop. After
+            # a Terminal outage long enough to push the reconnect backoff to
+            # its 60s cap, this check kept firing every 15s *while no
+            # connection existed* (nothing refreshes _last_status_at then),
+            # and 60s = 4 x 15s, so every new connection opened within 0.1s
+            # of a firing and was closed by request_reconnect() before its
+            # first STATUS could arrive -- 60 times an hour, long after the
+            # Terminal itself was healthy again (15:06:16 on 10-03).
+            if last_status_at is not None and self._active_websocket is not None:
+                status_silence = now - max(last_status_at, self._connection_opened_at)
                 if status_silence > STATUS_STALE_AFTER_SECONDS:
                     logger.warning(
                         "ThetaStreamHub: no STATUS message in %.0fs -- forcing a reconnect",
@@ -1214,6 +1229,7 @@ class ThetaStreamHub:
     async def _connect_and_consume(self) -> None:
         async with websockets.connect(self._ws_url, max_queue=WS_MAX_QUEUE) as websocket:
             self._active_websocket = websocket
+            self._connection_opened_at = time.monotonic()
             try:
                 await self._consume(websocket)
             finally:
