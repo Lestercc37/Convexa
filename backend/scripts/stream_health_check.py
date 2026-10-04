@@ -15,10 +15,14 @@ blind spot cannot hide an outage:
                   RECONNECT_LOOP_WINDOW_MINUTES -- the signature of both the
                   04-Oct lock-step loop and a Terminal flapping.
 
-Alerts go to logs/stream_health.log always, and to a phone/chat if one is
-configured: ALERT_NTFY_URL (e.g. https://ntfy.sh/<secret-topic>, plain-text
-POST) and/or ALERT_WEBHOOK_URL (JSON POST with "text" and "content" keys,
-Slack/Discord style). Nothing is sent anywhere unless one is set.
+Alerts go to logs/stream_health.log always, and optionally to:
+  --toast-task NAME   a Windows toast on the server's desktop: the message is
+                      written to logs/stream_alert_message.txt and the
+                      scheduled task NAME (running backend/scripts/show_toast.ps1
+                      as the logged-in desktop user) is started
+  ALERT_NTFY_URL      e.g. https://ntfy.sh/<secret-topic>, plain-text POST
+  ALERT_WEBHOOK_URL   JSON POST with "text" and "content" keys, Slack/Discord
+Nothing is sent anywhere unless one of them is set.
 
     python -m backend.scripts.stream_health_check            # one check
     python -m backend.scripts.stream_health_check --loop 60  # forever
@@ -181,6 +185,11 @@ def read_volume_total() -> int | None:
         engine.dispose()
 
 
+def notify_toast(message: str, logs_dir: Path, task_name: str) -> None:
+    (logs_dir / "stream_alert_message.txt").write_text(message, encoding="utf-8")
+    subprocess.run(["schtasks", "/Run", "/TN", task_name], capture_output=True, timeout=20, check=True)
+
+
 def notify(message: str) -> None:
     ntfy = os.environ.get("ALERT_NTFY_URL")
     webhook = os.environ.get("ALERT_WEBHOOK_URL")
@@ -193,7 +202,7 @@ def notify(message: str) -> None:
         urllib.request.urlopen(request, timeout=10).close()
 
 
-def run_once(logs_dir: Path, state_path: Path) -> list[Check]:
+def run_once(logs_dir: Path, state_path: Path, toast_task: str | None = None) -> list[Check]:
     now = datetime.now(UTC)
     state = json.loads(state_path.read_text()) if state_path.exists() else {}
     market_open = is_market_open(now)
@@ -225,6 +234,8 @@ def run_once(logs_dir: Path, state_path: Path) -> list[Check]:
     if message:
         print("ALERT:", message)
         try:
+            if toast_task:
+                notify_toast(message, logs_dir, toast_task)
             notify(message)
         except Exception as exc:  # noqa: BLE001 -- a failed send must not hide the check itself
             print("alert delivery failed:", exc)
@@ -236,10 +247,11 @@ def main() -> None:
     parser.add_argument("--logs-dir", default="logs")
     parser.add_argument("--state", default="logs/stream_health_state.json")
     parser.add_argument("--loop", type=int, default=0, help="seconds between checks; 0 = run once")
+    parser.add_argument("--toast-task", default=None, help="scheduled task that shows a Windows toast")
     args = parser.parse_args()
     logs_dir = Path(args.logs_dir)
     while True:
-        checks = run_once(logs_dir, Path(args.state))
+        checks = run_once(logs_dir, Path(args.state), args.toast_task)
         if not args.loop:
             sys.exit(0 if all(c.ok for c in checks) else 1)
         time.sleep(args.loop)
