@@ -101,3 +101,14 @@ class TestAlertDecision:
         assert message and "recovered" in message
         message, _ = shc.decide_alert(MARKET_NOW + timedelta(minutes=3), [], state)
         assert message is None
+
+
+class TestToast:
+    def test_the_message_is_written_and_the_toast_task_is_started(self, tmp_path, monkeypatch) -> None:
+        calls: list[list[str]] = []
+        monkeypatch.setattr(shc.subprocess, "run", lambda cmd, **kwargs: calls.append(cmd))
+
+        shc.notify_toast("CONVEXA STREAM PROBLEM: stalled", tmp_path, "ConvexaStreamAlertToast")
+
+        assert (tmp_path / "stream_alert_message.txt").read_text(encoding="utf-8") == "CONVEXA STREAM PROBLEM: stalled"
+        assert calls == [["schtasks", "/Run", "/TN", "ConvexaStreamAlertToast"]]
