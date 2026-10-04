@@ -15,6 +15,7 @@ import asyncio
 import contextlib
 import json
 import logging
+import time
 from collections.abc import AsyncIterator
 from datetime import date
 from decimal import Decimal
@@ -52,8 +53,8 @@ class FakeTerminal:
         self._server = None
         self.url = ""
 
-    async def start(self) -> None:
-        self._server = await serve(self._handler, "127.0.0.1", 0)
+    async def start(self, port: int = 0) -> None:
+        self._server = await serve(self._handler, "127.0.0.1", port)
         port = self._server.sockets[0].getsockname()[1]
         self.url = f"ws://127.0.0.1:{port}/v1/events"
 
@@ -308,3 +309,96 @@ class TestSubscriptionSafetyNet:
         hub._note_subscription_response({"header": {"req_id": 1, "response": "MAX_STREAMS_REACHED"}})
         hub._note_subscription_response({"header": {"req_id": 2, "response": "ERROR"}})
         assert [args[3] for _, args in hub._failed_subscriptions] == [Decimal(771)]
+
+
+class TestStatusWatchdogDoesNotLockStepWithTheBackoff:
+    """2026-10-04: after a Terminal outage long enough to push the reconnect
+    backoff to its 60s cap, the no-STATUS watchdog (firing every 15s, with
+    nothing refreshing its timestamp while no connection existed) closed
+    every new connection within 0.1s of opening it -- 60 = 4 x 15, so the two
+    stayed phase-locked for ~20 hours, long after the Terminal had recovered."""
+
+    @staticmethod
+    def _stale_hub(opened_ago: float, status_ago: float = 100.0) -> ThetaStreamHub:
+        hub = ThetaStreamHub("ws://unused", httpx.Client(base_url="http://127.0.0.1:1"))
+        now = time.monotonic()
+        hub._last_status_at = now - status_ago
+        hub._connection_opened_at = now - opened_ago
+        hub._active_websocket = object()  # type: ignore[assignment]
+        return hub
+
+    @pytest.mark.asyncio
+    async def test_a_connection_that_just_opened_is_not_judged_by_a_stale_status_timestamp(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(provider_module, "DATA_SILENCE_CHECK_INTERVAL_SECONDS", 0.01)
+        hub = self._stale_hub(opened_ago=0.05)
+        reconnects: list[int] = []
+        monkeypatch.setattr(hub, "request_reconnect", lambda: reconnects.append(1))
+
+        task = asyncio.create_task(hub._watch_for_data_silence())
+        await asyncio.sleep(0.1)
+        task.cancel()
+
+        assert reconnects == []
+
+    @pytest.mark.asyncio
+    async def test_status_silence_is_ignored_while_no_connection_exists(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(provider_module, "DATA_SILENCE_CHECK_INTERVAL_SECONDS", 0.01)
+        hub = self._stale_hub(opened_ago=100)
+        hub._active_websocket = None
+        before = hub._last_status_at
+        reconnects: list[int] = []
+        monkeypatch.setattr(hub, "request_reconnect", lambda: reconnects.append(1))
+
+        task = asyncio.create_task(hub._watch_for_data_silence())
+        await asyncio.sleep(0.1)
+        task.cancel()
+
+        assert reconnects == []
+        assert hub._last_status_at == before, "the watchdog must not touch its timestamp with no connection"
+
+    @pytest.mark.asyncio
+    async def test_a_live_connection_that_really_went_silent_is_still_reconnected(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(provider_module, "DATA_SILENCE_CHECK_INTERVAL_SECONDS", 0.01)
+        hub = self._stale_hub(opened_ago=100)
+        reconnects: list[int] = []
+        monkeypatch.setattr(hub, "request_reconnect", lambda: reconnects.append(1))
+
+        task = asyncio.create_task(hub._watch_for_data_silence())
+        await asyncio.sleep(0.1)
+        task.cancel()
+
+        assert reconnects, "a connection with no STATUS for longer than the threshold must be reconnected"
+
+    @pytest.mark.asyncio
+    async def test_hub_recovers_after_a_long_terminal_outage_with_backoff_a_multiple_of_the_watchdog_period(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Scaled 100x down from production: watchdog threshold 0.15s (15s),
+        # backoff cap 0.6s (60s) = exactly 4 x the threshold.
+        monkeypatch.setattr(provider_module, "STATUS_STALE_AFTER_SECONDS", 0.15)
+        monkeypatch.setattr(provider_module, "DATA_SILENCE_CHECK_INTERVAL_SECONDS", 0.05)
+        monkeypatch.setattr(provider_module, "RECONNECT_BASE_DELAY_SECONDS", 0.6)
+        monkeypatch.setattr(provider_module, "RECONNECT_MAX_DELAY_SECONDS", 0.6)
+        first = FakeTerminal()
+        await first.start()
+        port = int(first.url.split(":")[2].split("/")[0])
+        hub = _hub(first.url)
+        hub.start()
+        second = FakeTerminal()
+        try:
+            assert await _until(lambda: first.latest_accepted == EXPECTED_SUBSCRIPTIONS)
+            await first.stop()  # the Terminal goes away
+            await asyncio.sleep(2.0)  # several backoff cycles with the watchdog firing
+            await second.start(port)  # ...and comes back, healthy
+            assert await _until(
+                lambda: second.latest_accepted == EXPECTED_SUBSCRIPTIONS, timeout=8
+            ), "the hub never re-subscribed after the Terminal came back"
+        finally:
+            await hub.stop()
+            await second.stop()
