@@ -1645,6 +1645,40 @@ class TestOptionTradeHandling:
         assert stream.cumulative_volume(occ) == 30
 
     @pytest.mark.asyncio
+    async def test_a_backlog_in_the_message_queue_does_not_starve_other_tasks(self) -> None:
+        # 2026-10-05 open: Queue.get() on a non-empty queue never suspends,
+        # so a deep backlog kept _process_messages from ever yielding and the
+        # relay's socket-draining task starved.
+        stream = ThetaStreamHub(WS_URL, httpx.Client(base_url=REST_URL))
+        ticks = {"n": 0}
+
+        async def other_task() -> None:
+            while True:
+                ticks["n"] += 1
+                await asyncio.sleep(0)
+
+        queue = stream._message_queue
+        for _ in range(5000):
+            queue.put_nowait('{"header": {"type": "OTHER"}}')
+        ticks_when_drained = {"n": None}
+        original_get = queue.get
+
+        async def get_and_note_the_last_one() -> str:
+            item = await original_get()
+            if queue.empty():
+                ticks_when_drained["n"] = ticks["n"]
+            return item
+
+        queue.get = get_and_note_the_last_one  # type: ignore[method-assign]
+        helper = asyncio.create_task(other_task())
+        worker = asyncio.create_task(stream._process_messages())
+        await asyncio.sleep(0.5)
+        worker.cancel()
+        helper.cancel()
+        assert ticks_when_drained["n"] is not None
+        assert ticks_when_drained["n"] >= 5000 // 64 - 1, "the other task starved while the backlog drained"
+
+    @pytest.mark.asyncio
     async def test_handle_option_trade_publishes_a_flow_event_to_subscribers(self) -> None:
         stream = ThetaStreamHub(WS_URL, httpx.Client(base_url=REST_URL))
         queue = stream.subscribe_trade_queue("SPY")
