@@ -142,7 +142,7 @@ class TestContractCountNotice:
         assert "close to" in check.detail
 
     def test_over_the_plan_limit_says_so(self) -> None:
-        check = shc.check_contract_count(1524)
+        check = shc.check_contract_count(10_500)
         assert not check.ok
         assert "over the plan" in check.detail
 
@@ -150,7 +150,7 @@ class TestContractCountNotice:
         assert shc.check_contract_count(None).ok
 
     def test_a_notice_alone_is_labelled_notice_and_a_mix_is_a_problem(self) -> None:
-        notice = shc.check_contract_count(1200)
+        notice = shc.check_contract_count(shc.CONTRACT_PLAN_LIMIT + 200)
         message, _ = shc.decide_alert(MARKET_NOW, [notice], {})
         assert message and message.startswith("CONVEXA STREAM NOTICE")
         outage = shc.Check("services", False, "down")
