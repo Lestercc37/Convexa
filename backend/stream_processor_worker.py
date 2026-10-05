@@ -99,6 +99,7 @@ single raw frame.
 from __future__ import annotations
 
 import asyncio
+import collections
 import json
 import logging
 import time
@@ -135,6 +136,8 @@ PRICE_WRITE_CONCURRENCY = 4
 # _ProcessorState.is_repeated_quote.
 QUOTE_REFRESH_SECONDS = 1.0
 
+FRAME_MIX_LOG_INTERVAL_SECONDS = 60
+
 
 class _ProcessorState:
     """Everything one raw frame's handling needs beyond the pure
@@ -150,6 +153,10 @@ class _ProcessorState:
         self.whale_alerts_relay = whale_alerts_relay
         self.price_use_case = price_use_case
         self.cumulative_volume: dict[str, int] = {}
+        # What this process is spending its time on: frames per (type, root)
+        # since the last report, see _log_frame_mix_periodically.
+        self.frame_mix: collections.Counter[tuple[str, object]] = collections.Counter()
+        self.repeated_quotes = 0
         self._last_quote: dict[tuple, tuple[object, object, float]] = {}
         self._pending_prices: dict[str, UnderlyingTradeEvent] = {}
         self._price_writers: dict[str, asyncio.Task[None]] = {}
@@ -213,8 +220,11 @@ def _handle_raw_frame(state: _ProcessorState, raw: str) -> None:
         message = json.loads(raw)
         header = message.get("header", {})
         msg_type = header.get("type")
+        if msg_type in ("QUOTE", "TRADE"):
+            state.frame_mix[(msg_type, message.get("contract", {}).get("root"))] += 1
         if msg_type == "QUOTE":
             if state.is_repeated_quote(message):
+                state.repeated_quotes += 1
                 return
             parsed = parse_quote_message(message)
             if parsed is not None:
@@ -245,6 +255,37 @@ def _handle_raw_frame(state: _ProcessorState, raw: str) -> None:
                     state.schedule_price_write(parsed_underlying.event)
     except Exception:
         logger.exception("Stream processor worker: failed to parse one raw frame, dropping it")
+
+
+async def _log_frame_mix_periodically(state: _ProcessorState) -> None:
+    """One INFO line a minute: frames per second by type and the top roots, so
+    "which symbols load the stream" is answered from the log, not guessed."""
+    while True:
+        await asyncio.sleep(FRAME_MIX_LOG_INTERVAL_SECONDS)
+        mix, repeated = state.frame_mix, state.repeated_quotes
+        state.frame_mix = collections.Counter()
+        state.repeated_quotes = 0
+        total = sum(mix.values())
+        if not total:
+            continue
+        per_type = collections.Counter()
+        for (msg_type, _root), count in mix.items():
+            per_type[msg_type] += count
+        by_root = collections.Counter()
+        for (_msg_type, root), count in mix.items():
+            by_root[root] += count
+        top = ", ".join(
+            f"{root}={count / FRAME_MIX_LOG_INTERVAL_SECONDS:.0f}/s ({count / total:.0%})"
+            for root, count in by_root.most_common(8)
+        )
+        logger.info(
+            "Stream processor frame mix: %.0f frames/s (QUOTE %.0f/s of which %.0f/s repeats, TRADE %.0f/s); top roots: %s",
+            total / FRAME_MIX_LOG_INTERVAL_SECONDS,
+            per_type["QUOTE"] / FRAME_MIX_LOG_INTERVAL_SECONDS,
+            repeated / FRAME_MIX_LOG_INTERVAL_SECONDS,
+            per_type["TRADE"] / FRAME_MIX_LOG_INTERVAL_SECONDS,
+            top,
+        )
 
 
 async def _export_volume_periodically(container, state: _ProcessorState) -> None:
@@ -299,6 +340,7 @@ async def run() -> None:
     )
     state = _ProcessorState(whale_alerts_relay, price_use_case)
     export_task = asyncio.create_task(_export_volume_periodically(container, state))
+    frame_mix_task = asyncio.create_task(_log_frame_mix_periodically(state))
 
     relay = StreamProcessorRelayClient(
         container.settings.stream_processor_relay_host,
@@ -315,6 +357,7 @@ async def run() -> None:
     try:
         await relay.run(on_raw_frame=lambda raw: _handle_raw_frame(state, raw))
     finally:
+        frame_mix_task.cancel()
         export_task.cancel()
         try:
             await export_task
