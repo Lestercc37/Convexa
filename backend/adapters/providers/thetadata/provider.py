@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import logging
 import threading
@@ -1352,6 +1353,7 @@ class ThetaStreamHub:
         # same "must never block the shared reader" tradeoff already made
         # for every subscriber queue in this class.
         verifier = asyncio.create_task(self._verify_subscriptions(websocket))
+        frames_since_yield = 0
         try:
             while True:
                 try:
@@ -1363,6 +1365,14 @@ class ThetaStreamHub:
                         "No message from Theta Terminal within heartbeat window"
                     ) from exc
                 self._enqueue_raw_frame(raw)
+                # recv() doesn't suspend while frames are buffered, so with the
+                # socket full this loop could run for a long time before
+                # _process_messages got a turn, and the queue overflowed
+                # (2026-10-05 open). Hand the loop over every so often.
+                frames_since_yield += 1
+                if frames_since_yield >= PROCESS_YIELD_EVERY_FRAMES:
+                    frames_since_yield = 0
+                    await asyncio.sleep(0)
         finally:
             verifier.cancel()
 
@@ -1371,6 +1381,19 @@ class ThetaStreamHub:
             self._message_queue.put_nowait(raw)
             self._frames_enqueued += 1
         except asyncio.QueueFull:
+            # Quotes are what overflows the queue (the vast majority of the
+            # volume, and a later quote supersedes an earlier one); a TRADE
+            # (volume, whale alerts) or a STATUS/REQ_RESPONSE frame is worth
+            # more than the oldest queued frame, so it evicts that one instead
+            # of being dropped itself.
+            if '"QUOTE"' not in raw[:RAW_TYPE_SNIFF_CHARS]:
+                with contextlib.suppress(asyncio.QueueEmpty):
+                    self._message_queue.get_nowait()
+                    # keeps the stale-frame position counting aligned
+                    self._frames_dequeued += 1
+                    self._message_queue.put_nowait(raw)
+                    self._frames_enqueued += 1
+                    return
             # One log line per dropped frame made the drop path costlier than
             # normal processing (two log handlers per frame): once the queue
             # filled at the 2026-10-05 open it could never drain again. At
