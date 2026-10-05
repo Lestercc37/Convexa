@@ -199,6 +199,72 @@ class TestNoBlockingWaitOnUnderlyingTrades:
         await asyncio.sleep(0.01)  # let the now-unblocked task finish cleanly
 
 
+class TestPriceWritesAreCoalescedPerSymbol:
+    """2026-10-05 open: one task per tick for the tick-level symbols exhausted
+    the Postgres pool (QueuePool 5+10) within a minute, the processor fell
+    behind and the stored SPX price froze."""
+
+    @staticmethod
+    def _tick(symbol: str, price: float) -> str:
+        return json.dumps(
+            {
+                "header": {"type": "TRADE", "status": "CONNECTED"},
+                "contract": {"security_type": "INDEX" if symbol == "SPX" else "STOCK", "root": symbol},
+                "trade": {"size": 1, "price": price},
+            }
+        )
+
+    @pytest.mark.asyncio
+    async def test_a_burst_behind_a_slow_write_keeps_one_write_in_flight_and_ends_on_the_newest_tick(self) -> None:
+        state, _relay, price = _state()
+        price.block_until_released()
+
+        _handle_raw_frame(state, self._tick("SPX", 7700.0))
+        await asyncio.sleep(0.01)  # the first write starts and blocks
+        for i in range(1, 500):
+            _handle_raw_frame(state, self._tick("SPX", 7700.0 + i))
+        await asyncio.sleep(0.01)
+        assert len(price.calls) == 1, "only one write may be in flight for a symbol"
+
+        price.release()
+        await asyncio.sleep(0.05)
+        assert len(price.calls) == 2, "the 499 ticks in between collapse into the newest one"
+        assert float(price.calls[-1].price) == 7700.0 + 499
+
+    @pytest.mark.asyncio
+    async def test_symbols_are_written_independently_and_concurrency_is_capped(self) -> None:
+        state, _relay, price = _state()
+        price.block_until_released()
+        symbols = ["SPX", "SPY", "QQQ", "IWM", "AAPL", "TSLA", "NVDA"]
+        for symbol in symbols:
+            _handle_raw_frame(state, self._tick(symbol, 100.0))
+        await asyncio.sleep(0.01)
+        assert len(price.calls) == 4, "PRICE_WRITE_CONCURRENCY writes at a time across all symbols"
+
+        price.release()
+        await asyncio.sleep(0.05)
+        assert {c.symbol for c in price.calls} == set(symbols)
+
+    @pytest.mark.asyncio
+    async def test_a_failing_write_does_not_stop_later_ticks_for_that_symbol(self) -> None:
+        state, _relay, price = _state()
+        original = price.persist_if_due
+        attempts = {"n": 0}
+
+        async def flaky(event: UnderlyingTradeEvent) -> None:
+            attempts["n"] += 1
+            if attempts["n"] == 1:
+                raise RuntimeError("pool timeout")
+            await original(event)
+
+        price.persist_if_due = flaky  # type: ignore[method-assign]
+        _handle_raw_frame(state, self._tick("SPX", 7700.0))
+        await asyncio.sleep(0.02)
+        _handle_raw_frame(state, self._tick("SPX", 7701.0))
+        await asyncio.sleep(0.02)
+        assert [float(c.price) for c in price.calls] == [7701.0]
+
+
 class TestMalformedFrames:
     def test_invalid_json_does_not_raise(self) -> None:
         state, relay, _price = _state()
