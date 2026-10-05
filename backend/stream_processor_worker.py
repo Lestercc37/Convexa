@@ -111,6 +111,7 @@ from backend.core.container import build_container
 from backend.core.logging import configure_logging
 from backend.core.stream_processor_relay import StreamProcessorRelayClient
 from backend.core.whale_alerts_relay import WhaleAlertsRelayServer
+from backend.domain.entities import UnderlyingTradeEvent
 from backend.domain.underlyings import ACTIVE_UNDERLYINGS
 from backend.domain.use_cases.stream_underlying_price import StreamUnderlyingPriceUseCase
 
@@ -123,6 +124,11 @@ _SYMBOLS = {underlying.symbol: underlying.kind for underlying in ACTIVE_UNDERLYI
 # ~60-75s cycle never reads anything more than one export interval
 # stale, cheap enough not to matter at that cadence).
 VOLUME_EXPORT_INTERVAL_SECONDS = 15
+
+# Price writes in flight at once, across all symbols; well under the
+# engine's pool (5 + 10 overflow) so the volume export and anything else
+# always find a free connection.
+PRICE_WRITE_CONCURRENCY = 4
 
 
 class _ProcessorState:
@@ -139,6 +145,35 @@ class _ProcessorState:
         self.whale_alerts_relay = whale_alerts_relay
         self.price_use_case = price_use_case
         self.cumulative_volume: dict[str, int] = {}
+        self._pending_prices: dict[str, UnderlyingTradeEvent] = {}
+        self._price_writers: dict[str, asyncio.Task[None]] = {}
+        self._price_write_slots = asyncio.Semaphore(PRICE_WRITE_CONCURRENCY)
+
+    def schedule_price_write(self, event: UnderlyingTradeEvent) -> None:
+        """Latest-wins, one writer per symbol. Tick-level symbols are written
+        on every tick (see TICK_LEVEL_SYMBOLS), and a task per tick exhausted
+        the Postgres pool (5+10) within a minute of the 2026-10-05 open: the
+        tasks piled up waiting for a connection, the processor stopped
+        consuming and the stored price froze. A write only ever needs the
+        newest tick, so while one is in flight newer ticks just replace the
+        pending one."""
+        self._pending_prices[event.symbol] = event
+        writer = self._price_writers.get(event.symbol)
+        if writer is None or writer.done():
+            self._price_writers[event.symbol] = asyncio.create_task(self._drain_price_writes(event.symbol))
+
+    async def _drain_price_writes(self, symbol: str) -> None:
+        while True:
+            event = self._pending_prices.pop(symbol, None)
+            if event is None:
+                return
+            try:
+                async with self._price_write_slots:
+                    await self.price_use_case.persist_if_due(event)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.exception("Stream processor worker: persisting the %s price failed", symbol)
 
 
 def _handle_raw_frame(state: _ProcessorState, raw: str) -> None:
@@ -175,8 +210,10 @@ def _handle_raw_frame(state: _ProcessorState, raw: str) -> None:
                     # raw-frame handling behind that I/O, exactly the
                     # kind of self-inflicted backpressure v1's postmortem
                     # flagged. asyncio.create_task keeps this frame's
-                    # handling non-blocking regardless.
-                    asyncio.create_task(state.price_use_case.persist_if_due(parsed_underlying.event))
+                    # handling non-blocking regardless. Coalesced per
+                    # symbol (ProcessorState.schedule_price_write) so a
+                    # tick burst can't pile up unbounded writes.
+                    state.schedule_price_write(parsed_underlying.event)
     except Exception:
         logger.exception("Stream processor worker: failed to parse one raw frame, dropping it")
 
