@@ -101,6 +101,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import time
 
 from backend.adapters.providers.thetadata.stream_parsing import (
     parse_option_trade_message,
@@ -130,6 +131,10 @@ VOLUME_EXPORT_INTERVAL_SECONDS = 15
 # always find a free connection.
 PRICE_WRITE_CONCURRENCY = 4
 
+# A repeated bid/ask for a contract is forwarded again after this long, see
+# _ProcessorState.is_repeated_quote.
+QUOTE_REFRESH_SECONDS = 1.0
+
 
 class _ProcessorState:
     """Everything one raw frame's handling needs beyond the pure
@@ -145,9 +150,31 @@ class _ProcessorState:
         self.whale_alerts_relay = whale_alerts_relay
         self.price_use_case = price_use_case
         self.cumulative_volume: dict[str, int] = {}
+        self._last_quote: dict[tuple, tuple[object, object, float]] = {}
         self._pending_prices: dict[str, UnderlyingTradeEvent] = {}
         self._price_writers: dict[str, asyncio.Task[None]] = {}
         self._price_write_slots = asyncio.Semaphore(PRICE_WRITE_CONCURRENCY)
+
+    def is_repeated_quote(self, message: dict) -> bool:
+        """True when this QUOTE carries the same bid/ask as the last one
+        forwarded for the contract (a size-only update) and that one went out
+        less than QUOTE_REFRESH_SECONDS ago. The whale engine only needs the
+        latest bid/ask when a trade arrives, so a repeat adds nothing, but
+        parsing and relaying every one of them kept this process at 99% CPU
+        at the 2026-10-05 open (_build_occ_symbol, json, relay encode) and
+        its relay queue overflowed. The periodic refresh keeps the forwarded
+        quote's as_of from ever looking old."""
+        contract = message.get("contract", {})
+        quote = message.get("quote", {})
+        key = (contract.get("root"), contract.get("expiration"), contract.get("strike"), contract.get("right"))
+        bid = quote.get("bid")
+        ask = quote.get("ask")
+        now = time.monotonic()
+        last = self._last_quote.get(key)
+        if last is not None and last[0] == bid and last[1] == ask and now - last[2] < QUOTE_REFRESH_SECONDS:
+            return True
+        self._last_quote[key] = (bid, ask, now)
+        return False
 
     def schedule_price_write(self, event: UnderlyingTradeEvent) -> None:
         """Latest-wins, one writer per symbol. Tick-level symbols are written
@@ -187,6 +214,8 @@ def _handle_raw_frame(state: _ProcessorState, raw: str) -> None:
         header = message.get("header", {})
         msg_type = header.get("type")
         if msg_type == "QUOTE":
+            if state.is_repeated_quote(message):
+                return
             parsed = parse_quote_message(message)
             if parsed is not None:
                 state.whale_alerts_relay.publish_quote(parsed.event)

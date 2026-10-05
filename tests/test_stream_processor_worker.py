@@ -199,6 +199,56 @@ class TestNoBlockingWaitOnUnderlyingTrades:
         await asyncio.sleep(0.01)  # let the now-unblocked task finish cleanly
 
 
+class TestRepeatedQuotesAreNotRelayed:
+    """2026-10-05 open: parsing and relaying every size-only quote update kept
+    the processor at 99% CPU and its relay queue overflowing."""
+
+    @staticmethod
+    def _quote(bid: float, ask: float, strike: int = 770000) -> str:
+        return json.dumps(
+            {
+                "header": {"type": "QUOTE", "status": "CONNECTED"},
+                "contract": {
+                    "security_type": "OPTION",
+                    "root": "SPY",
+                    "expiration": 20260918,
+                    "strike": strike,
+                    "right": "C",
+                },
+                "quote": {"bid": bid, "ask": ask},
+            }
+        )
+
+    def test_the_same_bid_ask_within_the_refresh_window_is_forwarded_once(self) -> None:
+        state, relay, _price = _state()
+        for _ in range(50):
+            _handle_raw_frame(state, self._quote(1.08, 1.09))
+        assert len(relay.published_quotes) == 1
+
+    def test_a_changed_price_is_forwarded_immediately(self) -> None:
+        state, relay, _price = _state()
+        _handle_raw_frame(state, self._quote(1.08, 1.09))
+        _handle_raw_frame(state, self._quote(1.09, 1.10))
+        assert [str(q.bid) for q in relay.published_quotes] == ["1.08", "1.09"]
+
+    def test_contracts_are_tracked_independently(self) -> None:
+        state, relay, _price = _state()
+        _handle_raw_frame(state, self._quote(1.08, 1.09, strike=770000))
+        _handle_raw_frame(state, self._quote(1.08, 1.09, strike=771000))
+        assert len(relay.published_quotes) == 2
+
+    def test_an_unchanged_quote_is_refreshed_after_the_window(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        import backend.stream_processor_worker as module
+
+        clock = {"now": 1000.0}
+        monkeypatch.setattr(module.time, "monotonic", lambda: clock["now"])
+        state, relay, _price = _state()
+        _handle_raw_frame(state, self._quote(1.08, 1.09))
+        clock["now"] += module.QUOTE_REFRESH_SECONDS + 0.01
+        _handle_raw_frame(state, self._quote(1.08, 1.09))
+        assert len(relay.published_quotes) == 2
+
+
 class TestPriceWritesAreCoalescedPerSymbol:
     """2026-10-05 open: one task per tick for the tick-level symbols exhausted
     the Postgres pool (QueuePool 5+10) within a minute, the processor fell
