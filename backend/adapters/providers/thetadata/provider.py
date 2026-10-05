@@ -330,6 +330,9 @@ QUEUE_DEPTH_LOG_INTERVAL_SECONDS = 60
 # row (a non-empty queue never makes Queue.get() suspend on its own).
 PROCESS_YIELD_EVERY_FRAMES = 64
 
+# Frame drops at the hub's own queue are reported at most this often.
+DROP_LOG_INTERVAL_SECONDS = 1.0
+
 # A real incident fires the CRITICAL log this gates (see
 # ThetaStreamHub._maybe_alert_queue_saturation) dozens of times per
 # second -- confirmed live, 2026-09-24, QQQ: ~65/s sustained. Desktop-
@@ -896,6 +899,8 @@ class ThetaStreamHub:
         self._frames_enqueued = 0
         self._frames_dequeued = 0
         self._stale_frames_before = 0
+        self._frames_dropped_unreported = 0
+        self._last_drop_report_at = float("-inf")
 
     def register_contract(
         self,
@@ -1353,18 +1358,31 @@ class ThetaStreamHub:
                     raise ConnectionError(
                         "No message from Theta Terminal within heartbeat window"
                     ) from exc
-                try:
-                    self._message_queue.put_nowait(raw)
-                    self._frames_enqueued += 1
-                except asyncio.QueueFull:
-                    logger.warning(
-                        "ThetaStreamHub: internal message queue full (maxsize=%d) -- "
-                        "dropping one raw message; _process_messages is falling "
-                        "behind real message volume",
-                        self._message_queue.maxsize,
-                    )
+                self._enqueue_raw_frame(raw)
         finally:
             verifier.cancel()
+
+    def _enqueue_raw_frame(self, raw: str) -> None:
+        try:
+            self._message_queue.put_nowait(raw)
+            self._frames_enqueued += 1
+        except asyncio.QueueFull:
+            # One log line per dropped frame made the drop path costlier than
+            # normal processing (two log handlers per frame): once the queue
+            # filled at the 2026-10-05 open it could never drain again. At
+            # most one line a second.
+            self._frames_dropped_unreported += 1
+            now_monotonic = time.monotonic()
+            if now_monotonic - self._last_drop_report_at >= DROP_LOG_INTERVAL_SECONDS:
+                logger.warning(
+                    "ThetaStreamHub: internal message queue full (maxsize=%d) -- "
+                    "dropping raw messages (%d since the last report); "
+                    "_process_messages is falling behind real message volume",
+                    self._message_queue.maxsize,
+                    self._frames_dropped_unreported,
+                )
+                self._frames_dropped_unreported = 0
+                self._last_drop_report_at = now_monotonic
 
     async def _wait_for_terminal_connected(self, websocket: websockets.ClientConnection) -> None:
         """Blocks until Theta Terminal reports STATUS CONNECTED on this
