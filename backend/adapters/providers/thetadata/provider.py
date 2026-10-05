@@ -12,12 +12,14 @@ from collections.abc import AsyncIterator, Callable
 from datetime import date, datetime, timedelta
 from datetime import time as time_of_day
 from decimal import Decimal
+from pathlib import Path
 from typing import Any, TypeVar
 
 import httpx
 import websockets
 
 from backend.adapters.notifications.desktop_notify import notify_windows
+from backend.adapters.providers.thetadata import frame_recorder
 from backend.adapters.providers.thetadata.request_slots import (
     InProcessThetaRequestSlots,
     PostgresThetaRequestSlots,
@@ -334,6 +336,9 @@ PROCESS_YIELD_EVERY_FRAMES = 64
 # How much of a raw frame is searched for its "type" in
 # _relay_without_parsing (the header is the first object in every frame).
 RAW_TYPE_SNIFF_CHARS = 120
+
+# How often the hub looks for a raw-frame capture request (frame_recorder.py).
+CAPTURE_POLL_SECONDS = 5.0
 
 # Frame drops at the hub's own queue are reported at most this often.
 DROP_LOG_INTERVAL_SECONDS = 1.0
@@ -906,6 +911,9 @@ class ThetaStreamHub:
         self._stale_frames_before = 0
         self._frames_dropped_unreported = 0
         self._last_drop_report_at = float("-inf")
+        # Raw-frame capture for offline benchmarks, see frame_recorder.py
+        self._frame_recorder: frame_recorder.FrameRecorder | None = None
+        self._capture_watcher_task: asyncio.Task[None] | None = None
 
     def register_contract(
         self,
@@ -960,8 +968,17 @@ class ThetaStreamHub:
         self._watchdog_task = asyncio.create_task(self._watch_for_data_silence())
         self._reconcile_task = asyncio.create_task(self._run_reconcile_loop())
         self._message_processor_task = asyncio.create_task(self._process_messages())
+        self._capture_watcher_task = asyncio.create_task(self._watch_capture_request())
 
     async def stop(self) -> None:
+        if self._capture_watcher_task is not None:
+            self._capture_watcher_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._capture_watcher_task
+            self._capture_watcher_task = None
+        if self._frame_recorder is not None:
+            self._frame_recorder.finish()
+            self._frame_recorder = None
         if self._message_processor_task is not None:
             self._message_processor_task.cancel()
             try:
@@ -1376,7 +1393,30 @@ class ThetaStreamHub:
         finally:
             verifier.cancel()
 
+    async def _watch_capture_request(self) -> None:
+        """Arms/disarms the raw-frame recorder from logs/stream_capture_request.json
+        (see frame_recorder.py). A stat() every few seconds when nothing is
+        requested; never raises into the hub."""
+        logs_dir = Path("logs")
+        while True:
+            try:
+                await asyncio.sleep(CAPTURE_POLL_SECONDS)
+                recorder = self._frame_recorder
+                if recorder is not None:
+                    if recorder.finished:
+                        frame_recorder.mark_done(logs_dir)
+                        self._frame_recorder = None
+                    continue
+                self._frame_recorder = frame_recorder.load_request(logs_dir)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.exception("ThetaStreamHub: frame capture watcher failed")
+
     def _enqueue_raw_frame(self, raw: str) -> None:
+        recorder = self._frame_recorder
+        if recorder is not None:
+            recorder.record(raw)
         try:
             self._message_queue.put_nowait(raw)
             self._frames_enqueued += 1
