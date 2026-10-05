@@ -60,7 +60,18 @@ class StreamStateExporter:
                 logger.exception("StreamStateExporter: export failed, will retry next interval")
 
     async def _export_once(self) -> None:
-        volumes = self._container.market_data_provider.cumulative_volumes()
+        # Only contracts this process actually counted trades for. The hub
+        # registers every streamed contract with a 0 placeholder
+        # (register_contract), so exporting the dict as-is wrote a 0 for ~800
+        # to ~1,600 contracts every 15 s and overwrote the stream processor's
+        # real values (it owns the volume whenever it is connected), flapping
+        # the stored volume and producing the occasional deadlock between the
+        # two writers (2026-10-05).
+        volumes = {
+            occ_symbol: volume
+            for occ_symbol, volume in self._container.market_data_provider.cumulative_volumes().items()
+            if volume
+        }
         if volumes:
             await asyncio.to_thread(self._container.storage.save_cumulative_volumes, volumes)
 
