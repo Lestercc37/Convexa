@@ -80,6 +80,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import time
 from collections.abc import Callable
 
 logger = logging.getLogger(__name__)
@@ -94,6 +95,7 @@ RECONNECT_MAX_DELAY_SECONDS = 60
 # peer degrades (drop + CRITICAL log) instead of growing either
 # process's memory without limit.
 RELAY_QUEUE_MAXSIZE = 20000
+DROP_LOG_INTERVAL_SECONDS = 1.0
 
 
 class StreamProcessorRelayServer:
@@ -183,6 +185,8 @@ class _ConnectedProcessor:
     def __init__(self, writer: asyncio.StreamWriter) -> None:
         self.writer = writer
         self.queue: asyncio.Queue[bytes] = asyncio.Queue(maxsize=RELAY_QUEUE_MAXSIZE)
+        self._dropped_since_log = 0
+        self._last_drop_log_at = float("-inf")
         self.send_task = asyncio.create_task(self._drain())
 
     async def _drain(self) -> None:
@@ -200,12 +204,23 @@ class _ConnectedProcessor:
         try:
             self.queue.put_nowait(data)
         except asyncio.QueueFull:
-            logger.critical(
-                "Stream processor relay: outbound (raw frame) queue full for the "
-                "connected processor (maxsize=%s) -- dropping one message. The "
-                "stream processor process is connected but falling behind.",
-                RELAY_QUEUE_MAXSIZE,
-            )
+            # One log line per frame at tens of thousands of frames a second
+            # burned the worker's CPU and rotated the log files every few
+            # seconds (2026-10-05 open): at most one line a second, with the
+            # count of messages dropped since the previous one.
+            self._dropped_since_log += 1
+            now = time.monotonic()
+            if now - self._last_drop_log_at >= DROP_LOG_INTERVAL_SECONDS:
+                logger.critical(
+                    "Stream processor relay: outbound (raw frame) queue full for the "
+                    "connected processor (maxsize=%s) -- dropping messages (%d since the "
+                    "last report). The stream processor process is connected but falling "
+                    "behind.",
+                    RELAY_QUEUE_MAXSIZE,
+                    self._dropped_since_log,
+                )
+                self._dropped_since_log = 0
+                self._last_drop_log_at = now
 
     async def close(self) -> None:
         self.send_task.cancel()

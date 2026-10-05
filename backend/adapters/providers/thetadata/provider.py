@@ -326,6 +326,10 @@ LOOP_ITERATION_SLOW_THRESHOLD_SECONDS = 0.1
 RECONCILE_DANGEROUS_THRESHOLD_SECONDS = STATUS_STALE_AFTER_SECONDS / 2
 QUEUE_DEPTH_LOG_INTERVAL_SECONDS = 60
 
+# _process_messages hands the event loop back after this many frames in a
+# row (a non-empty queue never makes Queue.get() suspend on its own).
+PROCESS_YIELD_EVERY_FRAMES = 64
+
 # A real incident fires the CRITICAL log this gates (see
 # ThetaStreamHub._maybe_alert_queue_saturation) dozens of times per
 # second -- confirmed live, 2026-09-24, QQQ: ~65/s sustained. Desktop-
@@ -1515,8 +1519,19 @@ class ThetaStreamHub:
         uses.
         """
         queue_depths_logged_at = self._queue_depths_logged_at or utc_now()
+        frames_since_yield = 0
         while True:
             raw = await self._message_queue.get()
+            # Queue.get() on a non-empty queue never suspends, so a backlog
+            # turned this into a loop that never gave the event loop back:
+            # the relay's socket-draining task starved, its outbound queue
+            # filled and every later frame was dropped (and logged), exactly
+            # at the 2026-10-05 open. Yield every so often so the other
+            # tasks always get a turn.
+            frames_since_yield += 1
+            if frames_since_yield >= PROCESS_YIELD_EVERY_FRAMES:
+                frames_since_yield = 0
+                await asyncio.sleep(0)
             self._frames_dequeued += 1
             frame_is_stale = self._frames_dequeued <= self._stale_frames_before
             # Measured the same way LOOP_ITERATION_SLOW_THRESHOLD_SECONDS

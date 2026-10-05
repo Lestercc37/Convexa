@@ -201,6 +201,28 @@ class TestBackpressure:
         )
         await connected.writer.wait_closed()  # no-op on the fake, keeps cleanup symmetric
 
+    @pytest.mark.asyncio
+    async def test_a_burst_of_drops_logs_once_with_the_count(self, caplog: pytest.LogCaptureFixture) -> None:
+        class _FakeWriter:
+            def write(self, _data: bytes) -> None:
+                pass
+
+            async def drain(self) -> None:
+                pass
+
+        connected = _ConnectedProcessor(_FakeWriter())  # type: ignore[arg-type]
+        connected.send_task.cancel()
+        for i in range(RELAY_QUEUE_MAXSIZE):
+            connected.queue.put_nowait(f"{i}\n".encode())
+
+        with caplog.at_level(logging.CRITICAL):
+            for _ in range(1000):
+                connected.publish(b"x\n")
+
+        records = [r for r in caplog.records if "queue full" in r.message]
+        assert len(records) == 1, "tens of thousands of lines a second burned the worker's CPU"
+        assert connected._dropped_since_log == 999, "the rest are counted, reported on the next line"
+
 
 def test_reconnect_backoff_constants_match_the_rest_of_the_codebase() -> None:
     # Deliberately the same numbers as whale_alerts_relay.py/ThetaStreamHub
