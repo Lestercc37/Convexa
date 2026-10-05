@@ -249,6 +249,10 @@ class InMemoryStorage:
             if occ_symbol in self._cumulative_volumes
         }
 
+    def get_cumulative_volumes_since(self, since: datetime) -> dict[str, int]:
+        # no per-row timestamps in memory: everything stored counts as today's
+        return dict(self._cumulative_volumes)
+
     def save_cumulative_volumes(self, volumes: dict[str, int]) -> None:
         self._cumulative_volumes.update(volumes)
 
