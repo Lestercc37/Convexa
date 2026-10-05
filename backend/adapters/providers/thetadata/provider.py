@@ -330,6 +330,10 @@ QUEUE_DEPTH_LOG_INTERVAL_SECONDS = 60
 # row (a non-empty queue never makes Queue.get() suspend on its own).
 PROCESS_YIELD_EVERY_FRAMES = 64
 
+# How much of a raw frame is searched for its "type" in
+# _relay_without_parsing (the header is the first object in every frame).
+RAW_TYPE_SNIFF_CHARS = 120
+
 # Frame drops at the hub's own queue are reported at most this often.
 DROP_LOG_INTERVAL_SECONDS = 1.0
 
@@ -1526,6 +1530,31 @@ class ThetaStreamHub:
             # that and the next connection verifies again.
             logger.warning("ThetaStreamHub: subscription verification interrupted", exc_info=True)
 
+    def _relay_without_parsing(self, raw: str) -> bool:
+        """With a stream processor connected, a QUOTE/TRADE frame is only
+        forwarded to it, so there is no need to json.loads() it here too: the
+        type (header comes first) and the security type are found with plain
+        substring checks. json.loads of every frame was the single biggest
+        cost in this process at the 2026-10-05 open (py-spy, ~22%). STATUS,
+        REQ_RESPONSE and anything unrecognised still take the full path.
+        Returns True when the frame was handed to the processor."""
+        relay = self._processor_relay
+        if relay is None or not relay.has_client:
+            return False
+        head = raw[:RAW_TYPE_SNIFF_CHARS]
+        if '"QUOTE"' in head:
+            self._last_quote_at = time.monotonic()
+        elif '"TRADE"' in head:
+            if '"OPTION"' in raw:
+                self._last_option_trade_at = time.monotonic()
+            elif '"STOCK"' in raw or '"INDEX"' in raw:
+                self._last_underlying_trade_at = time.monotonic()
+            else:
+                return False
+        else:
+            return False
+        return relay.publish_raw(raw)
+
     async def _process_messages(self) -> None:
         """Drains _message_queue -- json.loads(), per-message
         classification/dispatch, and the periodic queue-depth log all
@@ -1557,6 +1586,8 @@ class ThetaStreamHub:
             # only how promptly the *next* already-buffered message gets
             # processed, but it's still worth knowing if it grows.
             iteration_started_at = time.perf_counter()
+            if self._relay_without_parsing(raw):
+                continue
             message = json.loads(raw)
             header = message.get("header", {})
             status = header.get("status")

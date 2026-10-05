@@ -2904,6 +2904,10 @@ class _FakeProcessorRelay:
         self.accepts = accepts
         self.published_raw: list[str] = []
 
+    @property
+    def has_client(self) -> bool:
+        return self.accepts
+
     def publish_raw(self, raw: str) -> bool:
         self.published_raw.append(raw)
         return self.accepts
@@ -2959,6 +2963,40 @@ class TestProcessorRelayRouting:
         # back here. See backend/core/stream_processor_relay.py's own
         # docstring.
         assert queue.empty()
+
+    @pytest.mark.asyncio
+    async def test_quote_and_trade_frames_are_relayed_without_json_parsing(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # json.loads of every frame was the biggest cost in the worker at the
+        # 2026-10-05 open; the processor parses them anyway.
+        import backend.adapters.providers.thetadata.provider as provider_module
+
+        stream = ThetaStreamHub(WS_URL, httpx.Client(base_url=REST_URL))
+        relay = _FakeProcessorRelay(accepts=True)
+        stream.set_processor_relay(relay)
+        frames = [
+            '{"header":{"type":"QUOTE","status":"CONNECTED"},"contract":{"security_type":"OPTION","root":"SPY"},"quote":{"bid":1.0,"ask":1.1}}',
+            '{"header":{"type":"TRADE","status":"CONNECTED"},"contract":{"security_type":"OPTION","root":"SPY"},"trade":{"size":1}}',
+            '{"header":{"type":"TRADE","status":"CONNECTED"},"contract":{"security_type":"INDEX","root":"SPX"},"trade":{"price":7735.0}}',
+        ]
+
+        def fail(_raw: str) -> dict:
+            raise AssertionError("json.loads must not run for relayed QUOTE/TRADE frames")
+
+        monkeypatch.setattr(provider_module.json, "loads", fail)
+        for raw in frames:
+            stream._message_queue.put_nowait(raw)
+        task = asyncio.create_task(stream._process_messages())
+        await asyncio.sleep(0.05)
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+
+        assert relay.published_raw == frames
+        assert stream._last_quote_at is not None
+        assert stream._last_option_trade_at is not None
+        assert stream._last_underlying_trade_at is not None
 
     @pytest.mark.asyncio
     async def test_quote_handled_in_process_when_no_processor_is_connected(self) -> None:
