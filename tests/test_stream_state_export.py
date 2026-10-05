@@ -51,6 +51,31 @@ async def test_export_once_writes_nonempty_cumulative_volumes() -> None:
 
 
 @pytest.mark.asyncio
+async def test_export_once_never_writes_the_zero_placeholders_of_registered_contracts() -> None:
+    """The hub registers every streamed contract with volume 0; exporting
+    those overwrote the stream processor's real volume for the same
+    contracts every 15 s (2026-10-05)."""
+    provider = _StubProvider(volumes={"SPY261005C00770000": 0, "SPY261005P00760000": 0, "AAPL260220C00200000": 42})
+    storage = _StubStorage()
+    exporter = _exporter(provider, storage)
+
+    await exporter._export_once()
+
+    assert storage.saved_volumes == [{"AAPL260220C00200000": 42}]
+
+
+@pytest.mark.asyncio
+async def test_export_once_writes_nothing_when_every_volume_is_a_zero_placeholder() -> None:
+    provider = _StubProvider(volumes={"SPY261005C00770000": 0})
+    storage = _StubStorage()
+    exporter = _exporter(provider, storage)
+
+    await exporter._export_once()
+
+    assert storage.saved_volumes == []
+
+
+@pytest.mark.asyncio
 async def test_export_once_skips_the_volume_write_when_empty() -> None:
     """MockDataProvider (and any process whose stream was never started)
     always returns {} here -- must not fire a write for nothing every
