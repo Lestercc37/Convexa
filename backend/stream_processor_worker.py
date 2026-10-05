@@ -102,6 +102,7 @@ import asyncio
 import json
 import logging
 import time
+from datetime import datetime
 
 from backend.adapters.providers.thetadata.stream_parsing import (
     parse_option_trade_message,
@@ -114,6 +115,7 @@ from backend.core.stream_processor_relay import StreamProcessorRelayClient
 from backend.core.whale_alerts_relay import WhaleAlertsRelayServer
 from backend.domain.entities import UnderlyingTradeEvent
 from backend.domain.underlyings import ACTIVE_UNDERLYINGS
+from backend.domain.use_cases.market_hours import EASTERN_TIME
 from backend.domain.use_cases.stream_underlying_price import StreamUnderlyingPriceUseCase
 
 logger = logging.getLogger(__name__)
@@ -247,6 +249,27 @@ def _handle_raw_frame(state: _ProcessorState, raw: str) -> None:
         logger.exception("Stream processor worker: failed to parse one raw frame, dropping it")
 
 
+async def _resume_cumulative_volume(container, state: _ProcessorState) -> None:
+    """Seeds the in-memory volume counters with what this process already
+    exported earlier today, so a restart mid-session doesn't wipe the day's
+    volume (the first export after a restart would otherwise overwrite the
+    stored rows with only the counts since then). Never blocks startup."""
+    try:
+        now = datetime.now(EASTERN_TIME)
+        start_of_day = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        stored = await asyncio.to_thread(container.storage.get_cumulative_volumes_since, start_of_day)
+    except Exception:
+        logger.exception(
+            "Stream processor worker: could not resume today's cumulative volume, starting from zero"
+        )
+        return
+    for occ_symbol, volume in stored.items():
+        state.cumulative_volume[occ_symbol] = max(volume, state.cumulative_volume.get(occ_symbol, 0))
+    logger.info(
+        "Stream processor worker: resumed today's cumulative volume for %d contracts", len(stored)
+    )
+
+
 async def _export_volume_periodically(container, state: _ProcessorState) -> None:
     """This process's own half of what StreamStateExporter already does
     for worker.py's in-process fallback path -- same cadence, same
@@ -298,6 +321,7 @@ async def run() -> None:
         storage=container.async_market_storage,
     )
     state = _ProcessorState(whale_alerts_relay, price_use_case)
+    await _resume_cumulative_volume(container, state)
     export_task = asyncio.create_task(_export_volume_periodically(container, state))
 
     relay = StreamProcessorRelayClient(

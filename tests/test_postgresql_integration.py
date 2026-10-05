@@ -453,6 +453,36 @@ def test_cumulative_volume_round_trip_against_postgresql(
             )
 
 
+def test_cumulative_volumes_since_returns_only_rows_written_at_or_after_the_cutoff(
+    postgresql_storage: tuple[PostgreSQLStorage, Engine, str],
+) -> None:
+    """Resume-on-restart read for the stream processor: today's rows only, so a
+    row left over from an earlier day is never added to today's counters."""
+    from datetime import UTC, datetime, timedelta
+
+    storage, engine, symbol = postgresql_storage
+    occ_today = f"{symbol}260320C00550000"
+    occ_old = f"{symbol}260320P00540000"
+    try:
+        storage.save_cumulative_volumes({occ_today: 100, occ_old: 250})
+        with engine.begin() as connection:
+            connection.execute(
+                text("UPDATE contract_cumulative_volume SET updated_at = :t WHERE occ_symbol = :o"),
+                {"t": datetime.now(UTC) - timedelta(days=2), "o": occ_old},
+            )
+
+        recent = storage.get_cumulative_volumes_since(datetime.now(UTC) - timedelta(hours=1))
+
+        assert recent.get(occ_today) == 100
+        assert occ_old not in recent
+    finally:
+        with engine.begin() as connection:
+            connection.execute(
+                text("DELETE FROM contract_cumulative_volume WHERE occ_symbol IN (:a, :b)"),
+                {"a": occ_today, "b": occ_old},
+            )
+
+
 def test_cumulative_volume_lookup_for_an_unknown_contract_is_absent_not_zero(
     postgresql_storage: tuple[PostgreSQLStorage, Engine, str],
 ) -> None:

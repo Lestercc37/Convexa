@@ -1307,6 +1307,27 @@ class PostgreSQLStorage:
             ).mappings()
             return {str(row["occ_symbol"]): int(row["volume"]) for row in rows}
 
+    def get_cumulative_volumes_since(self, since: datetime) -> dict[str, int]:
+        """Every contract's stored cumulative volume last written at or after
+        `since`. The stream processor seeds its in-memory counters with this at
+        startup so a restart (a deploy, a crash) in the middle of a session
+        doesn't reset the day's volume to zero: its first export would
+        overwrite the stored rows with only the counts since the restart
+        (2026-10-05: volume 46% of the real total after two restarts). Rows from
+        earlier days fall outside `since`, so the daily reset is unchanged."""
+        with self.session_factory() as session:
+            rows = session.execute(
+                text(
+                    """
+                    SELECT occ_symbol, volume
+                    FROM contract_cumulative_volume
+                    WHERE updated_at >= :since
+                    """
+                ),
+                {"since": since},
+            ).mappings()
+            return {str(row["occ_symbol"]): int(row["volume"]) for row in rows}
+
     def save_cumulative_volumes(self, volumes: dict[str, int]) -> None:
         """Written periodically by whichever process actually owns a
         live ThetaData trade stream (ThetaStreamHub's own

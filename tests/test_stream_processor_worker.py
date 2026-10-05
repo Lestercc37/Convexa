@@ -249,6 +249,55 @@ class TestRepeatedQuotesAreNotRelayed:
         assert len(relay.published_quotes) == 2
 
 
+class TestResumeCumulativeVolume:
+    """2026-10-05: a processor restart mid-session reset the day's volume to
+    zero (its first export overwrote the stored rows)."""
+
+    class _Container:
+        def __init__(self, storage) -> None:
+            self.storage = storage
+
+    @pytest.mark.asyncio
+    async def test_todays_stored_volume_seeds_the_counters(self) -> None:
+        from backend.adapters.storage.memory import InMemoryStorage
+        from backend.stream_processor_worker import _resume_cumulative_volume
+
+        storage = InMemoryStorage()
+        storage.save_cumulative_volumes({"SPY261005C00770000": 700})
+        state, _relay, _price = _state()
+
+        await _resume_cumulative_volume(self._Container(storage), state)
+
+        assert state.cumulative_volume == {"SPY261005C00770000": 700}
+        raw = json.dumps(
+            {
+                "header": {"type": "TRADE", "status": "CONNECTED"},
+                "contract": {
+                    "security_type": "OPTION",
+                    "root": "SPY",
+                    "expiration": 20261005,
+                    "strike": 770000,
+                    "right": "C",
+                },
+                "trade": {"size": 10, "price": 1.09},
+            }
+        )
+        _handle_raw_frame(state, raw)
+        assert state.cumulative_volume["SPY261005C00770000"] == 710, "new trades add to the resumed total"
+
+    @pytest.mark.asyncio
+    async def test_a_storage_failure_starts_from_zero_instead_of_blocking_startup(self) -> None:
+        from backend.stream_processor_worker import _resume_cumulative_volume
+
+        class _Broken:
+            def get_cumulative_volumes_since(self, _since) -> dict:
+                raise RuntimeError("db down")
+
+        state, _relay, _price = _state()
+        await _resume_cumulative_volume(self._Container(_Broken()), state)
+        assert state.cumulative_volume == {}
+
+
 class TestPriceWritesAreCoalescedPerSymbol:
     """2026-10-05 open: one task per tick for the tick-level symbols exhausted
     the Postgres pool (QueuePool 5+10) within a minute, the processor fell
