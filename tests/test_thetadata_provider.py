@@ -1679,6 +1679,21 @@ class TestOptionTradeHandling:
         assert ticks_when_drained["n"] >= 5000 // 64 - 1, "the other task starved while the backlog drained"
 
     @pytest.mark.asyncio
+    async def test_a_full_message_queue_logs_drops_once_a_second_not_once_per_frame(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        stream = ThetaStreamHub(WS_URL, httpx.Client(base_url=REST_URL))
+        stream._message_queue = asyncio.Queue(maxsize=10)
+        with caplog.at_level(logging.WARNING):
+            for _ in range(5000):
+                stream._enqueue_raw_frame("{}")
+
+        records = [r for r in caplog.records if "internal message queue full" in r.message]
+        assert len(records) == 1
+        assert stream._frames_enqueued == 10
+        assert stream._frames_dropped_unreported == 4989
+
+    @pytest.mark.asyncio
     async def test_handle_option_trade_publishes_a_flow_event_to_subscribers(self) -> None:
         stream = ThetaStreamHub(WS_URL, httpx.Client(base_url=REST_URL))
         queue = stream.subscribe_trade_queue("SPY")
