@@ -18,8 +18,10 @@ blind spot cannot hide an outage:
 And one informational notice (not an outage):
 
   contract_count  The worker streams TRADE and QUOTE for every registered
-                  contract and the plan (Options: STANDARD) documents 1,000
-                  streamable contracts for each. The registered set only
+                  contract and the plan (Options: STANDARD) documents 10,000
+                  streamable contracts for quotes and 15,000 for trades (the
+                  1,000 / 2,000 table on the same page is the STOCKS section;
+                  corrected 2026-10-05). The registered set only
                   grows during a session (and roughly doubles around the 16:00
                   close); it was 1,440-1,668 on several mornings when the
                   worker carried it over. Reconstructed from worker.log (last
@@ -63,8 +65,8 @@ from zoneinfo import ZoneInfo
 from backend.domain.use_cases.market_hours import is_market_open
 
 EASTERN = ZoneInfo("America/New_York")
-CONTRACT_NOTICE_LIMIT = 950
-CONTRACT_PLAN_LIMIT = 1000
+CONTRACT_NOTICE_LIMIT = 9500
+CONTRACT_PLAN_LIMIT = 10_000  # Options STANDARD quote contracts (the tighter of 10,000 / 15,000)
 STALL_MINUTES = 3
 GRACE_AFTER_OPEN_MINUTES = 10
 RECONNECT_LOOP_COUNT = 6
