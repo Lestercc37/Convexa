@@ -249,6 +249,16 @@ class TestRepeatedQuotesAreNotRelayed:
         assert len(relay.published_quotes) == 2
 
 
+class TestFrameMix:
+    def test_frames_are_counted_per_type_and_root_including_repeats(self) -> None:
+        state, _relay, _price = _state()
+        quote = TestRepeatedQuotesAreNotRelayed._quote(1.08, 1.09)
+        for _ in range(3):
+            _handle_raw_frame(state, quote)
+        assert state.frame_mix[("QUOTE", "SPY")] == 3
+        assert state.repeated_quotes == 2
+
+
 class TestPriceWritesAreCoalescedPerSymbol:
     """2026-10-05 open: one task per tick for the tick-level symbols exhausted
     the Postgres pool (QueuePool 5+10) within a minute, the processor fell
