@@ -1686,12 +1686,30 @@ class TestOptionTradeHandling:
         stream._message_queue = asyncio.Queue(maxsize=10)
         with caplog.at_level(logging.WARNING):
             for _ in range(5000):
-                stream._enqueue_raw_frame("{}")
+                stream._enqueue_raw_frame('{"header":{"type":"QUOTE"}}')
 
         records = [r for r in caplog.records if "internal message queue full" in r.message]
         assert len(records) == 1
         assert stream._frames_enqueued == 10
         assert stream._frames_dropped_unreported == 4989
+
+    @pytest.mark.asyncio
+    async def test_a_trade_arriving_at_a_full_queue_evicts_the_oldest_frame_instead_of_being_dropped(
+        self,
+    ) -> None:
+        stream = ThetaStreamHub(WS_URL, httpx.Client(base_url=REST_URL))
+        stream._message_queue = asyncio.Queue(maxsize=3)
+        quote = '{"header":{"type":"QUOTE"}}'
+        trade = '{"header":{"type":"TRADE"},"contract":{"security_type":"OPTION"}}'
+        for _ in range(3):
+            stream._enqueue_raw_frame(quote)
+        stream._enqueue_raw_frame(quote)  # dropped: it is only a quote
+        stream._enqueue_raw_frame(trade)  # kept: evicts the oldest quote
+
+        queued = [stream._message_queue.get_nowait() for _ in range(3)]
+        assert queued == [quote, quote, trade]
+        # the evicted frame counts as consumed, so stale-frame positions stay aligned
+        assert stream._frames_enqueued - stream._frames_dequeued == 3
 
     @pytest.mark.asyncio
     async def test_handle_option_trade_publishes_a_flow_event_to_subscribers(self) -> None:
