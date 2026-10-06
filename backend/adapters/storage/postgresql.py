@@ -70,6 +70,10 @@ class PostgreSQLStorage:
                     """
                 )
             ).mappings()
+            # Only the symbols Convexa actively serves: the table keeps the
+            # rows (and every stored history) of symbols that were removed
+            # from ACTIVE_UNDERLYINGS (2026-10-06), which must not keep showing
+            # up in the dashboard's selector.
             return [
                 Underlying(
                     symbol=str(row["symbol"]),
@@ -77,6 +81,7 @@ class PostgreSQLStorage:
                     is_priority=bool(row["is_priority"]),
                 )
                 for row in rows
+                if str(row["symbol"]) in ACTIVE_UNDERLYINGS_BY_SYMBOL
             ]
 
     def save_whale_threshold(self, threshold: WhaleThreshold) -> None:

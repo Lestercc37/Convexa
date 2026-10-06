@@ -134,7 +134,7 @@ async def test_a_symbols_task_restarts_after_an_exception_without_affecting_othe
             self, underlying: str
         ) -> AsyncIterator[UnderlyingTradeEvent]:
             self.calls[underlying] = self.calls.get(underlying, 0) + 1
-            if underlying == "AAPL" and self.calls[underlying] == 1:
+            if underlying == "NVDA" and self.calls[underlying] == 1:
                 raise RuntimeError("simulated transient failure")
             if False:
                 yield
@@ -144,14 +144,14 @@ async def test_a_symbols_task_restarts_after_an_exception_without_affecting_othe
     manager = UnderlyingPriceStreamManager(container)
 
     manager.start()
-    # AAPL's task: raises -> sleeps (patched, instant) -> retries -> a
+    # NVDA's task: raises -> sleeps (patched, instant) -> retries -> a
     # clean second call completes it. Every other symbol's task
     # completes on its own first, unaffected, real attempt.
     await asyncio.wait_for(asyncio.gather(*manager._tasks), timeout=5)
 
-    assert provider.calls["AAPL"] == 2
+    assert provider.calls["NVDA"] == 2
     assert sleep_calls == [2]  # RECONNECT_BASE_DELAY_SECONDS, the shared convention
-    other_symbols = [s for s in ACTIVE_SYMBOLS if s != "AAPL"]
+    other_symbols = [s for s in ACTIVE_SYMBOLS if s != "NVDA"]
     assert all(provider.calls[symbol] == 1 for symbol in other_symbols)
 
     await manager.stop()

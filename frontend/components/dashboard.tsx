@@ -188,7 +188,14 @@ export function Dashboard() {
           if (current) return current;
           const stored = window.localStorage.getItem(LAST_SYMBOL_STORAGE_KEY);
           const isStoredStillActive = stored && items.some((item) => item.symbol === stored);
-          return (isStoredStillActive ? stored : items[0]?.symbol) || "";
+          // A fresh load opens on SPX (the first symbol alphabetically is now ES, a
+          // price-proxy future with no options chain of its own), else the first
+          // non-future symbol.
+          const fallback =
+            items.find((item) => item.symbol === "SPX") ??
+            items.find((item) => item.kind !== "future") ??
+            items[0];
+          return (isStoredStillActive ? stored : fallback?.symbol) || "";
         });
       })
       .catch((reason: unknown) => {

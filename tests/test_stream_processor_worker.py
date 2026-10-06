@@ -161,7 +161,7 @@ class TestNoBlockingWaitOnUnderlyingTrades:
         underlying_raw = json.dumps(
             {
                 "header": {"type": "TRADE", "status": "CONNECTED"},
-                "contract": {"security_type": "STOCK", "root": "AAPL"},
+                "contract": {"security_type": "STOCK", "root": "NVDA"},
                 "trade": {"size": 500, "price": 184.51},
             }
         )
@@ -318,7 +318,7 @@ class TestPriceWritesAreCoalescedPerSymbol:
         return json.dumps(
             {
                 "header": {"type": "TRADE", "status": "CONNECTED"},
-                "contract": {"security_type": "INDEX" if symbol == "SPX" else "STOCK", "root": symbol},
+                "contract": {"security_type": "INDEX" if symbol in ("SPX", "NDX", "VIX") else "STOCK", "root": symbol},
                 "trade": {"size": 1, "price": price},
             }
         )
@@ -344,7 +344,7 @@ class TestPriceWritesAreCoalescedPerSymbol:
     async def test_symbols_are_written_independently_and_concurrency_is_capped(self) -> None:
         state, _relay, price = _state()
         price.block_until_released()
-        symbols = ["SPX", "SPY", "QQQ", "IWM", "AAPL", "TSLA", "NVDA"]
+        symbols = ["SPX", "SPY", "QQQ", "IWM", "NVDA", "NDX", "VIX"]
         for symbol in symbols:
             _handle_raw_frame(state, self._tick(symbol, 100.0))
         await asyncio.sleep(0.01)
