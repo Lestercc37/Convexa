@@ -1377,3 +1377,30 @@ def _delete_test_data(engine: Engine, symbol: str) -> None:
             text("DELETE FROM underlyings WHERE id = :id"),
             {"id": underlying_id},
         )
+
+
+def test_get_cumulative_volumes_ignores_rows_not_rewritten_today(
+    postgresql_storage: tuple[PostgreSQLStorage, Engine, str],
+) -> None:
+    """A row nobody rewrote today is a previous session's figure: reading it as
+    today's volume was the 2026-10-06 carry-over bug."""
+    from datetime import UTC, datetime, timedelta
+
+    storage, engine, symbol = postgresql_storage
+    occ_today = f"{symbol}260320C00550000"
+    occ_old = f"{symbol}260320P00540000"
+    try:
+        storage.save_cumulative_volumes({occ_today: 100, occ_old: 250})
+        with engine.begin() as connection:
+            connection.execute(
+                text("UPDATE contract_cumulative_volume SET updated_at = :t WHERE occ_symbol = :o"),
+                {"t": datetime.now(UTC) - timedelta(days=2), "o": occ_old},
+            )
+
+        assert storage.get_cumulative_volumes([occ_today, occ_old]) == {occ_today: 100}
+    finally:
+        with engine.begin() as connection:
+            connection.execute(
+                text("DELETE FROM contract_cumulative_volume WHERE occ_symbol IN (:a, :b)"),
+                {"a": occ_today, "b": occ_old},
+            )

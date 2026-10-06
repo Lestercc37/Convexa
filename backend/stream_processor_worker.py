@@ -102,7 +102,7 @@ import asyncio
 import collections
 import logging
 import time
-from datetime import datetime
+from datetime import date, datetime
 
 from backend.adapters.providers.thetadata.stream_parsing import (
     parse_option_trade_message,
@@ -155,6 +155,8 @@ class _ProcessorState:
         self.whale_alerts_relay = whale_alerts_relay
         self.price_use_case = price_use_case
         self.cumulative_volume: dict[str, int] = {}
+        # ET date the counters belong to; see roll_volume_day.
+        self.volume_date: date | None = None
         # What this process is spending its time on: frames per (type, root)
         # since the last report, see _log_frame_mix_periodically.
         self.frame_mix: collections.Counter[tuple[str, object]] = collections.Counter()
@@ -163,6 +165,26 @@ class _ProcessorState:
         self._pending_prices: dict[str, UnderlyingTradeEvent] = {}
         self._price_writers: dict[str, asyncio.Task[None]] = {}
         self._price_write_slots = asyncio.Semaphore(PRICE_WRITE_CONCURRENCY)
+
+    def roll_volume_day(self, today: date) -> bool:
+        """Clears the volume counters when the ET date changes. Cumulative
+        volume is a per-day figure but nothing ever reset it: the counters
+        only restarted when the process did, so a contract trading on
+        several days kept adding to the previous days' total (2026-10-06:
+        QQQ261006P00749000 stored 86,030 vs 7,745 on ThetaData)."""
+        if self.volume_date is None:
+            self.volume_date = today
+            return False
+        if today == self.volume_date:
+            return False
+        logger.info(
+            "Stream processor worker: new session date %s, resetting the cumulative volume of %d contracts",
+            today,
+            len(self.cumulative_volume),
+        )
+        self.cumulative_volume.clear()
+        self.volume_date = today
+        return True
 
     def is_repeated_quote(self, message: dict) -> bool:
         """True when this QUOTE carries the same bid/ask as the last one
@@ -266,6 +288,7 @@ async def _resume_cumulative_volume(container, state: _ProcessorState) -> None:
     stored rows with only the counts since then). Never blocks startup."""
     try:
         now = datetime.now(EASTERN_TIME)
+        state.volume_date = now.date()
         start_of_day = now.replace(hour=0, minute=0, second=0, microsecond=0)
         stored = await asyncio.to_thread(container.storage.get_cumulative_volumes_since, start_of_day)
     except Exception:
@@ -325,6 +348,7 @@ async def _export_volume_periodically(container, state: _ProcessorState) -> None
     while True:
         await asyncio.sleep(VOLUME_EXPORT_INTERVAL_SECONDS)
         try:
+            state.roll_volume_day(datetime.now(EASTERN_TIME).date())
             if state.cumulative_volume:
                 await asyncio.to_thread(
                     container.storage.save_cumulative_volumes, dict(state.cumulative_volume)

@@ -34,6 +34,7 @@ from backend.domain.entities import (
     WhaleThreshold,
 )
 from backend.domain.underlyings import ACTIVE_UNDERLYINGS_BY_SYMBOL
+from backend.domain.use_cases.market_hours import EASTERN_TIME
 from backend.domain.use_cases.flow import Moneyness, SymbolFlowPressure, WhaleAlert, WhaleAlertType
 
 # See get_latest_chain_snapshot's own comment -- how far back its fast
@@ -1294,6 +1295,10 @@ class PostgreSQLStorage:
         is no reason to pay per-contract round-trips here either."""
         if not occ_symbols:
             return {}
+        # Only rows written today (ET): a row nobody rewrote today is a
+        # previous session's figure and must not read as today's volume.
+        now = datetime.now(EASTERN_TIME)
+        start_of_day = now.replace(hour=0, minute=0, second=0, microsecond=0)
         with self.session_factory() as session:
             rows = session.execute(
                 text(
@@ -1301,9 +1306,10 @@ class PostgreSQLStorage:
                     SELECT occ_symbol, volume
                     FROM contract_cumulative_volume
                     WHERE occ_symbol = ANY(:occ_symbols)
+                      AND updated_at >= :start_of_day
                     """
                 ),
-                {"occ_symbols": occ_symbols},
+                {"occ_symbols": occ_symbols, "start_of_day": start_of_day},
             ).mappings()
             return {str(row["occ_symbol"]): int(row["volume"]) for row in rows}
 
