@@ -76,8 +76,15 @@ class AsyncPostgreSQLStorage:
     was the bug, not a deliberate scope cut.
     """
 
-    def __init__(self, session_factory: async_sessionmaker[AsyncSession]) -> None:
+    def __init__(
+        self,
+        session_factory: async_sessionmaker[AsyncSession],
+        whale_alerts_lee_ready_only: bool = False,
+    ) -> None:
         self.session_factory = session_factory
+        # See PostgreSQLStorage.__init__ / LEE_READY_ONLY_SQL (postgresql.py):
+        # same predicate, mirrored here by hand like the rest of this class.
+        self._whale_alerts_lee_ready_only = whale_alerts_lee_ready_only
         # See _ensure_underlying's own comment -- a symbol's underlying_id
         # never changes once seeded, so this cache is safe to keep for the
         # whole process lifetime, not just per-call.
@@ -454,16 +461,22 @@ class AsyncPostgreSQLStorage:
         ]
 
     async def get_recent_whale_alerts(self, underlying: str, limit: int = 100) -> list[WhaleAlert]:
+        source_filter = (
+            "AND abs((w.estimated_buy_volume + w.estimated_sell_volume) - w.amount) < 1"
+            if self._whale_alerts_lee_ready_only
+            else ""
+        )
         async with self.session_factory() as session:
             result = await session.execute(
                 text(
-                    """
+                    f"""
                     SELECT w.time, u.symbol, w.occ_symbol, w.alert_type, w.amount,
                            w.estimated_buy_volume, w.estimated_sell_volume, w.quote_unavailable,
                            w.moneyness, w.near_gamma_level, w.repeat_count
                     FROM whale_alerts AS w
                     JOIN underlyings AS u ON u.id = w.underlying_id
                     WHERE u.symbol = :symbol
+                    {source_filter}
                     ORDER BY w.time DESC
                     LIMIT :limit
                     """
