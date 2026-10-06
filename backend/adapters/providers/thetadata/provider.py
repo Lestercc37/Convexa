@@ -19,7 +19,7 @@ import httpx
 import websockets
 
 from backend.adapters.notifications.desktop_notify import notify_windows
-from backend.adapters.providers.thetadata import frame_recorder
+from backend.adapters.providers.thetadata import frame_recorder, picows_connection
 from backend.adapters.providers.thetadata.request_slots import (
     InProcessThetaRequestSlots,
     PostgresThetaRequestSlots,
@@ -336,6 +336,9 @@ PROCESS_YIELD_EVERY_FRAMES = 64
 # How much of a raw frame is searched for its "type" in
 # _relay_without_parsing (the header is the first object in every frame).
 RAW_TYPE_SNIFF_CHARS = 120
+
+# The relay wire format is one frame per line.
+LINE_SEPARATOR = bytes([10])
 
 # How often the hub looks for a raw-frame capture request (frame_recorder.py).
 CAPTURE_POLL_SECONDS = 5.0
@@ -1257,7 +1260,32 @@ class ThetaStreamHub:
                 await asyncio.sleep(delay)
                 delay = min(delay * 2, RECONNECT_MAX_DELAY_SECONDS)
 
+    def _picows_enabled(self) -> bool:
+        """Opt-in picows reader: logs/ws_reader_picows.flag must exist when a
+        connection opens (picows_connection.py explains why). Delete the file
+        and reconnect to go back to the websockets reader."""
+        if not Path("logs/ws_reader_picows.flag").exists():
+            return False
+        if not picows_connection.picows_available():
+            logger.warning("ThetaStreamHub: picows reader requested but picows is not installed -- using websockets")
+            return False
+        return True
+
+    async def _connect_and_consume_picows(self) -> None:
+        connection = await picows_connection.connect(self, self._ws_url)
+        logger.info("ThetaStreamHub: connected to %s with the picows reader", self._ws_url)
+        self._active_websocket = connection
+        self._connection_opened_at = time.monotonic()
+        try:
+            await self._consume(connection)
+        finally:
+            self._active_websocket = None
+            await connection.close()
+
     async def _connect_and_consume(self) -> None:
+        if self._picows_enabled():
+            await self._connect_and_consume_picows()
+            return
         # compression=None: permessage-deflate is only used when the client
         # offers it in the handshake (ThetaData/Eduardo, 2026-10-06), and on
         # loopback it is pure CPU on both sides (~4-5% of this process).
@@ -1286,6 +1314,9 @@ class ThetaStreamHub:
         # Anything already in _message_queue was read from the previous
         # connection (nothing from this one has been enqueued yet).
         self._stale_frames_before = self._frames_enqueued
+        if isinstance(websocket, picows_connection.PicowsConnection):
+            # from here on frames take the callback path, see _handle_picows_frame
+            websocket.fast = True
         # Same race as _contracts_lock's own comment (__init__) describes --
         # this runs on the event loop thread, register_contract() can run
         # concurrently from a scheduler worker thread. The lock's held only
@@ -1383,6 +1414,8 @@ class ThetaStreamHub:
         verifier = asyncio.create_task(self._verify_subscriptions(websocket))
         frames_since_yield = 0
         try:
+            if isinstance(websocket, picows_connection.PicowsConnection):
+                await websocket.hold_until_closed(STATUS_STALE_AFTER_SECONDS)
             while True:
                 try:
                     raw = await asyncio.wait_for(
@@ -1423,6 +1456,41 @@ class ThetaStreamHub:
                 raise
             except Exception:
                 logger.exception("ThetaStreamHub: frame capture watcher failed")
+
+    def _handle_picows_frame(self, payload: bytes, batch: list[bytes]) -> bool:
+        """The picows reader's per-frame step (called from its callback, no
+        await). Same decisions as _relay_without_parsing/_process_messages:
+        OHLC ignored; QUOTE/TRADE go to the processor relay in batches (appended
+        to `batch`, returns True); everything else, and everything when no
+        processor is connected, takes the normal queue path."""
+        head = payload[:RAW_TYPE_SNIFF_CHARS]
+        if b'"OHLC"' in head:
+            return False
+        relay = self._processor_relay
+        if relay is not None and relay.has_client:
+            if b'"QUOTE"' in head:
+                self._last_quote_at = time.monotonic()
+                batch.append(payload)
+                return True
+            if b'"TRADE"' in head:
+                if b'"OPTION"' in payload:
+                    self._last_option_trade_at = time.monotonic()
+                    batch.append(payload)
+                    return True
+                if b'"STOCK"' in payload or b'"INDEX"' in payload:
+                    self._last_underlying_trade_at = time.monotonic()
+                    batch.append(payload)
+                    return True
+        self._enqueue_raw_frame(payload.decode("utf-8", "replace"))
+        return False
+
+    def _publish_picows_batch(self, batch: list[bytes]) -> None:
+        relay = self._processor_relay
+        if relay is not None and relay.publish_bytes(LINE_SEPARATOR.join(batch) + LINE_SEPARATOR):
+            return
+        # no processor any more: handle them in-process like the websockets path does
+        for payload in batch:
+            self._enqueue_raw_frame(payload.decode("utf-8", "replace"))
 
     def _enqueue_raw_frame(self, raw: str) -> None:
         recorder = self._frame_recorder
