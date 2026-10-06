@@ -387,3 +387,39 @@ class TestMalformedFrames:
         _handle_raw_frame(state, raw)
         assert relay.published_quotes == []
         assert relay.published_trades == []
+
+
+class TestVolumeDayRollover:
+    """2026-10-06: nothing reset the cumulative volume between days, so a
+    contract trading on several days kept adding to the previous totals."""
+
+    def test_the_counters_are_cleared_when_the_et_date_changes(self) -> None:
+        from datetime import date
+
+        state, _relay, _price = _state()
+        assert state.roll_volume_day(date(2026, 10, 6)) is False  # first call only records the day
+        state.cumulative_volume["SPY261007C00780000"] = 500
+        assert state.roll_volume_day(date(2026, 10, 6)) is False
+        assert state.cumulative_volume == {"SPY261007C00780000": 500}
+
+        assert state.roll_volume_day(date(2026, 10, 7)) is True
+        assert state.cumulative_volume == {}
+
+    @pytest.mark.asyncio
+    async def test_resume_records_todays_date_so_the_first_export_does_not_wipe_the_resumed_volume(self) -> None:
+        from datetime import datetime
+
+        from backend.adapters.storage.memory import InMemoryStorage
+        from backend.domain.use_cases.market_hours import EASTERN_TIME
+        from backend.stream_processor_worker import _resume_cumulative_volume
+
+        class _Container:
+            storage = InMemoryStorage()
+
+        _Container.storage.save_cumulative_volumes({"SPY261007C00780000": 500})
+        state, _relay, _price = _state()
+        await _resume_cumulative_volume(_Container(), state)
+
+        assert state.volume_date == datetime.now(EASTERN_TIME).date()
+        assert state.roll_volume_day(datetime.now(EASTERN_TIME).date()) is False
+        assert state.cumulative_volume == {"SPY261007C00780000": 500}
