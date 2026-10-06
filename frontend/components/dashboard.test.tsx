@@ -528,6 +528,22 @@ describe("Dashboard", () => {
     ).toBeInTheDocument();
   });
 
+  it("opens on SPX, not on the first symbol alphabetically (ES, a price-proxy future), when nothing was chosen before", async () => {
+    window.localStorage.removeItem("convexa:last-symbol");
+    apiMocks.getUnderlyings.mockResolvedValueOnce({
+      schema_version: 1,
+      underlyings: [
+        { symbol: "ES", kind: "future", is_priority: true },
+        { symbol: "IWM", kind: "equity", is_priority: true },
+        { symbol: "SPX", kind: "index", is_priority: true },
+      ],
+    });
+
+    renderWithLanguage(<Dashboard />);
+
+    await screen.findByLabelText("Chart de velas para SPX");
+  });
+
   it("labels the VWAP overlay with its proxy symbol when the backend approximates it from a correlated ETF (regression)", async () => {
     // SPX/NDX have no volume of their own, so the backend approximates
     // their VWAP from a correlated ETF (VWAP_PROXY_SYMBOL_BY_INDEX,

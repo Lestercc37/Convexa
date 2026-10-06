@@ -22,14 +22,7 @@ def test_active_underlying_classification() -> None:
         "SPX": Underlying("SPX", UnderlyingKind.INDEX, True),
         "VIX": Underlying("VIX", UnderlyingKind.INDEX, True),
         "NDX": Underlying("NDX", UnderlyingKind.INDEX, True),
-        "TSLA": Underlying("TSLA", UnderlyingKind.EQUITY, True),
         "NVDA": Underlying("NVDA", UnderlyingKind.EQUITY, True),
-        "META": Underlying("META", UnderlyingKind.EQUITY, True),
-        "AMZN": Underlying("AMZN", UnderlyingKind.EQUITY, True),
-        "GOOGL": Underlying("GOOGL", UnderlyingKind.EQUITY, True),
-        "AAPL": Underlying("AAPL", UnderlyingKind.EQUITY, True),
-        "MSFT": Underlying("MSFT", UnderlyingKind.EQUITY, True),
-        "DIA": Underlying("DIA", UnderlyingKind.EQUITY, True),
         "ES": Underlying("ES", UnderlyingKind.FUTURE, True),
     }
 

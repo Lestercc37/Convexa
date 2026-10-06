@@ -2,6 +2,9 @@ from __future__ import annotations
 
 from backend.domain.entities import Underlying, UnderlyingKind
 
+# Trimmed 2026-10-06 (owner's decision, after the open showed the stream near its capacity limit):
+# TSLA, META, AMZN, GOOGL, AAPL, MSFT and DIA were removed; ES stays and NQ is planned as a
+# proxy of NDX (see read_models.PRICE_PROXY_SYMBOL_BY_FUTURE). Stored history is untouched.
 ACTIVE_UNDERLYINGS: tuple[Underlying, ...] = (
     Underlying("SPY", UnderlyingKind.EQUITY, True),
     Underlying("QQQ", UnderlyingKind.EQUITY, True),
@@ -9,14 +12,7 @@ ACTIVE_UNDERLYINGS: tuple[Underlying, ...] = (
     Underlying("SPX", UnderlyingKind.INDEX, True),
     Underlying("VIX", UnderlyingKind.INDEX, True),
     Underlying("NDX", UnderlyingKind.INDEX, True),
-    Underlying("TSLA", UnderlyingKind.EQUITY, True),
     Underlying("NVDA", UnderlyingKind.EQUITY, True),
-    Underlying("META", UnderlyingKind.EQUITY, True),
-    Underlying("AMZN", UnderlyingKind.EQUITY, True),
-    Underlying("GOOGL", UnderlyingKind.EQUITY, True),
-    Underlying("AAPL", UnderlyingKind.EQUITY, True),
-    Underlying("MSFT", UnderlyingKind.EQUITY, True),
-    Underlying("DIA", UnderlyingKind.EQUITY, True),
     Underlying("ES", UnderlyingKind.FUTURE, True),
 )
 

@@ -361,7 +361,10 @@ def test_market_price_and_underlying_round_trip_against_postgresql(
     storage.save_market_price(price)
 
     assert storage.get_latest_price(symbol) == price
-    assert any(item.symbol == symbol for item in storage.list_underlyings())
+    # list_underlyings only serves symbols in ACTIVE_UNDERLYINGS (2026-10-06): a
+    # stored symbol that is not one of them (a removed one, or this test's own)
+    # must never reach the dashboard's selector.
+    assert not any(item.symbol == symbol for item in storage.list_underlyings())
     history = storage.get_price_history(
         symbol,
         price.as_of - timedelta(seconds=1),
