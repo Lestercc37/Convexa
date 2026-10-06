@@ -1,0 +1,108 @@
+WHALE WORKER: FILTRO POR SIMBOLO ACTIVO (M1) - VERIFICACIONES, REPLAY Y PLAN DE REINICIO
+Convexa - 2026-10-06 - PR en borrador. NADA desplegado, NINGUN proceso reiniciado, sin merge, sin llamadas a ThetaData, sin UPDATE/DELETE/migracion.
+El cambio vive solo en backend/whale_alerts_worker.py (+ tests). No se tocaron whale_alerts_relay.py, el hub, el Worker, el procesador ni colas/tamanos/CRITICAL de _put.
+
+======================================================================
+QUE CAMBIA
+======================================================================
+- _ActiveSymbolsRelayDataProvider(RelayDataProvider): sobrescribe _dispatch(payload). Si payload["symbol"] no es un str presente en el conjunto de simbolos activos, descarta el mensaje
+  ANTES de decodificarlo y de crear/llenar ninguna cola (solo incrementa un contador); si esta, llama a super()._dispatch(payload) sin cambios.
+- El conjunto se deriva de ACTIVE_UNDERLYINGS al construir el proveedor (no hay lista copiada); admite inyectar uno en tests.
+- Observabilidad: contador por simbolo (ignored_by_symbol) y UN resumen INFO como maximo cada 60 s, solo si hubo mensajes ignorados, con los 10 simbolos principales y el total desde el
+  arranque; nunca una linea por mensaje y nunca WARNING/CRITICAL. Ademas, una linea INFO al arrancar con los simbolos que sigue ("tracks 9 symbols, ignoring the rest: ...").
+- run() construye el proveedor con _build_relay_provider(); nada mas cambia en el entrypoint.
+Como revertir: revertir el PR (el proceso vuelve a RelayDataProvider). OJO: el reinicio del whale worker con la lista de 7 simbolos SIN este filtro llena las colas de los eliminados (ver estudio
+anterior), asi que revertir y reiniciar no es una vuelta segura; la reversion segura tras un problema es Stop-Service ConvexaWhaleAlerts (se pausan las alertas; el mercado no se ve afectado).
+
+======================================================================
+B. VERIFICACIONES OBLIGATORIAS (antes de escribir el filtro)
+======================================================================
+B.1 Formato del simbolo en los mensajes
+Codigo: el simbolo del mensaje es event.symbol (whale_alerts_relay.py:99 y :124 lo escriben tal cual en "symbol"), y el procesador lo fija con underlying_symbol =
+_underlying_symbol_for_root(root.upper()) (stream_parsing.py:154 para quotes, :192 para trades), que traduce la raiz semanal de vuelta al subyacente (_SYMBOL_BY_WEEKLY_ROOT, :67-69:
+SPXW->SPX, NDXP->NDX, VIXW->VIX; el resto pasa igual). RelayDataProvider guarda las colas por ese mismo simbolo (:397-407) y los consumidores piden stream_trades/stream_quotes(underlying.upper())
+con los simbolos de ACTIVE_UNDERLYINGS (whale_alerts_stream.py:94-97). Es decir, el filtro compara exactamente la clave por la que las colas se consumen.
+Captura cruda 10-06 09:30-09:32 pasada por el codigo real del procesador (dedupe + parse) y los codificadores reales del relay (4,771,884 frames; 18 raices distintas):
+   raiz de contrato -> payload["symbol"]   (quotes / trades en 2 minutos)
+   SPXW  -> "SPX"    264,752 / 12,813        NDXP -> "NDX"   269,097 / 325        VIXW -> "VIX"   554 / 32
+   SPY -> "SPY"      52,875 / 15,139         QQQ -> "QQQ"    81,143 / 12,278      IWM -> "IWM"    20,092 / 1,339      NVDA -> "NVDA" 14,118 / 6,800
+   ES -> "ES"        362 / 0                 NQ: sin trafico en la captura
+   eliminados: TSLA 24,974 / 4,408; META 15,790 / 1,136; DIA 12,058 / 69; MSFT 10,857 / 1,051; AAPL 7,867 / 1,278; GOOGL 6,126 / 333; AMZN 4,550 / 690
+   Las raices "SPX", "NDX" y "VIX" (indices) aparecen en la captura pero no publican nada al whale relay (son del precio del subyacente, ruta del procesador).
+Ejemplos reales del cable: {"k":"t","symbol":"SPX","occ_symbol":"SPXW261006P07700000",...}; {"k":"q","symbol":"NDX","occ_symbol":"NDXP261006C30820000",...}; {"k":"q","symbol":"VIX","occ_symbol":"VIXW261007P00018000",...}.
+Respuesta a los casos pedidos: SPX vs SPXW: el mensaje trae "SPX" (la raiz SPXW queda solo en occ_symbol); NDX vs NDXP: "NDX"; VIX vs VIXW: "VIX". El filtro NO bloquea ningun simbolo activo.
+ES y NQ: SI pasan por este relay. OBSERVACION (no cambiada): la raiz "ES" que llega por el Terminal son opciones de Eversource (ES261016C00105000), no el futuro; como "ES" esta en ACTIVE_UNDERLYINGS
+(como futuro) el proceso ya las consume hoy y el filtro las deja pasar igual (362 quotes y 0 trades en 2 minutos). Si algun dia hay trades de "ES" podrian generar una alerta atribuida al futuro; es una
+decision de producto aparte, no de este PR. NQ: sin trafico; pasa el filtro porque esta en la lista.
+B.2 Mismo conjunto que consume WhaleAlertsStreamManager
+Con el codigo de la rama y el container real del servidor (StreamWhaleAlertsUseCase reemplazado por un registrador, manager.start()): tareas creadas para
+['ES','IWM','NDX','NQ','NVDA','QQQ','SPX','SPY','VIX'] (9) = conjunto del filtro ['ES','IWM','NDX','NQ','NVDA','QQQ','SPX','SPY','VIX'] (9): IDENTICOS. Hay un test que lo repite.
+B.3 payload sin "symbol", None u otro tipo
+Se descarta sin excepcion y sin log (payload.get("symbol") solo si es dict; un simbolo no-str, vacio o inhashable tambien cae a "descartado"); se cuenta bajo "<missing>". Probado: {"k":"t"},
+{"k":"t","symbol":None}, simbolo numerico/lista/dict, {}, [], 5, None, "SPX": ninguna excepcion, 0 registros de log. Cambio de comportamiento menor: antes un payload que no fuera dict (JSON malformado)
+lanzaba excepcion en _dispatch y reconectaba el cliente (RelayDataProvider._run); ahora se descarta.
+
+======================================================================
+C. RESULTADOS
+======================================================================
+C.1-C.3 Tests nuevos (tests/test_whale_alerts_worker_filter.py): 37 pasan: activos encolados y entregados al consumidor (trade y quote); los 7 eliminados no crean cola, no se decodifican (el decodificador
+se sustituye por uno que falla si se llama) y con 21,000 mensajes por simbolo no hay NI UN log WARNING/CRITICAL (linea base: el proveedor sin filtro SI se llena y emite 5 CRITICAL con 20,005); simbolos
+reales parseados desde tramas (SPXW->SPX, NDXP->NDX, VIXW->VIX, SPY, QQQ, IWM, NVDA, ES, NQ) pasan; 11 payloads sin simbolo utilizable; todos los simbolos de ACTIVE_UNDERLYINGS pasan; un simbolo agregado
+a la lista queda cubierto sin tocar el filtro; el conjunto del filtro = simbolos del manager (9); resumen cada 60 s solo si hay descartes y sin lineas por mensaje; el entrypoint usa el proveedor filtrado.
+C.4 Replay con la captura real (10-06 09:30-09:32, proceso aislado, prioridad baja, codigo de la rama con el venv del servidor; 842,906 mensajes publicados al relay en 120 s = 7,026/s, en orden de llegada):
+   Sin consumidores (peor caso, nadie drena): mensajes encolados A (produccion actual) vs B (filtro): SPX 32,813 | 32,813, NDX 20,325 | 20,325, QQQ 32,278 | 32,278, SPY 35,139 | 35,139,
+   IWM 21,339 | 21,339, NVDA 20,918 | 20,918, VIX 586 | 586, ES 362 | 362 (contenido y orden identicos). Eliminados: A crea colas para los 7 (TSLA 24,408, META 16,926, DIA 12,127, MSFT 11,908,
+   AAPL 9,145, GOOGL 6,459, AMZN 5,240); B: 0 colas.
+   Con consumidores en los 9 simbolos activos (como el manager): A: 4,974 lineas CRITICAL en 2 minutos (todas "quote queue for TSLA is full"; las colas de los demas eliminados aun no llegaban a 20,000);
+   B: 0. Mensajes ENTREGADOS a los consumidores activos, por simbolo y tipo, IDENTICOS en A y B (SPX 264,752 q / 12,813 t; NDX 269,097 / 325; QQQ 81,143 / 12,278; SPY 52,875 / 15,139; IWM 20,092 / 1,339;
+   NVDA 14,118 / 6,800; VIX 554 / 32; ES 362 / 0) y el ORDEN de entrega identico (sha256 de la secuencia (occ_symbol, as_of) por cola: iguales).
+   Ignorados por B: TSLA 29,382, META 16,926, DIA 12,127, MSFT 11,908, AAPL 9,145, GOOGL 6,459, AMZN 5,240 = 91,187 = exactamente lo publicado de los eliminados: 10.82% de lo publicado (760 de 7,026
+   mensajes/s), igual al ~10.8% del estudio anterior.
+   Coste: el tiempo de _dispatch con B fue 0.96x el de A (12.04 s vs 11.61 s sin consumidores; 6.32 s vs 5.94 s con consumidores): el ahorro de CPU es pequeno (se sigue leyendo y haciendo orjson.loads de
+   esas lineas); el valor del filtro es evitar las colas sin consumidor y la inundacion de CRITICAL, no CPU.
+C.5 Suite completa: 717 pasan (680 de antes + 37 nuevos), 21 fallan y 30 errores: los MISMOS que en main (17 de tests/test_thetadata_provider.py y 34 de tests/test_postgresql_integration.py, estos por la
+base de pruebas local atrasada en migraciones / TEST_DATABASE_URL); mi diff solo toca whale_alerts_worker.py y un test nuevo, ninguno de esos archivos. Sin regresiones.
+C.6 Import en seco: `python -c "import backend.whale_alerts_worker"` OK en local y OK con el venv del servidor y el codigo de la rama (copia en V:\Convexa\bench\hm_m1\src, sin tocar el repo del servidor):
+   "import OK ... symbols: ['ES','IWM','NDX','NQ','NVDA','QQQ','SPX','SPY','VIX']".
+
+======================================================================
+PLAN DE REINICIO ACTUALIZADO (NO EJECUTAR; requiere tu confirmacion en el chat)
+======================================================================
+Precondicion: este PR fusionado en main. Solo whale_alerts_worker.py cambia y ningun otro proceso lo importa (solo hay comentarios que lo citan), por lo que el pull no afecta a worker, procesador, scheduler ni API.
+ 1. Momento: 10-07 (o cualquier dia) DESPUES de la verificacion de BVC de las 16:10 ET y despues de las 16:20 (las opciones de SPY/QQQ/SPX operan hasta las 16:15); idealmente ~16:30 ET.
+ 2. Linea base (SELECT): alertas Lee-Ready del 10-06 por simbolo: SPY 521, NDX 512, QQQ 341, SPX 248, NVDA 133, IWM 68, VIX 5 (activos); TSLA 236, META 135, MSFT 98, AAPL 94, AMZN 86, GOOGL 36, DIA 4 (eliminados).
+ 3. `git -C V:\Convexa\repo pull --ff-only origin main` y, con el venv del servidor, `python -c "import backend.whale_alerts_worker"` desde V:\Convexa\repo.
+ 4. Anotar la hora T0 y el pid actual (5696) y `Restart-Service ConvexaWhaleAlerts` (solo ese servicio).
+ 5. Logs justo despues (logs\whale_alerts_worker.log), en orden: "Starting QLL Eagle Platform whale-alerts worker"; "Whale-alerts worker tracks 9 symbols, ignoring the rest: SPY, QQQ, IWM, SPX, VIX, NDX, NVDA, ES, NQ";
+    "Whale-alerts worker running, connecting to relay at 127.0.0.1:25599"; "Connected to the whale alerts relay at 127.0.0.1:25599". En stream_processor_worker.log: "Whale alerts worker process connected to the relay".
+    Pid nuevo y memoria ~200 MB estable a los 5 min.
+ 6. Comprobacion del contador: tras el cierre el trafico es bajo (~100 frames/s a las 16:21), asi que el primer resumen puede tardar unos minutos: debe aparecer al menos una linea
+    "Whale alerts relay client: ignored N messages in ~60s for symbols this process does not track (TSLA=..., ...); M since start" con N > 0 (a las 16:30, esperar 2-5 min; en sesion, cada 60 s con
+    N de ~6,000 a ~45,000 por minuto, 10-11% de lo publicado: en la captura del open 760/s). Si pasan 10 min sin ninguna linea con mensajes llegando, el filtro o el relay tienen un problema: parar y revisar.
+    Contar: Select-String logs\whale_alerts_worker.log -Pattern "ignored .* messages" | Select -Last 3.
+ 7. CERO lineas CRITICAL: Select-String logs\whale_alerts_worker.log -Pattern ' CRITICAL ' debe dar 0 desde T0, y ninguna "queue for <simbolo> is full".
+ 8. Consulta del dia siguiente (SELECT, READ ONLY) sobre whale_alerts, poblacion Lee-Ready:
+      SELECT u.symbol, count(*) AS alertas, min(w.time AT TIME ZONE 'America/New_York') AS primera, max(w.time AT TIME ZONE 'America/New_York') AS ultima
+        FROM whale_alerts w JOIN underlyings u ON u.id = w.underlying_id
+       WHERE w.time >= '<T0>' AND abs((w.estimated_buy_volume + w.estimated_sell_volume) - w.amount) < 1
+       GROUP BY 1 ORDER BY 2 DESC;
+    Criterio de exito: ninguna fila para TSLA, META, AMZN, GOOGL, AAPL, MSFT ni DIA con fecha posterior a T0; los 7 activos por simbolo y sesion dentro de +-30% de la mediana de las ultimas 5 sesiones
+    (la actividad cambia el ritmo: SPX ~220-300, SPY ~480-580, NDX ~500) y primera alerta de SPX/SPY ~09:36; cero CRITICAL en el log durante toda la sesion; resumenes INFO cada ~60 s con N de ~10% de
+    los mensajes publicados; memoria del proceso <300 MB al open. Si algun activo cae >30% sin explicacion de mercado, parar el servicio y revisar.
+ 9. Reversion: Stop-Service ConvexaWhaleAlerts (alertas en pausa; el mercado no se ve afectado). No hay reversion por configuracion; revertir el PR y reiniciar devolveria el riesgo de colas llenas.
+Que se pierde al reiniciar (ver el estudio anterior): bucket del minuto en curso, ventanas de 5/15 min, cache de quotes; fuera de horario no cambia el comportamiento del dia siguiente (los contratos 0DTE
+empiezan vacios cada manana: primera alerta ~09:36).
+
+======================================================================
+RIESGOS Y LO QUE NO SE PUDO VERIFICAR
+======================================================================
+- Los mensajes de los eliminados siguen viajando por el TCP del relay (10.8% de lo publicado) y se leen/parsean con orjson hasta que se baje la suscripcion en el Terminal (M2/M3, no recomendadas ahora).
+  El ahorro de CPU de M1 es pequeno (0.96x en _dispatch).
+- El resumen INFO solo se emite cuando llega el siguiente mensaje ignorado despues de 60 s (no hay tarea periodica): con trafico de eliminados continuo es cada ~60 s; si el Terminal dejara de mandarlos, no habra
+  linea (y no habra nada que contar).
+- "ES" son opciones de Eversource, no el futuro: ya se consumen hoy bajo el simbolo "ES"; el filtro no lo cambia (decision de producto aparte).
+- Un simbolo activo nuevo con una raiz semanal distinta a SPXW/NDXP/VIXW dependeria de que stream_parsing la traduzca al subyacente (igual que hoy: sin traduccion no tendria consumidor).
+- El replay usa 2 minutos del open (pico) y el orden de llegada del procesador; no modela la latencia real del consumidor ni el dia completo. Los CRITICAL de A en el dia completo (0 si se llenara una sola
+  cola) son una estimacion: solo TSLA (quotes) desborda en 2 minutos; el resto de eliminados lo haria en ~2.5-8 min (por tasas, no medido).
+- El test de integracion y las 51 fallas/errores preexistentes de la suite (provider y Postgres) no se pueden distinguir de regresiones sin la base de pruebas migrada; se comprobo que son las mismas que en main.
+- El comportamiento en produccion real del resumen INFO (formato, frecuencia) solo se ve tras el reinicio; esta cubierto por tests con reloj simulado.
