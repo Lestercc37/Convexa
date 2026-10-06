@@ -99,9 +99,15 @@ class Container:
     price_notification_listener: PriceNotificationListener | None
 
 
-def build_whale_alerts_engine(storage: IStorage) -> WhaleAlertsEngine:
-    """Build Whale Alerts, reading per-symbol threshold overrides live from storage."""
-    return WhaleAlertsEngine(storage=storage)
+def build_whale_alerts_engine(
+    storage: IStorage, bvc_alerts_enabled: bool = True
+) -> WhaleAlertsEngine:
+    """Build Whale Alerts, reading per-symbol threshold overrides live from storage.
+
+    `bvc_alerts_enabled` is Settings.whale_alerts_bvc_active in production
+    (off with ThetaData, see that property); the default keeps every other
+    caller's behavior unchanged."""
+    return WhaleAlertsEngine(storage=storage, bvc_alerts_enabled=bvc_alerts_enabled)
 
 
 def build_container() -> Container:
@@ -117,7 +123,13 @@ def build_container() -> Container:
     if settings.database_url.startswith("postgresql"):
         storage_engine = create_sync_engine(settings.database_url, echo=settings.database_echo)
         sync_session_factory = create_sync_session_factory(storage_engine)
-        storage: IStorage = PostgreSQLStorage(sync_session_factory)
+        # Hide the BVC rows (historical ones included) from alert reads exactly
+        # when BVC alerts are off -- see Settings.whale_alerts_bvc_active and
+        # postgresql.LEE_READY_ONLY_SQL.
+        lee_ready_only = not settings.whale_alerts_bvc_active
+        storage: IStorage = PostgreSQLStorage(
+            sync_session_factory, whale_alerts_lee_ready_only=lee_ready_only
+        )
         # Dedicated pool for whale-alerts, same principle as its already-
         # dedicated ThreadPoolExecutor (see stream_whale_alerts.py's own
         # docstring) -- confirmed live, 2026-09-11, that sharing the one
@@ -145,7 +157,9 @@ def build_container() -> Container:
         # the async engine above can't share data with) fall back to
         # wrapping the same sync `storage` those routes already work
         # against, so both backends serve identical data either way.
-        async_market_storage: IAsyncMarketReadStorage = AsyncPostgreSQLStorage(session_factory)
+        async_market_storage: IAsyncMarketReadStorage = AsyncPostgreSQLStorage(
+            session_factory, whale_alerts_lee_ready_only=lee_ready_only
+        )
     else:
         storage_engine = None
         sync_session_factory = None
@@ -216,7 +230,9 @@ def build_container() -> Container:
         max_pain=calculate_max_pain_use_case,
     )
     calculate_derived_metrics_use_case = CalculateDerivedMetricsUseCase(storage)
-    whale_alerts_engine = build_whale_alerts_engine(whale_alerts_storage)
+    whale_alerts_engine = build_whale_alerts_engine(
+        whale_alerts_storage, bvc_alerts_enabled=settings.whale_alerts_bvc_active
+    )
     refresh_underlying_snapshot_use_case = RefreshUnderlyingSnapshotUseCase(
         storage=storage,
         market_data_provider=market_data_provider,

@@ -40,6 +40,16 @@ class Settings(BaseSettings):
     # WebSocket connection. Never reaches the network beyond this machine.
     whale_alerts_relay_host: str = Field(default="127.0.0.1")
     whale_alerts_relay_port: int = Field(default=25599)
+    # Whether the REST scheduler also feeds WhaleAlertsEngine.process() (BVC:
+    # volume deltas between chain snapshots) in addition to the live trade
+    # stream's Lee-Ready alerts. None = decide by provider (see
+    # whale_alerts_bvc_active): off with ThetaData, where the stream already
+    # classifies every trade and the BVC alerts only duplicated it (and
+    # contradicted its direction, and inherited volume-counter artifacts);
+    # on otherwise (Mock has no trade stream, so BVC is its only source).
+    # Set QLL_WHALE_ALERTS_BVC_ENABLED=true/false to force either way, no
+    # code change.
+    whale_alerts_bvc_enabled: bool | None = Field(default=None)
     # Local-only TCP link (see backend/core/stream_processor_relay.py):
     # worker.py forwards raw QUOTE/TRADE WS frames to
     # backend/stream_processor_worker.py's own process over this, and
@@ -56,6 +66,14 @@ class Settings(BaseSettings):
     # restarts (Convexa, the production server) MUST set QLL_SESSION_SECRET
     # explicitly in its own .env, not rely on this default.
     session_secret: str = Field(default_factory=lambda: secrets.token_hex(32))
+
+    @property
+    def whale_alerts_bvc_active(self) -> bool:
+        """Resolved value of whale_alerts_bvc_enabled: the explicit setting
+        when given, else on for every provider except ThetaData."""
+        if self.whale_alerts_bvc_enabled is not None:
+            return self.whale_alerts_bvc_enabled
+        return self.data_provider != "thetadata"
 
 
 @lru_cache

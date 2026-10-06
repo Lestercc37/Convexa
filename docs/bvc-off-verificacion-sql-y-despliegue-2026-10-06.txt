@@ -1,0 +1,143 @@
+APAGADO DE LAS ALERTAS BVC: VERIFICACION, SQL DE LIMPIEZA Y PLAN DE DESPLIEGUE
+Convexa - 2026-10-06 - PR en borrador. NADA desplegado, NINGUN proceso reiniciado, NINGUN UPDATE/DELETE/migracion
+ejecutado. Todo lo medido abajo fue SELECT en READ ONLY con statement_timeout, proceso de baja prioridad, sin ThetaData.
+
+======================================================================
+1) VERIFICACION DEL PREDICADO  abs((buy+sell) - amount) < 1   (B.2)
+======================================================================
+Tabla completa whale_alerts (78,325 filas al momento de la consulta, particion por d = |buy+sell-amount|):
+   d == 0 ................ 38,855 filas   (maximo exacto 0)
+   0 < d < 0.01 ........... 0
+   0.01 <= d < 1 .......... 0
+   1 <= d < 100 ........... 0
+   d >= 100 ............... 39,470 filas   (minimo 24,136; maximo 53.5 millones)
+   amount <= 0 o buy/sell NULL: 0 filas.
+=> Hay un hueco enorme entre las dos poblaciones (de 0 a 24,136): CERO filas en el borde. Cualquier umbral en
+   (0, 24,136) las separa igual; se usa 1.
+(a) Lee-Ready: en el codigo buy+sell == amount por construccion (flow.py process_trade: cada trade suma su prima a
+    bucket_amount y la misma prima, entera o partida en dos mitades, a buy/sell). En datos: desde 09-25, 19,817 filas
+    con buy+sell/amount = 1.000000 exacto (min = max). Marcador independiente (la alerta BVC lleva la hora exacta de un
+    snapshot guardado de la cadena, refresh_snapshot.py:89-90): de 14,226 filas que NO estan en un instante de snapshot,
+    TODAS tienen d == 0 (14,226 de 14,226 de las que cumplen el predicado). Las otras 2,101 filas fuera de snapshot
+    tienen d >= 100: no se pudo confirmar su origen con ese marcador (su recall es parcial), pero su precio implicito
+    (amount / (buy+sell) / 100) tiene mediana $6.56 por contrato (p1 $0.11, p99 $569, max $831): son contratos, o sea BVC.
+    => "~100% de las Lee-Ready conocidas cumplen el predicado": no se puede medir al 100% de forma independiente;
+       lo demostrable es: por construccion en el codigo + 14,226/14,226 + ninguna fila en el borde.
+(b) Filas BVC conocidas (hora = instante de snapshot) que cumplen el predicado por casualidad: 0 de 8,011 (0.000%).
+(c) Filas ambiguas en el borde (0 < d < 100): 0.
+Prueba de la SQL exacta del PR sobre datos reales (copia del texto del SELECT, READ ONLY):
+   SPX limit=100:  sin filtro 100 filas (46 con forma BVC, 46 con bandera) | con filtro 100 filas (0 BVC, 0 con bandera)
+   SPX limit=1000: sin filtro 1000 filas (423 BVC) | con filtro 1000 filas (0 BVC)
+   SPY limit=100:  sin filtro 100 (43 BVC) | con filtro 100 (0 BVC);  SPY limit=1000: 275 BVC -> 0
+   (el LIMIT se aplica despues del filtro: las BVC no ocupan lugar en las 100/1000 mas recientes.)
+
+======================================================================
+2) SQL DE LIMPIEZA DE FILAS HISTORICAS (C)  -- ENTREGADO, NO EJECUTADO
+======================================================================
+Conteo esperado vs real (SELECT, ya corrido): esperado ~35,900 (91.5% de 39,321); REAL 36,156 filas (de 78,347 totales;
+36,158 con bandera; las 2 con bandera que NO se tocan son alertas Lee-Ready reales de SPY del 09-08).
+
+-- C.0 Respaldo, ANTES de cualquier UPDATE (en el servidor, desde una consola con acceso a Postgres):
+--   pg_dump -h localhost -U <usuario> -d Convexa -t whale_alerts -Fc -f V:\Convexa\backups\whale_alerts_pre_bvc_cleanup_2026-10-06.dump
+--   (restauracion si hiciera falta: pg_restore -d Convexa --clean -t whale_alerts <archivo>)
+
+-- C.1 Conteo previo (debe dar ~36,156 y no cambiar entre el SELECT y el UPDATE, salvo alertas nuevas):
+SELECT count(*) AS filas_a_corregir
+  FROM whale_alerts
+ WHERE quote_unavailable
+   AND abs((estimated_buy_volume + estimated_sell_volume) - amount) >= 1;
+
+-- C.2 UPDATE en una transaccion con verificacion de conteo antes del commit.
+--     Corre despues del cierre, con aprobacion. Si el conteo no coincide, ROLLBACK.
+BEGIN;
+SET LOCAL statement_timeout = '120s';
+CREATE TEMP TABLE _bvc_fix AS
+  SELECT ctid AS id FROM whale_alerts
+   WHERE quote_unavailable
+     AND abs((estimated_buy_volume + estimated_sell_volume) - amount) >= 1;
+SELECT count(*) AS a_corregir FROM _bvc_fix;            -- anotar el numero N
+UPDATE whale_alerts SET quote_unavailable = false
+ WHERE ctid IN (SELECT id FROM _bvc_fix);
+-- verificacion: el UPDATE debe haber tocado exactamente N filas (mirar "UPDATE N" que imprime psql) y no quedan pendientes:
+SELECT count(*) AS deben_ser_0
+  FROM whale_alerts
+ WHERE quote_unavailable
+   AND abs((estimated_buy_volume + estimated_sell_volume) - amount) >= 1;
+-- Si "UPDATE N" == N y deben_ser_0 == 0  ->  COMMIT;   si no  ->  ROLLBACK;
+COMMIT;   -- (o ROLLBACK;)
+
+-- C.3 Verificacion posterior (conteo por dia y fuente, con y sin bandera):
+SELECT (time AT TIME ZONE 'America/New_York')::date AS dia,
+       CASE WHEN abs((estimated_buy_volume + estimated_sell_volume) - amount) < 1 THEN 'lee_ready' ELSE 'bvc' END AS fuente,
+       count(*) FILTER (WHERE quote_unavailable)     AS con_bandera,
+       count(*) FILTER (WHERE NOT quote_unavailable) AS sin_bandera
+  FROM whale_alerts
+ GROUP BY 1, 2
+ ORDER BY 1, 2;
+-- Esperado tras el UPDATE: fuente 'bvc' con con_bandera = 0 todos los dias; 'lee_ready' sin cambio (con_bandera 0 salvo 2 filas del 09-08).
+Resultado ACTUAL de esa misma consulta (ultimos 6 dias, antes de cualquier cambio), para comparar:
+   09-30 bvc 510 con bandera / 0 sin | lee_ready 0 / 665
+   10-01 bvc 1,843 / 0              | lee_ready 0 / 2,293
+   10-02 bvc 1,886 / 130            | lee_ready 0 / 2,709
+   10-05 bvc 701 / 0                | lee_ready 0 / 2,453
+   10-06 bvc 1,517 / 110            | lee_ready 0 / 1,955  (parcial, hasta ~13:50 ET)
+   (Todo el historial ya corrido: sin esta limpieza el 91.5% de las BVC sigue con la bandera en true.)
+NO se propone borrar filas BVC: se ocultan con el filtro de lectura.
+
+C.4 ¿ES NECESARIO EL UPDATE CON EL FILTRO ACTIVO?  Recomendacion:
+   Con el filtro de B activo (en produccion siempre que BVC este apagada) ninguna pantalla ni endpoint (/alerts,
+   screener, grafico) vuelve a leer una fila BVC, asi que el UPDATE es COSMETICO para la aplicacion: no cambia nada de
+   lo que ve el usuario. Solo importa para quien consulte la tabla directamente (analisis, backtests, el estudio de flujo
+   por minuto), donde las BVC seguiran mostrando una bandera falsa. Recomiendo hacerlo, pero sin prisa y SIN condicionar
+   el despliegue: despues del cierre del dia del despliegue o cualquier dia, con el respaldo y la transaccion de arriba
+   (es una sola pasada de ~36k filas, reversible con el dump). Si se prefiere minimo riesgo: omitirlo y dejar que
+   cualquier consulta analitica filtre por la regla de la fuente.
+
+======================================================================
+3) PLAN DE DESPLIEGUE (despues de las 16:00 ET, con tu confirmacion explicita en el chat)
+======================================================================
+IMPORTANTE (diferencia con lo que dijimos): el cambio A (apagar process()) vive en el proceso del SCHEDULER, pero el
+cambio B (filtro de lectura) vive en el proceso de la API (uvicorn, ConvexaBackendAPI: /alerts y /screener-presets leen
+con async_market_storage). Para que B surta efecto hay que reiniciar TAMBIEN la API. Los dos son reinicios cortos y no
+tocan el stream. NO se reinicia: ConvexaWorker, ConvexaStreamProcessor, ConvexaWhaleAlerts, ConvexaThetaTerminal.
+(El POST /internal/trigger-calculation tambien llama a process() desde la API: queda apagado al reiniciar la API.)
+Configuracion: el servidor ya tiene QLL_DATA_PROVIDER en V:\Convexa\repo\.env (el default del flag lo toma de ahi;
+NO hay que agregar ninguna variable) y los servicios NSSM no definen entorno propio.
+Pasos:
+ 0. Confirmacion tuya en el chat (PR revisado y de acuerdo en pasarlo a main).
+ 1. Despues de las 16:00 ET: hacer merge del PR a main (lo haces tu o me lo pides) y en el servidor:
+      git -C V:\Convexa\repo pull --ff-only origin main      (el repo del servidor esta en main, sin cambios en tracked files)
+ 2. Antes de reiniciar, anotar la linea base (consulta C.3, solo SELECT): filas BVC y Lee-Ready del dia.
+ 3. Restart-Service ConvexaScheduler ; Restart-Service ConvexaBackendAPI     (uno detras de otro; el dashboard queda
+    sin API unos segundos). Comprobar que ambos quedan Running y que logs\scheduler_worker.log / backend sin errores.
+ 4. Verificacion inmediata (SELECT): la consulta de la base no puede probar nada hasta el siguiente ciclo del scheduler;
+    comprobar solo que la API responde y que GET /alerts/SPX (desde un navegador con sesion) ya no muestra tarjetas con la
+    etiqueta "Sin cotizacion" (se puede ver en el dashboard).
+ 5. Verificacion al dia siguiente (10-07 a las ~16:10 ET), consulta C.3 sobre el dia 10-07:
+       - filas 'bvc' del 10-07 = 0   (el scheduler ya no las genera)
+       - filas 'lee_ready' del 10-07 dentro de +-10% de la linea base: SPX ~225/dia, SPY ~550/dia (mediana de las 8
+         sesiones desde 09-25: SPX 217-302, SPY 483-576)
+       - panel de alertas del dashboard (SPX, SPY): ninguna tarjeta con "Sin cotizacion"; vista de flujo del grafico sin
+         la mezcla de unidades (suma solo dolares); screener "unusual options activity" sin alertas de $30-50M duplicadas.
+ 6. (Opcional, otro dia) limpieza C.0-C.3.
+CRITERIO DE EXITO: filas BVC nuevas = 0 desde el despliegue; filas Lee-Ready por dia sin cambio (+-10%); panel sin
+etiquetas "Sin cotizacion"; ningun error nuevo en los logs del scheduler/API.
+REVERSION (sin tocar codigo): agregar QLL_WHALE_ALERTS_BVC_ENABLED=true en V:\Convexa\repo\.env y reiniciar
+ConvexaScheduler y ConvexaBackendAPI: vuelve process() (BVC) Y el filtro de lectura se desactiva a la vez (las BVC
+reaparecen en pantalla). Reversion total del codigo: revert del PR.
+
+======================================================================
+4) LO QUE NO SE PUDO VERIFICAR
+======================================================================
+- El test de integracion contra Postgres real (test_whale_alerts_lee_ready_only_hides_bvc_rows_in_both_storages) NO se
+  pudo correr: la base local Convexa_test esta atrasada respecto a las migraciones (le falta la columna moneyness, 0038) y
+  los tests de alertas ya existentes fallan igual en main por eso; migrarla es DDL y la instruccion fue no hacer
+  migraciones. Lo que si se verifico: la misma SQL (texto copiado) contra datos reales de produccion en SELECT (arriba),
+  y tests unitarios que graban la SQL emitida por ambos storages con y sin flag.
+- Que los ~36k UPDATE no tengan efectos laterales en indices/replicas: no se ejecuto; se entrega con transaccion y respaldo.
+- El comportamiento visual del dashboard (alertas, grafico, screener) tras el cambio: no hay navegador contra el
+  servidor con el codigo nuevo hasta el despliegue; se comprueba en el paso 5.
+- El "100% de las Lee-Ready conocidas" no tiene un marcador independiente completo (ver 1.a).
+- La causa de la alternancia real/0 del volumen (que alimentaba los artefactos BVC) sigue sin investigarse a fondo; al
+  apagar BVC deja de afectar a las alertas, pero la serie de volumen almacenada se sigue usando para otras cosas.
+- El ahorro de CPU del scheduler al apagar process() no se midio.

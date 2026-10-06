@@ -404,8 +404,16 @@ class WhaleAlertsEngine:
         default_thresholds: WhaleAlertThresholds | None = None,
         alert_limit: int = 1000,
         thresholds_cache_ttl_seconds: float = _THRESHOLDS_CACHE_TTL_SECONDS,
+        bvc_alerts_enabled: bool = True,
     ) -> None:
         self._storage = storage
+        # False turns process() (BVC, fed by the REST scheduler's chain
+        # snapshots) into a no-op. With a live trade stream process_trade()
+        # (Lee-Ready) already covers every streamed contract: BVC alerts
+        # there duplicated that flow, disagreed with its direction (~45%
+        # same sign) and fired on volume-counter artifacts. See
+        # Settings.whale_alerts_bvc_active for how production sets this.
+        self._bvc_alerts_enabled = bvc_alerts_enabled
         self._default_thresholds = default_thresholds or WhaleAlertThresholds()
         self._thresholds_cache_ttl_seconds = thresholds_cache_ttl_seconds
         self._thresholds_cache: dict[str, WhaleThreshold] | None = None
@@ -486,6 +494,8 @@ class WhaleAlertsEngine:
             return context
 
     def process(self, chain: OptionChain) -> tuple[WhaleAlert, ...]:
+        if not self._bvc_alerts_enabled:
+            return ()
         generated: list[WhaleAlert] = []
         thresholds = self._resolve_thresholds(chain.symbol)
         current_bucket_start = _floor_to_minute(chain.as_of)

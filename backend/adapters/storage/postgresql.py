@@ -42,12 +42,31 @@ from backend.domain.use_cases.flow import Moneyness, SymbolFlowPressure, WhaleAl
 # of the symbol's entire snapshot history.
 RECENT_CHAIN_SNAPSHOT_WINDOW_MINUTES = 15
 
+# whale_alerts holds two populations in one table: Lee-Ready alerts (the live
+# trade stream, WhaleAlertsEngine.process_trade) and BVC alerts (the REST
+# scheduler, WhaleAlertsEngine.process). They are told apart by unit, with no
+# stored source column: for Lee-Ready, estimated_buy_volume + estimated_sell_volume
+# is the bucket's premium in dollars, i.e. exactly `amount` (flow.py,
+# process_trade); for BVC the two are contracts, which differ from `amount`
+# by orders of magnitude. Measured on the whole table (2026-10-06, ~78k rows):
+# 38,855 rows with a difference of exactly 0 and 39,470 rows with a difference
+# of at least 24,136, nothing in between -- so any threshold in (0, 24,136)
+# separates them; 1 is used. Mirrored by hand in postgresql_async.py.
+LEE_READY_ONLY_SQL = "AND abs((w.estimated_buy_volume + w.estimated_sell_volume) - w.amount) < 1"
+
 
 class PostgreSQLStorage:
     """Synchronous PostgreSQL implementation of the domain storage port."""
 
-    def __init__(self, session_factory: sessionmaker[Session]) -> None:
+    def __init__(
+        self, session_factory: sessionmaker[Session], whale_alerts_lee_ready_only: bool = False
+    ) -> None:
         self.session_factory = session_factory
+        # See LEE_READY_ONLY_SQL: hides the historical (and any new) BVC rows
+        # from get_recent_whale_alerts. The container turns this on exactly
+        # when BVC alerts are switched off (Settings.whale_alerts_bvc_active),
+        # so re-enabling BVC by configuration also shows them again.
+        self._whale_alerts_lee_ready_only = whale_alerts_lee_ready_only
         # See _ensure_underlying's own comment -- a symbol's underlying_id
         # never changes once seeded, so this cache is safe to keep for the
         # whole process lifetime, not just per-call. Same fix already
@@ -1177,16 +1196,18 @@ class PostgreSQLStorage:
             )
 
     def get_recent_whale_alerts(self, underlying: str, limit: int = 100) -> list[WhaleAlert]:
+        source_filter = LEE_READY_ONLY_SQL if self._whale_alerts_lee_ready_only else ""
         with self.session_factory() as session:
             rows = session.execute(
                 text(
-                    """
+                    f"""
                     SELECT w.time, u.symbol, w.occ_symbol, w.alert_type, w.amount,
                            w.estimated_buy_volume, w.estimated_sell_volume, w.quote_unavailable,
                            w.moneyness, w.near_gamma_level, w.repeat_count
                     FROM whale_alerts AS w
                     JOIN underlyings AS u ON u.id = w.underlying_id
                     WHERE u.symbol = :symbol
+                    {source_filter}
                     ORDER BY w.time DESC
                     LIMIT :limit
                     """

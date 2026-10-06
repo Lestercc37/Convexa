@@ -994,6 +994,57 @@ async def test_async_postgresql_storage_get_recent_whale_alerts_reads_what_the_s
         await async_engine.dispose()
 
 
+@pytest.mark.asyncio
+async def test_whale_alerts_lee_ready_only_hides_bvc_rows_in_both_storages(
+    postgresql_storage: tuple[PostgreSQLStorage, Engine, str],
+) -> None:
+    """BVC rows (estimated buy+sell in contracts, far from `amount`) are hidden when the
+    storages are built with whale_alerts_lee_ready_only=True; Lee-Ready rows (buy+sell ==
+    amount, 50/50 splits included) stay; with the flag off both are returned as before."""
+    sync_storage, engine, symbol = postgresql_storage
+    base = datetime(2026, 8, 3, 14, 0, tzinfo=timezone.utc)
+    lee_ready_buy = WhaleAlert(
+        symbol=symbol, occ_symbol=f"{symbol}260220C00540000", alert_type=WhaleAlertType.WHALE,
+        amount=Decimal("210000.5"), as_of=base + timedelta(minutes=1),
+        estimated_buy_volume=Decimal("210000.5"), estimated_sell_volume=Decimal("0"),
+    )
+    lee_ready_split = WhaleAlert(
+        symbol=symbol, occ_symbol=f"{symbol}260220P00540000", alert_type=WhaleAlertType.UNUSUAL,
+        amount=Decimal("45001"), as_of=base + timedelta(minutes=3),
+        estimated_buy_volume=Decimal("22500.5"), estimated_sell_volume=Decimal("22500.5"),
+        quote_unavailable=True,
+    )
+    bvc = WhaleAlert(
+        symbol=symbol, occ_symbol=f"{symbol}260220C00545000", alert_type=WhaleAlertType.SUSTAINED_FLOW,
+        amount=Decimal("1805760.00"), as_of=base + timedelta(minutes=2),
+        estimated_buy_volume=Decimal("3344.0"), estimated_sell_volume=Decimal("3344.0"),
+        quote_unavailable=True,
+    )
+    for alert in (lee_ready_buy, bvc, lee_ready_split):
+        sync_storage.save_whale_alert(alert)
+
+    assert sync_storage.get_recent_whale_alerts(symbol) == [lee_ready_split, bvc, lee_ready_buy]
+
+    filtered_sync = PostgreSQLStorage(sync_storage.session_factory, whale_alerts_lee_ready_only=True)
+    assert filtered_sync.get_recent_whale_alerts(symbol) == [lee_ready_split, lee_ready_buy]
+    # LIMIT applies after the filter: the BVC row never consumes a slot.
+    assert filtered_sync.get_recent_whale_alerts(symbol, limit=2) == [lee_ready_split, lee_ready_buy]
+
+    async_engine = create_engine(_require_test_database_url())
+    try:
+        factory = create_session_factory(async_engine)
+        assert await AsyncPostgreSQLStorage(factory, whale_alerts_lee_ready_only=True).get_recent_whale_alerts(
+            symbol
+        ) == [lee_ready_split, lee_ready_buy]
+        assert await AsyncPostgreSQLStorage(factory).get_recent_whale_alerts(symbol) == [
+            lee_ready_split,
+            bvc,
+            lee_ready_buy,
+        ]
+    finally:
+        await async_engine.dispose()
+
+
 def _theta_slots_engine() -> Engine:
     return create_sync_engine(_require_test_database_url())
 
