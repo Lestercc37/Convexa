@@ -1258,7 +1258,18 @@ class ThetaStreamHub:
                 delay = min(delay * 2, RECONNECT_MAX_DELAY_SECONDS)
 
     async def _connect_and_consume(self) -> None:
-        async with websockets.connect(self._ws_url, max_queue=WS_MAX_QUEUE) as websocket:
+        # compression=None: permessage-deflate is only used when the client
+        # offers it in the handshake (ThetaData/Eduardo, 2026-10-06), and on
+        # loopback it is pure CPU on both sides (~4-5% of this process).
+        async with websockets.connect(
+            self._ws_url, max_queue=WS_MAX_QUEUE, compression=None
+        ) as websocket:
+            logger.info(
+                "ThetaStreamHub: connected to %s, negotiated WebSocket extensions: %s",
+                self._ws_url,
+                [str(extension) for extension in getattr(getattr(websocket, "protocol", None), "extensions", [])]
+                or "none",
+            )
             self._active_websocket = websocket
             self._connection_opened_at = time.monotonic()
             try:

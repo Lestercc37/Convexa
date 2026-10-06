@@ -127,3 +127,27 @@ class TestHubIntegration:
         task.cancel()
         assert stream._frame_recorder is None
         assert (tmp_path / "logs" / (frame_recorder.REQUEST_FILENAME + ".done")).exists()
+
+
+class TestHubWebSocketCompression:
+    @pytest.mark.asyncio
+    async def test_the_hub_does_not_offer_permessage_deflate(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Eduardo (ThetaData), 2026-10-06: the Terminal only uses
+        permessage-deflate when the client offers it, and on loopback it is
+        pure CPU. The hub must connect with compression=None."""
+        import backend.adapters.providers.thetadata.provider as provider_module
+
+        seen: dict[str, object] = {}
+
+        class _Stop(Exception):
+            pass
+
+        def fake_connect(url: str, **kwargs: object):
+            seen.update(kwargs)
+            raise _Stop
+
+        monkeypatch.setattr(provider_module.websockets, "connect", fake_connect)
+        stream = ThetaStreamHub("ws://127.0.0.1:1/x", httpx.Client(base_url="http://127.0.0.1:1"))
+        with pytest.raises(_Stop):
+            await stream._connect_and_consume()
+        assert "compression" in seen and seen["compression"] is None

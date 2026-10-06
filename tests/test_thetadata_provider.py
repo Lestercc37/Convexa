@@ -2558,7 +2558,7 @@ class TestStreamHubWebsocketQueueSize:
         await stream._connect_and_consume()
 
         assert captured["url"] == WS_URL
-        assert captured["kwargs"] == {"max_queue": WS_MAX_QUEUE}
+        assert captured["kwargs"] == {"max_queue": WS_MAX_QUEUE, "compression": None}
         assert WS_MAX_QUEUE > 16
 
 
