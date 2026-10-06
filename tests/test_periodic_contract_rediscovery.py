@@ -10,6 +10,7 @@ from backend.adapters.providers.thetadata.provider import (
     ThetaDataProvider,
     _NearTheMoneyChain,
 )
+from backend.domain.entities import UnderlyingKind
 from backend.domain.underlyings import ACTIVE_UNDERLYINGS_BY_SYMBOL
 
 REST_URL = "http://thetaterminal.test"
@@ -21,7 +22,10 @@ WS_URL = "ws://thetaterminal.test/v1/events"
 # price registration loop just above it (futures options still exist
 # and still need discovering, even though a future's own spot price
 # isn't streamed the same way a stock/index's is).
-ALL_SYMBOLS = list(ACTIVE_UNDERLYINGS_BY_SYMBOL)
+# futures have no options of their own (ES/NQ are proxies of SPX/NDX): never rediscovered
+ALL_SYMBOLS = [
+    symbol for symbol, underlying in ACTIVE_UNDERLYINGS_BY_SYMBOL.items() if underlying.kind != UnderlyingKind.FUTURE
+]
 
 
 def _provider() -> ThetaDataProvider:

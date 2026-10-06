@@ -22,6 +22,13 @@ from backend.domain.use_cases.calculate_expected_move import (
     calculate_time_to_close_pct,
 )
 from backend.domain.use_cases.errors import NotFoundError
+from backend.domain.use_cases.futures_proxy import (  # noqa: F401 -- PRICE_PROXY_SYMBOL_BY_FUTURE is re-exported
+    PRICE_PROXY_SYMBOL_BY_FUTURE,
+    future_level_offset,
+    future_level_offset_async,
+    proxy_symbol_for,
+    shift_option_chain,
+)
 from backend.domain.use_cases.flow import SymbolFlowPressure
 from backend.domain.use_cases.market_hours import is_market_open
 
@@ -85,9 +92,8 @@ VWAP_PROXY_SYMBOL_BY_INDEX: dict[str, str] = {
 # shifted by one constant offset = anchor - proxy's own price at that
 # same 9:30 open. See future_price_offset()/get_price_history_async()
 # below.
-PRICE_PROXY_SYMBOL_BY_FUTURE: dict[str, str] = {
-    "ES": "SPX",
-}
+# PRICE_PROXY_SYMBOL_BY_FUTURE lives in futures_proxy.py (imported above) so the gamma/chain
+# read models can share it without a circular import.
 
 DEFAULT_FRESHNESS_SECONDS = 60
 
@@ -153,6 +159,9 @@ def get_option_chain(
     expiration: date | None = None,
     freshness_seconds: int = DEFAULT_FRESHNESS_SECONDS,
 ) -> OptionChain:
+    if proxy_symbol_for(underlying) is not None:
+        # Same rule as the async/expirations paths: a future's chain is its index's, shifted.
+        return get_option_chain_expirations(storage, underlying)
     chain = storage.get_latest_chain_snapshot(underlying, expiration)
     now = datetime.now(timezone.utc)
     if chain is not None and (
@@ -198,6 +207,20 @@ async def get_option_chain_async(
     doesn't introduce a new way of doing blocking I/O, just reuses the
     one already proven safe.
     """
+    proxy_symbol = proxy_symbol_for(underlying)
+    if proxy_symbol is not None:
+        # ES/NQ: the index's chain in the future's points; never a provider fetch for the future
+        # itself (ThetaData's "ES" is Eversource Energy, not the E-mini).
+        proxy_chain = await get_option_chain_async(
+            async_storage, sync_storage, provider, proxy_symbol, expiration, freshness_seconds
+        )
+        offset = await future_level_offset_async(async_storage, underlying.upper(), proxy_symbol)
+        if offset is None:
+            raise NotFoundError(
+                f"{underlying.upper()}'s option levels come from {proxy_symbol}: enter today's "
+                f"{underlying.upper()} opening price first"
+            )
+        return shift_option_chain(proxy_chain, underlying.upper(), offset)
     chain = await async_storage.get_latest_chain_snapshot(underlying, expiration)
     now = datetime.now(UTC)
     if chain is not None and (
@@ -222,6 +245,18 @@ def get_option_chain_expirations(storage: IStorage, underlying: str) -> OptionCh
     waiting on the same thread pool and ThetaData concurrency semaphore
     the scheduler's own cycle was saturating.
     """
+    proxy_symbol = proxy_symbol_for(underlying)
+    if proxy_symbol is not None:
+        proxy_chain = storage.get_latest_chain_snapshot(proxy_symbol)
+        if proxy_chain is None:
+            raise NotFoundError(f"No option chain found for {underlying.upper()}")
+        offset = future_level_offset(storage, underlying.upper(), proxy_symbol)
+        if offset is None:
+            raise NotFoundError(
+                f"{underlying.upper()}'s option levels come from {proxy_symbol}: enter today's "
+                f"{underlying.upper()} opening price first"
+            )
+        return shift_option_chain(proxy_chain, underlying.upper(), offset)
     chain = storage.get_latest_chain_snapshot(underlying)
     if chain is None:
         raise NotFoundError(f"No option chain found for {underlying.upper()}")

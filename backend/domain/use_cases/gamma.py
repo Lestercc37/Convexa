@@ -18,13 +18,31 @@ from backend.domain.use_cases.calculate_near_the_money_width import (
     calculate_near_the_money_width,
 )
 from backend.domain.use_cases.calculate_walls import CalculateWallsUseCase
+from backend.domain.use_cases.calculate_anchored_vwap import calculate_session_open
 from backend.domain.use_cases.errors import NotFoundError
+from backend.domain.use_cases.futures_proxy import (
+    empty_future_aggregate,
+    future_level_offset,
+    future_level_offset_async,
+    proxy_symbol_for,
+    shift_gamma_aggregate,
+)
 from backend.domain.use_cases.market_hours import EASTERN_TIME
 
 
 def get_gamma_exposure(
     storage: IStorage, underlying: str, view: GammaView = "structural"
 ) -> GammaAggregate:
+    proxy_symbol = proxy_symbol_for(underlying)
+    if proxy_symbol is not None:
+        # ES/NQ: the index's own aggregate, in the future's points (futures_proxy.py)
+        proxy_gamma = storage.get_latest_gamma_aggregate(proxy_symbol, view=view)
+        if proxy_gamma is None:
+            raise NotFoundError(f"No gamma aggregate found for {underlying.upper()}")
+        offset = future_level_offset(storage, underlying.upper(), proxy_symbol)
+        if offset is None:
+            return empty_future_aggregate(proxy_gamma, underlying.upper())
+        return shift_gamma_aggregate(proxy_gamma, underlying.upper(), offset)
     gamma = storage.get_latest_gamma_aggregate(underlying, view=view)
     if gamma is None:
         raise NotFoundError(f"No gamma aggregate found for {underlying.upper()}")
@@ -34,6 +52,15 @@ def get_gamma_exposure(
 async def get_gamma_exposure_async(
     storage: IAsyncMarketReadStorage, underlying: str, view: GammaView = "structural"
 ) -> GammaAggregate:
+    proxy_symbol = proxy_symbol_for(underlying)
+    if proxy_symbol is not None:
+        proxy_gamma = await storage.get_latest_gamma_aggregate(proxy_symbol, view=view)
+        if proxy_gamma is None:
+            raise NotFoundError(f"No gamma aggregate found for {underlying.upper()}")
+        offset = await future_level_offset_async(storage, underlying.upper(), proxy_symbol)
+        if offset is None:
+            return empty_future_aggregate(proxy_gamma, underlying.upper())
+        return shift_gamma_aggregate(proxy_gamma, underlying.upper(), offset)
     gamma = await storage.get_latest_gamma_aggregate(underlying, view=view)
     if gamma is None:
         raise NotFoundError(f"No gamma aggregate found for {underlying.upper()}")
@@ -47,6 +74,19 @@ def get_gamma_history(
     end: datetime,
     view: GammaView = "structural",
 ) -> list[GammaAggregate]:
+    proxy_symbol = proxy_symbol_for(underlying)
+    if proxy_symbol is not None:
+        # ES/NQ: the index's history shifted by TODAY's offset; earlier sessions had their own
+        # anchor, so only today's points can be expressed in futures points.
+        offset = future_level_offset(storage, underlying.upper(), proxy_symbol)
+        latest = storage.get_latest_price(proxy_symbol)
+        if offset is None or latest is None:
+            return []
+        session_open = calculate_session_open(latest.as_of)
+        return [
+            shift_gamma_aggregate(item, underlying.upper(), offset)
+            for item in storage.get_gamma_history(proxy_symbol, max(start, session_open), end, view=view)
+        ]
     return storage.get_gamma_history(underlying, start, end, view=view)
 
 
@@ -524,6 +564,7 @@ STRUCTURAL_WINDOW_DAYS_BY_SYMBOL: dict[str, int] = {
     # own comment on ES's fixed strike width), so it takes the index
     # tier, not the individual-stock one.
     "ES": 30,
+    "NQ": 30,
     # Individual stocks -- 45 days.
     "AAPL": 45,
     "MSFT": 45,
