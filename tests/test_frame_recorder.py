@@ -151,3 +151,44 @@ class TestHubWebSocketCompression:
         with pytest.raises(_Stop):
             await stream._connect_and_consume()
         assert "compression" in seen and seen["compression"] is None
+
+
+class TestOhlcFramesAreDroppedWithoutParsing:
+    @pytest.mark.asyncio
+    async def test_ohlc_frames_are_neither_parsed_nor_relayed(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        import backend.adapters.providers.thetadata.provider as provider_module
+
+        class _Relay:
+            has_client = True
+
+            def __init__(self) -> None:
+                self.published: list[str] = []
+
+            def publish_raw(self, raw: str) -> bool:
+                self.published.append(raw)
+                return True
+
+        stream = ThetaStreamHub("ws://127.0.0.1:1/x", httpx.Client(base_url="http://127.0.0.1:1"))
+        relay = _Relay()
+        stream.set_processor_relay(relay)
+
+        def fail(_raw: str) -> dict:
+            raise AssertionError("OHLC frames must not be json-parsed")
+
+        monkeypatch.setattr(provider_module.json, "loads", fail)
+        ohlc = '{"header":{"type":"OHLC","status":"CONNECTED"},"contract":{"security_type":"STOCK","root":"MSFT"},"ohlc":{"open":1.0}}'
+        assert stream._relay_without_parsing(ohlc) is True
+        assert relay.published == []
+        # also with no processor connected: still ignored cheaply
+        stream.set_processor_relay(None)
+        assert stream._relay_without_parsing(ohlc) is True
+
+
+def test_fastjson_round_trips_and_matches_the_wire_format() -> None:
+    from backend.core import fastjson
+
+    payload = {"k": "q", "symbol": "SPY", "bid": "1.08", "n": 3}
+    line = fastjson.dumps_line(payload)
+    assert line.endswith(b"\n") and b"\n" not in line[:-1]
+    assert fastjson.loads(line) == payload
+    assert fastjson.loads('{"a": [1, 2.5, null]}') == {"a": [1, 2.5, None]}

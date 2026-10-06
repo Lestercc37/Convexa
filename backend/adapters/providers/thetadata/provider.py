@@ -1612,10 +1612,15 @@ class ThetaStreamHub:
         cost in this process at the 2026-10-05 open (py-spy, ~22%). STATUS,
         REQ_RESPONSE and anything unrecognised still take the full path.
         Returns True when the frame was handed to the processor."""
+        head = raw[:RAW_TYPE_SNIFF_CHARS]
+        if '"OHLC"' in head:
+            # One OHLC frame per trade of a streamed underlying (~4% of all
+            # frames at the 2026-10-06 open); nothing consumes them, and they
+            # used to go through a full json.loads just to be ignored.
+            return True
         relay = self._processor_relay
         if relay is None or not relay.has_client:
             return False
-        head = raw[:RAW_TYPE_SNIFF_CHARS]
         if '"QUOTE"' in head:
             self._last_quote_at = time.monotonic()
         elif '"TRADE"' in head:
