@@ -57,16 +57,105 @@ single trade or quote. See that module's own docstring.
 from __future__ import annotations
 
 import asyncio
+import collections
 import dataclasses
 import logging
+import time
+from collections.abc import Callable, Iterable
 
 from backend.core.container import build_container
 from backend.core.logging import configure_logging
 from backend.core.stream_state_export import StreamStateExporter
 from backend.core.whale_alerts_relay import RelayDataProvider
 from backend.core.whale_alerts_stream import WhaleAlertsStreamManager
+from backend.domain.underlyings import ACTIVE_UNDERLYINGS
 
 logger = logging.getLogger(__name__)
+
+# How often the count of messages ignored for symbols this process does not
+# track is summarized (one INFO line, only when there is something to report).
+IGNORED_SYMBOLS_SUMMARY_INTERVAL_SECONDS = 60.0
+# Bucket for messages whose "symbol" is missing, None or not a string.
+MISSING_SYMBOL_KEY = "<missing>"
+
+
+class _ActiveSymbolsRelayDataProvider(RelayDataProvider):
+    """RelayDataProvider that drops, before decoding and queueing, every message
+    for a symbol outside ACTIVE_UNDERLYINGS.
+
+    The stream processor publishes every option quote/trade it receives from
+    the Terminal, whatever the symbol, and the Terminal keeps streaming symbols
+    removed from ACTIVE_UNDERLYINGS until their subscriptions are dropped on its
+    side (2026-10-06: TSLA, META, AMZN, GOOGL, AAPL, MSFT and DIA, ~11% of what
+    the relay carries at the open). RelayDataProvider._dispatch creates a queue
+    for ANY symbol it sees and only the active ones have a consumer, so the
+    others would fill their 20,000-message queues in 1.5-8 minutes and then log
+    one CRITICAL line per message. This class filters on the symbol the
+    processor already resolved to the underlying (SPXW -> SPX, NDXP -> NDX,
+    VIXW -> VIX, see stream_parsing._underlying_symbol_for_root) -- the same key
+    WhaleAlertsStreamManager consumes by -- and only counts what it drops.
+
+    The set of symbols is read from ACTIVE_UNDERLYINGS when the provider is
+    built, never a hand-copied list, so a symbol added to that list is tracked
+    here automatically. Nothing in whale_alerts_relay.py (queue size, drop log)
+    is changed.
+    """
+
+    def __init__(
+        self,
+        host: str,
+        port: int,
+        active_symbols: Iterable[str] | None = None,
+        monotonic: Callable[[], float] = time.monotonic,
+    ) -> None:
+        super().__init__(host, port)
+        self._active_symbols: frozenset[str] = frozenset(
+            active_symbols
+            if active_symbols is not None
+            else (underlying.symbol for underlying in ACTIVE_UNDERLYINGS)
+        )
+        self._monotonic = monotonic
+        self._last_summary_at = monotonic()
+        # Since the process started, and since the last summary line.
+        self.ignored_by_symbol: collections.Counter[str] = collections.Counter()
+        self._ignored_since_summary: collections.Counter[str] = collections.Counter()
+
+    @property
+    def active_symbols(self) -> frozenset[str]:
+        return self._active_symbols
+
+    def _dispatch(self, payload: dict[str, object]) -> None:
+        symbol = payload.get("symbol") if isinstance(payload, dict) else None
+        if not isinstance(symbol, str) or symbol not in self._active_symbols:
+            self._note_ignored(symbol if isinstance(symbol, str) else MISSING_SYMBOL_KEY)
+            return
+        super()._dispatch(payload)
+
+    def _note_ignored(self, symbol: str) -> None:
+        self.ignored_by_symbol[symbol] += 1
+        self._ignored_since_summary[symbol] += 1
+        now = self._monotonic()
+        if now - self._last_summary_at < IGNORED_SYMBOLS_SUMMARY_INTERVAL_SECONDS:
+            return
+        window = now - self._last_summary_at
+        total = sum(self._ignored_since_summary.values())
+        top = ", ".join(
+            f"{name}={count}" for name, count in self._ignored_since_summary.most_common(10)
+        )
+        logger.info(
+            "Whale alerts relay client: ignored %d messages in %.0fs for symbols this process does "
+            "not track (%s); %d since start",
+            total,
+            window,
+            top,
+            sum(self.ignored_by_symbol.values()),
+        )
+        self._ignored_since_summary.clear()
+        self._last_summary_at = now
+
+
+def _build_relay_provider(host: str, port: int) -> RelayDataProvider:
+    return _ActiveSymbolsRelayDataProvider(host, port)
 
 
 async def run() -> None:
@@ -83,8 +172,13 @@ async def run() -> None:
         )
         return
 
-    relay_provider = RelayDataProvider(
+    relay_provider = _build_relay_provider(
         container.settings.whale_alerts_relay_host, container.settings.whale_alerts_relay_port
+    )
+    logger.info(
+        "Whale-alerts worker tracks %d symbols, ignoring the rest: %s",
+        len(ACTIVE_UNDERLYINGS),
+        ", ".join(underlying.symbol for underlying in ACTIVE_UNDERLYINGS),
     )
     await relay_provider.start()
     # Swaps only market_data_provider -- everything else (whale_alerts_
