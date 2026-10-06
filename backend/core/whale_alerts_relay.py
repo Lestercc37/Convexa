@@ -55,12 +55,12 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-import json
 import logging
 from collections.abc import AsyncIterator
 from datetime import date, datetime
 from decimal import Decimal
 
+from backend.core import fastjson
 from backend.domain.entities import (
     DailyBar,
     FlowEvent,
@@ -104,7 +104,7 @@ def _encode_trade(event: FlowEvent) -> bytes:
         "size": event.size,
         "aggressor_side": event.aggressor_side.value,
     }
-    return (json.dumps(payload) + "\n").encode("utf-8")
+    return fastjson.dumps_line(payload)
 
 
 def _decode_trade(payload: dict[str, object]) -> FlowEvent:
@@ -128,7 +128,7 @@ def _encode_quote(event: QuoteEvent) -> bytes:
         "bid": str(event.bid),
         "ask": str(event.ask),
     }
-    return (json.dumps(payload) + "\n").encode("utf-8")
+    return fastjson.dumps_line(payload)
 
 
 def _decode_quote(payload: dict[str, object]) -> QuoteEvent:
@@ -386,7 +386,7 @@ class RelayDataProvider:
                 line = await reader.readline()
                 if not line:
                     raise ConnectionError("Whale alerts relay server closed the connection")
-                self._dispatch(json.loads(line))
+                self._dispatch(fastjson.loads(line))
         finally:
             writer.close()
             with contextlib.suppress(ConnectionError, OSError):

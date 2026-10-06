@@ -100,7 +100,6 @@ from __future__ import annotations
 
 import asyncio
 import collections
-import json
 import logging
 import time
 from datetime import datetime
@@ -110,6 +109,7 @@ from backend.adapters.providers.thetadata.stream_parsing import (
     parse_quote_message,
     parse_underlying_trade_message,
 )
+from backend.core import fastjson
 from backend.core.container import build_container
 from backend.core.logging import configure_logging
 from backend.core.stream_processor_relay import StreamProcessorRelayClient
@@ -219,7 +219,7 @@ def _handle_raw_frame(state: _ProcessorState, raw: str) -> None:
     message must never take down this process's whole relay connection,
     same principle as StreamProcessorRelayServer's own reader loop."""
     try:
-        message = json.loads(raw)
+        message = fastjson.loads(raw)
         header = message.get("header", {})
         msg_type = header.get("type")
         if msg_type in ("QUOTE", "TRADE"):
