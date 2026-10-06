@@ -95,6 +95,9 @@ RECONNECT_MAX_DELAY_SECONDS = 60
 # peer degrades (drop + CRITICAL log) instead of growing either
 # process's memory without limit.
 RELAY_QUEUE_MAXSIZE = 20000
+# The queue holds chunks (one frame, or a whole read buffer from the picows
+# reader), so its item count alone no longer bounds memory: also cap the bytes.
+RELAY_MAX_QUEUED_BYTES = 64 * 1024 * 1024
 DROP_LOG_INTERVAL_SECONDS = 1.0
 
 
@@ -159,6 +162,16 @@ class StreamProcessorRelayServer:
             await client.close()
             logger.warning("Stream processor worker disconnected from the relay")
 
+    def publish_bytes(self, data: bytes) -> bool:
+        """Hands already-encoded newline-terminated lines (one or many) to the
+        connected processor; False when none is connected. The picows reader
+        batches a whole read buffer into one call."""
+        if not self._clients:
+            return False
+        for client in self._clients:
+            client.publish(data)
+        return True
+
     def publish_raw(self, raw: str) -> bool:
         """Hands one raw WS frame to a connected processor. Returns
         False (no-op) when nothing is connected -- the caller
@@ -187,22 +200,29 @@ class _ConnectedProcessor:
         self.queue: asyncio.Queue[bytes] = asyncio.Queue(maxsize=RELAY_QUEUE_MAXSIZE)
         self._dropped_since_log = 0
         self._last_drop_log_at = float("-inf")
+        self.queued_bytes = 0
         self.send_task = asyncio.create_task(self._drain())
 
     async def _drain(self) -> None:
         try:
             while True:
                 data = await self.queue.get()
+                self.queued_bytes -= len(data)
                 self.writer.write(data)
                 while not self.queue.empty():
-                    self.writer.write(self.queue.get_nowait())
+                    more = self.queue.get_nowait()
+                    self.queued_bytes -= len(more)
+                    self.writer.write(more)
                 await self.writer.drain()
         except (ConnectionError, OSError):
             pass
 
     def publish(self, data: bytes) -> None:
         try:
+            if self.queued_bytes > RELAY_MAX_QUEUED_BYTES:
+                raise asyncio.QueueFull
             self.queue.put_nowait(data)
+            self.queued_bytes += len(data)
         except asyncio.QueueFull:
             # One log line per frame at tens of thousands of frames a second
             # burned the worker's CPU and rotated the log files every few
