@@ -15,6 +15,7 @@ from backend.domain.entities import (
     VolatilityRegimeMetric,
 )
 from backend.domain.ports import IAsyncMarketReadStorage, IStorage
+from backend.domain.use_cases.futures_proxy import proxy_symbol_for
 from backend.domain.use_cases.errors import NotFoundError
 
 DEFAULT_HISTORY_DAYS = 60
@@ -38,6 +39,8 @@ class CalculateDerivedMetricsUseCase:
         self._history_days = history_days
 
     def execute(self, underlying: str) -> DerivedMetrics:
+        # ES/NQ have no data of their own: the scores describe the index they are proxied by
+        underlying = proxy_symbol_for(underlying) or underlying
         gamma = self._storage.get_latest_gamma_aggregate(underlying)
         if gamma is None:
             raise NotFoundError(f"No gamma aggregate found for {underlying.upper()}")
@@ -59,6 +62,7 @@ async def calculate_derived_metrics_async(
     `/gamma/{symbol}` can run on the event loop instead of the
     scheduler's shared threadpool (see AsyncPostgreSQLStorage's own
     docstring)."""
+    underlying = proxy_symbol_for(underlying) or underlying  # ES/NQ: the proxy index's scores
     gamma = await storage.get_latest_gamma_aggregate(underlying)
     if gamma is None:
         raise NotFoundError(f"No gamma aggregate found for {underlying.upper()}")

@@ -24,6 +24,7 @@ def test_active_underlying_classification() -> None:
         "NDX": Underlying("NDX", UnderlyingKind.INDEX, True),
         "NVDA": Underlying("NVDA", UnderlyingKind.EQUITY, True),
         "ES": Underlying("ES", UnderlyingKind.FUTURE, True),
+        "NQ": Underlying("NQ", UnderlyingKind.FUTURE, True),
     }
 
     assert {item.symbol: item for item in ACTIVE_UNDERLYINGS} == expected

@@ -42,6 +42,7 @@ FIXED_WIDTH_BY_SYMBOL: dict[str, Decimal] = {
     # that method's own comment). Fixed width matched to the same order
     # of magnitude as SPX, since ES tracks the S&P 500 in index points.
     "ES": Decimal(100),
+    "NQ": Decimal(200),  # never used for a computation (a proxy of NDX), here only so every active symbol is classified
 }
 
 # Defensive fallback only -- not expected to trigger for any of the 11

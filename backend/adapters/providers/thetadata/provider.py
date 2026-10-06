@@ -2313,7 +2313,11 @@ class ThetaDataProvider:
                 continue
             self._hub.register_symbol(underlying.symbol, underlying.kind)
 
-        for symbol in ACTIVE_UNDERLYINGS_BY_SYMBOL:
+        for symbol, underlying in ACTIVE_UNDERLYINGS_BY_SYMBOL.items():
+            if underlying.kind == UnderlyingKind.FUTURE:
+                # ES/NQ have no options of their own on ThetaData (its "ES" root is Eversource
+                # Energy); their levels are read from SPX/NDX, see use_cases/futures_proxy.py.
+                continue
             try:
                 chain = self._fetch_near_the_money(symbol, expiration=None)
             except (httpx.HTTPError, ValueError):
@@ -2368,7 +2372,9 @@ class ThetaDataProvider:
         function call the loop can't preempt."""
         while True:
             await asyncio.sleep(CONTRACT_REDISCOVERY_INTERVAL_SECONDS)
-            for symbol in ACTIVE_UNDERLYINGS_BY_SYMBOL:
+            for symbol, underlying in ACTIVE_UNDERLYINGS_BY_SYMBOL.items():
+                if underlying.kind == UnderlyingKind.FUTURE:
+                    continue  # no options of its own, see start()
                 try:
                     chain = await asyncio.to_thread(
                         self._fetch_near_the_money, symbol, expiration=None

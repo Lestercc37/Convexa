@@ -8,6 +8,7 @@ from datetime import UTC, date, datetime
 
 from backend.core.container import Container
 from backend.domain.entities import MarketHoliday
+from backend.domain.entities import UnderlyingKind
 from backend.domain.underlyings import ACTIVE_UNDERLYINGS
 from backend.domain.use_cases import is_market_open
 from backend.domain.use_cases.market_hours import EASTERN_TIME
@@ -139,7 +140,13 @@ class UnderlyingRefreshScheduler:
         return {holiday.date: holiday for holiday in holidays}
 
     async def _run_cycle(self) -> None:
-        symbols = [underlying.symbol for underlying in ACTIVE_UNDERLYINGS]
+        # ES/NQ are skipped: no data of their own to refresh, their levels are read from SPX/NDX
+        # (use_cases/futures_proxy.py). ThetaData's "ES" root is Eversource Energy.
+        symbols = [
+            underlying.symbol
+            for underlying in ACTIVE_UNDERLYINGS
+            if underlying.kind != UnderlyingKind.FUTURE
+        ]
         logger.info("Scheduler cycle starting for %d symbols", len(symbols))
         started_at = time.monotonic()
         tasks: list[asyncio.Task[bool]] = []

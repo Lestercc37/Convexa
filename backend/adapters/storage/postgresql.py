@@ -74,7 +74,7 @@ class PostgreSQLStorage:
             # rows (and every stored history) of symbols that were removed
             # from ACTIVE_UNDERLYINGS (2026-10-06), which must not keep showing
             # up in the dashboard's selector.
-            return [
+            listed = [
                 Underlying(
                     symbol=str(row["symbol"]),
                     kind=UnderlyingKind(str(row["kind"])),
@@ -83,6 +83,13 @@ class PostgreSQLStorage:
                 for row in rows
                 if str(row["symbol"]) in ACTIVE_UNDERLYINGS_BY_SYMBOL
             ]
+            # An active symbol that has no row yet (a newly added one such as NQ, which only gets
+            # its row on its first write) must still be selectable.
+            present = {item.symbol for item in listed}
+            listed.extend(
+                underlying for symbol, underlying in ACTIVE_UNDERLYINGS_BY_SYMBOL.items() if symbol not in present
+            )
+            return sorted(listed, key=lambda item: item.symbol)
 
     def save_whale_threshold(self, threshold: WhaleThreshold) -> None:
         with self.session_factory.begin() as session:
