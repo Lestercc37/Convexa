@@ -54,12 +54,16 @@ def test_expiration_derives_dte() -> None:
     assert expiration.dte == 30
 
 
-def test_chain_fetch_persists_and_serializes_contract_shape() -> None:
+def test_chain_fetch_serializes_contract_shape_and_does_not_persist() -> None:
     storage = InMemoryStorage()
     provider = MockDataProvider()
 
     chain = get_option_chain(storage, provider, "spy")
     payload = chain_response(chain)
+
+    # The live fallback is not a writer: the scheduler is the only one
+    # (see tests/test_chain_fallback_does_not_write.py).
+    assert storage.get_latest_chain_snapshot("SPY") is None
 
     assert payload["schema_version"] == 1
     assert payload["symbol"] == "SPY"
