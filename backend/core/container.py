@@ -183,7 +183,10 @@ def build_container() -> Container:
     )
     market_data_provider: IDataProvider = (
         ThetaDataProvider(
-            settings.thetadata_rest_url, settings.thetadata_ws_url, theta_request_slots
+            settings.thetadata_rest_url,
+            settings.thetadata_ws_url,
+            theta_request_slots,
+            reconcile_enabled=settings.thetadata_reconcile_enabled,
         )
         if settings.data_provider == "thetadata"
         else MockDataProvider()
