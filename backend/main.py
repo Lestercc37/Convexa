@@ -51,6 +51,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # _merge_cumulative_volume -- see that use case's comment and
     # backend/scheduler_worker.py's own docstring (the same gap, but for
     # that process's OWN scheduler cycle, not just this rarely-hit path).
+    # GET /chain/{symbol}'s live fallback is the other caller: it fills the
+    # volume the same way (use_cases/cumulative_volume.py) and does NOT save the
+    # chain -- saving it wrote all-zero-volume snapshots (2026-10-07).
     #
     # `.stop()` IS still called below, even though `.start()` never
     # ran: every stream's own stop() no-ops when its task was never

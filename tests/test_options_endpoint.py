@@ -1,5 +1,6 @@
 from fastapi.testclient import TestClient
 
+from backend.adapters.providers.mock.provider import MockDataProvider
 from backend.main import app
 
 
@@ -22,7 +23,9 @@ def test_chain_get_keeps_documented_provider_fallback_and_expiration() -> None:
         stored = app.state.container.storage.get_latest_chain_snapshot("QQQ")
 
     assert response.status_code == 200
-    assert stored is not None
+    # The fallback answers from the provider but does NOT persist: the scheduler is
+    # the only writer of option_chain_snapshots.
+    assert stored is None
     assert {contract["occ_symbol"][3:9] for contract in response.json()["contracts"]} == {"260320"}
 
 
@@ -35,11 +38,12 @@ def test_chain_expirations_get_returns_only_dates_not_full_contracts() -> None:
     # /chain/{symbol}'s shared threadpool into real 500s.
     with TestClient(app) as client:
         # get_option_chain_expirations is storage-only (never live-fetches,
-        # see its own docstring) -- /chain/spy runs first here purely to
-        # seed storage the same way a real scheduler cycle already would
-        # have by the time anyone opens the dropdown, not because the
-        # expirations route itself needs it.
+        # see its own docstring) -- /chain/spy only supplies the expected dates
+        # here; the storage seed right after it stands in for what a real
+        # scheduler cycle already wrote by the time anyone opens the dropdown
+        # (the /chain fallback no longer persists anything).
         full_chain = client.get("/api/v1/chain/spy")
+        app.state.container.storage.save_chain_snapshot(MockDataProvider().get_option_chain("SPY"))
         response = client.get("/api/v1/chain/spy/expirations")
 
     assert response.status_code == 200

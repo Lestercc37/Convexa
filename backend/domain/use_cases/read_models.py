@@ -21,6 +21,7 @@ from backend.domain.use_cases.calculate_expected_move import (
     calculate_expected_move,
     calculate_time_to_close_pct,
 )
+from backend.domain.use_cases.cumulative_volume import merge_cumulative_volume
 from backend.domain.use_cases.errors import NotFoundError
 from backend.domain.use_cases.futures_proxy import (  # noqa: F401 -- PRICE_PROXY_SYMBOL_BY_FUTURE is re-exported
     PRICE_PROXY_SYMBOL_BY_FUTURE,
@@ -95,7 +96,12 @@ VWAP_PROXY_SYMBOL_BY_INDEX: dict[str, str] = {
 # PRICE_PROXY_SYMBOL_BY_FUTURE lives in futures_proxy.py (imported above) so the gamma/chain
 # read models can share it without a circular import.
 
-DEFAULT_FRESHNESS_SECONDS = 60
+# How old the stored chain snapshot (written by the scheduler, the only writer)
+# may be, during market hours, before GET /chain/{symbol} fetches live instead.
+# Tuning knob: the scheduler's snapshots land every ~95 s today (cycle
+# 63-76 s + the 30 s sleep), so most polls are past 60 s -- change it with
+# data, not here by reflex.
+CHAIN_STORED_MAX_AGE_SECONDS = 60
 
 
 async def future_price_offset(
@@ -157,7 +163,7 @@ def get_option_chain(
     provider: IDataProvider,
     underlying: str,
     expiration: date | None = None,
-    freshness_seconds: int = DEFAULT_FRESHNESS_SECONDS,
+    freshness_seconds: int = CHAIN_STORED_MAX_AGE_SECONDS,
 ) -> OptionChain:
     if proxy_symbol_for(underlying) is not None:
         # Same rule as the async/expirations paths: a future's chain is its index's, shifted.
@@ -175,9 +181,13 @@ def get_option_chain(
         # live, 2026-09: it was overwriting a good pre-close snapshot with
         # a degenerate all-zero-gamma one, see calculate_bsm_greeks).
         return chain
-    chain = provider.get_option_chain(underlying, expiration)
-    storage.save_chain_snapshot(chain)
-    return chain
+    # Live fallback: returned to the caller, NEVER persisted. The scheduler is the
+    # only writer of option_chain_snapshots -- this process has no trade stream,
+    # so its provider reports volume 0 for every contract, and saving that chain
+    # filled the table with all-zero-volume snapshots (~48% of SPXW 0DTE rows on
+    # 2026-10-06/07, 138 of 289 snapshots on 10-07). The volume is read back from
+    # contract_cumulative_volume (the stream processor's export, <= ~15 s old).
+    return merge_cumulative_volume(provider.get_option_chain(underlying, expiration), storage)
 
 
 async def get_option_chain_async(
@@ -186,7 +196,7 @@ async def get_option_chain_async(
     provider: IDataProvider,
     underlying: str,
     expiration: date | None = None,
-    freshness_seconds: int = DEFAULT_FRESHNESS_SECONDS,
+    freshness_seconds: int = CHAIN_STORED_MAX_AGE_SECONDS,
 ) -> OptionChain:
     """Async twin of get_option_chain, for GET /chain/{symbol} -- confirmed
     live, 2026-09-22: the plain `def` version of that route shared
@@ -206,6 +216,10 @@ async def get_option_chain_async(
     scheduler itself already uses for every symbol refresh, so this
     doesn't introduce a new way of doing blocking I/O, just reuses the
     one already proven safe.
+
+    The live fallback never writes to option_chain_snapshots (the scheduler is the
+    only writer) and fills the volume from contract_cumulative_volume -- see
+    get_option_chain.
     """
     proxy_symbol = proxy_symbol_for(underlying)
     if proxy_symbol is not None:
