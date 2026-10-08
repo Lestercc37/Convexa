@@ -966,6 +966,58 @@ def test_whale_alert_save_and_get_recent_against_postgresql(
     assert storage.get_recent_whale_alerts(symbol, limit=1) == [newer]
 
 
+def test_whale_alert_condition_premium_is_stored_as_jsonb_and_never_read_back(
+    postgresql_storage: tuple[PostgreSQLStorage, Engine, str],
+) -> None:
+    """Phase 1 of the multi-leg work (migration 0040): the per-condition-code premium split is CAPTURED in
+    whale_alerts.condition_premium (jsonb) and not read by any query -- the alert reads back exactly as before,
+    with condition_premium None -- while an alert without a split stores SQL NULL."""
+    storage, engine, symbol = postgresql_storage
+    with_split = WhaleAlert(
+        symbol=symbol,
+        occ_symbol=f"{symbol}260220C00540000",
+        alert_type=WhaleAlertType.WHALE,
+        amount=Decimal("65000"),
+        as_of=datetime(2026, 8, 3, 14, 0, tzinfo=timezone.utc),
+        estimated_buy_volume=Decimal("65000"),
+        estimated_sell_volume=Decimal("0"),
+        condition_premium={"130": Decimal("35000"), "18": Decimal("10000"), "-1": Decimal("20000")},
+    )
+    without_split = WhaleAlert(
+        symbol=symbol,
+        occ_symbol=f"{symbol}260220P00540000",
+        alert_type=WhaleAlertType.UNUSUAL,
+        amount=Decimal("45000"),
+        as_of=datetime(2026, 8, 3, 14, 5, tzinfo=timezone.utc),
+        estimated_buy_volume=Decimal("22500"),
+        estimated_sell_volume=Decimal("22500"),
+    )
+
+    storage.save_whale_alert(with_split)
+    storage.save_whale_alert(without_split)
+
+    with engine.connect() as connection:
+        rows = {
+            row.occ_symbol: row.condition_premium
+            for row in connection.execute(
+                text("SELECT occ_symbol, condition_premium FROM whale_alerts WHERE occ_symbol LIKE :p"),
+                {"p": f"{symbol}%"},
+            )
+        }
+        total = connection.execute(
+            text("SELECT sum(value::numeric) FROM whale_alerts w, jsonb_each_text(w.condition_premium) WHERE w.occ_symbol = :o"),
+            {"o": with_split.occ_symbol},
+        ).scalar()
+    assert rows[with_split.occ_symbol] == {"130": 35000.0, "18": 10000.0, "-1": 20000.0}
+    assert rows[without_split.occ_symbol] is None
+    assert Decimal(str(total)) == with_split.amount
+    # Not read back: same alert, split dropped.
+    assert storage.get_recent_whale_alerts(symbol) == [
+        without_split,
+        replace(with_split, condition_premium=None),
+    ]
+
+
 @pytest.mark.asyncio
 async def test_async_postgresql_storage_get_recent_whale_alerts_reads_what_the_sync_storage_wrote(
     postgresql_storage: tuple[PostgreSQLStorage, Engine, str],
