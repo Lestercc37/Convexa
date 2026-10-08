@@ -3,6 +3,7 @@ from __future__ import annotations
 import threading
 import time
 from collections import deque
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 from decimal import Decimal
@@ -195,6 +196,14 @@ class WhaleAlert:
     # strike (repeat_count climbing) versus an isolated one-off print,
     # which a bare list of dollar amounts doesn't distinguish at a glance.
     repeat_count: int = 1
+    # Premium (USD, price x size x 100) of the trades behind this alert, split
+    # by OPRA trade-condition code as str(code) (e.g. {"18": 812000.0, "130":
+    # 640000.0}); "-1" = the message carried no condition. For WHALE/UNUSUAL
+    # it covers the one-minute bucket, for SUSTAINED_FLOW the same 15 minutes
+    # as `amount`, so the values add up to `amount`. CAPTURE ONLY (2026-10):
+    # nothing signs, filters or weights by it yet. None for BVC-derived
+    # alerts, when capture is switched off, and for rows written before it.
+    condition_premium: dict[str, Decimal] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -252,6 +261,18 @@ def _parse_strike(occ_symbol: str) -> Decimal:
 
 def _floor_to_minute(moment: datetime) -> datetime:
     return moment.replace(second=0, microsecond=0)
+
+
+_ZERO = Decimal(0)
+
+
+def _merge_condition_premium(buckets: Iterable[dict[int, Decimal]]) -> dict[int, Decimal]:
+    """Sum of per-bucket {condition code: premium} maps (SUSTAINED_FLOW's 15 minutes)."""
+    merged: dict[int, Decimal] = {}
+    for bucket in buckets:
+        for code, value in bucket.items():
+            merged[code] = merged.get(code, _ZERO) + value
+    return merged
 
 
 @dataclass(slots=True)
@@ -323,6 +344,12 @@ class _ContractState:
     # (this state itself only lives as long as the engine process does,
     # so "this session" in practice means "since this process started").
     alert_count: int = 0
+    # Lee-Ready only (process_trade): premium of the current bucket by OPRA
+    # condition code (-1 = none sent), and the last 15 finalized buckets' maps
+    # for SUSTAINED_FLOW. Left empty when condition capture is off and for
+    # process()/BVC, which never writes them.
+    bucket_condition_premium: dict[int, Decimal] = field(default_factory=dict)
+    sustained_condition_premium: deque[dict[int, Decimal]] = field(default_factory=lambda: deque(maxlen=15))
 
 
 @dataclass(slots=True)
@@ -405,8 +432,14 @@ class WhaleAlertsEngine:
         alert_limit: int = 1000,
         thresholds_cache_ttl_seconds: float = _THRESHOLDS_CACHE_TTL_SECONDS,
         bvc_alerts_enabled: bool = True,
+        store_conditions: bool = True,
     ) -> None:
         self._storage = storage
+        # True: process_trade() also tallies each bucket's premium by OPRA
+        # trade-condition code and _emit() stores it on the alert. Capture
+        # only -- see WhaleAlert.condition_premium. Settings.
+        # whale_alerts_store_conditions is the kill switch.
+        self._store_conditions = store_conditions
         # False turns process() (BVC, fed by the REST scheduler's chain
         # snapshots) into a no-op. With a live trade stream process_trade()
         # (Lee-Ready) already covers every streamed contract: BVC alerts
@@ -666,6 +699,10 @@ class WhaleAlertsEngine:
         state.bucket_amount += event.premium
         state.bucket_buy_volume += buy_volume
         state.bucket_sell_volume += sell_volume
+        if self._store_conditions:
+            code = -1 if event.condition is None else event.condition
+            tally = state.bucket_condition_premium
+            tally[code] = tally.get(code, _ZERO) + event.premium
         # AND-accumulation, not assignment: stays True only if EVERY
         # trade contributing to this bucket (including ones already
         # folded in before this call) was Side.UNKNOWN. One real BUY/SELL
@@ -749,6 +786,7 @@ class WhaleAlertsEngine:
         finalized_buy_volume = state.bucket_buy_volume
         finalized_sell_volume = state.bucket_sell_volume
         finalized_quote_unavailable = state.bucket_quote_unavailable
+        finalized_condition_premium = state.bucket_condition_premium
 
         if len(state.previous_amounts) == self._WINDOW_SIZE:
             average_amount = sum(state.previous_amounts, Decimal()) / self._WINDOW_SIZE
@@ -765,6 +803,7 @@ class WhaleAlertsEngine:
                         finalized_buy_volume,
                         finalized_sell_volume,
                         finalized_quote_unavailable,
+                        finalized_condition_premium,
                     )
                 )
 
@@ -772,6 +811,7 @@ class WhaleAlertsEngine:
         state.sustained_buy_volumes.append(finalized_buy_volume)
         state.sustained_sell_volumes.append(finalized_sell_volume)
         state.sustained_quote_unavailable.append(finalized_quote_unavailable)
+        state.sustained_condition_premium.append(finalized_condition_premium)
         if len(state.sustained_amounts) == self._SUSTAINED_WINDOW_SIZE:
             sustained_total = sum(state.sustained_amounts, Decimal())
             if sustained_total >= thresholds.sustained_flow_min:
@@ -788,6 +828,7 @@ class WhaleAlertsEngine:
                             sum(state.sustained_buy_volumes, Decimal()),
                             sum(state.sustained_sell_volumes, Decimal()),
                             all(state.sustained_quote_unavailable),
+                            _merge_condition_premium(state.sustained_condition_premium),
                         )
                     )
             else:
@@ -804,6 +845,9 @@ class WhaleAlertsEngine:
         # inert there -- same non-contamination guarantee as the field's
         # own comment.
         state.bucket_quote_unavailable = True
+        # A NEW dict, not .clear(): the one just finalized is also held by
+        # sustained_condition_premium.
+        state.bucket_condition_premium = {}
         return generated
 
     def _emit(
@@ -817,6 +861,7 @@ class WhaleAlertsEngine:
         estimated_buy_volume: Decimal,
         estimated_sell_volume: Decimal,
         quote_unavailable: bool = False,
+        condition_premium: dict[int, Decimal] | None = None,
     ) -> WhaleAlert:
         spot, gamma = self._cached_market_context(symbol)
         strike = _parse_strike(occ_symbol)
@@ -839,6 +884,9 @@ class WhaleAlertsEngine:
             ),
             near_gamma_level=_nearest_gamma_level(spot, gamma),
             repeat_count=state.alert_count,
+            condition_premium=(
+                {str(code): value for code, value in condition_premium.items()} if condition_premium else None
+            ),
         )
         self._alerts.append(alert)
         # Dual-write, this phase only: whale_alerts now persists the same

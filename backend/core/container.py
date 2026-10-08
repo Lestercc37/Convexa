@@ -100,14 +100,17 @@ class Container:
 
 
 def build_whale_alerts_engine(
-    storage: IStorage, bvc_alerts_enabled: bool = True
+    storage: IStorage, bvc_alerts_enabled: bool = True, store_conditions: bool = True
 ) -> WhaleAlertsEngine:
     """Build Whale Alerts, reading per-symbol threshold overrides live from storage.
 
     `bvc_alerts_enabled` is Settings.whale_alerts_bvc_active in production
     (off with ThetaData, see that property); the default keeps every other
-    caller's behavior unchanged."""
-    return WhaleAlertsEngine(storage=storage, bvc_alerts_enabled=bvc_alerts_enabled)
+    caller's behavior unchanged. `store_conditions` is
+    Settings.whale_alerts_store_conditions (capture of trade-condition codes)."""
+    return WhaleAlertsEngine(
+        storage=storage, bvc_alerts_enabled=bvc_alerts_enabled, store_conditions=store_conditions
+    )
 
 
 def build_container() -> Container:
@@ -231,7 +234,9 @@ def build_container() -> Container:
     )
     calculate_derived_metrics_use_case = CalculateDerivedMetricsUseCase(storage)
     whale_alerts_engine = build_whale_alerts_engine(
-        whale_alerts_storage, bvc_alerts_enabled=settings.whale_alerts_bvc_active
+        whale_alerts_storage,
+        bvc_alerts_enabled=settings.whale_alerts_bvc_active,
+        store_conditions=settings.whale_alerts_store_conditions,
     )
     refresh_underlying_snapshot_use_case = RefreshUnderlyingSnapshotUseCase(
         storage=storage,

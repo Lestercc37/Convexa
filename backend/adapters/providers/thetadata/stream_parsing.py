@@ -165,6 +165,12 @@ def parse_quote_message(message: dict[str, Any]) -> ParsedQuote | None:
     )
 
 
+def _trade_condition(raw: Any) -> int | None:
+    """The trade's OPRA condition code, or None when absent / not a plain
+    integer (bool is excluded: it is an int subclass in Python)."""
+    return raw if type(raw) is int else None
+
+
 def parse_option_trade_message(message: dict[str, Any]) -> ParsedOptionTrade | None:
     contract = message.get("contract", {})
     trade = message.get("trade", {})
@@ -200,6 +206,7 @@ def parse_option_trade_message(message: dict[str, Any]) -> ParsedOptionTrade | N
             premium=Decimal(str(price)) * Decimal(size) * Decimal(100),
             size=int(size),
             aggressor_side=Side.UNKNOWN,
+            condition=_trade_condition(trade.get("condition")),
         )
         if price is not None
         else None

@@ -50,6 +50,12 @@ class Settings(BaseSettings):
     # Set QLL_WHALE_ALERTS_BVC_ENABLED=true/false to force either way, no
     # code change.
     whale_alerts_bvc_enabled: bool | None = Field(default=None)
+    # Whether the Whale Alerts engine records, per alert, how much of its
+    # premium traded under each OPRA trade-condition code (whale_alerts.
+    # condition_premium). Capture only: no alert, net-pressure figure or
+    # volume is computed differently because of it. Kill switch for the
+    # per-trade accumulation: QLL_WHALE_ALERTS_STORE_CONDITIONS=false.
+    whale_alerts_store_conditions: bool = Field(default=True)
     # Local-only TCP link (see backend/core/stream_processor_relay.py):
     # worker.py forwards raw QUOTE/TRADE WS frames to
     # backend/stream_processor_worker.py's own process over this, and

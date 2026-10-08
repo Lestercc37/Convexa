@@ -727,6 +727,11 @@ class FlowEvent:
     premium: Decimal
     size: int
     aggressor_side: AggressorSide
+    # OPRA/ThetaData trade condition code of the print (e.g. 18 = auto
+    # execution, 125 = single-leg auction non-ISO, 130-144 = multi-leg). Only
+    # CAPTURED so far (see WhaleAlertsEngine's condition_premium); nothing
+    # classifies, filters or signs by it yet. None when the message had none.
+    condition: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
