@@ -111,6 +111,7 @@ export type Translations = {
     vannaNeutral: string;
   };
   volatilitySmile: {
+    noCurrentExpiration: string;
     eyebrow: string;
     roleSubtitle: string;
     expirationLabel: string;

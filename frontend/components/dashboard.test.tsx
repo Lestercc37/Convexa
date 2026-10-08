@@ -22,6 +22,12 @@ const apiMocks = vi.hoisted(() => ({
   updateWhaleThreshold: vi.fn(),
 }));
 
+// The fixtures' option expirations are fixed dates in August 2026; "today" is pinned to match,
+// since the Smile no longer asks for expirations that already expired.
+const marketSessionMocks = vi.hoisted(() => ({
+  currentEasternDate: vi.fn(() => "2026-08-03"),
+}));
+
 const chartMocks = vi.hoisted(() => ({
   createChart: vi.fn(),
 }));
@@ -82,6 +88,10 @@ vi.mock("next/navigation", () => ({
   useRouter: () => ({ replace: vi.fn(), push: vi.fn() }),
 }));
 vi.mock("@/lib/market-price-stream", () => marketPriceStreamMocks);
+vi.mock("@/lib/market-session", async () => {
+  const actual = await vi.importActual<typeof import("@/lib/market-session")>("@/lib/market-session");
+  return { ...actual, currentEasternDate: marketSessionMocks.currentEasternDate };
+});
 vi.mock("lightweight-charts", () => ({
   CandlestickSeries: "CandlestickSeries",
   LineSeries: "LineSeries",

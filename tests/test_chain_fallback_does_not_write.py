@@ -8,6 +8,7 @@ back from contract_cumulative_volume (the stream processor's export)."""
 
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 
@@ -20,6 +21,8 @@ from backend.adapters.storage.sync_read_adapter import SyncStorageAsyncReadAdapt
 from backend.api.serializers import chain_response
 from backend.domain.entities import ContractType, Greeks, OptionChain, OptionContract
 from backend.domain.use_cases import read_models
+from backend.domain.use_cases.errors import NotFoundError
+from backend.domain.use_cases.market_hours import EASTERN_TIME
 from backend.domain.use_cases.read_models import (
     CHAIN_STORED_MAX_AGE_SECONDS,
     get_option_chain,
@@ -27,6 +30,8 @@ from backend.domain.use_cases.read_models import (
 )
 from backend.main import app
 
+# "Today" in New York: the live fallback only exists for expirations that have not expired yet.
+EXPIRATION = datetime.now(EASTERN_TIME).date()
 TRADED = "SPXW261007C07800000"
 UNTRADED = "SPXW261007P07800000"
 
@@ -35,7 +40,7 @@ def _contract(occ_symbol: str, strike: int, contract_type: ContractType, volume:
     return OptionContract(
         underlying="SPX",
         strike=Decimal(strike),
-        expiration=date(2026, 10, 7),
+        expiration=EXPIRATION,
         contract_type=contract_type,
         occ_symbol=occ_symbol,
         bid=Decimal("6.70"),
@@ -110,7 +115,7 @@ def test_old_chain_goes_live_but_writes_no_rows(market_open) -> None:
     storage, stale_as_of = _stale_storage()
     provider = _ZeroVolumeProvider()
 
-    chain = get_option_chain(storage, provider, "SPX", date(2026, 10, 7))
+    chain = get_option_chain(storage, provider, "SPX", EXPIRATION)
 
     assert provider.calls == 1
     assert storage.saves == 0
@@ -124,7 +129,7 @@ def test_returned_volume_matches_the_stored_cumulative_volume(market_open) -> No
     storage.save_cumulative_volumes({TRADED: 140_548})
     provider = _ZeroVolumeProvider()
 
-    chain = get_option_chain(storage, provider, "SPX", date(2026, 10, 7))
+    chain = get_option_chain(storage, provider, "SPX", EXPIRATION)
     volume = {c.occ_symbol: c.volume for c in chain.contracts}
 
     assert volume[TRADED] == 140_548          # the processor's export, not the hub's 0
@@ -152,7 +157,7 @@ async def test_async_route_path_writes_nothing_and_fills_the_volume(market_open)
     provider = _ZeroVolumeProvider()
 
     chain = await get_option_chain_async(
-        SyncStorageAsyncReadAdapter(storage), storage, provider, "SPX", date(2026, 10, 7)
+        SyncStorageAsyncReadAdapter(storage), storage, provider, "SPX", EXPIRATION
     )
 
     assert provider.calls == 1 and storage.saves == 0
@@ -182,3 +187,66 @@ def test_volatility_smile_still_gets_its_data_from_the_route(market_open) -> Non
     assert {c["expiration"] for c in contracts} == {expiration.isoformat()}
     assert [chain.as_of for chain in written] == [stale.as_of]       # the route wrote nothing
     assert chain_response(stale)["symbol"] == "SPY"
+
+
+YESTERDAY = EXPIRATION - timedelta(days=1)
+
+
+def test_expired_expiration_is_served_from_storage_and_never_fetched_live(market_open) -> None:
+    """A browser tab left open overnight keeps asking for yesterday's date: that date is over, so the
+    provider is not called (this was ~83% of the API's ThetaData requests on 2026-10-08)."""
+    storage = _CountingStorage()
+    stale_as_of = datetime.now(UTC) - timedelta(seconds=CHAIN_STORED_MAX_AGE_SECONDS + 240)   # old, market "open"
+    stored = _chain(stale_as_of, volume=111)
+    storage.save_chain_snapshot(
+        OptionChain(
+            symbol=stored.symbol,
+            as_of=stored.as_of,
+            spot_price=stored.spot_price,
+            contracts=tuple(replace(c, expiration=YESTERDAY) for c in stored.contracts),
+        )
+    )
+    storage.saves = 0
+    provider = _ZeroVolumeProvider()
+
+    chain = get_option_chain(storage, provider, "SPX", YESTERDAY)
+
+    assert provider.calls == 0 and storage.saves == 0
+    assert chain.as_of == stale_as_of                        # whatever is stored, as it is
+
+
+def test_expired_expiration_with_nothing_stored_says_expired_without_a_live_call(market_open) -> None:
+    storage = _CountingStorage()
+    provider = _ZeroVolumeProvider()
+
+    with pytest.raises(NotFoundError, match="already expired"):
+        get_option_chain(storage, provider, "SPX", YESTERDAY)
+    assert provider.calls == 0
+
+
+@pytest.mark.asyncio
+async def test_async_expired_expiration_never_reaches_the_provider(market_open) -> None:
+    storage = _CountingStorage()
+    provider = _ZeroVolumeProvider()
+
+    with pytest.raises(NotFoundError, match="already expired"):
+        await get_option_chain_async(SyncStorageAsyncReadAdapter(storage), storage, provider, "SPX", YESTERDAY)
+    assert provider.calls == 0
+
+
+def test_todays_expiration_still_goes_live_when_stale(market_open) -> None:
+    """The guard is for dates strictly before today: today's 0DTE keeps its live fallback."""
+    storage, _ = _stale_storage()
+    provider = _ZeroVolumeProvider()
+
+    get_option_chain(storage, provider, "SPX", EXPIRATION)
+
+    assert provider.calls == 1
+
+
+def test_route_answers_404_expired_for_a_past_date_nothing_stored(market_open) -> None:
+    with TestClient(app) as client:
+        response = client.get(f"/api/v1/chain/spy?expiration={YESTERDAY.isoformat()}")
+
+    assert response.status_code == 404
+    assert "already expired" in response.text
