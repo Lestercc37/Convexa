@@ -2311,6 +2311,9 @@ class ThetaDataProvider:
         request_slots: PostgresThetaRequestSlots | InProcessThetaRequestSlots | None = None,
     ) -> None:
         self._client = httpx.Client(base_url=rest_base_url, timeout=10.0)
+        # REST calls currently running in this process (diagnostics only: see _log_thetadata_transport_failure)
+        self._rest_in_flight = 0
+        self._rest_in_flight_lock = threading.Lock()
         # Defaults to the pre-existing in-process behavior (correct on
         # its own whenever nothing in a separate OS process could also
         # be calling ThetaData -- every caller that doesn't pass a real
@@ -2326,9 +2329,6 @@ class ThetaDataProvider:
         # call this provider makes -- see ThetaStreamHub.__init__'s own
         # comment for why this wasn't wired in from the start.
         self._hub = ThetaStreamHub(ws_url, self._client, self._request_slots)
-        # REST calls currently running in this process (diagnostics only: see _log_thetadata_transport_failure)
-        self._rest_in_flight = 0
-        self._rest_in_flight_lock = threading.Lock()
         self._rediscovery_task: asyncio.Task[None] | None = None
         self._rate_cache: tuple[date, Decimal] | None = None
         # ATR (and therefore the near-the-money width derived from it)
