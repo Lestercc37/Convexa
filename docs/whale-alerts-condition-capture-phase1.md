@@ -79,6 +79,21 @@ Plan (todo antes de instalar, nada toca Postgres ni el Terminal):
 | 20,000/s | sin pérdida; p99 5.6 / 3.2 ms | sin pérdida; p99 4.9 / 2.5 ms |
 | 40,000/s | 0 / **4,106** tramas perdidas; p50 24 / 522 ms | **114** / 0 perdidas; p50 297 / 375 ms |
 
+**Repetición a 40,000/s (pedida por Lester, 2026-10-08): 8 corridas por versión, intercaladas, 20 s cada una, en tres tandas.** La mediana de tramas
+perdidas es **0 en ambas versiones en las tres tandas** (la mayoría de corridas no pierde nada y unas pocas pierden miles, así que la mediana no distingue);
+lo que sí informa es en cuántas corridas hubo pérdida, la magnitud y la mediana de la latencia del marcador:
+
+| Tanda | Código de la rama | main: corridas con pérdida (tramas perdidas, procesador + eventos) | rama: corridas con pérdida | mediana p50 del marcador main / rama |
+|---|---|---|---|---|
+| 1 | con función auxiliar; **confundida**: yo corría otras cosas en la misma máquina | 1/8 (938 + 938) | 3/8 (22,286 + 22,276; 14,620 + 14,867; 3,808 + 4,218) | 57 / 210 ms |
+| 2 | con función auxiliar; limpia (sin nada más corriendo) | 1/8 (1,143 + 1,142) | 2/8 (6,425 + 6,741; 7,652 + 7,737) | 39 / 209 ms |
+| 3 | **con la comprobación en línea (este commit)**; limpia | 1/8 (314 + 314) | **0/8** | 80 / 59 ms |
+
+Con la función auxiliar la rama salía peor a 40k (5 de 16 corridas con pérdida contra 2 de 16, latencia mediana 4-5 veces mayor). Se midió la etapa del
+procesador aparte (200,000 tramas por `_handle_raw_frame` + la codificación del relay): **+4.7% por trama con la función auxiliar, +1.5% con la comprobación
+en línea** (5.80 contra 5.72 us/trama; solo operaciones: 17.67 contra 17.48 us). Se dejó la versión en línea. Con 8 corridas por tanda y pérdidas
+esporádicas en `main` también, la tanda 3 NO prueba equivalencia: dice que ya no se ve la diferencia de las tandas 1-2.
+
 A 10 y 20 mil por segundo no hay diferencia. A 40 mil (el "codo" medido el 2026-10-04) ambas variantes oscilan entre sin pérdida y pérdida
 de un orden parecido, así que ahí la prueba no distingue la rama de `main`. Límites: una sola máquina compartida (portátil), 2 rondas, 20 s,
 y esta prueba **no incluye el motor de ballenas** (su consumidor es un `RelayDataProvider`): el costo del motor sale solo del benchmark A.
