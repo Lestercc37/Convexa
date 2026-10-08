@@ -203,6 +203,23 @@ describe("VolatilitySmile", () => {
     expect(await screen.findByText(/No hay vencimientos vigentes por ahora/)).toBeInTheDocument();
     expect(apiMocks.getOptionChain).not.toHaveBeenCalled();
   });
+
+  it("keeps looking for a current expiration when there is none, and starts asking for it as soon as one appears", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    apiMocks.getOptionChainExpirations
+      .mockResolvedValueOnce({ schema_version: 1, symbol: "SPY", expirations: ["2026-07-31"] })
+      .mockResolvedValue({ schema_version: 1, symbol: "SPY", expirations: ["2026-07-31", "2026-08-03"] });
+    renderWithLanguage(<VolatilitySmile symbol="SPY" marketPrice={551} />);
+    expect(await screen.findByText(/No hay vencimientos vigentes por ahora/)).toBeInTheDocument();
+    expect(apiMocks.getOptionChain).not.toHaveBeenCalled();
+
+    await vi.advanceTimersByTimeAsync(30_000);
+
+    await vi.waitFor(() =>
+      expect(apiMocks.getOptionChain).toHaveBeenCalledWith("SPY", "2026-08-03", expect.anything()),
+    );
+    vi.useRealTimers();
+  });
 });
 
 function withinOptions(selector: HTMLElement): string[] {

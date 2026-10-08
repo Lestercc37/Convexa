@@ -23,6 +23,13 @@ function nearestAtmStrike(contracts: OptionContract[], marketPrice: number): num
   );
 }
 
+// Only dates that have not expired yet (today or later, New York calendar): an expired date has
+// nothing left to ask the provider about.
+function currentExpirations(expirations: string[]): string[] {
+  const today = currentEasternDate();
+  return [...expirations].sort().filter((date) => date >= today);
+}
+
 function scale(value: number, minimum: number, maximum: number, start: number, end: number) {
   if (maximum <= minimum) return (start + end) / 2;
   return start + ((value - minimum) / (maximum - minimum)) * (end - start);
@@ -59,10 +66,7 @@ export function VolatilitySmile({ symbol, marketPrice }: VolatilitySmileProps) {
     // slow scheduler cycle).
     getOptionChainExpirations(symbol, controller.signal)
       .then((response) => {
-        // Only dates that have not expired yet (today or later, New York calendar): an
-        // expired date has nothing left to ask the provider about.
-        const today = currentEasternDate();
-        const available = [...response.expirations].sort().filter((date) => date >= today);
+        const available = currentExpirations(response.expirations);
         setExpirations(available);
         setSelectedExpiration(available[0] ?? "");
         setExpirationsLoaded(true);
@@ -90,8 +94,7 @@ export function VolatilitySmile({ symbol, marketPrice }: VolatilitySmileProps) {
       if (selectedExpiration < currentEasternDate()) {
         getOptionChainExpirations(symbol, controller.signal)
           .then((response) => {
-            const today = currentEasternDate();
-            const available = [...response.expirations].sort().filter((date) => date >= today);
+            const available = currentExpirations(response.expirations);
             setExpirations(available);
             setSelectedExpiration(available[0] ?? "");
             if (!available.length) setChain(null);
@@ -119,6 +122,27 @@ export function VolatilitySmile({ symbol, marketPrice }: VolatilitySmileProps) {
       window.clearInterval(interval);
     };
   }, [selectedExpiration, symbol]);
+
+  // No current expiration at all (e.g. the stored chain still lists only past dates until the
+  // scheduler writes a new one): keep looking every poll instead of staying empty until a reload.
+  useEffect(() => {
+    if (!expirationsLoaded || selectedExpiration) return;
+    const controller = new AbortController();
+    const interval = window.setInterval(() => {
+      getOptionChainExpirations(symbol, controller.signal)
+        .then((response) => {
+          const available = currentExpirations(response.expirations);
+          if (!available.length) return;
+          setExpirations(available);
+          setSelectedExpiration(available[0]);
+        })
+        .catch(() => {});
+    }, POLLING_INTERVAL_MS);
+    return () => {
+      controller.abort();
+      window.clearInterval(interval);
+    };
+  }, [expirationsLoaded, selectedExpiration, symbol]);
 
   const contracts = useMemo(() => chain?.contracts ?? [], [chain]);
   const plot = useMemo(() => {

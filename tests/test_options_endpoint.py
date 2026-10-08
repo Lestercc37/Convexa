@@ -1,4 +1,4 @@
-from datetime import date, timedelta
+from datetime import UTC, datetime, timedelta
 
 from fastapi.testclient import TestClient
 
@@ -23,7 +23,7 @@ def test_chain_get_keeps_documented_provider_fallback_and_expiration() -> None:
     with TestClient(app) as client:
         # A date that has not expired yet (an expired one is never fetched live, see
         # test_chain_fallback_does_not_write.py).
-        expiration = date.today() + timedelta(days=30)
+        expiration = datetime.now(UTC).date() + timedelta(days=30)
         response = client.get(f"/api/v1/chain/qqq?expiration={expiration.isoformat()}")
         stored = app.state.container.storage.get_latest_chain_snapshot("QQQ")
 
