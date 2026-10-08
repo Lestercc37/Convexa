@@ -18,7 +18,7 @@ from dataclasses import replace
 from datetime import date
 from decimal import Decimal
 
-from backend.domain.entities import GammaAggregate, OptionChain
+from backend.domain.entities import GammaAggregate, MarketSnapshot, OptionChain
 from backend.domain.use_cases.calculate_anchored_vwap import calculate_session_open
 
 # future -> the index whose own data stands in for it.
@@ -108,6 +108,50 @@ def empty_future_aggregate(proxy_gamma: GammaAggregate, symbol: str) -> GammaAgg
     """Before today's anchor exists the levels cannot be expressed in futures points: an honest
     empty aggregate (no levels, no strikes) instead of the index's unshifted numbers."""
     return GammaAggregate(symbol=symbol, as_of=proxy_gamma.as_of, view=proxy_gamma.view)
+
+
+def shift_market_snapshot(snapshot: MarketSnapshot, symbol: str, offset: Decimal) -> MarketSnapshot:
+    """The proxy's /market snapshot in the future's points: the price and every price level move by
+    `offset`; widths, percentages and exposures are the index's own and are kept. The index options'
+    own flow events are in index strikes and the future has none of its own, so they are dropped."""
+    expected_move = snapshot.expected_move
+    atr_range = snapshot.atr_range
+    anchored_vwap = snapshot.anchored_vwap
+    closing = snapshot.closing_dynamics
+    return replace(
+        snapshot,
+        symbol=symbol,
+        price=snapshot.price + offset,
+        gamma=None if snapshot.gamma is None else shift_gamma_aggregate(snapshot.gamma, symbol, offset),
+        expected_move=None
+        if expected_move is None
+        else replace(
+            expected_move,
+            upper_bound=expected_move.upper_bound + offset,
+            lower_bound=expected_move.lower_bound + offset,
+        ),
+        anchored_vwap=None
+        if anchored_vwap is None
+        else replace(anchored_vwap, value=_shift(anchored_vwap.value, offset)),
+        atr_range=None
+        if atr_range is None
+        else replace(
+            atr_range,
+            today_open=_shift(atr_range.today_open, offset),
+            outer_upper_band=_shift(atr_range.outer_upper_band, offset),
+            outer_lower_band=_shift(atr_range.outer_lower_band, offset),
+            inner_upper_band=_shift(atr_range.inner_upper_band, offset),
+            inner_lower_band=_shift(atr_range.inner_lower_band, offset),
+        ),
+        closing_dynamics=None
+        if closing is None
+        else replace(
+            closing,
+            magnet_strike=_shift(closing.magnet_strike, offset),
+            max_pain=closing.max_pain + offset if closing.max_pain else closing.max_pain,
+        ),
+        recent_flow=(),
+    )
 
 
 def shift_option_chain(chain: OptionChain, symbol: str, offset: Decimal) -> OptionChain:

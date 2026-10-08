@@ -41,6 +41,8 @@ export const es: Translations = {
     notSetNote: (proxySymbol) =>
       `Introduce el precio de apertura (proxy: ${proxySymbol}) para activar la gráfica`,
     saveErrorNote: "No se pudo guardar el precio de apertura.",
+    noDataMessage: (symbol) =>
+      `Sin datos para ${symbol}: falta el precio de apertura de las 9:30 ET de hoy. Escríbelo arriba (casilla "Apertura 9:30 ET") y pulsa Guardar.`,
   },
   derivedMetricsBar: {
     ariaLabel: "Métricas derivadas",

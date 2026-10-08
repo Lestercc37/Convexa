@@ -37,6 +37,7 @@ export type Translations = {
     calibratedNote: (proxySymbol: string) => string;
     notSetNote: (proxySymbol: string) => string;
     saveErrorNote: string;
+    noDataMessage: (symbol: string) => string;
   };
   derivedMetricsBar: {
     ariaLabel: string;

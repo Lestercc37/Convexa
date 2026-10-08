@@ -41,6 +41,8 @@ export const en: Translations = {
     notSetNote: (proxySymbol) =>
       `Enter the opening price (proxy: ${proxySymbol}) to activate the chart`,
     saveErrorNote: "Couldn't save the opening price.",
+    noDataMessage: (symbol) =>
+      `No data for ${symbol}: today's 9:30 ET opening price has not been entered. Type it above ("9:30 ET Open" box) and press Save.`,
   },
   derivedMetricsBar: {
     ariaLabel: "Derived metrics",
