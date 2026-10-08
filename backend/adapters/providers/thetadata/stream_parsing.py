@@ -191,6 +191,7 @@ def parse_option_trade_message(message: dict[str, Any]) -> ParsedOptionTrade | N
     occ_symbol = _build_occ_symbol(root, expiration, contract_type, strike)
     underlying_symbol = _underlying_symbol_for_root(root.upper())
     price = trade.get("price")
+    condition = trade.get("condition")
     event = (
         FlowEvent(
             symbol=underlying_symbol,
@@ -200,6 +201,9 @@ def parse_option_trade_message(message: dict[str, Any]) -> ParsedOptionTrade | N
             premium=Decimal(str(price)) * Decimal(size) * Decimal(100),
             size=int(size),
             aggressor_side=Side.UNKNOWN,
+            # The OPRA condition code; None when absent or not a plain int (bool is an int subclass, hence `type is`).
+            # Inline on purpose: this runs once per option trade in the stream processor's hot path.
+            condition=condition if type(condition) is int else None,
         )
         if price is not None
         else None

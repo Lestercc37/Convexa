@@ -103,11 +103,13 @@ def _encode_trade(event: FlowEvent) -> bytes:
         "premium": str(event.premium),
         "size": event.size,
         "aggressor_side": event.aggressor_side.value,
+        "cond": event.condition,
     }
     return fastjson.dumps_line(payload)
 
 
 def _decode_trade(payload: dict[str, object]) -> FlowEvent:
+    condition = payload.get("cond")  # absent from an older sender: tolerated, same as None
     return FlowEvent(
         symbol=str(payload["symbol"]),
         occ_symbol=str(payload["occ_symbol"]),
@@ -116,6 +118,7 @@ def _decode_trade(payload: dict[str, object]) -> FlowEvent:
         premium=Decimal(str(payload["premium"])),
         size=int(payload["size"]),  # type: ignore[call-overload]
         aggressor_side=Side(payload["aggressor_side"]),
+        condition=condition if type(condition) is int else None,
     )
 
 

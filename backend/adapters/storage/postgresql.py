@@ -1171,12 +1171,13 @@ class PostgreSQLStorage:
                     INSERT INTO whale_alerts (
                         time, underlying_id, occ_symbol, alert_type, amount,
                         estimated_buy_volume, estimated_sell_volume, quote_unavailable,
-                        moneyness, near_gamma_level, repeat_count
+                        moneyness, near_gamma_level, repeat_count, condition_premium
                     )
                     VALUES (
                         :time, :underlying_id, :occ_symbol, :alert_type, :amount,
                         :estimated_buy_volume, :estimated_sell_volume, :quote_unavailable,
-                        :moneyness, :near_gamma_level, :repeat_count
+                        :moneyness, :near_gamma_level, :repeat_count,
+                        CAST(:condition_premium AS jsonb)
                     )
                     """
                 ),
@@ -1192,6 +1193,12 @@ class PostgreSQLStorage:
                     "moneyness": alert.moneyness.value,
                     "near_gamma_level": alert.near_gamma_level,
                     "repeat_count": alert.repeat_count,
+                    # Capture only (WhaleAlert.condition_premium): never read back.
+                    "condition_premium": (
+                        json.dumps({code: float(value) for code, value in alert.condition_premium.items()})
+                        if alert.condition_premium
+                        else None
+                    ),
                 },
             )
 
