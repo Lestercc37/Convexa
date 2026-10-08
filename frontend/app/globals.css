@@ -635,6 +635,7 @@ button, select { font: inherit; }
 .alert-card.alert-sustained_flow .alert-type { color: var(--atr); }
 .alert-amount { font-variant-numeric: tabular-nums; }
 .alert-time { color: var(--tv-text-dim); font-size: 0.66rem; }
+.alert-overlap-note { color: var(--tv-text-dim); font-size: 0.6rem; font-style: italic; }
 
 /* Moneyness/near-level/repeat-count (2026-09-28) -- context tags so a
    card says something more useful than a raw dollar amount at a glance.

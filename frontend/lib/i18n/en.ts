@@ -148,6 +148,7 @@ export const en: Translations = {
     dominantQuoteUnavailable: "No quote",
     nearLevelLabel: (level) => `Near ${level}`,
     repeatCountLabel: (count) => `Same strike ×${count}`,
+    includesWhaleMinute: "includes the minute of the WHALE alert",
   },
   quickScreener: {
     eyebrow: "Convexa Presets",

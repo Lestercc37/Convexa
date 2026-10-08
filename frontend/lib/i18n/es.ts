@@ -150,6 +150,7 @@ export const es: Translations = {
     dominantQuoteUnavailable: "Sin cotización",
     nearLevelLabel: (level) => `Cerca de ${level}`,
     repeatCountLabel: (count) => `Mismo strike ×${count}`,
+    includesWhaleMinute: "incluye el minuto de la alerta WHALE",
   },
   quickScreener: {
     eyebrow: "Presets Convexa",

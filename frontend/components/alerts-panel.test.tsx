@@ -266,6 +266,33 @@ describe("AlertsPanel", () => {
     expect(cards[0]).toHaveTextContent("Compra/venta estimada (Lee-Ready)");
   });
 
+  it("notes on a SUSTAINED_FLOW card that it includes the minute of the WHALE alert shown with it, and only then", async () => {
+    const base = {
+      symbol: "NDX",
+      quote_unavailable: false,
+      moneyness: "ATM" as const,
+      near_gamma_level: null,
+      repeat_count: 1,
+    };
+    apiMocks.getAlerts.mockResolvedValue(
+      alertsResponse("NDX", [
+        // Same bucket close: WHALE minute + the 15-minute sum that contains it.
+        { ...base, contract: "NDXP261008P30830000", type: "SUSTAINED_FLOW", amount: 1660031, timestamp: "2026-10-08T19:12:04.524Z", estimated_buy_volume: 13000, estimated_sell_volume: 1647031 },
+        { ...base, contract: "NDXP261008P30830000", type: "WHALE", amount: 1451296, timestamp: "2026-10-08T19:12:04.524Z", estimated_buy_volume: 0, estimated_sell_volume: 1451296 },
+        // A SUSTAINED_FLOW with no WHALE card for the same close: no note.
+        { ...base, contract: "NDXP261008P30700000", type: "SUSTAINED_FLOW", amount: 700000, timestamp: "2026-10-08T19:13:04.550Z", estimated_buy_volume: 350000, estimated_sell_volume: 350000 },
+      ]),
+    );
+
+    renderWithLanguage(<AlertsPanel symbol="NDX" orientation="vertical" />);
+
+    const cards = await screen.findAllByRole("article");
+    expect(cards).toHaveLength(3);
+    expect(cards[0]).toHaveTextContent("incluye el minuto de la alerta WHALE");
+    expect(cards[1]).not.toHaveTextContent("incluye el minuto");
+    expect(cards[2]).not.toHaveTextContent("incluye el minuto");
+  });
+
   it("labels each card Compra or Venta based on which side of the BVC split dominates", async () => {
     apiMocks.getAlerts.mockResolvedValue(
       alertsResponse("SPY", [
