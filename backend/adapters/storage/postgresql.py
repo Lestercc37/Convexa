@@ -1481,6 +1481,21 @@ class PostgreSQLStorage:
             ).mappings().first()
             return Decimal(str(row["anchor_price"])) if row is not None else None
 
+    def get_future_price_anchor_saved_at(self, symbol: str, session_date: date) -> datetime | None:
+        with self.session_factory() as session:
+            row = session.execute(
+                text(
+                    """
+                    SELECT a.updated_at
+                    FROM future_price_anchors AS a
+                    JOIN underlyings AS u ON u.id = a.underlying_id
+                    WHERE u.symbol = :symbol AND a.session_date = :session_date
+                    """
+                ),
+                {"symbol": symbol.upper(), "session_date": session_date},
+            ).mappings().first()
+            return row["updated_at"] if row is not None else None
+
     def _ensure_underlying(self, session: Session, symbol: str) -> int:
         # Confirmed live, 2026-09-24: this UPSERT used to run
         # unconditionally on *every* call -- save_whale_alert alone can

@@ -25,17 +25,31 @@ const API_PREFIX = "/backend/api/v1";
 
 export class ApiError extends Error {
   readonly status: number;
+  // The API's own error code (e.g. "OPENING_PRICE_NOT_OPEN_YET"), when the failed response carried one.
+  readonly code: string | null;
 
-  constructor(status: number) {
+  constructor(status: number, code: string | null = null) {
     super(`API request failed (${status})`);
     this.name = "ApiError";
     this.status = status;
+    this.code = code;
   }
+}
+
+async function apiErrorFrom(response: Response): Promise<ApiError> {
+  let code: string | null = null;
+  try {
+    const body = (await response.json()) as { error?: { code?: unknown } };
+    if (typeof body?.error?.code === "string") code = body.error.code;
+  } catch {
+    // no JSON body: the status alone is what we know
+  }
+  return new ApiError(response.status, code);
 }
 
 async function getJson<T>(path: string, signal?: AbortSignal): Promise<T> {
   const response = await fetch(`${API_PREFIX}${path}`, { cache: "no-store", signal });
-  if (!response.ok) throw new ApiError(response.status);
+  if (!response.ok) throw await apiErrorFrom(response);
   return (await response.json()) as T;
 }
 
@@ -51,7 +65,7 @@ async function patchJson<T>(path: string, body: unknown, signal?: AbortSignal): 
     cache: "no-store",
     signal,
   });
-  if (!response.ok) throw new ApiError(response.status);
+  if (!response.ok) throw await apiErrorFrom(response);
   return (await response.json()) as T;
 }
 
@@ -63,7 +77,7 @@ async function postJson<T>(path: string, body: unknown, signal?: AbortSignal): P
     cache: "no-store",
     signal,
   });
-  if (!response.ok) throw new ApiError(response.status);
+  if (!response.ok) throw await apiErrorFrom(response);
   return (await response.json()) as T;
 }
 
@@ -75,7 +89,7 @@ async function putJson<T>(path: string, body: unknown, signal?: AbortSignal): Pr
     cache: "no-store",
     signal,
   });
-  if (!response.ok) throw new ApiError(response.status);
+  if (!response.ok) throw await apiErrorFrom(response);
   return (await response.json()) as T;
 }
 

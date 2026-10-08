@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from datetime import UTC, date, datetime
+from datetime import UTC, datetime
+from decimal import Decimal
 
 from fastapi import APIRouter, Depends, Request
 
@@ -9,27 +10,30 @@ from backend.api.schemas import FuturePriceAnchorRequest, FuturePriceAnchorRespo
 from backend.core.container import Container
 from backend.domain.entities import SCHEMA_VERSION
 from backend.domain.ports import IStorage
-from backend.domain.use_cases import PRICE_PROXY_SYMBOL_BY_FUTURE, calculate_session_open
-from backend.domain.use_cases.errors import NotFoundError
+from backend.domain.use_cases import PRICE_PROXY_SYMBOL_BY_FUTURE
+from backend.domain.use_cases.errors import NotFoundError, OpeningPriceNotOpenYetError
+from backend.domain.use_cases.futures_proxy import OpeningPriceWindow, opening_price_window
 
 router = APIRouter(tags=["futures"])
 
 
-def _current_session_date(storage: IStorage, proxy_symbol: str) -> date:
-    """The session this anchor belongs to -- anchored to the PROXY's
-    (SPX/NDX) own latest stored price, same as future_price_offset()
-    (read_models.py) itself, not wall-clock now. Must match exactly, or
-    an anchor saved under "today" (wall-clock) is invisible to a read
-    that resolves the session from the proxy's actual last trading
-    session -- confirmed live, 2026-09-27: over a weekend, wall-clock
-    now() computed Sunday while SPX's own last real price was still
-    Friday's, so an anchor entered against Sunday's date never matched
-    the Friday session the chart was actually reading. Falls back to
-    wall-clock only when the proxy has no price at all yet (never
-    happens for SPX/NDX in practice, but keeps this total)."""
+def _now() -> datetime:
+    return datetime.now(UTC)
+
+
+def _opening_price_window(storage: IStorage, proxy_symbol: str) -> OpeningPriceWindow:
+    """The session a typed opening price belongs to, and whether it may be saved right now.
+
+    The session is anchored to the PROXY's (SPX/NDX) own latest stored price, same as
+    future_level_offset() (read_models.py) itself, so the number is visible to the reads that
+    resolve the session the same way (confirmed live, 2026-09-27: wall-clock "now" computed Sunday
+    while SPX's last real price was still Friday's, and an anchor entered against Sunday never
+    matched the Friday session the chart was reading).
+
+    That is also why a number typed BEFORE today's first index price (9:30:02 ET) used to land on
+    the previous session: opening_price_window() refuses it instead (see its docstring)."""
     latest_proxy_price = storage.get_latest_price(proxy_symbol)
-    as_of = latest_proxy_price.as_of if latest_proxy_price is not None else datetime.now(UTC)
-    return calculate_session_open(as_of).date()
+    return opening_price_window(_now(), latest_proxy_price.as_of if latest_proxy_price is not None else None)
 
 
 def _proxy_symbol_or_404(symbol: str) -> str:
@@ -47,17 +51,14 @@ def get_future_opening_price(symbol: str, request: Request) -> FuturePriceAnchor
     normalized = symbol.upper()
     proxy_symbol = _proxy_symbol_or_404(normalized)
     container: Container = request.app.state.container
-    session_date = _current_session_date(container.storage, proxy_symbol)
-    anchor = container.storage.get_future_price_anchor(normalized, session_date)
-    return FuturePriceAnchorResponse.model_validate(
-        {
-            "schema_version": SCHEMA_VERSION,
-            "symbol": normalized,
-            "proxy_symbol": proxy_symbol,
-            "session_date": session_date,
-            "opening_price": anchor,
-        }
+    window = _opening_price_window(container.storage, proxy_symbol)
+    anchor = container.storage.get_future_price_anchor(normalized, window.session_date)
+    saved_at = (
+        container.storage.get_future_price_anchor_saved_at(normalized, window.session_date)
+        if anchor is not None
+        else None
     )
+    return _response(normalized, proxy_symbol, window, anchor, saved_at)
 
 
 @router.put(
@@ -71,14 +72,33 @@ def set_future_opening_price(
     normalized = symbol.upper()
     proxy_symbol = _proxy_symbol_or_404(normalized)
     container: Container = request.app.state.container
-    session_date = _current_session_date(container.storage, proxy_symbol)
-    container.storage.set_future_price_anchor(normalized, session_date, body.opening_price)
+    window = _opening_price_window(container.storage, proxy_symbol)
+    if not window.accepting:
+        raise OpeningPriceNotOpenYetError(
+            f"Wait for {proxy_symbol}'s first price of today (9:30:02 ET). The number is the {normalized} "
+            f"price at 9:30:00 (the open of the 1-minute candle), not the current price."
+        )
+    container.storage.set_future_price_anchor(normalized, window.session_date, body.opening_price)
+    saved_at = container.storage.get_future_price_anchor_saved_at(normalized, window.session_date)
+    return _response(normalized, proxy_symbol, window, body.opening_price, saved_at)
+
+
+def _response(
+    symbol: str,
+    proxy_symbol: str,
+    window: OpeningPriceWindow,
+    opening_price: Decimal | None,
+    saved_at: datetime | None,
+) -> FuturePriceAnchorResponse:
     return FuturePriceAnchorResponse.model_validate(
         {
             "schema_version": SCHEMA_VERSION,
-            "symbol": normalized,
+            "symbol": symbol,
             "proxy_symbol": proxy_symbol,
-            "session_date": session_date,
-            "opening_price": body.opening_price,
+            "session_date": window.session_date,
+            "opening_price": opening_price,
+            "saved_at": saved_at,
+            "accepting": window.accepting,
+            "waiting_reason": window.waiting_reason,
         }
     )

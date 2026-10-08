@@ -10,6 +10,10 @@ export type FutureOpeningPriceResponse = {
   proxy_symbol: string;
   session_date: string;
   opening_price: number | null;
+  // When it was saved (UTC), and whether saving is open right now (false until today's first SPX/NDX price).
+  saved_at?: string | null;
+  accepting?: boolean;
+  waiting_reason?: "before_open" | "waiting_first_price" | null;
 };
 
 export type UnderlyingsResponse = {
