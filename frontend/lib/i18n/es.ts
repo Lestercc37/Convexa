@@ -37,9 +37,15 @@ export const es: Translations = {
     label: "Apertura 9:30 ET",
     saveButton: "Guardar",
     savingButton: "Guardando…",
-    calibratedNote: (proxySymbol) => `Calibrado con ${proxySymbol}`,
-    notSetNote: (proxySymbol) =>
-      `Introduce el precio de apertura (proxy: ${proxySymbol}) para activar la gráfica`,
+    hint: (symbol) =>
+      `Precio de /${symbol} a las 9:30:00, el open de la vela de 1 minuto, no el precio actual`,
+    savedNote: (sessionDate, price, timeEt) =>
+      `Guardado para la sesión del ${sessionDate}: ${price} (${timeEt} ET)`,
+    notSavedNote: (sessionDate) => `Sin precio guardado para la sesión del ${sessionDate}`,
+    waitingBeforeOpenNote: (proxySymbol) =>
+      `Se puede guardar desde las 9:30:02 ET, cuando ${proxySymbol} tenga su primer precio de hoy`,
+    waitingFirstPriceNote: (proxySymbol) =>
+      `Esperando el primer precio de ${proxySymbol} de hoy (9:30:02 ET)`,
     saveErrorNote: "No se pudo guardar el precio de apertura.",
     noDataMessage: (symbol) =>
       `Sin datos para ${symbol}: falta el precio de apertura de las 9:30 ET de hoy. Escríbelo arriba (casilla "Apertura 9:30 ET") y pulsa Guardar.`,

@@ -34,8 +34,11 @@ export type Translations = {
     label: string;
     saveButton: string;
     savingButton: string;
-    calibratedNote: (proxySymbol: string) => string;
-    notSetNote: (proxySymbol: string) => string;
+    hint: (symbol: string) => string;
+    savedNote: (sessionDate: string, price: string, timeEt: string) => string;
+    notSavedNote: (sessionDate: string) => string;
+    waitingBeforeOpenNote: (proxySymbol: string) => string;
+    waitingFirstPriceNote: (proxySymbol: string) => string;
     saveErrorNote: string;
     noDataMessage: (symbol: string) => string;
   };

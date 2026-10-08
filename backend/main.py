@@ -106,6 +106,7 @@ def create_app() -> FastAPI:
             "UNAUTHORIZED": 401,
             "FORBIDDEN": 403,
             "NO_OPENING_PRICE": 409,
+            "OPENING_PRICE_NOT_OPEN_YET": 409,
         }.get(error.code, 500)
         return JSONResponse(status_code=status_code, content=error_response(error))
 

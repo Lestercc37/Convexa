@@ -14,6 +14,14 @@ class NoOpeningPriceError(QllError):
     code = "NO_OPENING_PRICE"
 
 
+class OpeningPriceNotOpenYetError(QllError):
+    """The owner tried to save the 9:30 opening price before today's session has its first SPX/NDX price.
+    Saving then would attach the number to the PREVIOUS session (the session is taken from the index's
+    latest price), so the API refuses and says when it can be saved."""
+
+    code = "OPENING_PRICE_NOT_OPEN_YET"
+
+
 class UnauthorizedError(QllError):
     code = "UNAUTHORIZED"
 

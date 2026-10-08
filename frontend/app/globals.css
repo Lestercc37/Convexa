@@ -187,7 +187,9 @@ button, select { font: inherit; }
 .tv-price-readout strong { font-size: 0.94rem; font-variant-numeric: tabular-nums; }
 .tv-ohlc { color: var(--tv-text-dim); font-size: 0.74rem; font-variant-numeric: tabular-nums; }
 
-.tv-future-opening-price { display: flex; align-items: center; gap: 6px; white-space: nowrap; }
+.tv-future-opening-price { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; width: 400px; max-width: 100%; flex: 0 1 auto; }
+.tv-future-opening-price-row { display: flex; align-items: center; gap: 6px; white-space: nowrap; }
+.tv-future-opening-price-hint { color: var(--tv-text); font-size: 0.7rem; font-weight: 600; }
 .tv-future-opening-price input {
   width: 88px;
   border: 1px solid var(--tv-border);

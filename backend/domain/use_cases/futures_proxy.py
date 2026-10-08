@@ -14,12 +14,13 @@ or computed for the future itself (the scheduler and the stream skip futures).
 
 from __future__ import annotations
 
-from dataclasses import replace
-from datetime import date
+from dataclasses import dataclass, replace
+from datetime import date, datetime
 from decimal import Decimal
 
 from backend.domain.entities import GammaAggregate, MarketSnapshot, OptionChain
 from backend.domain.use_cases.calculate_anchored_vwap import calculate_session_open
+from backend.domain.use_cases.market_hours import EASTERN_TIME, MARKET_OPEN_ET
 
 # future -> the index whose own data stands in for it.
 PRICE_PROXY_SYMBOL_BY_FUTURE: dict[str, str] = {
@@ -31,6 +32,39 @@ PRICE_PROXY_SYMBOL_BY_FUTURE: dict[str, str] = {
 # session has started, so it is read once instead of loading the session's whole price history on
 # every gamma request.
 _proxy_open_cache: dict[tuple[str, date], Decimal] = {}
+
+
+@dataclass(frozen=True, slots=True)
+class OpeningPriceWindow:
+    """Which session a typed opening price would belong to, and whether it may be saved right now.
+
+    `waiting_reason`: "before_open" (a trading day, earlier than 9:30 ET) or "waiting_first_price" (9:30 has
+    passed but the index has not printed today's first price yet). In both cases the number would land on
+    the PREVIOUS session, because the session is taken from the index's latest stored price."""
+
+    session_date: date
+    accepting: bool
+    waiting_reason: str | None = None
+
+
+def opening_price_window(now: datetime, latest_proxy_as_of: datetime | None) -> OpeningPriceWindow:
+    """Weekdays are treated as trading days (no holiday calendar is available to this endpoint): on a
+    weekday holiday the index never prints, so saving stays closed all day -- nothing to enter then.
+    Weekends: the last session stays open for a late entry or a correction."""
+    eastern = now.astimezone(EASTERN_TIME)
+    today = eastern.date()
+    latest_session = (
+        calculate_session_open(latest_proxy_as_of).date() if latest_proxy_as_of is not None else None
+    )
+    if eastern.weekday() < 5:
+        if eastern.time() < MARKET_OPEN_ET:
+            return OpeningPriceWindow(today, False, "before_open")
+        if latest_session != today:
+            return OpeningPriceWindow(today, False, "waiting_first_price")
+        return OpeningPriceWindow(today, True)
+    if latest_session is None:
+        return OpeningPriceWindow(today, False, "waiting_first_price")
+    return OpeningPriceWindow(latest_session, True)
 
 
 def proxy_symbol_for(symbol: str) -> str | None:

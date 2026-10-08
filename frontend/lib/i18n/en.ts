@@ -37,9 +37,15 @@ export const en: Translations = {
     label: "9:30 ET Open",
     saveButton: "Save",
     savingButton: "Saving…",
-    calibratedNote: (proxySymbol) => `Calibrated against ${proxySymbol}`,
-    notSetNote: (proxySymbol) =>
-      `Enter the opening price (proxy: ${proxySymbol}) to activate the chart`,
+    hint: (symbol) =>
+      `Price of /${symbol} at 9:30:00, the open of the 1-minute candle, not the current price`,
+    savedNote: (sessionDate, price, timeEt) =>
+      `Saved for the ${sessionDate} session: ${price} (${timeEt} ET)`,
+    notSavedNote: (sessionDate) => `No price saved for the ${sessionDate} session`,
+    waitingBeforeOpenNote: (proxySymbol) =>
+      `Can be saved from 9:30:02 ET, once ${proxySymbol} has its first price today`,
+    waitingFirstPriceNote: (proxySymbol) =>
+      `Waiting for ${proxySymbol}'s first price today (9:30:02 ET)`,
     saveErrorNote: "Couldn't save the opening price.",
     noDataMessage: (symbol) =>
       `No data for ${symbol}: today's 9:30 ET opening price has not been entered. Type it above ("9:30 ET Open" box) and press Save.`,
