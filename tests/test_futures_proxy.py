@@ -217,7 +217,7 @@ def test_es_market_is_spxs_snapshot_in_es_points() -> None:
 
     assert response.status_code == 200
     body = response.json()
-    market = body["market"] if "market" in body else body
+    market = body.get("market", body)
     assert market["symbol"] == "ES"
     assert market["price"] == 5810 + 50, "the price shown is SPX's price plus the owner's basis, never Eversource's stored rows"
     assert market["call_wall"] == 5840 + 50
@@ -233,7 +233,7 @@ def test_nq_market_needs_no_row_of_its_own_and_uses_its_own_anchor() -> None:
 
     assert response.status_code == 200
     body = response.json()
-    market = body["market"] if "market" in body else body
+    market = body.get("market", body)
     assert market["symbol"] == "NQ"
     assert market["price"] == 20510 + 60
 
