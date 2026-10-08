@@ -30,7 +30,7 @@ excluir cancelaciones (40-44, 148) del contador de volumen.
 | `backend/domain/use_cases/flow.py` | `WhaleAlert.condition_premium`, estado por contrato, suma en `process_trade`, cierre de cubo, `_emit` |
 | `backend/core/settings.py`, `backend/core/container.py` | `whale_alerts_store_conditions` y su cableado |
 | `backend/adapters/storage/postgresql.py` | `save_whale_alert` escribe la columna (`CAST(:condition_premium AS jsonb)`) |
-| `backend/db/migrations/0040_whale_alerts_condition_premium.py` | `ALTER TABLE whale_alerts ADD COLUMN IF NOT EXISTS condition_premium jsonb` |
+| `backend/db/migrations/0040_whale_alerts_conditions.py` | `ALTER TABLE whale_alerts ADD COLUMN IF NOT EXISTS condition_premium jsonb` |
 | `tests/test_trade_condition_capture.py` | 10 pruebas (parseo, relay, motor, interruptor, "el código no cambia nada") |
 | `backend/scripts/bench_trade_condition_capture.py` | micro-benchmark de `process_trade` con captura apagada/encendida |
 | `backend/scripts/loadtest_stream_split.py` | las operaciones falsas ahora traen `condition` con la mezcla real |
