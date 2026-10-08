@@ -141,7 +141,7 @@ export const es: Translations = {
     title: "Alertas",
     empty: "Sin alertas recientes.",
     recentAriaLabel: "Alertas recientes",
-    bvcLabel: "Compra/venta estimado (BVC)",
+    bvcLabel: "Compra/venta estimada (Lee-Ready)",
     bvcAriaLabel: (buyPct, sellPct) =>
       `Estimado: ${buyPct}% compra, ${sellPct}% venta — no es dato confirmado`,
     dominantBuy: "Compra",

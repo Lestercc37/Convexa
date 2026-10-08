@@ -260,10 +260,10 @@ describe("AlertsPanel", () => {
     // Type (Call/Put) stays visible per card, just not as a tab filter.
     expect(cards[0]).toHaveTextContent("Put");
     expect(cards[1]).toHaveTextContent("Call");
-    // BVC estimate rendered on the card, explicitly labeled as an estimate
+    // Lee-Ready estimate rendered on the card, explicitly labeled as an estimate
     // (renderWithLanguage defaults to Spanish).
     expect(cards[0]).toHaveTextContent("29% / 71%");
-    expect(cards[0]).toHaveTextContent("Compra/venta estimado (BVC)");
+    expect(cards[0]).toHaveTextContent("Compra/venta estimada (Lee-Ready)");
   });
 
   it("labels each card Compra or Venta based on which side of the BVC split dominates", async () => {
@@ -304,7 +304,7 @@ describe("AlertsPanel", () => {
 
     // Scoped to the dedicated .alert-dominant element, not a whole-card
     // text match -- "Compra" is also a substring of the unrelated
-    // "Compra/venta estimado (BVC)" caption on every card.
+    // "Compra/venta estimada (Lee-Ready)" caption on every card.
     const cards = await screen.findAllByRole("article");
     expect(cards[0].querySelector(".alert-dominant")).toHaveTextContent("Compra");
     expect(cards[1].querySelector(".alert-dominant")).toHaveTextContent("Venta");
