@@ -173,6 +173,15 @@ class UnderlyingRefreshScheduler:
         # over cycle (rather than settling into a steady band) is the
         # signal to watch for, not any single cycle's absolute value.
         current_mb, peak_mb = (value / (1024 * 1024) for value in tracemalloc.get_traced_memory())
+        # DIAGNOSTIC (2026-10-08, own line so the "Scheduler cycle finished" format that the monitoring scripts parse is untouched): how much memory
+        # tracemalloc ITSELF uses for its bookkeeping. The process holds ~2.4x what it traces (3.0 GB vs 1.3 GB on 2026-10-08) and we need to know how much of
+        # that gap is the tracer.
+        tracer_mb = tracemalloc.get_tracemalloc_memory() / (1024 * 1024)
+        logger.info(
+            "Scheduler memory tracer (tracemalloc's own bookkeeping): %.1fMB for %.1fMB of traced Python memory",
+            tracer_mb,
+            current_mb,
+        )
         failed = [symbol for symbol, succeeded in zip(symbols, outcomes, strict=True) if not succeeded]
         succeeded_count = len(symbols) - len(failed)
         if failed:

@@ -123,6 +123,28 @@ async def test_cycle_processes_every_active_symbol() -> None:
 
 
 @pytest.mark.asyncio
+async def test_cycle_logs_the_tracer_memory_on_its_own_line_and_keeps_the_finished_line_format(caplog) -> None:
+    """Diagnostic (2026-10-08): the tracemalloc bookkeeping size goes on a SEPARATE line; the 'Scheduler cycle finished in Xs (mem XMB, peak YMB): ...'
+    line is parsed by the monitoring scripts (hm_mem.py, hm_fail.py, hm_v2.py) and must not change."""
+    import re
+    import tracemalloc
+
+    tracemalloc.start()
+    try:
+        scheduler, _stub = _scheduler_with_stub()
+        with caplog.at_level("INFO"):
+            await scheduler._run_cycle()
+    finally:
+        tracemalloc.stop()
+
+    messages = [r.getMessage() for r in caplog.records]
+    finished = [m for m in messages if m.startswith("Scheduler cycle finished in")]
+    assert finished and re.match(r"Scheduler cycle finished in [\d.]+s \(mem [\d.]+MB, peak [\d.]+MB\): \d+ succeeded, 0 failed", finished[0])
+    tracer = [m for m in messages if m.startswith("Scheduler memory tracer (tracemalloc's own bookkeeping):")]
+    assert len(tracer) == 1 and re.search(r": [\d.]+MB for [\d.]+MB of traced Python memory", tracer[0])
+
+
+@pytest.mark.asyncio
 async def test_cycle_continues_for_remaining_symbols_when_one_fails() -> None:
     scheduler, stub = _scheduler_with_stub(fail_for=frozenset({"QQQ"}))
 

@@ -621,6 +621,61 @@ def _log_thetadata_latency(path: str, wait_seconds: float, request_seconds: floa
         )
 
 
+def _winerror_of(exc: BaseException) -> str:
+    """The Windows socket error code behind a transport failure (e.g. 10038 'not a socket'), found by walking the exception chain."""
+    seen: set[int] = set()
+    cur: BaseException | None = exc
+    while cur is not None and id(cur) not in seen:
+        seen.add(id(cur))
+        code = getattr(cur, "winerror", None)
+        if code is not None:
+            return str(code)
+        cur = cur.__cause__ or cur.__context__
+    return "-"
+
+
+def _pool_state(client: httpx.Client) -> str:
+    """Best-effort view of httpx's connection pool at the moment of a failure (uses private attributes: never raises)."""
+    try:
+        pool = client._transport._pool  # type: ignore[attr-defined]
+        connections = list(pool.connections)
+        idle = sum(1 for c in connections if c.is_idle())
+        return f"{len(connections)} connections ({idle} idle)"
+    except Exception:  # noqa: BLE001 - diagnostics must never break the request path
+        return "unavailable"
+
+
+def _log_thetadata_transport_failure(
+    path: str,
+    params: dict[str, object],
+    *,
+    waited_seconds: float,
+    elapsed_seconds: float,
+    timeout: object,
+    in_flight: int,
+    pool_state: str,
+    exc: BaseException,
+) -> None:
+    """DIAGNOSTIC ONLY (2026-10-08): 24 scheduler cycles since 09-28 failed with httpx/httpcore ReadError [WinError 10038] ('not a socket') and we could not tell
+    whether our own 10 s read timeout, a connection closed under another thread, or the Terminal was behind it (the log only records a request when it COMPLETES).
+    Logs what is needed to tell them apart -- how long THIS request had run (after the slot wait), the configured timeout, how many REST calls were in flight in this
+    process, the pool state and the Windows error code -- and the caller re-raises: no retry, no behavior change."""
+    logger.warning(
+        "ThetaData transport failure: GET %s %s -> %s (winerror=%s): %s | waited=%.2fs request_ran=%.2fs timeout=%s in_flight=%d pool=%s thread=%s",
+        path,
+        {k: params[k] for k in ("symbol", "expiration", "strike", "right") if k in params},
+        type(exc).__name__,
+        _winerror_of(exc),
+        exc,
+        waited_seconds,
+        elapsed_seconds,
+        timeout,
+        in_flight,
+        pool_state,
+        threading.current_thread().name,
+    )
+
+
 def _log_req_response(stream_name: str, message: dict[str, Any]) -> None:
     """Logs ThetaData's per-subscription acknowledgment — confirmed live
     (2026-09 investigation against the real Theta Terminal, Stocks/Index
@@ -2256,6 +2311,9 @@ class ThetaDataProvider:
         request_slots: PostgresThetaRequestSlots | InProcessThetaRequestSlots | None = None,
     ) -> None:
         self._client = httpx.Client(base_url=rest_base_url, timeout=10.0)
+        # REST calls currently running in this process (diagnostics only: see _log_thetadata_transport_failure)
+        self._rest_in_flight = 0
+        self._rest_in_flight_lock = threading.Lock()
         # Defaults to the pre-existing in-process behavior (correct on
         # its own whenever nothing in a separate OS process could also
         # be calling ThetaData -- every caller that doesn't pass a real
@@ -2420,7 +2478,26 @@ class ThetaDataProvider:
             wait_started_at = time.monotonic()
             with self._request_slots.hold():
                 request_started_at = time.monotonic()
-                response = self._client.get(path, **request_kwargs)
+                with self._rest_in_flight_lock:
+                    self._rest_in_flight += 1
+                    in_flight = self._rest_in_flight
+                try:
+                    response = self._client.get(path, **request_kwargs)
+                except httpx.TransportError as exc:
+                    _log_thetadata_transport_failure(
+                        path,
+                        params,
+                        waited_seconds=request_started_at - wait_started_at,
+                        elapsed_seconds=time.monotonic() - request_started_at,
+                        timeout=request_kwargs.get("timeout", self._client.timeout),
+                        in_flight=in_flight,
+                        pool_state=_pool_state(self._client),
+                        exc=exc,
+                    )
+                    raise  # diagnostics only: no retry, same failure as before
+                finally:
+                    with self._rest_in_flight_lock:
+                        self._rest_in_flight -= 1
             now = time.monotonic()
             _log_thetadata_latency(path, request_started_at - wait_started_at, now - request_started_at)
             if response.status_code != 429 or attempt == MAX_429_RETRIES:
