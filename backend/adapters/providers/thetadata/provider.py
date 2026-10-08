@@ -3031,6 +3031,7 @@ class ThetaDataProvider:
         spot_price: Decimal | None = None
         latest_as_of = utc_now()
         contracts = []
+        crossed_quotes: list[tuple[str, Decimal, Decimal]] = []
         for chain in gamma_calc_chains:
             # Computed per-chain, not once for the whole call — each
             # expiration needs its own time-to-expiration for correct BSM
@@ -3048,6 +3049,14 @@ class ThetaDataProvider:
                 spot_price = underlying_price
                 bid = Decimal(str(data["bid"]))
                 ask = Decimal(str(data["ask"]))
+                if ask < bid:
+                    # A crossed quote (ask below bid) is a momentary bad print on ONE contract. Building
+                    # it raised InvalidOptionError and failed the whole symbol's cycle (2026-10-08 09:30:37,
+                    # SPY): skip just this contract and say so below.
+                    crossed_quotes.append(
+                        (_build_occ_symbol(root, chain.expiration, contract_type, strike), bid, ask)
+                    )
+                    continue
                 iv = Decimal(str(data["implied_vol"]))
                 delta = Decimal(str(data["delta"]))
                 theta = Decimal(str(data["theta"]))
@@ -3084,7 +3093,15 @@ class ThetaDataProvider:
                     )
                 )
 
-        if spot_price is None:
+        if crossed_quotes:
+            examples = ", ".join(f"{occ} bid={bid} ask={ask}" for occ, bid, ask in crossed_quotes[:3])
+            logger.warning(
+                "%s: skipped %d contract(s) with a crossed quote (ask lower than bid): %s",
+                symbol,
+                len(crossed_quotes),
+                examples,
+            )
+        if spot_price is None or not contracts:
             raise RuntimeError(f"ThetaData returned no usable contracts for {symbol}")
         return OptionChain(
             symbol=symbol,
