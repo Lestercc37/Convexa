@@ -34,6 +34,10 @@ depends_on = None
 
 
 def upgrade() -> None:
+    # ADD COLUMN (nullable, no default) only touches the catalog, but it needs a brief ACCESS EXCLUSIVE lock, and a request
+    # for that lock queues every insert/select that arrives after it. Give up after 5 s instead of waiting behind a long
+    # transaction (SET LOCAL: only this migration's transaction); a failed run changes nothing and can simply be repeated.
+    op.execute("SET LOCAL lock_timeout = '5s'")
     op.execute("ALTER TABLE whale_alerts ADD COLUMN IF NOT EXISTS condition_premium jsonb")
 
 

@@ -44,8 +44,20 @@ Reiniciar el procesador y el worker de ballenas borra el estado en memoria del d
 El contador de volumen se retoma desde lo guardado desde las 00:00 (`_resume_cumulative_volume`).
 
 Migración: `alembic upgrade head` primero contra `Convexa_test` (mostrando host y base antes, como la 0029/0039), luego contra `Convexa`.
-Es un `ADD COLUMN` nullable sin valor por defecto: solo metadatos en Postgres. Verificar antes si la hipertabla `whale_alerts` tiene
-compresión activa en la versión de TimescaleDB instalada (añadir columnas a una hipertabla comprimida tiene restricciones según versión).
+Es un `ADD COLUMN` nullable sin valor por defecto: solo toca el catálogo de Postgres, no reescribe la tabla.
+
+Medido en producción el 2026-10-08 (solo lectura): PostgreSQL 18.4; extensiones instaladas: solo `plpgsql` (**no hay TimescaleDB**, así que `whale_alerts`
+**no es hipertabla y no hay compresión que la bloquee**); tabla de 9 MB + índice de 2.7 MB = 11 MB, ~83,700 filas; sin triggers, reglas ni vistas que dependan de ella;
+sin transacciones abiertas de más de 30 s; 29 conexiones inactivas y 1 activa. Lo único que puede demorar el `ALTER TABLE` es esperar el bloqueo exclusivo breve
+detrás de una transacción larga: la migración pone `SET LOCAL lock_timeout = '5s'` y, si no lo consigue, falla sin cambiar nada y se repite.
+
+### Respaldo antes de migrar producción
+1. `pg_dump -Fc -t whale_alerts -f V:\Convexa\hist\backups\whale_alerts_pre0040_<fecha>.dump` (~11 MB, segundos) y un `pg_dump -Fc --schema-only` de toda la base (pequeño);
+   anotar `alembic_version` (hoy `0039_gamma_near_money_width`). Espacio libre en V: 210 GB.
+2. Un volcado completo de la base (17 GB) no hace falta para este cambio (añadir una columna nullable y `alembic downgrade -1` la quita); si se quiere igualmente,
+   fuera de horario y con espacio de sobra.
+3. Restaurar solo esta tabla: `pg_restore -d Convexa -t whale_alerts --clean --if-exists <dump>`; o simplemente `alembic downgrade -1`.
+La contraseña se lee del `.env` del servidor dentro del script; no se escribe en ningún archivo ni se imprime.
 
 ## 4. Costo en el camino caliente y plan de prueba de carga
 
@@ -120,7 +132,7 @@ Límite: son solo las operaciones que terminan dentro de una alerta, no todo el 
 
 1. Camino caliente (sección 4): medido, pero la prueba B no incluye el motor de ballenas con su base de datos real.
 2. Memoria del worker de ballenas: hasta 15 dicts por contrato con estado; medida en el benchmark A, no en producción.
-3. Migración sobre hipertabla: comprobar compresión antes (sección 3).
+3. Migración: tabla común de 11 MB sin TimescaleDB (medido 2026-10-08); riesgo residual = esperar el bloqueo exclusivo (límite de 5 s, se repite).
 4. Solo cubre operaciones dentro de alertas. Para el porcentaje sobre TODO el tape haría falta una tabla agregada por símbolo/minuto/código
    (otro cambio: tabla nueva, tarea de vaciado cada minuto); no está en esta fase salvo que Lester lo pida.
 5. Si ThetaData cambiara el campo `condition`, el código quedaría en `-1` (sin condición), sin romper nada.
