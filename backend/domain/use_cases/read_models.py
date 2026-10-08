@@ -31,7 +31,7 @@ from backend.domain.use_cases.futures_proxy import (  # noqa: F401 -- PRICE_PROX
     shift_option_chain,
 )
 from backend.domain.use_cases.flow import SymbolFlowPressure
-from backend.domain.use_cases.market_hours import is_market_open
+from backend.domain.use_cases.market_hours import EASTERN_TIME, is_market_open
 
 
 def _is_pure_index(underlying: str) -> bool:
@@ -158,6 +158,12 @@ async def get_price_history_async(
     )
 
 
+def _is_expired_expiration(expiration: date | None) -> bool:
+    """True for an expiration strictly before today (New York calendar): the contracts are gone, so
+    there is nothing left to ask the data provider. Stored data for that date may still exist."""
+    return expiration is not None and expiration < datetime.now(EASTERN_TIME).date()
+
+
 def get_option_chain(
     storage: IStorage,
     provider: IDataProvider,
@@ -169,6 +175,11 @@ def get_option_chain(
         # Same rule as the async/expirations paths: a future's chain is its index's, shifted.
         return get_option_chain_expirations(storage, underlying)
     chain = storage.get_latest_chain_snapshot(underlying, expiration)
+    if _is_expired_expiration(expiration):
+        # An expired date is never fetched live: the stored snapshot if there is one, else "expired".
+        if chain is None:
+            raise NotFoundError(f"{underlying.upper()} {expiration} has already expired")
+        return chain
     now = datetime.now(timezone.utc)
     if chain is not None and (
         (now - chain.as_of).total_seconds() <= freshness_seconds or not is_market_open(now)
@@ -236,6 +247,12 @@ async def get_option_chain_async(
             )
         return shift_option_chain(proxy_chain, underlying.upper(), offset)
     chain = await async_storage.get_latest_chain_snapshot(underlying, expiration)
+    if _is_expired_expiration(expiration):
+        # An expired date is never fetched live (a browser tab left open overnight, or an old
+        # page, can still ask for one): the stored snapshot if there is one, else "expired".
+        if chain is None:
+            raise NotFoundError(f"{underlying.upper()} {expiration} has already expired")
+        return chain
     now = datetime.now(UTC)
     if chain is not None and (
         (now - chain.as_of).total_seconds() <= freshness_seconds or not is_market_open(now)

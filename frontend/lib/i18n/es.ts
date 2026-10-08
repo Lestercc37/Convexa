@@ -135,6 +135,7 @@ export const es: Translations = {
     pointAriaLabel: (type, strike, ivPct) => `${type} strike ${strike}, IV ${ivPct}%`,
     legendAriaLabel: "Leyenda",
     loading: "Cargando vencimientos y volatilidad implícita…",
+    noCurrentExpiration: "No hay vencimientos vigentes por ahora (los anteriores ya vencieron).",
   },
   alertsPanel: {
     eyebrow: "Whale Alerts",

@@ -133,6 +133,7 @@ export const en: Translations = {
     pointAriaLabel: (type, strike, ivPct) => `${type} strike ${strike}, IV ${ivPct}%`,
     legendAriaLabel: "Legend",
     loading: "Loading expirations and implied volatility…",
+    noCurrentExpiration: "No current expirations right now (the earlier ones have already expired).",
   },
   alertsPanel: {
     eyebrow: "Whale Alerts",

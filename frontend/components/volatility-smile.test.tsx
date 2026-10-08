@@ -10,6 +10,12 @@ const apiMocks = vi.hoisted(() => ({
   getOptionChainExpirations: vi.fn(),
 }));
 
+// The fixtures' option expirations are fixed dates in August 2026; "today" is pinned to match,
+// since the Smile no longer asks for expirations that already expired.
+const marketSessionMocks = vi.hoisted(() => ({
+  currentEasternDate: vi.fn(() => "2026-08-03"),
+}));
+
 vi.mock("@/lib/api", async () => {
   const actual = await vi.importActual<typeof import("@/lib/api")>("@/lib/api");
   return {
@@ -17,6 +23,11 @@ vi.mock("@/lib/api", async () => {
     getOptionChain: apiMocks.getOptionChain,
     getOptionChainExpirations: apiMocks.getOptionChainExpirations,
   };
+});
+
+vi.mock("@/lib/market-session", async () => {
+  const actual = await vi.importActual<typeof import("@/lib/market-session")>("@/lib/market-session");
+  return { ...actual, currentEasternDate: marketSessionMocks.currentEasternDate };
 });
 
 function contract(
@@ -65,6 +76,7 @@ function chain(filteredContracts: OptionContract[]): OptionChainResponse {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  marketSessionMocks.currentEasternDate.mockReturnValue("2026-08-03");
   apiMocks.getOptionChainExpirations.mockResolvedValue({
     schema_version: 1,
     symbol: "SPY",
@@ -144,6 +156,52 @@ describe("VolatilitySmile", () => {
 
     const point = await screen.findByLabelText("call strike 545, IV 22.00%");
     expect(point.querySelector("title")).toHaveTextContent("call strike 545, IV 22.00%");
+  });
+
+  it("never offers or asks for an expiration that already expired", async () => {
+    apiMocks.getOptionChainExpirations.mockResolvedValue({
+      schema_version: 1,
+      symbol: "SPY",
+      expirations: ["2026-08-01", "2026-08-03", "2026-08-07", "2026-08-14"],
+    });
+    renderWithLanguage(<VolatilitySmile symbol="SPY" marketPrice={551} />);
+
+    const selector = await screen.findByLabelText("Vencimiento");
+    await waitFor(() => expect(selector).toHaveValue("2026-08-03"));
+    expect(withinOptions(selector)).toEqual(["2026-08-03", "2026-08-07", "2026-08-14"]);
+    const requested = apiMocks.getOptionChain.mock.calls.map((call) => call[1]);
+    expect(requested).not.toContain("2026-08-01");
+  });
+
+  it("moves to the nearest current expiration by itself when the panel stays open past the selected date", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    apiMocks.getOptionChainExpirations
+      .mockResolvedValueOnce({ schema_version: 1, symbol: "SPY", expirations: ["2026-08-03", "2026-08-07"] })
+      .mockResolvedValue({ schema_version: 1, symbol: "SPY", expirations: ["2026-08-03", "2026-08-07", "2026-08-14"] });
+    renderWithLanguage(<VolatilitySmile symbol="SPY" marketPrice={551} />);
+    const selector = await screen.findByLabelText("Vencimiento");
+    await vi.waitFor(() => expect(selector).toHaveValue("2026-08-03"));
+
+    marketSessionMocks.currentEasternDate.mockReturnValue("2026-08-04");   // next day, same open tab
+    apiMocks.getOptionChain.mockClear();
+    await vi.advanceTimersByTimeAsync(30_000);
+
+    await vi.waitFor(() => expect(selector).toHaveValue("2026-08-07"));
+    expect(withinOptions(selector)).toEqual(["2026-08-07", "2026-08-14"]);
+    expect(apiMocks.getOptionChain).not.toHaveBeenCalledWith("SPY", "2026-08-03", expect.anything());
+    vi.useRealTimers();
+  });
+
+  it("says there is no current expiration (and asks for none) when every stored date has expired", async () => {
+    apiMocks.getOptionChainExpirations.mockResolvedValue({
+      schema_version: 1,
+      symbol: "SPY",
+      expirations: ["2026-07-30", "2026-07-31"],
+    });
+    renderWithLanguage(<VolatilitySmile symbol="SPY" marketPrice={551} />);
+
+    expect(await screen.findByText(/No hay vencimientos vigentes por ahora/)).toBeInTheDocument();
+    expect(apiMocks.getOptionChain).not.toHaveBeenCalled();
   });
 });
 
