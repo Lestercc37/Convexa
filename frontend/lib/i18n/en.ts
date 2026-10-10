@@ -148,7 +148,7 @@ export const en: Translations = {
     title: "Alerts",
     empty: "No recent alerts.",
     recentAriaLabel: "Recent alerts",
-    bvcLabel: "Estimated buy/sell (BVC)",
+    bvcLabel: "Estimated buy/sell (Lee-Ready)",
     bvcAriaLabel: (buyPct, sellPct) =>
       `Estimated: ${buyPct}% buy, ${sellPct}% sell — not confirmed data`,
     dominantBuy: "Buy",
@@ -157,6 +157,7 @@ export const en: Translations = {
     dominantQuoteUnavailable: "No quote",
     nearLevelLabel: (level) => `Near ${level}`,
     repeatCountLabel: (count) => `Same strike ×${count}`,
+    includesWhaleMinute: "includes the minute of the WHALE alert",
   },
   quickScreener: {
     eyebrow: "Convexa Presets",

@@ -109,7 +109,15 @@ const MONEYNESS_LABEL: Record<WhaleAlert["moneyness"], string> = {
   OTM: "OTM",
 };
 
-function AlertCard({ alert, t }: { alert: WhaleAlert; t: Translations }) {
+function AlertCard({
+  alert,
+  t,
+  includesWhaleMinute,
+}: {
+  alert: WhaleAlert;
+  t: Translations;
+  includesWhaleMinute: boolean;
+}) {
   const buyPct = buyPercent(alert);
   const sellPct = 100 - buyPct;
   const side = parseContractSide(alert.contract);
@@ -126,6 +134,9 @@ function AlertCard({ alert, t }: { alert: WhaleAlert; t: Translations }) {
       {side && <span className={`alert-side alert-side-${side}`}>{SIDE_LABEL[side]}</span>}
       <span className="alert-contract">{alert.contract}</span>
       <span className="alert-type">{TYPE_LABEL[alert.type]}</span>
+      {includesWhaleMinute && (
+        <span className="alert-overlap-note">{t.alertsPanel.includesWhaleMinute}</span>
+      )}
       <span
         className={`alert-moneyness alert-moneyness-${alert.moneyness.toLowerCase()}`}
       >
@@ -203,6 +214,13 @@ export function AlertsPanel({ symbol, orientation = "horizontal" }: AlertsPanelP
   }, [symbol]);
 
   const isVertical = orientation === "vertical";
+  // A SUSTAINED_FLOW alert is the sum of the last 15 finalized minutes, and
+  // the minute that trips a WHALE alert is one of them: both are emitted by
+  // the same bucket close, so they share contract and timestamp exactly.
+  // The note is shown only when that WHALE card is actually in the list.
+  const whaleMinutes = new Set(
+    alerts.filter((alert) => alert.type === "WHALE").map((alert) => `${alert.contract}|${alert.timestamp}`),
+  );
 
   return (
     <section
@@ -240,7 +258,15 @@ export function AlertsPanel({ symbol, orientation = "horizontal" }: AlertsPanelP
           aria-label={t.alertsPanel.recentAriaLabel}
         >
           {alerts.map((alert) => (
-            <AlertCard key={alertKey(alert)} alert={alert} t={t} />
+            <AlertCard
+              key={alertKey(alert)}
+              alert={alert}
+              t={t}
+              includesWhaleMinute={
+                alert.type === "SUSTAINED_FLOW" &&
+                whaleMinutes.has(`${alert.contract}|${alert.timestamp}`)
+              }
+            />
           ))}
         </div>
       )}

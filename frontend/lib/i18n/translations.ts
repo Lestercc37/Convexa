@@ -138,6 +138,7 @@ export type Translations = {
     dominantQuoteUnavailable: string;
     nearLevelLabel: (level: string) => string;
     repeatCountLabel: (count: number) => string;
+    includesWhaleMinute: string;
   };
   quickScreener: {
     eyebrow: string;
