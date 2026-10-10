@@ -106,6 +106,17 @@ export function mostRecentSessionRange(referenceMs: number): SessionRange {
   return regularSessionRange(referenceMs - rollBackDays * oneDayMs);
 }
 
+// Today's calendar date in New York as YYYY-MM-DD (en-CA formats dates that way). An option
+// expiration strictly before this date is over: nothing is left to ask the provider about.
+export function currentEasternDate(nowMs: number = Date.now()): string {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: EASTERN_TIME_ZONE,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(new Date(nowMs));
+}
+
 // Mirrors backend/domain/use_cases/market_hours.py's is_market_open, but
 // against the most recent real session as of `nowMs` (defaults to real
 // "now"), not `referenceMs`'s own date -- see mostRecentSessionRange's
