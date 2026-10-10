@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Group, Panel, Separator, useDefaultLayout } from "react-resizable-panels";
 import {
+  ApiError,
   getGamma,
   getMarket,
   getMarketPriceHistory,
@@ -178,6 +179,9 @@ export function Dashboard() {
       ? Math.max(0, Math.floor((Date.now() - Date.parse(gamma.as_of)) / 60_000))
       : null;
   const isFutureSymbol = underlyings.find((item) => item.symbol === symbol)?.kind === "future";
+  // ES/NQ are SPX/NDX shifted by the opening price typed in by hand each morning. Without today's
+  // price the API answers 409: say "no data" (never stale numbers, never hide the symbol).
+  const hasNoOpeningPrice = isFutureSymbol && error instanceof ApiError && error.status === 409;
 
   useEffect(() => {
     const controller = new AbortController();
@@ -485,7 +489,10 @@ export function Dashboard() {
             <FutureOpeningPriceControl
               key={`future-opening-price-${symbol}`}
               symbol={symbol}
-              onSaved={() => void seedPriceAndVwap(symbol)}
+              onSaved={() => {
+                void seedPriceAndVwap(symbol);
+                void refresh(symbol, gammaViewRef.current);
+              }}
             />
           )}
           <div
@@ -618,7 +625,11 @@ export function Dashboard() {
         <EnginesGuidePanel onClose={() => setShowEnginesGuide(false)} />
       )}
 
-      {error ? (
+      {hasNoOpeningPrice ? (
+        <section className="panel status" role="status" aria-live="polite">
+          {t.futureOpeningPrice.noDataMessage(symbol)}
+        </section>
+      ) : error ? (
         <section className="panel status error" role="alert">
           {describeError(error, t)}
         </section>

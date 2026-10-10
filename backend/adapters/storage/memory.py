@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
-from datetime import date, datetime
+from datetime import UTC, date, datetime
 from decimal import Decimal
 
 from backend.domain.entities import (
@@ -45,6 +45,7 @@ class InMemoryStorage:
         self._symbol_flow_pressure: dict[str, SymbolFlowPressure] = {}
         self._cumulative_volumes: dict[str, int] = {}
         self._future_price_anchors: dict[tuple[str, date], Decimal] = {}
+        self._future_price_anchor_saved_at: dict[tuple[str, date], datetime] = {}
         self._whale_thresholds: dict[str, WhaleThreshold] = {
             underlying.symbol: WhaleThreshold(
                 symbol=underlying.symbol,
@@ -260,6 +261,10 @@ class InMemoryStorage:
         self, symbol: str, session_date: date, anchor_price: Decimal
     ) -> None:
         self._future_price_anchors[(symbol.upper(), session_date)] = anchor_price
+        self._future_price_anchor_saved_at[(symbol.upper(), session_date)] = datetime.now(UTC)
 
     def get_future_price_anchor(self, symbol: str, session_date: date) -> Decimal | None:
         return self._future_price_anchors.get((symbol.upper(), session_date))
+
+    def get_future_price_anchor_saved_at(self, symbol: str, session_date: date) -> datetime | None:
+        return self._future_price_anchor_saved_at.get((symbol.upper(), session_date))

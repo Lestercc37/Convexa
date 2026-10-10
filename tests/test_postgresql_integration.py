@@ -1367,6 +1367,26 @@ def test_user_round_trip_against_postgresql(
             connection.execute(text("DELETE FROM users WHERE username = :username"), {"username": username})
 
 
+def test_future_price_anchor_round_trip_with_saved_at_against_postgresql(
+    postgresql_storage: tuple[PostgreSQLStorage, Engine, str],
+) -> None:
+    """The ES/NQ opening price: the number, the session it belongs to, and when it was saved."""
+    storage, _, symbol = postgresql_storage
+    session = date(2026, 10, 13)
+    before = datetime.now(UTC) - timedelta(seconds=5)
+
+    assert storage.get_future_price_anchor(symbol, session) is None
+    assert storage.get_future_price_anchor_saved_at(symbol, session) is None
+
+    storage.set_future_price_anchor(symbol, session, Decimal("7826.00"))
+    storage.set_future_price_anchor(symbol, session, Decimal("7827.25"))      # a correction replaces it
+
+    assert storage.get_future_price_anchor(symbol, session) == Decimal("7827.25")
+    saved_at = storage.get_future_price_anchor_saved_at(symbol, session)
+    assert saved_at is not None and saved_at >= before
+    assert storage.get_future_price_anchor(symbol, date(2026, 10, 12)) is None, "other sessions stay empty"
+
+
 def _delete_test_data(engine: Engine, symbol: str) -> None:
     with engine.begin() as connection:
         underlying_id = connection.execute(
@@ -1381,6 +1401,10 @@ def _delete_test_data(engine: Engine, symbol: str) -> None:
         )
         connection.execute(
             text("DELETE FROM daily_gamma_reference WHERE underlying_id = :id"),
+            {"id": underlying_id},
+        )
+        connection.execute(
+            text("DELETE FROM future_price_anchors WHERE underlying_id = :id"),
             {"id": underlying_id},
         )
         connection.execute(

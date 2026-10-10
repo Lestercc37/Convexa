@@ -383,6 +383,11 @@ class FuturePriceAnchorResponse(BaseModel):
     proxy_symbol: str = Field(examples=["SPX"])
     session_date: date = Field(examples=["2026-09-29"])
     opening_price: Number | None = Field(examples=[5812.25])
+    # When the number was saved (UTC), so the dashboard can say which session it was saved for and when.
+    saved_at: datetime | None = Field(default=None, examples=["2026-09-29T13:31:10Z"])
+    # False until today's session has the index's first price: saving earlier would land on the previous session.
+    accepting: bool = Field(default=True)
+    waiting_reason: str | None = Field(default=None, examples=["before_open"])
 
 
 class ScreenerPresetSettingsResponse(BaseModel):

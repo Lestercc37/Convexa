@@ -2,6 +2,7 @@ import { screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ReactNode } from "react";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { ApiError } from "@/lib/api";
 import { renderWithLanguage } from "@/lib/i18n/test-utils";
 import { POLLING_INTERVAL_MS } from "@/lib/polling";
 import { derivedMetricsFixture } from "@/test/fixtures";
@@ -9,6 +10,7 @@ import { Dashboard } from "./dashboard";
 
 const apiMocks = vi.hoisted(() => ({
   getAlerts: vi.fn(),
+  getFutureOpeningPrice: vi.fn(),
   getGamma: vi.fn(),
   getGammaProfile: vi.fn(),
   getMarket: vi.fn(),
@@ -887,5 +889,53 @@ describe("Dashboard", () => {
       expect(body?.querySelector(".tv-center")).toBeInTheDocument();
       expect(body?.querySelector(".tv-sidebar")).toBeInTheDocument();
     });
+  });
+
+  it("says \"no data\" for ES when today's opening price has not been entered (409), instead of an error banner or stale numbers", async () => {
+    window.localStorage.setItem("convexa:last-symbol", "ES");
+    apiMocks.getUnderlyings.mockResolvedValueOnce({
+      schema_version: 1,
+      underlyings: [
+        { symbol: "ES", kind: "future", is_priority: true },
+        { symbol: "SPX", kind: "index", is_priority: true },
+      ],
+    });
+    apiMocks.getMarket.mockImplementation((symbol: string) =>
+      symbol === "ES" ? Promise.reject(new ApiError(409)) : Promise.resolve(marketFor(symbol)),
+    );
+    apiMocks.getFutureOpeningPrice.mockResolvedValue({
+      schema_version: 1,
+      symbol: "ES",
+      proxy_symbol: "SPX",
+      session_date: "2026-10-08",
+      opening_price: null,
+    });
+
+    renderWithLanguage(<Dashboard />);
+
+    expect(await screen.findByText(/Sin datos para ES/)).toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(screen.getByRole("combobox")).toHaveValue("ES");
+  });
+
+  it("any other failure for ES still shows the error banner, not \"no data\"", async () => {
+    window.localStorage.setItem("convexa:last-symbol", "ES");
+    apiMocks.getUnderlyings.mockResolvedValueOnce({
+      schema_version: 1,
+      underlyings: [{ symbol: "ES", kind: "future", is_priority: true }],
+    });
+    apiMocks.getMarket.mockRejectedValue(new ApiError(500));
+    apiMocks.getFutureOpeningPrice.mockResolvedValue({
+      schema_version: 1,
+      symbol: "ES",
+      proxy_symbol: "SPX",
+      session_date: "2026-10-08",
+      opening_price: null,
+    });
+
+    renderWithLanguage(<Dashboard />);
+
+    expect(await screen.findByRole("alert")).toBeInTheDocument();
+    expect(screen.queryByText(/Sin datos para ES/)).not.toBeInTheDocument();
   });
 });

@@ -14,12 +14,13 @@ or computed for the future itself (the scheduler and the stream skip futures).
 
 from __future__ import annotations
 
-from dataclasses import replace
-from datetime import date
+from dataclasses import dataclass, replace
+from datetime import date, datetime
 from decimal import Decimal
 
-from backend.domain.entities import GammaAggregate, OptionChain
+from backend.domain.entities import GammaAggregate, MarketSnapshot, OptionChain
 from backend.domain.use_cases.calculate_anchored_vwap import calculate_session_open
+from backend.domain.use_cases.market_hours import EASTERN_TIME, MARKET_OPEN_ET
 
 # future -> the index whose own data stands in for it.
 PRICE_PROXY_SYMBOL_BY_FUTURE: dict[str, str] = {
@@ -31,6 +32,39 @@ PRICE_PROXY_SYMBOL_BY_FUTURE: dict[str, str] = {
 # session has started, so it is read once instead of loading the session's whole price history on
 # every gamma request.
 _proxy_open_cache: dict[tuple[str, date], Decimal] = {}
+
+
+@dataclass(frozen=True, slots=True)
+class OpeningPriceWindow:
+    """Which session a typed opening price would belong to, and whether it may be saved right now.
+
+    `waiting_reason`: "before_open" (a trading day, earlier than 9:30 ET) or "waiting_first_price" (9:30 has
+    passed but the index has not printed today's first price yet). In both cases the number would land on
+    the PREVIOUS session, because the session is taken from the index's latest stored price."""
+
+    session_date: date
+    accepting: bool
+    waiting_reason: str | None = None
+
+
+def opening_price_window(now: datetime, latest_proxy_as_of: datetime | None) -> OpeningPriceWindow:
+    """Weekdays are treated as trading days (no holiday calendar is available to this endpoint): on a
+    weekday holiday the index never prints, so saving stays closed all day -- nothing to enter then.
+    Weekends: the last session stays open for a late entry or a correction."""
+    eastern = now.astimezone(EASTERN_TIME)
+    today = eastern.date()
+    latest_session = (
+        calculate_session_open(latest_proxy_as_of).date() if latest_proxy_as_of is not None else None
+    )
+    if eastern.weekday() < 5:
+        if eastern.time() < MARKET_OPEN_ET:
+            return OpeningPriceWindow(today, False, "before_open")
+        if latest_session != today:
+            return OpeningPriceWindow(today, False, "waiting_first_price")
+        return OpeningPriceWindow(today, True)
+    if latest_session is None:
+        return OpeningPriceWindow(today, False, "waiting_first_price")
+    return OpeningPriceWindow(latest_session, True)
 
 
 def proxy_symbol_for(symbol: str) -> str | None:
@@ -108,6 +142,50 @@ def empty_future_aggregate(proxy_gamma: GammaAggregate, symbol: str) -> GammaAgg
     """Before today's anchor exists the levels cannot be expressed in futures points: an honest
     empty aggregate (no levels, no strikes) instead of the index's unshifted numbers."""
     return GammaAggregate(symbol=symbol, as_of=proxy_gamma.as_of, view=proxy_gamma.view)
+
+
+def shift_market_snapshot(snapshot: MarketSnapshot, symbol: str, offset: Decimal) -> MarketSnapshot:
+    """The proxy's /market snapshot in the future's points: the price and every price level move by
+    `offset`; widths, percentages and exposures are the index's own and are kept. The index options'
+    own flow events are in index strikes and the future has none of its own, so they are dropped."""
+    expected_move = snapshot.expected_move
+    atr_range = snapshot.atr_range
+    anchored_vwap = snapshot.anchored_vwap
+    closing = snapshot.closing_dynamics
+    return replace(
+        snapshot,
+        symbol=symbol,
+        price=snapshot.price + offset,
+        gamma=None if snapshot.gamma is None else shift_gamma_aggregate(snapshot.gamma, symbol, offset),
+        expected_move=None
+        if expected_move is None
+        else replace(
+            expected_move,
+            upper_bound=expected_move.upper_bound + offset,
+            lower_bound=expected_move.lower_bound + offset,
+        ),
+        anchored_vwap=None
+        if anchored_vwap is None
+        else replace(anchored_vwap, value=_shift(anchored_vwap.value, offset)),
+        atr_range=None
+        if atr_range is None
+        else replace(
+            atr_range,
+            today_open=_shift(atr_range.today_open, offset),
+            outer_upper_band=_shift(atr_range.outer_upper_band, offset),
+            outer_lower_band=_shift(atr_range.outer_lower_band, offset),
+            inner_upper_band=_shift(atr_range.inner_upper_band, offset),
+            inner_lower_band=_shift(atr_range.inner_lower_band, offset),
+        ),
+        closing_dynamics=None
+        if closing is None
+        else replace(
+            closing,
+            magnet_strike=_shift(closing.magnet_strike, offset),
+            max_pain=closing.max_pain + offset if closing.max_pain else closing.max_pain,
+        ),
+        recent_flow=(),
+    )
 
 
 def shift_option_chain(chain: OptionChain, symbol: str, offset: Decimal) -> OptionChain:

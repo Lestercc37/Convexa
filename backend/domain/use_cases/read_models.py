@@ -22,12 +22,13 @@ from backend.domain.use_cases.calculate_expected_move import (
     calculate_time_to_close_pct,
 )
 from backend.domain.use_cases.cumulative_volume import merge_cumulative_volume
-from backend.domain.use_cases.errors import NotFoundError
+from backend.domain.use_cases.errors import NoOpeningPriceError, NotFoundError
 from backend.domain.use_cases.futures_proxy import (  # noqa: F401 -- PRICE_PROXY_SYMBOL_BY_FUTURE is re-exported
     PRICE_PROXY_SYMBOL_BY_FUTURE,
     future_level_offset,
     future_level_offset_async,
     proxy_symbol_for,
+    shift_market_snapshot,
     shift_option_chain,
 )
 from backend.domain.use_cases.flow import SymbolFlowPressure
@@ -344,6 +345,19 @@ async def build_market_snapshot_async(
     calculate_* calls, just awaited so `/market/{symbol}` can run on the
     event loop instead of the scheduler's shared threadpool (see
     AsyncPostgreSQLStorage's own docstring)."""
+    future_proxy_symbol = PRICE_PROXY_SYMBOL_BY_FUTURE.get(underlying.upper())
+    if future_proxy_symbol is not None:
+        # ES/NQ: never their own stored rows (ThetaData's "ES" is Eversource Energy, not the E-mini);
+        # the index's snapshot expressed in the future's points, or an honest "no data" until
+        # today's opening print has been entered.
+        future = underlying.upper()
+        offset = await future_level_offset_async(storage, future, future_proxy_symbol)
+        if offset is None:
+            raise NoOpeningPriceError(
+                f"No data for {future}: today's {future} 9:30 ET opening price has not been entered"
+            )
+        proxy_snapshot = await build_market_snapshot_async(storage, future_proxy_symbol)
+        return shift_market_snapshot(proxy_snapshot, future, offset)
     price = await storage.get_latest_price(underlying)
     if price is None:
         raise NotFoundError(f"No market price found for {underlying}")

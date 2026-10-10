@@ -6,6 +6,7 @@ import {
   getOptionChain,
   getOptionChainExpirations,
   getUnderlyings,
+  setFutureOpeningPrice,
 } from "./api";
 
 const fetchMock = vi.fn();
@@ -83,3 +84,28 @@ function response(payload: object): Response {
     json: async () => payload,
   } as Response;
 }
+
+describe("ApiError code", () => {
+  it("carries the API's own error code when the failed response has one", async () => {
+    fetchMock.mockResolvedValueOnce({
+      ok: false,
+      status: 409,
+      json: async () => ({ error: { code: "OPENING_PRICE_NOT_OPEN_YET", message: "wait" } }),
+    });
+    await expect(setFutureOpeningPrice("ES", 7826)).rejects.toMatchObject({
+      status: 409,
+      code: "OPENING_PRICE_NOT_OPEN_YET",
+    });
+  });
+
+  it("has no code when the failed response is not JSON", async () => {
+    fetchMock.mockResolvedValueOnce({
+      ok: false,
+      status: 502,
+      json: async () => {
+        throw new Error("not json");
+      },
+    });
+    await expect(setFutureOpeningPrice("ES", 7826)).rejects.toMatchObject({ status: 502, code: null });
+  });
+});

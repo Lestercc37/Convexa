@@ -206,3 +206,93 @@ def test_es_and_nq_are_futures_with_an_index_proxy() -> None:
     assert futures_proxy.PRICE_PROXY_SYMBOL_BY_FUTURE == {"ES": "SPX", "NQ": "NDX"}
     for symbol in ("ES", "NQ"):
         assert ACTIVE_UNDERLYINGS_BY_SYMBOL[symbol].kind == UnderlyingKind.FUTURE
+
+
+def test_es_market_is_spxs_snapshot_in_es_points() -> None:
+    with TestClient(app) as client:
+        storage = client.app.state.container.storage
+        _seed(storage, "SPX", 5800, "ES", 5850)  # session open 5800 -> basis = +50, latest SPX 5810
+
+        response = client.get("/api/v1/market/ES")
+
+    assert response.status_code == 200
+    body = response.json()
+    market = body.get("market", body)
+    assert market["symbol"] == "ES"
+    assert market["price"] == 5810 + 50, "the price shown is SPX's price plus the owner's basis, never Eversource's stored rows"
+    assert market["call_wall"] == 5840 + 50
+    assert market["gamma_flip"] == 5785 + 50
+
+
+def test_nq_market_needs_no_row_of_its_own_and_uses_its_own_anchor() -> None:
+    with TestClient(app) as client:
+        storage = client.app.state.container.storage
+        _seed(storage, "NDX", 20500, "NQ", 20560)  # basis = +60, latest NDX 20510
+
+        response = client.get("/api/v1/market/NQ")
+
+    assert response.status_code == 200
+    body = response.json()
+    market = body.get("market", body)
+    assert market["symbol"] == "NQ"
+    assert market["price"] == 20510 + 60
+
+
+def test_es_market_without_todays_anchor_says_no_data_and_serves_no_price() -> None:
+    with TestClient(app) as client:
+        storage = client.app.state.container.storage
+        _seed(storage, "SPX", 5800)  # no anchor for ES today
+        # an old Eversource-style row stored under "ES" must never be served as the E-mini
+        storage.save_market_price(MarketPrice(symbol="ES", as_of=SESSION_NOW - timedelta(days=2), price=Decimal("64.95"), volume=0))
+
+        response = client.get("/api/v1/market/ES")
+
+    assert response.status_code == 409
+    error = response.json()["error"]
+    assert error["code"] == "NO_OPENING_PRICE"
+    assert "No data for ES" in error["message"]
+    assert "64.95" not in response.text
+
+
+def test_es_market_without_anchor_does_not_affect_the_index_itself() -> None:
+    with TestClient(app) as client:
+        storage = client.app.state.container.storage
+        _seed(storage, "SPX", 5800)
+
+        response = client.get("/api/v1/market/SPX")
+
+    assert response.status_code == 200
+
+
+def test_market_snapshot_shift_moves_levels_and_keeps_widths() -> None:
+    from backend.domain.entities import AtrRange, ClosingDynamics, ExpectedMove, MarketSnapshot
+
+    snapshot = MarketSnapshot(
+        symbol="SPX",
+        as_of=SESSION_NOW,
+        price=Decimal(5810),
+        volume=0,
+        gamma=_gamma("SPX", 5800),
+        expected_move=ExpectedMove(
+            implied_1sd_dollars=Decimal(40), implied_1sd_pct=Decimal("0.7"), remaining_1sd_dollars=Decimal(30),
+            remaining_1sd_pct=Decimal("0.5"), upper_bound=Decimal(5840), lower_bound=Decimal(5760), atm_iv=Decimal("0.2"),
+        ),
+        atr_range=AtrRange(
+            atr=Decimal(60), atr_provisional=False, daily_bars_count=20, today_open=Decimal(5800), bands_provisional=False,
+            outer_upper_band=Decimal(5860), outer_lower_band=Decimal(5740), inner_upper_band=Decimal(5830), inner_lower_band=Decimal(5770),
+        ),
+        closing_dynamics=ClosingDynamics(
+            time_to_close_pct=Decimal("0.5"), active=False, pin_score=Decimal(1), magnet_strike=Decimal(5800),
+            charm_regime=None, vanna_interpretation=None, max_pain=Decimal(5790),
+        ),
+    )
+
+    shifted = futures_proxy.shift_market_snapshot(snapshot, "ES", Decimal(50))
+
+    assert shifted.symbol == "ES" and shifted.price == 5860
+    assert shifted.expected_move.upper_bound == 5890 and shifted.expected_move.lower_bound == 5810
+    assert shifted.expected_move.implied_1sd_dollars == 40, "widths are the index's own"
+    assert shifted.atr_range.atr == 60 and shifted.atr_range.today_open == 5850
+    assert shifted.atr_range.outer_upper_band == 5910 and shifted.atr_range.inner_lower_band == 5820
+    assert shifted.closing_dynamics.magnet_strike == 5850 and shifted.closing_dynamics.max_pain == 5840
+    assert shifted.recent_flow == ()
