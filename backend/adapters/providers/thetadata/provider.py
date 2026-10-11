@@ -788,9 +788,14 @@ class ThetaStreamHub:
         ws_url: str,
         rest_client: httpx.Client,
         request_slots: PostgresThetaRequestSlots | InProcessThetaRequestSlots | None = None,
+        reconcile_enabled: bool = True,
     ) -> None:
         self._ws_url = ws_url
         self._rest_client = rest_client
+        # False = start() does not create the periodic reconcile() task (see
+        # Settings.thetadata_reconcile_enabled for why production turns it off).
+        # The _reconcile() method itself stays and can still be called by hand.
+        self._reconcile_enabled = reconcile_enabled
         # reconcile()'s own REST call (below) used to bypass every other
         # REST call's account-wide concurrency limit entirely -- it never
         # went through ThetaDataProvider._get_json()/_get_json_allow_no_data(),
@@ -969,7 +974,13 @@ class ThetaStreamHub:
         self._loop = asyncio.get_running_loop()
         self._task = asyncio.create_task(self._run())
         self._watchdog_task = asyncio.create_task(self._watch_for_data_silence())
-        self._reconcile_task = asyncio.create_task(self._run_reconcile_loop())
+        if self._reconcile_enabled:
+            self._reconcile_task = asyncio.create_task(self._run_reconcile_loop())
+        else:
+            logger.info(
+                "ThetaStreamHub: periodic reconcile() is disabled (thetadata_reconcile_enabled=false); "
+                "no per-contract REST volume checks will run"
+            )
         self._message_processor_task = asyncio.create_task(self._process_messages())
         self._capture_watcher_task = asyncio.create_task(self._watch_capture_request())
 
@@ -2254,6 +2265,7 @@ class ThetaDataProvider:
         rest_base_url: str,
         ws_url: str,
         request_slots: PostgresThetaRequestSlots | InProcessThetaRequestSlots | None = None,
+        reconcile_enabled: bool = True,
     ) -> None:
         self._client = httpx.Client(base_url=rest_base_url, timeout=10.0)
         # Defaults to the pre-existing in-process behavior (correct on
@@ -2270,7 +2282,9 @@ class ThetaDataProvider:
         # share the exact same account-wide slot pool as every other REST
         # call this provider makes -- see ThetaStreamHub.__init__'s own
         # comment for why this wasn't wired in from the start.
-        self._hub = ThetaStreamHub(ws_url, self._client, self._request_slots)
+        self._hub = ThetaStreamHub(
+            ws_url, self._client, self._request_slots, reconcile_enabled=reconcile_enabled
+        )
         self._rediscovery_task: asyncio.Task[None] | None = None
         self._rate_cache: tuple[date, Decimal] | None = None
         # ATR (and therefore the near-the-money width derived from it)

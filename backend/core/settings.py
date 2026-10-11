@@ -33,6 +33,16 @@ class Settings(BaseSettings):
     data_provider: Literal["mock", "thetadata"] = Field(default="mock")
     thetadata_rest_url: str = Field(default="http://localhost:25503")
     thetadata_ws_url: str = Field(default="ws://127.0.0.1:25520/v1/events")
+    # The Worker's periodic reconcile() (ThetaStreamHub, every 20 min): one REST
+    # ohlc call per registered contract (1,200-1,800 calls per pass, 13-25 s, up to
+    # 8 request slots at once) comparing REST volume with a stream counter that the
+    # Worker no longer keeps (the stream processor owns the counters), so it logs
+    # "stream=0" mismatches and nothing reads its result. It also competes with the
+    # scheduler and the API for the account-wide request slots (it starved the
+    # scheduler on 2026-10-06 10:21 and 10-07 13:50) and shares the Terminal's Java
+    # process with the live stream. OFF by default; set QLL_THETADATA_RECONCILE_ENABLED=true
+    # and restart the Worker to bring it back without reverting any code.
+    thetadata_reconcile_enabled: bool = Field(default=False)
     # Local-only TCP link (see backend/core/whale_alerts_relay.py): worker.py
     # forwards every trade/quote event to backend/whale_alerts_worker.py's
     # own process over this, so whale-alerts' own CPU-bound classification
