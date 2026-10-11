@@ -3949,3 +3949,77 @@ class TestNearTheMoneyCaching:
         provider.get_option_chain("QQQ")
 
         assert calls_by_symbol == {"SPY": 1, "QQQ": 1}
+
+
+class TestCrossedQuoteSkipsOnlyThatContract:
+    """A crossed quote (ask below bid) on ONE contract used to raise InvalidOptionError out of
+    get_option_chain and fail the whole symbol's scheduler cycle (SPY, 2026-10-08 09:30:37). Now that contract
+    is skipped, with a warning, and the rest of the chain is returned."""
+
+    EXPIRATION = "2026-09-18"
+
+    @staticmethod
+    def _with_quote(entry: dict[str, object], bid: float, ask: float) -> dict[str, object]:
+        data = dict(entry["data"][0])  # type: ignore[index]
+        data["bid"], data["ask"] = bid, ask
+        return {**entry, "data": [data]}
+
+    def _handler(self, entries_by_root: dict[str, list[dict[str, object]]]):
+        def handler(request: httpx.Request) -> httpx.Response:
+            params = request.url.params
+            path = request.url.path
+            if path == "/v3/option/snapshot/greeks/first_order":
+                return httpx.Response(200, json={"response": entries_by_root.get(params.get("symbol"), [])})
+            if path == "/v3/option/snapshot/open_interest":
+                return httpx.Response(200, json={"response": []})
+            if path == "/v3/interest_rate/history/eod":
+                return httpx.Response(200, json={"response": [{"rate": 3.64, "created": "2026-08-31"}]})
+            if path == "/v3/index/history/eod":
+                return httpx.Response(200, json=_daily_bars_response(base_close=7700.0, daily_range=50.0))
+            raise AssertionError(f"unexpected request: {request.url}")
+
+        return handler
+
+    def test_the_crossed_contract_is_skipped_and_the_rest_of_the_chain_is_kept(self, caplog) -> None:
+        good_call = _first_order_entry("7700", "CALL", expiration=self.EXPIRATION, underlying_price="7700.0", root="SPXW")
+        crossed_put = self._with_quote(
+            _first_order_entry("7690", "PUT", expiration=self.EXPIRATION, underlying_price="7700.0", root="SPXW"),
+            bid=5.0,
+            ask=4.0,
+        )
+        good_put = _first_order_entry("7710", "PUT", expiration=self.EXPIRATION, underlying_price="7700.0", root="SPXW")
+        provider = _provider_with_transport(self._handler({"SPXW": [good_call, crossed_put, good_put]}))
+
+        with caplog.at_level("WARNING"):
+            chain = provider.get_option_chain("SPX", expiration=date(2026, 9, 18))
+
+        strikes = sorted(c.strike for c in chain.contracts)
+        assert strikes == [Decimal(7700), Decimal(7710)], "only the crossed 7690 put is missing"
+        warnings = [r.getMessage() for r in caplog.records if "crossed quote" in r.getMessage()]
+        assert len(warnings) == 1, "one summary line per chain, not one per contract"
+        assert "SPX: skipped 1 contract(s)" in warnings[0]
+        assert _build_occ_symbol("SPXW", date(2026, 9, 18), ContractType.PUT, Decimal(7690)) in warnings[0]
+        assert "bid=5.0 ask=4.0" in warnings[0]
+
+    def test_equal_bid_and_ask_is_not_crossed(self) -> None:
+        locked = self._with_quote(
+            _first_order_entry("7700", "CALL", expiration=self.EXPIRATION, underlying_price="7700.0", root="SPXW"),
+            bid=5.0,
+            ask=5.0,
+        )
+        provider = _provider_with_transport(self._handler({"SPXW": [locked]}))
+
+        chain = provider.get_option_chain("SPX", expiration=date(2026, 9, 18))
+
+        assert len(chain.contracts) == 1
+
+    def test_if_every_contract_is_crossed_the_symbol_still_fails_loudly(self) -> None:
+        crossed = self._with_quote(
+            _first_order_entry("7700", "CALL", expiration=self.EXPIRATION, underlying_price="7700.0", root="SPXW"),
+            bid=5.0,
+            ask=4.0,
+        )
+        provider = _provider_with_transport(self._handler({"SPXW": [crossed]}))
+
+        with pytest.raises(RuntimeError, match="no usable contracts"):
+            provider.get_option_chain("SPX", expiration=date(2026, 9, 18))
