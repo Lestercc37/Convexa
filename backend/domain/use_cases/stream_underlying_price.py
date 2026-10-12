@@ -56,8 +56,9 @@ MIN_WRITE_INTERVAL_SECONDS = 1.0
 
 # Trial (2026-09-22, explicit user request): these 5 -- SPX/NDX/SPY/QQQ/
 # IWM, the most-watched symbols -- get every real trade tick persisted
-# and pushed to the chart immediately, no debounce at all, instead of
-# coalesced to at most one write per second like everything else. Safe
+# and pushed to the chart almost immediately (debounce: see
+# TICK_LEVEL_MIN_WRITE_INTERVAL_SECONDS below), instead of coalesced to at
+# most one write per second like everything else. Safe
 # to trial now specifically because the risk that made a blanket
 # "every tick, every symbol" policy risky before (this process's event
 # loop contending with the REST scheduler's own concurrent per-symbol
@@ -70,7 +71,13 @@ MIN_WRITE_INTERVAL_SECONDS = 1.0
 # Scale to more symbols gradually once this trial confirms Postgres/the
 # WebSocket push to the chart hold up under real tick rates for these 5.
 TICK_LEVEL_SYMBOLS: frozenset[str] = frozenset({"SPX", "NDX", "SPY", "QQQ", "IWM"})
-TICK_LEVEL_MIN_WRITE_INTERVAL_SECONDS = 0.0
+# 2026-10-12 (explicit user decision): 0.25 s instead of 0.0. The zero was only "safe" in
+# practice because every write was preceded by a get_latest_price() whose old query took 400+ ms
+# (~12 calls/s in total, ~1 write/s per symbol); with that query on the index the same code path can write
+# as fast as ticks arrive (SPY alone prints dozens of trades a second -> millions of
+# market_snapshots rows a day). 0.25 s caps a tick-level symbol at 4 rows/s (~20 rows/s for the five
+# plus ~8 for the rest, ~650k rows/day in all) while still being ~4x finer than the ~1/s it effectively got before.
+TICK_LEVEL_MIN_WRITE_INTERVAL_SECONDS = 0.25
 
 
 class StreamUnderlyingPriceUseCase:

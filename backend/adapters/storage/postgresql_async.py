@@ -190,10 +190,13 @@ class AsyncPostgreSQLStorage:
             result = await session.execute(
                 text(
                     """
-                    SELECT m.time, u.symbol, m.price, m.volume
+                    -- The symbol is resolved to its id in a scalar subquery so the planner can walk
+                    -- idx_market_snapshots_underlying_time backwards and stop at the first row. The previous
+                    -- JOIN ... WHERE u.symbol form made it sort every row of the symbol (~385k rows,
+                    -- ~42k pages, 400+ ms per call at 12 calls/s on 2026-10-12).
+                    SELECT m.time, CAST(:symbol AS text) AS symbol, m.price, m.volume
                     FROM market_snapshots AS m
-                    JOIN underlyings AS u ON u.id = m.underlying_id
-                    WHERE u.symbol = :symbol
+                    WHERE m.underlying_id = (SELECT id FROM underlyings WHERE symbol = :symbol)
                     ORDER BY m.time DESC
                     LIMIT 1
                     """

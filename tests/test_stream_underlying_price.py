@@ -8,7 +8,9 @@ from decimal import Decimal
 import pytest
 
 from backend.domain.entities import MarketPrice, UnderlyingTradeEvent
+from backend.domain.use_cases import stream_underlying_price as stream_module
 from backend.domain.use_cases.stream_underlying_price import (
+    TICK_LEVEL_MIN_WRITE_INTERVAL_SECONDS,
     TICK_LEVEL_SYMBOLS,
     StreamUnderlyingPriceUseCase,
 )
@@ -100,7 +102,9 @@ async def test_volume_survives_several_stream_ticks_in_a_row() -> None:
     # A window of 0 so every one of the 3 fixture trades is persisted,
     # not debounced away -- isolates this test to the carry-forward
     # behavior itself.
-    use_case = StreamUnderlyingPriceUseCase(provider, storage, min_write_interval_seconds=0.0)
+    use_case = StreamUnderlyingPriceUseCase(
+        provider, storage, min_write_interval_seconds=0.0, tick_level_min_write_interval_seconds=0.0
+    )
 
     await use_case.run("SPY")
 
@@ -137,7 +141,9 @@ async def test_a_tick_after_the_debounce_window_elapses_is_persisted() -> None:
     # A window of 0 -- every tick is past "the last write", regardless
     # of real elapsed time -- isolates the test from real wall-clock
     # timing flakiness while still exercising the same code path.
-    use_case = StreamUnderlyingPriceUseCase(provider, storage, min_write_interval_seconds=0.0)
+    use_case = StreamUnderlyingPriceUseCase(
+        provider, storage, min_write_interval_seconds=0.0, tick_level_min_write_interval_seconds=0.0
+    )
 
     await use_case.run("SPY")
 
@@ -246,7 +252,9 @@ class TestMarketHoursGate:
                 _trade("553.50", as_of=after_close),
             ],
         )
-        use_case = StreamUnderlyingPriceUseCase(provider, storage, min_write_interval_seconds=0.0)
+        use_case = StreamUnderlyingPriceUseCase(
+        provider, storage, min_write_interval_seconds=0.0, tick_level_min_write_interval_seconds=0.0
+    )
 
         await use_case.run("SPY")
 
@@ -276,8 +284,12 @@ class TestTickLevelSymbols:
             trades=[_trade("552.25", symbol="SPY"), _trade("552.30", symbol="SPY")],
         )
         # A large window that would debounce any *non* tick-level
-        # symbol down to just the first tick -- SPY must still get both.
-        use_case = StreamUnderlyingPriceUseCase(provider, storage, min_write_interval_seconds=60.0)
+        # symbol down to just the first tick -- SPY must still get both
+        # (tick-level interval pinned to 0.0 here: this test is about the
+        # SCOPING of the override, the production value has its own tests).
+        use_case = StreamUnderlyingPriceUseCase(
+            provider, storage, min_write_interval_seconds=60.0, tick_level_min_write_interval_seconds=0.0
+        )
 
         await use_case.run("SPY")
 
@@ -303,8 +315,65 @@ class TestTickLevelSymbols:
         provider = _FakeProvider(
             trades=[_trade("552.25", symbol="spy"), _trade("552.30", symbol="spy")],
         )
-        use_case = StreamUnderlyingPriceUseCase(provider, storage, min_write_interval_seconds=60.0)
+        use_case = StreamUnderlyingPriceUseCase(
+            provider, storage, min_write_interval_seconds=60.0, tick_level_min_write_interval_seconds=0.0
+        )
 
         await use_case.run("spy")
 
         assert [p.price for p in storage.saved] == [Decimal("552.25"), Decimal("552.30")]
+
+
+class TestTickLevelDebounce:
+    """2026-10-12 (explicit user decision): tick-level symbols are debounced to
+    TICK_LEVEL_MIN_WRITE_INTERVAL_SECONDS = 0.25 s instead of 0.0, because the
+    latest-price query that used to throttle them de facto (400+ ms) is now an
+    index lookup."""
+
+    def test_the_production_interval_is_250_ms(self) -> None:
+        assert TICK_LEVEL_MIN_WRITE_INTERVAL_SECONDS == 0.25
+
+    @pytest.mark.asyncio
+    async def test_a_tick_level_symbol_drops_ticks_inside_the_250_ms_window(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        clock = {"t": 1000.0}
+        monkeypatch.setattr(stream_module.time, "monotonic", lambda: clock["t"])
+        storage = _FakeStorage()
+        use_case = StreamUnderlyingPriceUseCase(_FakeProvider(), storage)
+
+        await use_case.persist_if_due(_trade("552.00", symbol="SPY"))
+        clock["t"] += 0.10
+        await use_case.persist_if_due(_trade("552.05", symbol="SPY"))
+        clock["t"] += 0.10
+        await use_case.persist_if_due(_trade("552.10", symbol="SPY"))
+        clock["t"] += 0.06  # 0.26 s after the first write
+        await use_case.persist_if_due(_trade("552.15", symbol="SPY"))
+
+        assert [p.price for p in storage.saved] == [Decimal("552.00"), Decimal("552.15")]
+
+    @pytest.mark.asyncio
+    async def test_a_tick_exactly_at_the_window_edge_is_written(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        clock = {"t": 50.0}
+        monkeypatch.setattr(stream_module.time, "monotonic", lambda: clock["t"])
+        storage = _FakeStorage()
+        use_case = StreamUnderlyingPriceUseCase(_FakeProvider(), storage)
+
+        await use_case.persist_if_due(_trade("340.00", symbol="SPX"))
+        clock["t"] += TICK_LEVEL_MIN_WRITE_INTERVAL_SECONDS
+        await use_case.persist_if_due(_trade("340.10", symbol="SPX"))
+
+        assert [p.price for p in storage.saved] == [Decimal("340.00"), Decimal("340.10")]
+
+    @pytest.mark.asyncio
+    async def test_other_symbols_keep_their_one_second_window(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        clock = {"t": 10.0}
+        monkeypatch.setattr(stream_module.time, "monotonic", lambda: clock["t"])
+        storage = _FakeStorage()
+        use_case = StreamUnderlyingPriceUseCase(_FakeProvider(), storage)
+
+        await use_case.persist_if_due(_trade("340.00", symbol="AAPL"))
+        clock["t"] += 0.30
+        await use_case.persist_if_due(_trade("340.05", symbol="AAPL"))
+        clock["t"] += 0.80  # 1.10 s after the first write
+        await use_case.persist_if_due(_trade("340.10", symbol="AAPL"))
+
+        assert [p.price for p in storage.saved] == [Decimal("340.00"), Decimal("340.10")]
