@@ -1482,3 +1482,40 @@ def test_get_cumulative_volumes_ignores_rows_not_rewritten_today(
                 text("DELETE FROM contract_cumulative_volume WHERE occ_symbol IN (:a, :b)"),
                 {"a": occ_today, "b": occ_old},
             )
+
+
+@pytest.mark.asyncio
+async def test_latest_price_returns_the_newest_row_of_its_own_symbol_only(
+    postgresql_storage: tuple[PostgreSQLStorage, Engine, str],
+) -> None:
+    """2026-10-12: get_latest_price resolves the symbol to its id in a scalar subquery (so the
+    planner can use idx_market_snapshots_underlying_time instead of sorting every row of the
+    symbol). Same contract as before: newest row by time, per symbol, None for an unknown one,
+    for both the sync and the async storage."""
+    storage, engine, symbol = postgresql_storage
+    other = f"T{uuid4().hex[:7]}".upper()
+    base = datetime.now(UTC).replace(microsecond=0)
+    newest = MarketPrice(symbol=symbol, as_of=base, price=Decimal("101.50"), volume=30)
+    try:
+        # inserted out of time order on purpose
+        storage.save_market_price(MarketPrice(symbol=symbol, as_of=base - timedelta(seconds=5), price=Decimal("100.00"), volume=10))
+        storage.save_market_price(newest)
+        storage.save_market_price(MarketPrice(symbol=symbol, as_of=base - timedelta(seconds=2), price=Decimal("101.00"), volume=20))
+        # another symbol with a NEWER row must not leak into this symbol's answer
+        storage.save_market_price(MarketPrice(symbol=other, as_of=base + timedelta(seconds=9), price=Decimal("999.00"), volume=99))
+
+        assert storage.get_latest_price(symbol) == newest
+        assert storage.get_latest_price(symbol.lower()) == newest
+        assert storage.get_latest_price(f"NOPE{uuid4().hex[:6]}".upper()) is None
+
+        async_engine = create_engine(_require_test_database_url())
+        try:
+            async_storage = AsyncPostgreSQLStorage(create_session_factory(async_engine))
+            assert await async_storage.get_latest_price(symbol) == newest
+            assert await async_storage.get_latest_price(symbol.lower()) == newest
+            assert (await async_storage.get_latest_price(other)).price == Decimal("999.00")
+            assert await async_storage.get_latest_price(f"NOPE{uuid4().hex[:6]}".upper()) is None
+        finally:
+            await async_engine.dispose()
+    finally:
+        _delete_test_data(engine, other)
