@@ -118,6 +118,11 @@ from backend.domain.entities import UnderlyingTradeEvent
 from backend.domain.underlyings import ACTIVE_UNDERLYINGS
 from backend.domain.use_cases.market_hours import EASTERN_TIME
 from backend.domain.use_cases.stream_underlying_price import StreamUnderlyingPriceUseCase
+from backend.domain.use_cases.trade_date import (
+    next_trade_date_roll,
+    trade_date_of,
+    volume_rows_since,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -155,8 +160,11 @@ class _ProcessorState:
         self.whale_alerts_relay = whale_alerts_relay
         self.price_use_case = price_use_case
         self.cumulative_volume: dict[str, int] = {}
-        # ET date the counters belong to; see roll_volume_day.
+        # Trade date (OPRA convention: opens 20:15 ET of the previous calendar day, see
+        # use_cases/trade_date.py) the counters belong to; see roll_volume_day.
         self.volume_date: date | None = None
+        # time.time() of the next 20:15 ET boundary; 0.0 = not computed yet (roll_if_due).
+        self._next_roll_epoch: float = 0.0
         # What this process is spending its time on: frames per (type, root)
         # since the last report, see _log_frame_mix_periodically.
         self.frame_mix: collections.Counter[tuple[str, object]] = collections.Counter()
@@ -166,12 +174,25 @@ class _ProcessorState:
         self._price_writers: dict[str, asyncio.Task[None]] = {}
         self._price_write_slots = asyncio.Semaphore(PRICE_WRITE_CONCURRENCY)
 
+    def roll_if_due(self, now: datetime | None = None) -> None:
+        """Rolls the counters the moment the trade date changes (20:15 ET), checked on every option
+        TRADE: a plain float compare against the next boundary, so a roll costs nothing per frame and
+        the first prints of the evening session land in the NEW day's counters (a periodic check every
+        15 s would have thrown them away). `now` is only for tests."""
+        epoch = now.timestamp() if now is not None else time.time()
+        if epoch < self._next_roll_epoch:
+            return
+        current = now if now is not None else datetime.now(EASTERN_TIME)
+        self.roll_volume_day(trade_date_of(current))
+        self._next_roll_epoch = next_trade_date_roll(current).timestamp()
+
     def roll_volume_day(self, today: date) -> bool:
-        """Clears the volume counters when the ET date changes. Cumulative
-        volume is a per-day figure but nothing ever reset it: the counters
-        only restarted when the process did, so a contract trading on
-        several days kept adding to the previous days' total (2026-10-06:
-        QQQ261006P00749000 stored 86,030 vs 7,745 on ThetaData)."""
+        """Clears the volume counters when the TRADE DATE changes (opens 20:15 ET, was 00:00 ET until
+        2026-10-13: that dropped the previous evening's session, the fixed per-contract shortfall
+        against thinkorswim). Cumulative volume is a per-trade-date figure but nothing ever reset
+        it: the counters only restarted when the process did, so a contract trading on several days
+        kept adding to the previous days' total (2026-10-06: QQQ261006P00749000 stored 86,030 vs
+        7,745 on ThetaData). `today` is the TRADE DATE (see use_cases/trade_date.py)."""
         if self.volume_date is None:
             self.volume_date = today
             return False
@@ -258,6 +279,7 @@ def _handle_raw_frame(state: _ProcessorState, raw: str) -> None:
             if security_type == "OPTION":
                 parsed = parse_option_trade_message(message)
                 if parsed is not None:
+                    state.roll_if_due()
                     state.cumulative_volume[parsed.occ_symbol] = (
                         state.cumulative_volume.get(parsed.occ_symbol, 0) + parsed.size
                     )
@@ -288,9 +310,10 @@ async def _resume_cumulative_volume(container, state: _ProcessorState) -> None:
     stored rows with only the counts since then). Never blocks startup."""
     try:
         now = datetime.now(EASTERN_TIME)
-        state.volume_date = now.date()
-        start_of_day = now.replace(hour=0, minute=0, second=0, microsecond=0)
-        stored = await asyncio.to_thread(container.storage.get_cumulative_volumes_since, start_of_day)
+        state.volume_date = trade_date_of(now)
+        # the current trade date opened at 20:15 ET of the previous calendar day (evening session included);
+        # volume_rows_since also guards the one-time transition from the per-calendar-day counters
+        stored = await asyncio.to_thread(container.storage.get_cumulative_volumes_since, volume_rows_since(now))
     except Exception:
         logger.exception(
             "Stream processor worker: could not resume today's cumulative volume, starting from zero"
@@ -348,7 +371,7 @@ async def _export_volume_periodically(container, state: _ProcessorState) -> None
     while True:
         await asyncio.sleep(VOLUME_EXPORT_INTERVAL_SECONDS)
         try:
-            state.roll_volume_day(datetime.now(EASTERN_TIME).date())
+            state.roll_volume_day(trade_date_of(datetime.now(EASTERN_TIME)))
             if state.cumulative_volume:
                 await asyncio.to_thread(
                     container.storage.save_cumulative_volumes, dict(state.cumulative_volume)
