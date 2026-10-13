@@ -1519,3 +1519,33 @@ async def test_latest_price_returns_the_newest_row_of_its_own_symbol_only(
             await async_engine.dispose()
     finally:
         _delete_test_data(engine, other)
+
+
+def test_get_cumulative_volumes_reads_rows_written_since_the_trade_date_opened(
+    postgresql_storage: tuple[PostgreSQLStorage, Engine, str],
+) -> None:
+    """2026-10-13: the current trade date opened at 20:15 ET of the previous calendar day (evening session
+    included), so a row written during that evening is part of today's volume, while one written before it
+    belongs to the previous trade date."""
+    from backend.domain.use_cases.trade_date import volume_rows_since
+
+    storage, engine, symbol = postgresql_storage
+    opened = volume_rows_since(datetime.now(UTC))
+    occ_evening = f"{symbol}260320C00550000"
+    occ_before = f"{symbol}260320P00540000"
+    try:
+        storage.save_cumulative_volumes({occ_evening: 40, occ_before: 90})
+        with engine.begin() as connection:
+            for occ, moment in ((occ_evening, opened + timedelta(minutes=1)), (occ_before, opened - timedelta(minutes=1))):
+                connection.execute(
+                    text("UPDATE contract_cumulative_volume SET updated_at = :t WHERE occ_symbol = :o"),
+                    {"t": moment, "o": occ},
+                )
+
+        assert storage.get_cumulative_volumes([occ_evening, occ_before]) == {occ_evening: 40}
+    finally:
+        with engine.begin() as connection:
+            connection.execute(
+                text("DELETE FROM contract_cumulative_volume WHERE occ_symbol IN (:a, :b)"),
+                {"a": occ_evening, "b": occ_before},
+            )

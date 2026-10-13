@@ -420,6 +420,101 @@ class TestVolumeDayRollover:
         state, _relay, _price = _state()
         await _resume_cumulative_volume(_Container(), state)
 
-        assert state.volume_date == datetime.now(EASTERN_TIME).date()
-        assert state.roll_volume_day(datetime.now(EASTERN_TIME).date()) is False
+        from backend.domain.use_cases.trade_date import trade_date_of
+
+        assert state.volume_date == trade_date_of(datetime.now(EASTERN_TIME))
+        assert state.roll_volume_day(trade_date_of(datetime.now(EASTERN_TIME))) is False
         assert state.cumulative_volume == {"SPY261007C00780000": 500}
+
+
+class TestTradeDateRoll:
+    """2026-10-13 (ThetaData support confirmed): daily option volume is per OPRA TRADE DATE, which opens
+    with the evening session at 20:15 ET of the previous calendar day. The counters used to reset at 00:00 ET
+    and dropped the 20:15-23:59 volume (the fixed shortfall against thinkorswim)."""
+
+    @staticmethod
+    def _et(day: int, hh: int, mm: int, ss: int = 0):
+        from datetime import datetime
+
+        from backend.domain.use_cases.market_hours import EASTERN_TIME
+
+        return datetime(2026, 10, day, hh, mm, ss, tzinfo=EASTERN_TIME)
+
+    def test_the_counters_do_not_reset_at_midnight(self) -> None:
+        state, _relay, _price = _state()
+        state.roll_if_due(now=self._et(13, 21, 0))  # evening of 10-13 = trade date 10-14
+        state.cumulative_volume["SPXW261014C07800000"] = 300
+        state.roll_if_due(now=self._et(14, 0, 0, 5))  # just after midnight, same trade date
+        state.roll_if_due(now=self._et(14, 9, 31))
+        assert state.cumulative_volume == {"SPXW261014C07800000": 300}
+
+    def test_they_roll_exactly_at_2015_et(self) -> None:
+        from datetime import date
+
+        state, _relay, _price = _state()
+        state.roll_if_due(now=self._et(13, 9, 30))
+        assert state.volume_date == date(2026, 10, 13)
+        state.cumulative_volume["SPXW261013C07800000"] = 123_456
+        state.roll_if_due(now=self._et(13, 16, 20))  # stray after-close print: still the old day
+        state.roll_if_due(now=self._et(13, 20, 14, 59))
+        assert state.cumulative_volume == {"SPXW261013C07800000": 123_456}
+        state.roll_if_due(now=self._et(13, 20, 15, 0))
+        assert state.cumulative_volume == {}
+        assert state.volume_date == date(2026, 10, 14)
+
+    def test_a_check_after_the_boundary_does_not_roll_twice(self) -> None:
+        state, _relay, _price = _state()
+        state.roll_if_due(now=self._et(13, 20, 15, 1))
+        state.cumulative_volume["SPXW261014C07800000"] = 7
+        state.roll_if_due(now=self._et(13, 20, 15, 2))
+        state.roll_if_due(now=self._et(13, 23, 59, 59))
+        assert state.cumulative_volume == {"SPXW261014C07800000": 7}
+
+    def test_an_option_trade_frame_rolls_a_stale_day_before_it_is_counted(self) -> None:
+        from datetime import date
+
+        state, _relay, _price = _state()
+        state.volume_date = date(2020, 1, 1)  # counters left over from another trade date
+        state.cumulative_volume["SPXW200101C03000000"] = 999
+        raw = json.dumps(
+            {
+                "header": {"type": "TRADE", "status": "CONNECTED"},
+                "contract": {"security_type": "OPTION", "root": "SPXW", "expiration": 20261013, "strike": 7800000, "right": "C"},
+                "trade": {"size": 4, "price": 12.5},
+            }
+        )
+        _handle_raw_frame(state, raw)
+        assert "SPXW200101C03000000" not in state.cumulative_volume
+        assert state.cumulative_volume["SPXW261013C07800000"] == 4
+
+    @pytest.mark.asyncio
+    async def test_resume_seeds_from_the_opening_of_the_current_trade_date(self) -> None:
+        from datetime import datetime, timedelta
+
+        from backend.domain.use_cases.market_hours import EASTERN_TIME
+        from backend.stream_processor_worker import _resume_cumulative_volume
+
+        seen: dict = {}
+
+        class _Storage:
+            def get_cumulative_volumes_since(self, since) -> dict:
+                seen["since"] = since
+                return {"SPXW261013C07800000": 11}
+
+        class _Container:
+            storage = _Storage()
+
+        state, _relay, _price = _state()
+        await _resume_cumulative_volume(_Container(), state)
+
+        from backend.domain.use_cases.trade_date import TRADE_DATE_COUNTERS_FROM, volume_rows_since
+
+        since = seen["since"]
+        now = datetime.now(EASTERN_TIME)
+        assert since <= now
+        assert abs((since - volume_rows_since(now)).total_seconds()) < 5
+        if now >= TRADE_DATE_COUNTERS_FROM:
+            # the trade date opened at 20:15 ET of the previous calendar day (evening session included)
+            assert (since.hour, since.minute) == (20, 15)
+            assert timedelta(0) <= now - since <= timedelta(hours=24, minutes=1)
+        assert state.cumulative_volume == {"SPXW261013C07800000": 11}

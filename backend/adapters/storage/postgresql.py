@@ -35,6 +35,7 @@ from backend.domain.entities import (
 )
 from backend.domain.underlyings import ACTIVE_UNDERLYINGS_BY_SYMBOL
 from backend.domain.use_cases.market_hours import EASTERN_TIME
+from backend.domain.use_cases.trade_date import volume_rows_since
 from backend.domain.use_cases.flow import Moneyness, SymbolFlowPressure, WhaleAlert, WhaleAlertType
 
 # See get_latest_chain_snapshot's own comment -- how far back its fast
@@ -1331,10 +1332,10 @@ class PostgreSQLStorage:
         is no reason to pay per-contract round-trips here either."""
         if not occ_symbols:
             return {}
-        # Only rows written today (ET): a row nobody rewrote today is a
-        # previous session's figure and must not read as today's volume.
-        now = datetime.now(EASTERN_TIME)
-        start_of_day = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        # Only rows written during the current TRADE DATE (it opened at 20:15 ET of the previous
+        # calendar day, see use_cases/trade_date.py): a row nobody rewrote since then is a previous
+        # session's figure and must not read as today's volume.
+        start_of_day = volume_rows_since(datetime.now(EASTERN_TIME))
         with self.session_factory() as session:
             rows = session.execute(
                 text(
