@@ -16,7 +16,7 @@ type VolatilitySmileProps = {
 // Strikes run up the left axis and IV across the bottom, so the strike ladder reads like the price
 // chart beside it. Only the strikes within +-1.5% of spot are drawn: the far wings stretched the IV
 // scale and flattened the part around the money that the panel is about.
-const PLOT = { left: 50, right: 396, top: 14, bottom: 318 };
+const PLOT = { left: 50, right: 396, top: 12, bottom: 262 };
 const WINDOW_FRACTION = 0.015;
 const STRIKE_TICKS = 5;
 const IV_TICKS = 4;
@@ -218,7 +218,7 @@ export function VolatilitySmile({ symbol, marketPrice }: VolatilitySmileProps) {
         <div className="smile-chart-wrap">
           <svg
             className="smile-chart"
-            viewBox="0 0 420 360"
+            viewBox="0 0 420 300"
             role="img"
             aria-label={t.volatilitySmile.chartAriaLabel(symbol, selectedExpiration)}
           >
@@ -255,7 +255,7 @@ export function VolatilitySmile({ symbol, marketPrice }: VolatilitySmileProps) {
                 </circle>
               );
             })}
-            <text className="smile-axis-label" x={(PLOT.left + PLOT.right) / 2} y="352">IV</text>
+            <text className="smile-axis-label" x={(PLOT.left + PLOT.right) / 2} y="294">IV</text>
             <text className="smile-axis-label" x="12" y={(PLOT.top + PLOT.bottom) / 2} transform={`rotate(-90 12 ${(PLOT.top + PLOT.bottom) / 2})`}>Strike</text>
           </svg>
           {plot.missingIvCount > 0 && (
