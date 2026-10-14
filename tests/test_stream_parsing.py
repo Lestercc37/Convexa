@@ -96,6 +96,31 @@ class TestParseUnderlyingTradeMessage:
         assert parsed.event.price == Decimal("184.51")
         assert parsed.event.size == 500
 
+    def test_the_sale_condition_code_is_carried_when_the_message_has_one(self) -> None:
+        parsed = parse_underlying_trade_message(
+            {
+                "contract": {"security_type": "STOCK", "root": "IWM"},
+                "trade": {"size": 4, "price": 273.0645, "condition": 115, "exchange": 57},
+            },
+            symbols={"IWM": UnderlyingKind.EQUITY},
+        )
+        assert parsed is not None
+        assert parsed.event.condition == 115
+
+    def test_a_message_without_a_usable_condition_code_has_none(self) -> None:
+        for trade in (
+            {"size": 4, "price": 273.06},
+            {"size": 4, "price": 273.06, "condition": None},
+            {"size": 4, "price": 273.06, "condition": True},
+            {"size": 4, "price": 273.06, "condition": "115"},
+        ):
+            parsed = parse_underlying_trade_message(
+                {"contract": {"security_type": "STOCK", "root": "IWM"}, "trade": trade},
+                symbols={"IWM": UnderlyingKind.EQUITY},
+            )
+            assert parsed is not None
+            assert parsed.event.condition is None
+
     def test_an_unregistered_symbol_is_dropped(self) -> None:
         parsed = parse_underlying_trade_message(
             {

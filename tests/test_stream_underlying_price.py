@@ -10,9 +10,11 @@ import pytest
 from backend.domain.entities import MarketPrice, UnderlyingTradeEvent
 from backend.domain.use_cases import stream_underlying_price as stream_module
 from backend.domain.use_cases.stream_underlying_price import (
+    NON_LAST_SALE_CONDITIONS,
     TICK_LEVEL_MIN_WRITE_INTERVAL_SECONDS,
     TICK_LEVEL_SYMBOLS,
     StreamUnderlyingPriceUseCase,
+    sets_last_price,
 )
 
 NOW = datetime(2026, 1, 15, 14, 30, tzinfo=UTC)
@@ -377,3 +379,90 @@ class TestTickLevelDebounce:
         await use_case.persist_if_due(_trade("340.10", symbol="AAPL"))
 
         assert [p.price for p in storage.saved] == [Decimal("340.00"), Decimal("340.10")]
+
+
+# Real IWM prints of 2026-10-14 10:05:28-10:05:36 ET (ThetaData /v3/stock/history/trade): (price, size,
+# condition, exchange). The market was at 272.73-272.77; the 273.09-273.10 prints are the spikes seen on the
+# chart (exchange 57 = FINRA/Nasdaq TRF; condition 115 = odd lot, 3 = average price).
+REAL_IWM_PRINTS = [
+    (Decimal("273.1011"), 8, 115, 57),
+    (Decimal("272.74"), 50, 0, 57),
+    (Decimal("272.735"), 169, 0, 57),
+    (Decimal("272.735"), 11, 115, 57),
+    (Decimal("272.74"), 50, 0, 1),
+    (Decimal("273.0978"), 40, 3, 57),
+    (Decimal("272.75"), 40, 0, 1),
+    (Decimal("272.755"), 16, 115, 57),
+    (Decimal("272.76"), 60, 0, 1),
+    (Decimal("273.0945"), 1, 115, 57),
+    (Decimal("273.0944"), 40, 3, 57),
+    (Decimal("272.77"), 40, 0, 1),
+    (Decimal("272.74"), 500, 0, 1),
+    (Decimal("272.75"), 500, 0, 1),
+    (Decimal("272.745"), 293, 0, 57),
+]
+
+
+class TestPricesThatCannotSetTheLastPrice:
+    @pytest.mark.parametrize("condition", sorted(NON_LAST_SALE_CONDITIONS))
+    @pytest.mark.asyncio
+    async def test_a_print_with_a_non_last_sale_condition_is_not_persisted(self, condition: int) -> None:
+        storage = _FakeStorage()
+        use_case = StreamUnderlyingPriceUseCase(_FakeProvider([]), storage, min_write_interval_seconds=0.0)  # type: ignore[arg-type]
+
+        await use_case.persist_if_due(
+            UnderlyingTradeEvent(symbol="IWM", as_of=NOW, price=Decimal("273.0645"), size=4, condition=condition)
+        )
+
+        assert storage.saved == []
+
+    @pytest.mark.parametrize("condition", [0, 18, 95, None])
+    @pytest.mark.asyncio
+    async def test_regular_and_unknown_conditions_still_persist(self, condition: int | None) -> None:
+        storage = _FakeStorage()
+        use_case = StreamUnderlyingPriceUseCase(_FakeProvider([]), storage, min_write_interval_seconds=0.0)  # type: ignore[arg-type]
+
+        await use_case.persist_if_due(
+            UnderlyingTradeEvent(symbol="IWM", as_of=NOW, price=Decimal("272.74"), size=50, condition=condition)
+        )
+
+        assert [price.price for price in storage.saved] == [Decimal("272.74")]
+
+    @pytest.mark.asyncio
+    async def test_an_ignored_print_does_not_use_up_the_debounce_window_of_the_next_real_one(self) -> None:
+        storage = _FakeStorage()
+        use_case = StreamUnderlyingPriceUseCase(_FakeProvider([]), storage, min_write_interval_seconds=3600.0)  # type: ignore[arg-type]
+
+        await use_case.persist_if_due(
+            UnderlyingTradeEvent(symbol="IWM", as_of=NOW, price=Decimal("273.0945"), size=1, condition=115)
+        )
+        await use_case.persist_if_due(
+            UnderlyingTradeEvent(symbol="IWM", as_of=NOW, price=Decimal("272.74"), size=50, condition=0)
+        )
+
+        assert [price.price for price in storage.saved] == [Decimal("272.74")]
+
+    @pytest.mark.asyncio
+    async def test_the_real_iwm_spike_window_draws_no_spike(self) -> None:
+        storage = _FakeStorage()
+        use_case = StreamUnderlyingPriceUseCase(_FakeProvider([]), storage, min_write_interval_seconds=0.0)  # type: ignore[arg-type]
+
+        for price, size, condition, _exchange in REAL_IWM_PRINTS:
+            await use_case.persist_if_due(
+                UnderlyingTradeEvent(symbol="IWM", as_of=NOW, price=price, size=size, condition=condition)
+            )
+
+        persisted = [price.price for price in storage.saved]
+        assert persisted
+        assert max(persisted) < Decimal("272.80")  # the 273.09-273.10 prints are gone
+        assert len(persisted) < len(REAL_IWM_PRINTS)
+
+    def test_sets_last_price_matches_the_documented_set(self) -> None:
+        def event(condition: int | None) -> UnderlyingTradeEvent:
+            return UnderlyingTradeEvent(symbol="IWM", as_of=NOW, price=Decimal(1), size=1, condition=condition)
+
+        assert not sets_last_price(event(115))
+        assert not sets_last_price(event(3))
+        assert sets_last_price(event(0))
+        assert sets_last_price(event(None))
+        assert NON_LAST_SALE_CONDITIONS == {2, 3, 4, 59, 96, 105, 106, 109, 114, 115, 124}

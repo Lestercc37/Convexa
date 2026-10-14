@@ -242,12 +242,15 @@ def parse_underlying_trade_message(
     expected_security_type = "INDEX" if kind == UnderlyingKind.INDEX else "STOCK"
     if contract.get("security_type") != expected_security_type:
         return None
+    condition = trade.get("condition")
     return ParsedUnderlyingTrade(
         event=UnderlyingTradeEvent(
             symbol=symbol,
             as_of=utc_now(),
             price=Decimal(str(price)),
             size=int(size),
+            # `type(...) is int`: bool is an int subclass, and anything that is not a plain int is "unknown".
+            condition=condition if type(condition) is int else None,
         ),
         exchange_ts=exchange_ts,
     )
