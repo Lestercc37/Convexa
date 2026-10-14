@@ -79,6 +79,7 @@ import logging
 from backend.adapters.providers.thetadata.provider import ThetaDataProvider
 from backend.core.container import build_container
 from backend.core.logging import configure_logging
+from backend.core.loop_lag_monitor import LoopLagMonitor
 from backend.core.stream_processor_relay import StreamProcessorRelayServer
 from backend.core.stream_state_export import StreamStateExporter
 from backend.core.underlying_price_stream import UnderlyingPriceStreamManager
@@ -90,6 +91,10 @@ async def run() -> None:
     container = build_container()
     configure_logging(container.settings, log_file="logs/worker.log")
     logger.info("Starting %s worker", container.settings.app_name)
+    # Observation only: tells GC pauses, a busy task and a starved process apart the next time the
+    # Terminal reports SLOW CONSUMER for this process (2026-10-14 09:36 open).
+    loop_lag_monitor = LoopLagMonitor("worker")
+    loop_lag_monitor.start()
 
     if not container.settings.enable_scheduler:
         # Same kill switch this flag has always gated background work
@@ -169,6 +174,7 @@ async def run() -> None:
         await asyncio.Event().wait()
     finally:
         logger.info("Stopping %s worker", container.settings.app_name)
+        await loop_lag_monitor.stop()
         await underlying_price_stream.stop()
         await stream_state_exporter.stop()
         await container.market_data_provider.stop()
