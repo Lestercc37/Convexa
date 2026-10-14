@@ -20,6 +20,7 @@ from backend.domain.entities import (
     MarketPrice,
     OptionChain,
     OptionContract,
+    OptionQuoteMinute,
     UnderlyingKind,
 )
 from backend.domain.underlyings import ACTIVE_UNDERLYINGS_BY_SYMBOL
@@ -33,6 +34,8 @@ from backend.domain.use_cases.flow import Moneyness, SymbolFlowPressure, WhaleAl
 # constant, imported by that listener, so the sender and receiver can
 # never drift out of sync on the channel name.
 MARKET_PRICE_CHANNEL = "market_price_updates"
+# Rows per transaction when the stream processor flushes a minute of quotes (a minute is a few hundred).
+OPTION_QUOTE_MINUTES_BATCH = 1000
 
 # How many of a symbol's newest distinct snapshot times the fast tier of
 # get_latest_chain_snapshot inspects when looking for the latest multi-
@@ -577,6 +580,35 @@ class AsyncPostgreSQLStorage:
                 text("SELECT pg_notify(:channel, :payload)"),
                 {"channel": MARKET_PRICE_CHANNEL, "payload": payload},
             )
+
+    async def save_option_quote_minutes(self, rows: list[OptionQuoteMinute]) -> None:
+        """Appends the minute rows the stream processor recorded (migration 0040); a repeated
+        (time, occ_symbol) is ignored, so a retry or an overlapping flush can never fail."""
+        if not rows:
+            return
+        statement = text(
+            """
+            INSERT INTO option_quote_minutes (time, occ_symbol, bid, ask, quote_time)
+            VALUES (:time, :occ_symbol, :bid, :ask, :quote_time)
+            ON CONFLICT (time, occ_symbol) DO NOTHING
+            """
+        )
+        for start in range(0, len(rows), OPTION_QUOTE_MINUTES_BATCH):
+            batch = rows[start : start + OPTION_QUOTE_MINUTES_BATCH]
+            async with self.session_factory.begin() as session:
+                await session.execute(
+                    statement,
+                    [
+                        {
+                            "time": row.minute,
+                            "occ_symbol": row.occ_symbol,
+                            "bid": row.bid,
+                            "ask": row.ask,
+                            "quote_time": row.quote_time,
+                        }
+                        for row in batch
+                    ],
+                )
 
     async def get_future_price_anchor(self, symbol: str, session_date: date) -> Decimal | None:
         async with self.session_factory() as session:

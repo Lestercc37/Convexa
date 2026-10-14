@@ -102,7 +102,8 @@ import asyncio
 import collections
 import logging
 import time
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
+from decimal import Decimal
 
 from backend.adapters.providers.thetadata.stream_parsing import (
     parse_option_trade_message,
@@ -114,9 +115,9 @@ from backend.core.container import build_container
 from backend.core.logging import configure_logging
 from backend.core.stream_processor_relay import StreamProcessorRelayClient
 from backend.core.whale_alerts_relay import WhaleAlertsRelayServer
-from backend.domain.entities import UnderlyingTradeEvent
+from backend.domain.entities import OptionQuoteMinute, QuoteEvent, UnderlyingTradeEvent
 from backend.domain.underlyings import ACTIVE_UNDERLYINGS
-from backend.domain.use_cases.market_hours import EASTERN_TIME
+from backend.domain.use_cases.market_hours import EASTERN_TIME, is_market_open
 from backend.domain.use_cases.stream_underlying_price import StreamUnderlyingPriceUseCase
 from backend.domain.use_cases.trade_date import (
     next_trade_date_roll,
@@ -145,6 +146,11 @@ QUOTE_REFRESH_SECONDS = 1.0
 
 FRAME_MIX_LOG_INTERVAL_SECONDS = 60
 
+# option_quote_minutes (migration 0040): the flush runs this long after each minute boundary so the last quotes of
+# the minute are in; one INFO line with the rows written every 15 minutes.
+MINUTE_QUOTES_FLUSH_DELAY_SECONDS = 0.3
+MINUTE_QUOTES_LOG_EVERY_SECONDS = 900
+
 
 class _ProcessorState:
     """Everything one raw frame's handling needs beyond the pure
@@ -170,6 +176,12 @@ class _ProcessorState:
         self.frame_mix: collections.Counter[tuple[str, object]] = collections.Counter()
         self.repeated_quotes = 0
         self._last_quote: dict[tuple, tuple[object, object, float]] = {}
+        # Last changed bid/ask per contract since the last minute flush, and the last values written, see
+        # record_minute_quote / take_minute_rows (table option_quote_minutes, migration 0040).
+        self.minute_quotes_enabled = True
+        self.minute_quotes: dict[str, tuple[Decimal, Decimal, datetime]] = {}
+        self._minute_quotes_last_written: dict[str, tuple[Decimal, Decimal]] = {}
+        self._minute_quotes_date: date | None = None
         self._pending_prices: dict[str, UnderlyingTradeEvent] = {}
         self._price_writers: dict[str, asyncio.Task[None]] = {}
         self._price_write_slots = asyncio.Semaphore(PRICE_WRITE_CONCURRENCY)
@@ -206,6 +218,31 @@ class _ProcessorState:
         self.cumulative_volume.clear()
         self.volume_date = today
         return True
+
+    def record_minute_quote(self, event: QuoteEvent) -> None:
+        """Keeps the latest bid/ask per contract for the current minute: one dict assignment per quote that
+        is not a repeat (is_repeated_quote already dropped the ~85% that only changed sizes)."""
+        if self.minute_quotes_enabled:
+            self.minute_quotes[event.occ_symbol] = (event.bid, event.ask, event.as_of)
+
+    def take_minute_rows(self, minute_start: datetime) -> list[OptionQuoteMinute]:
+        """Hands over the minute that just ended and starts a new one. Same shape as ThetaData's quote flat
+        file: a contract whose bid/ask equals what was last written has no row (carry the previous one
+        forward), so a quiet contract costs nothing. The last-written memory restarts every session day.
+        Nothing is marked as written here: see mark_minute_rows_written."""
+        quotes, self.minute_quotes = self.minute_quotes, {}
+        if self._minute_quotes_date != minute_start.date():
+            self._minute_quotes_date = minute_start.date()
+            self._minute_quotes_last_written.clear()
+        return [
+            OptionQuoteMinute(minute_start, occ_symbol, bid, ask, quote_time)
+            for occ_symbol, (bid, ask, quote_time) in quotes.items()
+            if self._minute_quotes_last_written.get(occ_symbol) != (bid, ask)
+        ]
+
+    def mark_minute_rows_written(self, rows: list[OptionQuoteMinute]) -> None:
+        for row in rows:
+            self._minute_quotes_last_written[row.occ_symbol] = (row.bid, row.ask)
 
     def is_repeated_quote(self, message: dict) -> bool:
         """True when this QUOTE carries the same bid/ask as the last one
@@ -274,6 +311,7 @@ def _handle_raw_frame(state: _ProcessorState, raw: str) -> None:
             parsed = parse_quote_message(message)
             if parsed is not None:
                 state.whale_alerts_relay.publish_quote(parsed.event)
+                state.record_minute_quote(parsed.event)
         elif msg_type == "TRADE":
             security_type = message.get("contract", {}).get("security_type")
             if security_type == "OPTION":
@@ -324,6 +362,39 @@ async def _resume_cumulative_volume(container, state: _ProcessorState) -> None:
     logger.info(
         "Stream processor worker: resumed today's cumulative volume for %d contracts", len(stored)
     )
+
+
+async def _record_option_quote_minutes_periodically(container, state: _ProcessorState) -> None:
+    """At every minute boundary (ET) writes the last changed bid/ask of each contract of the minute that
+    just ended to option_quote_minutes, regular session only. Never raises: a failed write loses that
+    minute's rows (logged), it must not take the stream processor down."""
+    rows_since_log = 0
+    last_log = time.monotonic()
+    while True:
+        now = datetime.now(EASTERN_TIME)
+        next_minute = now.replace(second=0, microsecond=0) + timedelta(minutes=1)
+        await asyncio.sleep(max(0.5, (next_minute - now).total_seconds() + MINUTE_QUOTES_FLUSH_DELAY_SECONDS))
+        minute_start = next_minute - timedelta(minutes=1)
+        try:
+            rows = state.take_minute_rows(minute_start)
+            if not is_market_open(minute_start) or not rows:
+                continue
+            await container.async_market_storage.save_option_quote_minutes(rows)
+            state.mark_minute_rows_written(rows)
+            rows_since_log += len(rows)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("Stream processor worker: writing the minute quotes failed, that minute is lost")
+        if time.monotonic() - last_log >= MINUTE_QUOTES_LOG_EVERY_SECONDS:
+            logger.info(
+                "Stream processor worker: option_quote_minutes wrote %d rows in the last %.0f min (last minute %s)",
+                rows_since_log,
+                (time.monotonic() - last_log) / 60,
+                minute_start.strftime("%H:%M"),
+            )
+            rows_since_log = 0
+            last_log = time.monotonic()
 
 
 async def _log_frame_mix_periodically(state: _ProcessorState) -> None:
@@ -412,6 +483,12 @@ async def run() -> None:
     await _resume_cumulative_volume(container, state)
     export_task = asyncio.create_task(_export_volume_periodically(container, state))
     frame_mix_task = asyncio.create_task(_log_frame_mix_periodically(state))
+    state.minute_quotes_enabled = container.settings.option_quote_minutes_enabled
+    minute_quotes_task = (
+        asyncio.create_task(_record_option_quote_minutes_periodically(container, state))
+        if state.minute_quotes_enabled
+        else None
+    )
 
     relay = StreamProcessorRelayClient(
         container.settings.stream_processor_relay_host,
@@ -429,6 +506,8 @@ async def run() -> None:
         await relay.run(on_raw_frame=lambda raw: _handle_raw_frame(state, raw))
     finally:
         frame_mix_task.cancel()
+        if minute_quotes_task is not None:
+            minute_quotes_task.cancel()
         export_task.cancel()
         try:
             await export_task

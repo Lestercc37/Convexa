@@ -785,6 +785,18 @@ class UnderlyingTradeEvent:
 
 
 @dataclass(frozen=True, slots=True)
+class OptionQuoteMinute:
+    """The last bid/ask of one option contract in one ET minute in which it changed (see migration 0040).
+    `minute` is the START of the minute; a minute without a row still holds the previous row's quote."""
+
+    minute: datetime
+    occ_symbol: str
+    bid: Decimal
+    ask: Decimal
+    quote_time: datetime
+
+
+@dataclass(frozen=True, slots=True)
 class OptionSnapshot:
     contract: OptionContract
     greeks: OptionGreeks
