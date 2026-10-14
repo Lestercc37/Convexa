@@ -123,6 +123,7 @@ export type Translations = {
     atmAriaLabel: (strike: number) => string;
     pointAriaLabel: (type: string, strike: number, ivPct: string) => string;
     legendAriaLabel: string;
+    missingIvNote: (count: number) => string;
     loading: string;
   };
   alertsPanel: {

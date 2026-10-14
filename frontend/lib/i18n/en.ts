@@ -139,6 +139,7 @@ export const en: Translations = {
     chartAriaLabel: (symbol, expiration) => `Volatility Smile for ${symbol} on ${expiration}`,
     atmAriaLabel: (strike) => `ATM strike ${strike}`,
     pointAriaLabel: (type, strike, ivPct) => `${type} strike ${strike}, IV ${ivPct}%`,
+    missingIvNote: (count) => `${count} in-the-money contracts without IV`,
     legendAriaLabel: "Legend",
     loading: "Loading expirations and implied volatility…",
     noCurrentExpiration: "No current expirations right now (the earlier ones have already expired).",

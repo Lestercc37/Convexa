@@ -493,7 +493,9 @@ button, select { font: inherit; }
 .expiration-control { display: flex; flex-direction: column; gap: 4px; width: 100%; color: var(--tv-text-dim); font-size: 0.68rem; }
 .expiration-control select { border: 1px solid var(--tv-border); border-radius: 6px; background: var(--tv-panel-raised); color: var(--tv-text); padding: 6px 8px; }
 .smile-chart-wrap { margin-top: 12px; }
-.smile-chart { display: block; width: 100%; height: auto; max-height: 220px; }
+.smile-chart { display: block; width: 100%; height: auto; max-height: 340px; }
+.smile-tick { fill: var(--tv-text-dim); font-size: 10px; text-anchor: middle; }
+.smile-note { margin: 4px 0 0; color: var(--tv-text-dim); font-size: 0.66rem; text-align: center; }
 .smile-axis { stroke: var(--tv-border); stroke-width: 1.5; }
 .smile-axis-label, .smile-atm-label { fill: var(--tv-text-dim); font-size: 12px; text-anchor: middle; }
 .smile-atm { stroke: var(--warning); stroke-width: 1.5; stroke-dasharray: 5 5; }

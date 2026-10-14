@@ -141,6 +141,7 @@ export const es: Translations = {
     chartAriaLabel: (symbol, expiration) => `Volatility Smile de ${symbol} para ${expiration}`,
     atmAriaLabel: (strike) => `Strike ATM ${strike}`,
     pointAriaLabel: (type, strike, ivPct) => `${type} strike ${strike}, IV ${ivPct}%`,
+    missingIvNote: (count) => `${count} contratos dentro del dinero sin IV`,
     legendAriaLabel: "Leyenda",
     loading: "Cargando vencimientos y volatilidad implícita…",
     noCurrentExpiration: "No hay vencimientos vigentes por ahora (los anteriores ya vencieron).",
