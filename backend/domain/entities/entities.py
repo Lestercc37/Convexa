@@ -328,6 +328,12 @@ class GammaAggregateItem:
     absolute_gamma: Decimal = Decimal("0")
     open_interest: int = 0
     volume: int = 0
+    # Per-strike delta / vanna / charm exposure (migration 0041), dollar notional = greek x OI x 100 x spot:
+    # delta raw (calls +, puts -), vanna and charm with the GEX dealer sign (call +1, put -1). None = "not
+    # stored" (a row written before the migration), never a false 0.
+    delta_exposure: Decimal | None = None
+    vanna_exposure: Decimal | None = None
+    charm_exposure: Decimal | None = None
 
     def __post_init__(self) -> None:
         _ensure_positive_decimal(self.strike, InvalidStrikeError, "strike")
@@ -339,6 +345,10 @@ class GammaAggregateItem:
             "absolute_gamma",
         ):
             _ensure_finite_decimal(getattr(self, name), InvalidOptionError, name)
+        for name in ("delta_exposure", "vanna_exposure", "charm_exposure"):
+            value = getattr(self, name)
+            if value is not None:
+                _ensure_finite_decimal(value, InvalidOptionError, name)
         if self.contract_count < 0:
             raise InvalidOptionError("contract_count cannot be negative")
         if self.open_interest < 0 or self.volume < 0:
@@ -680,6 +690,11 @@ class GammaExposure:
     # populated). Defaulted for backward compatibility with any existing
     # caller/fixture that only knew about open_interest.
     volume: int = 0
+    # Dollar-notional delta / vanna / charm of this contract (greek x OI x 100 x spot); vanna and charm carry the
+    # dealer sign of dealer_gamma_exposure. Default 0 for callers that only know gamma.
+    delta_exposure: Decimal = Decimal("0")
+    vanna_exposure: Decimal = Decimal("0")
+    charm_exposure: Decimal = Decimal("0")
 
     def __post_init__(self) -> None:
         if not self.occ_symbol:

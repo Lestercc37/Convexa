@@ -30,6 +30,7 @@ class FakeGammaExposureCalculator(IGammaExposureCalculator):
             * Decimal("0.01")
             * sign
         )
+        notional = Decimal("100") * Decimal(contract.open_interest) * spot_price
         return GammaExposure(
             occ_symbol=contract.occ_symbol,
             strike=contract.strike,
@@ -40,4 +41,10 @@ class FakeGammaExposureCalculator(IGammaExposureCalculator):
             dealer_gamma_exposure=dealer_gamma_exposure,
             sign=sign,
             volume=contract.volume,
+            # Same dollar notional the aggregate Delta/Vanna/Charm exposures use (greek x OI x 100 x spot).
+            # Delta keeps its own sign (a quoted ThetaData delta: calls +, puts -); vanna and charm (BSM,
+            # vanna per 1.00 of IV, charm per year) take the dealer sign of the GEX (call +1, put -1).
+            delta_exposure=contract.greeks.delta * notional,
+            vanna_exposure=contract.greeks.vanna * notional * sign,
+            charm_exposure=contract.greeks.charm * notional * sign,
         )

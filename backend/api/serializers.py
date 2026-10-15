@@ -106,6 +106,9 @@ def gamma_aggregate_response(gamma: GammaAggregate) -> dict[str, Any]:
                 "absolute_gamma": _num(item.absolute_gamma),
                 "open_interest": item.open_interest,
                 "volume": item.volume,
+                "delta_exposure": _num(item.delta_exposure) if item.delta_exposure is not None else None,
+                "vanna_exposure": _num(item.vanna_exposure) if item.vanna_exposure is not None else None,
+                "charm_exposure": _num(item.charm_exposure) if item.charm_exposure is not None else None,
             }
             for item in gamma.items
         ],

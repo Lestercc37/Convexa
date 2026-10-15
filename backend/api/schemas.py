@@ -239,6 +239,12 @@ class GammaAggregateItemResponse(BaseModel):
     absolute_gamma: Number = Field(examples=[90])
     open_interest: int = Field(default=0, ge=0, examples=[14000])
     volume: int = Field(default=0, ge=0, examples=[6800])
+    # Per-strike delta / vanna / charm (dollar notional: greek x OI x 100 x spot). delta is raw (calls +, puts -);
+    # vanna (per 1.00 of IV) and charm (per year) carry the GEX dealer sign (call +1, put -1). null = not stored
+    # (a row written before migration 0041).
+    delta_exposure: Number | None = Field(default=None, examples=[1200000])
+    vanna_exposure: Number | None = Field(default=None, examples=[-340000])
+    charm_exposure: Number | None = Field(default=None, examples=[25000])
 
 
 GammaAggregateStrikeResponse = GammaAggregateItemResponse

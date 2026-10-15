@@ -45,6 +45,11 @@ OPTION_QUOTE_MINUTES_BATCH = 1000
 FAST_LATEST_SNAPSHOT_CANDIDATES = 20
 
 
+def _optional_decimal(value: object) -> Decimal | None:
+    """A nullable numeric column as Decimal; NULL (row written before migration 0041) stays None."""
+    return None if value is None else Decimal(str(value))
+
+
 class AsyncPostgreSQLStorage:
     """Async counterpart to `PostgreSQLStorage`, covering the handful of
     reads `/gamma/{symbol}` and `/market/{symbol}` need, plus one write
@@ -164,7 +169,8 @@ class AsyncPostgreSQLStorage:
                     """
                     SELECT strike, total_gamma_exposure, call_gamma_exposure,
                            put_gamma_exposure, net_gamma, contract_count,
-                           absolute_gamma, open_interest, volume
+                           absolute_gamma, open_interest, volume,
+                           delta_exposure, vanna_exposure, charm_exposure
                     FROM gamma_aggregate_items
                     WHERE underlying_id = :underlying_id AND time = :time AND view = :view
                     ORDER BY strike
@@ -184,6 +190,9 @@ class AsyncPostgreSQLStorage:
                 absolute_gamma=Decimal(row["absolute_gamma"]),
                 open_interest=int(row["open_interest"]),
                 volume=int(row["volume"]),
+                delta_exposure=_optional_decimal(row["delta_exposure"]),
+                vanna_exposure=_optional_decimal(row["vanna_exposure"]),
+                charm_exposure=_optional_decimal(row["charm_exposure"]),
             )
             for row in rows
         )
