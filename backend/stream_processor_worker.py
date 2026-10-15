@@ -118,7 +118,10 @@ from backend.core.whale_alerts_relay import WhaleAlertsRelayServer
 from backend.domain.entities import OptionQuoteMinute, QuoteEvent, UnderlyingTradeEvent
 from backend.domain.underlyings import ACTIVE_UNDERLYINGS
 from backend.domain.use_cases.market_hours import EASTERN_TIME, is_market_open
-from backend.domain.use_cases.stream_underlying_price import StreamUnderlyingPriceUseCase
+from backend.domain.use_cases.stream_underlying_price import (
+    StreamUnderlyingPriceUseCase,
+    sets_last_price,
+)
 from backend.domain.use_cases.trade_date import (
     next_trade_date_roll,
     trade_date_of,
@@ -272,7 +275,13 @@ class _ProcessorState:
         tasks piled up waiting for a connection, the processor stopped
         consuming and the stored price froze. A write only ever needs the
         newest tick, so while one is in flight newer ticks just replace the
-        pending one."""
+        pending one.
+
+        A print that cannot set the last price (odd lot, average price, ...: see
+        NON_LAST_SALE_CONDITIONS) is dropped here, not only inside persist_if_due: it must
+        not replace a pending real tick, which would then never be written."""
+        if not sets_last_price(event):
+            return
         self._pending_prices[event.symbol] = event
         writer = self._price_writers.get(event.symbol)
         if writer is None or writer.done():

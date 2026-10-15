@@ -3,12 +3,15 @@ from __future__ import annotations
 import asyncio
 import inspect
 import json
+from datetime import UTC, datetime
 from decimal import Decimal
 
 import pytest
 
 from backend.domain.entities import FlowEvent, QuoteEvent, UnderlyingTradeEvent
 from backend.stream_processor_worker import _handle_raw_frame, _ProcessorState
+
+NOW = datetime(2026, 1, 15, 14, 30, tzinfo=UTC)
 
 
 class _FakeWhaleAlertsRelay:
@@ -49,6 +52,36 @@ def _state() -> tuple[_ProcessorState, _FakeWhaleAlertsRelay, _FakePriceUseCase]
     price_use_case = _FakePriceUseCase()
     state = _ProcessorState(relay, price_use_case)  # type: ignore[arg-type]
     return state, relay, price_use_case
+
+
+class TestSchedulePriceWriteIgnoresNonLastSalePrints:
+    @pytest.mark.asyncio
+    async def test_an_odd_lot_print_never_reaches_the_price_use_case(self) -> None:
+        state, _relay, price = _state()
+
+        state.schedule_price_write(
+            UnderlyingTradeEvent(symbol="IWM", as_of=NOW, price=Decimal("273.0945"), size=1, condition=115)
+        )
+        await asyncio.sleep(0)
+
+        assert price.calls == []
+
+    @pytest.mark.asyncio
+    async def test_an_ignored_print_does_not_replace_a_pending_real_tick(self) -> None:
+        state, _relay, price = _state()
+        price.block_until_released()  # the first write stays in flight, so the next tick is only "pending"
+        real = UnderlyingTradeEvent(symbol="IWM", as_of=NOW, price=Decimal("272.74"), size=50, condition=0)
+        newer_real = UnderlyingTradeEvent(symbol="IWM", as_of=NOW, price=Decimal("272.75"), size=40, condition=0)
+        spike = UnderlyingTradeEvent(symbol="IWM", as_of=NOW, price=Decimal("273.0945"), size=1, condition=115)
+
+        state.schedule_price_write(real)
+        await asyncio.sleep(0)
+        state.schedule_price_write(newer_real)
+        state.schedule_price_write(spike)  # would have replaced newer_real as the pending one
+        price.release()
+        await asyncio.sleep(0.01)
+
+        assert [call.price for call in price.calls] == [Decimal("272.74"), Decimal("272.75")]
 
 
 class TestRoutesQuoteMessages:

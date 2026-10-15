@@ -179,6 +179,56 @@ class TestHelpers:
         now_et = datetime(2026, 8, 31, 16, 30, 0, tzinfo=EASTERN_TIME)
         assert _time_to_expiration_years(date(2026, 8, 31), now_et) == Decimal(0)
 
+    def test_time_to_expiration_has_a_one_hour_floor_for_same_day_contracts(self) -> None:
+        # ThetaData's rule (its written answer of 2026-10-14, confirmed on the stored 10-13/10-14 data:
+        # IV solved back from the mid matches the stored IV only with this floor): a 0DTE contract quoted
+        # after 15:00 ET is priced with 1 hour left, never less.
+        one_hour = Decimal(3600) / Decimal(86400) / Decimal(365)
+        for hour, minute, second in ((15, 0, 0), (15, 28, 58), (15, 49, 21), (15, 59, 59)):
+            quoted = datetime(2026, 10, 13, hour, minute, second, tzinfo=EASTERN_TIME)
+            assert _time_to_expiration_years(date(2026, 10, 13), quoted) == one_hour
+
+    def test_time_to_expiration_floor_does_not_apply_while_more_than_an_hour_is_left(self) -> None:
+        quoted = datetime(2026, 10, 13, 14, 59, 0, tzinfo=EASTERN_TIME)
+        expected = Decimal(3660) / Decimal(86400) / Decimal(365)
+        assert _time_to_expiration_years(date(2026, 10, 13), quoted) == expected
+
+    def test_time_to_expiration_is_exact_time_for_one_to_six_days(self) -> None:
+        quoted = datetime(2026, 10, 13, 10, 0, 0, tzinfo=EASTERN_TIME)
+        # Thursday 10-15 16:00 is 54 hours after Tuesday 10-13 10:00; 6 days out (10-19) is 6 x 24 + 6 hours
+        assert _time_to_expiration_years(date(2026, 10, 15), quoted) == Decimal(54 * 3600) / Decimal(86400) / Decimal(365)
+        assert _time_to_expiration_years(date(2026, 10, 19), quoted) == Decimal(150 * 3600) / Decimal(86400) / Decimal(365)
+
+    def test_time_to_expiration_is_whole_calendar_days_from_seven_days_on(self) -> None:
+        morning = datetime(2026, 10, 13, 9, 35, 0, tzinfo=EASTERN_TIME)
+        late = datetime(2026, 10, 13, 15, 55, 0, tzinfo=EASTERN_TIME)
+        expected = Decimal(10) / Decimal(365)
+        # the time of day is ignored, and exactly 7 days already counts as whole days
+        assert _time_to_expiration_years(date(2026, 10, 23), morning) == expected
+        assert _time_to_expiration_years(date(2026, 10, 23), late) == expected
+        assert _time_to_expiration_years(date(2026, 10, 20), late) == Decimal(7) / Decimal(365)
+
+    def test_an_expired_contract_is_still_zero_and_the_floor_does_not_revive_it(self) -> None:
+        just_after = datetime(2026, 10, 13, 16, 0, 1, tzinfo=EASTERN_TIME)
+        exactly_at = datetime(2026, 10, 13, 16, 0, 0, tzinfo=EASTERN_TIME)
+        assert _time_to_expiration_years(date(2026, 10, 13), just_after) == Decimal(0)
+        assert _time_to_expiration_years(date(2026, 10, 13), exactly_at) == Decimal(0)
+
+    def test_the_gamma_of_a_0dte_contract_is_the_same_from_15_00_to_the_close(self) -> None:
+        from backend.domain.use_cases.calculate_bsm_greeks import calculate_bsm_greeks
+
+        gammas = {
+            calculate_bsm_greeks(
+                Decimal("7809.83"),
+                Decimal("7810"),
+                Decimal("0.043"),
+                Decimal("0.123"),
+                _time_to_expiration_years(date(2026, 10, 13), datetime(2026, 10, 13, hour, minute, tzinfo=EASTERN_TIME)),
+            ).gamma
+            for hour, minute in ((15, 0), (15, 30), (15, 50), (15, 59))
+        }
+        assert len(gammas) == 1  # the IV was solved with a fixed 1 hour, so gamma stays consistent with it
+
 
 class TestNearestExpirationCutoff:
     """Before MARKET_CLOSE_ET, today's own date must still be eligible as

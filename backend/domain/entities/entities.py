@@ -782,6 +782,10 @@ class UnderlyingTradeEvent:
     as_of: datetime
     price: Decimal
     size: int
+    # The exchange's sale-condition code for this print (ThetaData's `trade.condition`), None when the
+    # message did not carry one. Decides whether the print may set the displayed price: see
+    # stream_underlying_price.sets_last_price.
+    condition: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
