@@ -548,20 +548,35 @@ def _parse_et_timestamp(raw: str) -> datetime:
     return datetime.fromisoformat(raw).replace(tzinfo=EASTERN_TIME)
 
 
-def _time_to_expiration_years(expiration_date: date, now_et: datetime) -> Decimal:
-    """Real elapsed seconds to 4:00pm ET / 86400 / 365 (ACT/365).
+# ThetaData's own time-to-expiration rule for the IV it returns (their written answer, 2026-10-14, and
+# confirmed on our stored data: with this rule the IV solved back from each stored mid matches the stored
+# IV within ~0.3-1 vol points, with real elapsed time it is off by 40-390% in the last hour -- see
+# docs/estudio_iv_thetadata_2026-10-14.txt). Gamma must use the SAME time as the IV it is built from:
+# an option price fixes the total variance sigma^2 * T, so a different T with the same sigma changes the
+# implied distribution and every gamma-based level.
+THETADATA_WHOLE_DAYS_FROM_DAYS = 7
+THETADATA_MINIMUM_TIME_SECONDS = 3600
 
-    Confirmed against ThetaData's own reported delta on real contracts
-    (0DTE and ~3 weeks out, at two points in the trading day) — whole
-    calendar-day counts collapse to zero for 0DTE and don't reconcile;
-    this convention matched to within 0.0002 total absolute delta error
-    across 7 real strikes.
-    """
+
+def _time_to_expiration_years(expiration_date: date, quote_time_et: datetime) -> Decimal:
+    """Time to expiration the way ThetaData computes it (ACT/365), from the option's own quote time.
+
+    - 7 or more calendar days left: whole calendar days, the time of day is ignored.
+    - fewer than 7 days: exact seconds from the quote time to 16:00 ET on the expiration date, with a
+      floor of 1 hour (a 0DTE contract quoted after 15:00 ET is priced with 1 hour left).
+    - once 16:00 ET of the expiration date has passed the contract is expired: 0, which
+      calculate_bsm_greeks turns into zero greeks (same as before this rule).
+
+    The old rule (real elapsed seconds, no floor, fractional days) was confirmed against ThetaData's
+    delta only before 15:00 ET (2026-08-31, 14:35 and earlier), where the two rules agree."""
+    days = (expiration_date - quote_time_et.date()).days
+    if days >= THETADATA_WHOLE_DAYS_FROM_DAYS:
+        return Decimal(days) / Decimal(365)
     close = datetime.combine(expiration_date, MARKET_CLOSE_ET, tzinfo=EASTERN_TIME)
-    seconds_remaining = (close - now_et).total_seconds()
+    seconds_remaining = (close - quote_time_et).total_seconds()
     if seconds_remaining <= 0:
         return Decimal(0)
-    return Decimal(seconds_remaining) / Decimal(86400) / Decimal(365)
+    return Decimal(max(seconds_remaining, THETADATA_MINIMUM_TIME_SECONDS)) / Decimal(86400) / Decimal(365)
 
 
 def _nearest_expiration_cutoff(now_et: datetime) -> date:
@@ -3117,18 +3132,15 @@ class ThetaDataProvider:
             }
 
         rate = self._risk_free_rate()
-        now_et = datetime.now(EASTERN_TIME)
 
         spot_price: Decimal | None = None
         latest_as_of = utc_now()
         contracts = []
         crossed_quotes: list[tuple[str, Decimal, Decimal]] = []
         for chain in gamma_calc_chains:
-            # Computed per-chain, not once for the whole call — each
-            # expiration needs its own time-to-expiration for correct BSM
-            # greeks; a single index symbol can now span 50+ real
-            # expirations in one get_option_chain() call.
-            time_to_expiration = _time_to_expiration_years(chain.expiration, now_et)
+            # Time to expiration is computed per contract below, from that
+            # contract's own quote time, because that is what ThetaData's IV
+            # was solved with (see _time_to_expiration_years).
             for entry in chain.entries:
                 contract_meta = entry["contract"]
                 data = entry["data"][0]
@@ -3152,12 +3164,13 @@ class ThetaDataProvider:
                 delta = Decimal(str(data["delta"]))
                 theta = Decimal(str(data["theta"]))
                 vega = Decimal(str(data["vega"]))
+                as_of = _parse_et_timestamp(data["timestamp"])
+                time_to_expiration = _time_to_expiration_years(chain.expiration, as_of)
                 bsm = calculate_bsm_greeks(underlying_price, strike, rate, iv, time_to_expiration)
 
                 occ_symbol = _build_occ_symbol(root, chain.expiration, contract_type, strike)
                 open_interest = open_interest_by_key.get((root, strike, right, chain.expiration), 0)
                 volume = self._hub.cumulative_volume(occ_symbol)
-                as_of = _parse_et_timestamp(data["timestamp"])
                 latest_as_of = max(latest_as_of, as_of)
 
                 contracts.append(
