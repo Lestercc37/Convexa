@@ -17,13 +17,15 @@ import {
   type ISeriesApi,
   type UTCTimestamp,
 } from "lightweight-charts";
-import { getGammaHistory } from "@/lib/api";
+import { getGammaHistory, getGammaProfile } from "@/lib/api";
 import { aggregateVwapPoints, type MinuteCandle, type Timeframe, type VwapPoint } from "@/lib/candles";
 import { useLanguage } from "@/lib/i18n/language-context";
 import type { MarketPriceStreamStatus } from "@/lib/market-price-stream";
 import { EASTERN_TIME_ZONE, mostRecentSessionRange } from "@/lib/market-session";
 import type { AtrRange, ExpectedMove, GammaHistoryItem, GammaResponse, GammaView } from "@/lib/types";
 import { LEVEL_MERGE_THRESHOLD } from "./gravity-map";
+import { GexHistogramPrimitive } from "./gex-histogram-primitive";
+import { POLLING_INTERVAL_MS } from "@/lib/polling";
 import { RegimeCompactBadge } from "./regime-badge";
 
 type PriceChartProps = {
@@ -421,6 +423,8 @@ export function PriceChart({
   const [showVwap, setShowVwap] = useState(true);
   const [showAtr, setShowAtr] = useState(true);
   const [showExpectedMove, setShowExpectedMove] = useState(true);
+  // GEX histogram aligned with the price axis (draft, off by default so the current view is untouched).
+  const [showGexHistogram, setShowGexHistogram] = useState(false);
   const [drawMode, setDrawMode] = useState(false);
   const [trendline, setTrendline] = useState<Trendline | null>(null);
   const referenceLevelsRef = useRef(
@@ -674,6 +678,39 @@ export function PriceChart({
       chartRef.current?.timeScale().fitContent();
     }
   }, [candles]);
+
+  // GEX histogram: a series primitive drawn against the right edge of the pane at the candles' own price
+  // coordinates. Attached only while the toggle is on; the profile (one row per strike of the selected
+  // gamma view) is polled like every other live panel and handed over with setBars().
+  useEffect(() => {
+    const series = seriesRef.current;
+    if (!showGexHistogram || !series) return;
+    const primitive = new GexHistogramPrimitive();
+    series.attachPrimitive(primitive);
+    const controller = new AbortController();
+    const refresh = () => {
+      getGammaProfile(symbol, gammaView, controller.signal)
+        .then((profile) => {
+          primitive.setBars(
+            profile.items.map((item) => ({
+              strike: item.strike,
+              net: item.net_gamma,
+              absolute: item.absolute_gamma,
+            })),
+          );
+        })
+        .catch(() => {
+          // A failed poll keeps the bars already drawn; the next one retries.
+        });
+    };
+    refresh();
+    const interval = window.setInterval(refresh, POLLING_INTERVAL_MS);
+    return () => {
+      controller.abort();
+      window.clearInterval(interval);
+      series.detachPrimitive(primitive);
+    };
+  }, [showGexHistogram, symbol, gammaView]);
 
   useEffect(() => {
     trendlineSeriesRef.current?.setData(
@@ -1023,6 +1060,14 @@ export function PriceChart({
                 onChange={(event) => setShowExpectedMove(event.target.checked)}
               />
               {t.priceChart.expectedMoveRangeLabel}
+            </label>
+            <label className="chart-toggle">
+              <input
+                type="checkbox"
+                checked={showGexHistogram}
+                onChange={(event) => setShowGexHistogram(event.target.checked)}
+              />
+              {t.priceChart.gexHistogramLabel}
             </label>
           </fieldset>
           <fieldset

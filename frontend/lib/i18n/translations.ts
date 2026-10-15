@@ -66,6 +66,7 @@ export type Translations = {
     vwapNotApplicableLabel: string;
     vwapProxyLabel: (proxySymbol: string) => string;
     atrRangeLabel: string;
+    gexHistogramLabel: string;
     expectedMoveRangeLabel: string;
     streamFallbackLabel: string;
     drawingToolsAriaLabel: string;
