@@ -27,6 +27,8 @@ try:  # optional dependency: without it the hub keeps using websockets
 except ImportError:  # pragma: no cover
     picows = None  # type: ignore[assignment]
 
+from backend.core.frame_gap_monitor import FrameGapMonitor
+
 if TYPE_CHECKING:
     from backend.adapters.providers.thetadata.provider import ThetaStreamHub
 
@@ -50,6 +52,8 @@ class PicowsConnection:
         self.closed = asyncio.Event()
         self.last_frame_at = time.monotonic()
         self._batch: list[bytes] = []
+        # Observation only: logs how long the Terminal went silent (see frame_gap_monitor.py).
+        self._gap_monitor = FrameGapMonitor()
 
     # --- the API the hub relies on -------------------------------------
     async def send(self, text: str) -> None:
@@ -71,11 +75,13 @@ class PicowsConnection:
     def on_frame(self, frame) -> None:
         if frame.msg_type != picows.WSMsgType.TEXT:
             return
-        self.last_frame_at = time.monotonic()
+        now = time.monotonic()
+        self.last_frame_at = now
         payload = frame.get_payload_as_bytes()
         if not self.fast:
             self._handshake_frames.put_nowait(payload.decode("utf-8", "replace"))
             return
+        self._gap_monitor.observe(now)
         hub = self.hub
         recorder = hub._frame_recorder
         if recorder is not None:
@@ -102,6 +108,7 @@ class PicowsConnection:
             try:
                 await asyncio.wait_for(self.closed.wait(), timeout=1.0)
             except TimeoutError:
+                self._gap_monitor.maybe_report()
                 if time.monotonic() - self.last_frame_at > stale_after_seconds:
                     raise ConnectionError("No message from Theta Terminal within heartbeat window") from None
                 continue
