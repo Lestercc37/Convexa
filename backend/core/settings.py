@@ -43,6 +43,10 @@ class Settings(BaseSettings):
     # process with the live stream. OFF by default; set QLL_THETADATA_RECONCILE_ENABLED=true
     # and restart the Worker to bring it back without reverting any code.
     thetadata_reconcile_enabled: bool = Field(default=False)
+    # The stream processor keeps the last changed bid/ask of every contract per minute in
+    # option_quote_minutes (migration 0040). QLL_OPTION_QUOTE_MINUTES_ENABLED=false and a restart of
+    # ConvexaStreamProcessor switches it off without reverting any code.
+    option_quote_minutes_enabled: bool = Field(default=True)
     # Local-only TCP link (see backend/core/whale_alerts_relay.py): worker.py
     # forwards every trade/quote event to backend/whale_alerts_worker.py's
     # own process over this, so whale-alerts' own CPU-bound classification

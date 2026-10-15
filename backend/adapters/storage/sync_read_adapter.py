@@ -10,6 +10,7 @@ from backend.domain.entities import (
     GammaAggregate,
     MarketPrice,
     OptionChain,
+    OptionQuoteMinute,
 )
 from backend.domain.ports import IStorage
 from backend.domain.use_cases.flow import SymbolFlowPressure, WhaleAlert
@@ -34,6 +35,7 @@ class SyncStorageAsyncReadAdapter:
 
     def __init__(self, storage: IStorage) -> None:
         self._storage = storage
+        self.option_quote_minutes: list[OptionQuoteMinute] = []
 
     async def get_latest_gamma_aggregate(
         self, underlying: str, view: str = "structural"
@@ -45,6 +47,10 @@ class SyncStorageAsyncReadAdapter:
 
     async def save_market_price(self, price: MarketPrice) -> None:
         self._storage.save_market_price(price)
+
+    async def save_option_quote_minutes(self, rows: list[OptionQuoteMinute]) -> None:
+        # No table behind the in-memory/sqlite storages: kept in memory so tests can read it back.
+        self.option_quote_minutes.extend(rows)
 
     async def get_price_history(
         self, underlying: str, start: datetime, end: datetime

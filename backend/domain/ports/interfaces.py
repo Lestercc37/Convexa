@@ -21,13 +21,14 @@ from backend.domain.entities import (
     GammaAggregate,
     GammaExposure,
     GammaFlip,
+    Invite,
     MarketHoliday,
     MarketPrice,
     MarketSnapshot,
     MaxPain,
     OptionChain,
+    OptionQuoteMinute,
     QuoteEvent,
-    Invite,
     ScreenerPreset,
     ScreenerPresetSettings,
     Underlying,
@@ -189,6 +190,7 @@ class IAsyncMarketReadStorage(Protocol):
     ) -> GammaAggregate | None: ...
     async def get_latest_price(self, underlying: str) -> MarketPrice | None: ...
     async def save_market_price(self, price: MarketPrice) -> None: ...
+    async def save_option_quote_minutes(self, rows: list[OptionQuoteMinute]) -> None: ...
     async def get_price_history(
         self, underlying: str, start: datetime, end: datetime
     ) -> list[MarketPrice]: ...
