@@ -18,8 +18,8 @@ get_recent_whale_alerts keeps its explicit column list).
 Nullable, no default, no backfill: a metadata-only change for Postgres, and
 existing rows (and BVC-derived ones) simply stay NULL. Same shape as 0038.
 
-Revision ID: 0040_whale_alerts_conditions
-Revises: 0039_gamma_near_money_width
+Revision ID: 0041_whale_alerts_conditions
+Revises: 0040_option_quote_minutes
 Create Date: 2026-10-08
 """
 
@@ -27,8 +27,8 @@ from __future__ import annotations
 
 from alembic import op
 
-revision = "0040_whale_alerts_conditions"
-down_revision = "0039_gamma_near_money_width"
+revision = "0041_whale_alerts_conditions"
+down_revision = "0040_option_quote_minutes"
 branch_labels = None
 depends_on = None
 
