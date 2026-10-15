@@ -456,6 +456,41 @@ def test_cumulative_volume_round_trip_against_postgresql(
             )
 
 
+def test_a_lower_cumulative_volume_never_overwrites_the_current_trade_dates_total(
+    postgresql_storage: tuple[PostgreSQLStorage, Engine, str],
+) -> None:
+    """2026-10-15 01:42: the Worker's in-process fallback counters (a few seconds of trades) kept exporting over
+    the stream processor's totals after a processor restart. Within the current trade date the stored volume
+    only grows; a row from an earlier trade date is replaced (the 20:15 roll)."""
+    from datetime import UTC, datetime, timedelta
+
+    storage, engine, symbol = postgresql_storage
+    occ_a = f"{symbol}260320C00550000"
+    occ_b = f"{symbol}260320P00540000"
+    try:
+        storage.save_cumulative_volumes({occ_a: 784})
+        storage.save_cumulative_volumes({occ_a: 4})  # a partial count from another writer
+        assert storage.get_cumulative_volumes([occ_a]) == {occ_a: 784}
+
+        storage.save_cumulative_volumes({occ_a: 900})  # real growth still lands
+        assert storage.get_cumulative_volumes([occ_a]) == {occ_a: 900}
+
+        storage.save_cumulative_volumes({occ_b: 500})
+        with engine.begin() as connection:
+            connection.execute(
+                text("UPDATE contract_cumulative_volume SET updated_at = :t WHERE occ_symbol = :o"),
+                {"t": datetime.now(UTC) - timedelta(days=2), "o": occ_b},
+            )
+        storage.save_cumulative_volumes({occ_b: 30})  # a new trade date starts lower: replaced
+        assert storage.get_cumulative_volumes([occ_b]) == {occ_b: 30}
+    finally:
+        with engine.begin() as connection:
+            connection.execute(
+                text("DELETE FROM contract_cumulative_volume WHERE occ_symbol IN (:a, :b)"),
+                {"a": occ_a, "b": occ_b},
+            )
+
+
 def test_cumulative_volumes_since_returns_only_rows_written_at_or_after_the_cutoff(
     postgresql_storage: tuple[PostgreSQLStorage, Engine, str],
 ) -> None:

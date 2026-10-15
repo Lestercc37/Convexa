@@ -1390,13 +1390,20 @@ class PostgreSQLStorage:
         items = list(volumes.items())
         CHUNK_SIZE = 500
         now = datetime.now(UTC)
+        # Within one TRADE DATE a contract's cumulative volume only grows, so a write that is lower than what
+        # the same trade date already stored is a partial count from another writer, never a correction:
+        # 2026-10-15 01:42, restarting the stream processor left the Worker's in-process fallback counters
+        # (a few seconds of trades) exporting every 15 s over the processor's totals (784 <-> 4 on a
+        # contract; 10 of 77 contracts flipped). Rows older than the current trade date are replaced as
+        # before, which is what the 20:15 roll needs.
+        cutoff = volume_rows_since(datetime.now(EASTERN_TIME))
         with self.session_factory.begin() as session:
             for start in range(0, len(items), CHUNK_SIZE):
                 batch = items[start : start + CHUNK_SIZE]
                 values_sql = ", ".join(
                     f"(:occ_symbol_{i}, :volume_{i}, :updated_at_{i})" for i in range(len(batch))
                 )
-                params: dict[str, object] = {}
+                params: dict[str, object] = {"cutoff": cutoff}
                 for i, (occ_symbol, volume) in enumerate(batch):
                     params[f"occ_symbol_{i}"] = occ_symbol
                     params[f"volume_{i}"] = volume
@@ -1407,7 +1414,11 @@ class PostgreSQLStorage:
                         INSERT INTO contract_cumulative_volume (occ_symbol, volume, updated_at)
                         VALUES {values_sql}
                         ON CONFLICT (occ_symbol) DO UPDATE SET
-                            volume = EXCLUDED.volume,
+                            volume = CASE
+                                WHEN contract_cumulative_volume.updated_at >= :cutoff
+                                    THEN GREATEST(contract_cumulative_volume.volume, EXCLUDED.volume)
+                                ELSE EXCLUDED.volume
+                            END,
                             updated_at = EXCLUDED.updated_at
                         """
                     ),
