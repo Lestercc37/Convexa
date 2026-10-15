@@ -44,6 +44,23 @@ from backend.domain.entities import MarketPrice, UnderlyingTradeEvent
 from backend.domain.ports import IAsyncMarketReadStorage, IDataProvider
 from backend.domain.use_cases.market_hours import is_market_open
 
+# Sale conditions whose price is not a market price and that the consolidated tape does not let set the
+# last price (ThetaData's trade-condition table, read 2026-10-14; confirmed on real IWM prints of that
+# morning: every >= 8 bps spike on the IWM chart was a FINRA/Nasdaq TRF print, exchange 57, with condition
+# 115 or 3, all at sub-penny prices well away from the quote). None of them is ever drawn as the price;
+# the volume is untouched (stream ticks carry the scheduler's volume forward, never their own size).
+#   2 OUT_OF_SEQ     3 AVG_PRC (NYSE/AMEX)   4 AVG_PRC_NASDAQ   59 VWAP
+#   96 DERIVATIVE (derivatively priced)      105/114/124 contingent trades
+#   106 STOPPED_IM (valid trade, does not update last)   109 IMPLIED   115 ODD_LOT (size 1-99)
+NON_LAST_SALE_CONDITIONS: frozenset[int] = frozenset({2, 3, 4, 59, 96, 105, 106, 109, 114, 115, 124})
+
+
+def sets_last_price(event: UnderlyingTradeEvent) -> bool:
+    """False for a print whose condition code cannot set the last price; True when the code is not
+    in the list or the message carried none (unknown means keep, as before this filter)."""
+    return event.condition not in NON_LAST_SALE_CONDITIONS
+
+
 # A liquid stock's Trade Stream can print many times per second, and
 # IStorage.save_market_price() appends to an unbounded in-memory history
 # (see InMemoryStorage._price_history — no eviction, by design, same as
@@ -130,6 +147,9 @@ class StreamUnderlyingPriceUseCase:
         # session -- reusing the same is_market_open the REST scheduler
         # already gates on, not a new check.
         if not is_market_open(event.as_of):
+            return
+        # Before the debounce: an ignored print must not use up the write window of the next real one.
+        if not sets_last_price(event):
             return
         now = time.monotonic()
         last_written_at = self._last_written_at.get(event.symbol)
