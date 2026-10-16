@@ -108,10 +108,11 @@ def test_the_time_box_stops_the_pass() -> None:
     assert summary["stopped_because"] == "time box"
 
 
-def test_the_pass_refuses_the_open_and_weekends() -> None:
+def test_the_pass_refuses_the_first_minutes_of_the_open_and_weekends() -> None:
     et = volume_correction_pass.EASTERN_TIME
     assert not volume_correction_pass.within_allowed_window(datetime(2026, 10, 16, 9, 40, tzinfo=et))
-    assert not volume_correction_pass.within_allowed_window(datetime(2026, 10, 16, 10, 5, tzinfo=et))
+    assert not volume_correction_pass.within_allowed_window(datetime(2026, 10, 16, 9, 44, tzinfo=et))
+    assert volume_correction_pass.within_allowed_window(datetime(2026, 10, 16, 9, 50, tzinfo=et))
     assert volume_correction_pass.within_allowed_window(datetime(2026, 10, 16, 10, 30, tzinfo=et))
     assert volume_correction_pass.within_allowed_window(datetime(2026, 10, 16, 16, 5, tzinfo=et))
     assert not volume_correction_pass.within_allowed_window(datetime(2026, 10, 16, 17, 0, tzinfo=et))
