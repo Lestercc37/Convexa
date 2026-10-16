@@ -581,12 +581,21 @@ export function Dashboard() {
         <section className="panel status" role="status" aria-live="polite">
           {t.futureOpeningPrice.noDataMessage(symbol)}
         </section>
-      ) : error ? (
+      ) : error && !(gamma && market) ? (
         <section className="panel status error" role="alert">
           {describeError(error, t)}
         </section>
       ) : gamma && market ? (
-        (() => {
+        <>
+          {/* A failed request while the symbol's data is already on screen (a 2026-10-15 10:32 report: one
+              failed call replaced the whole dashboard with this message): keep the last good data and
+              show the failure as a notice. The next successful poll clears it. */}
+          {error ? (
+            <section className="panel status error dashboard-stale-notice" role="alert">
+              {describeError(error, t)}
+            </section>
+          ) : null}
+          {(() => {
           const alertsContent = (
             <aside className="tv-alerts-sidebar">
               <AlertsPanel symbol={symbol} orientation="vertical" />
@@ -750,7 +759,8 @@ export function Dashboard() {
               </Panel>
             </Group>
           );
-        })()
+          })()}
+        </>
       ) : (
         <section className="panel status" aria-live="polite">
           {t.dashboard.loadingRegime}

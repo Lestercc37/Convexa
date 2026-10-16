@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from dataclasses import replace
 from datetime import UTC, date, datetime, timezone
 from decimal import Decimal
@@ -33,6 +34,8 @@ from backend.domain.use_cases.futures_proxy import (  # noqa: F401 -- PRICE_PROX
 )
 from backend.domain.use_cases.flow import SymbolFlowPressure
 from backend.domain.use_cases.market_hours import EASTERN_TIME, is_market_open
+
+logger = logging.getLogger(__name__)
 
 
 def _is_pure_index(underlying: str) -> bool:
@@ -199,7 +202,22 @@ def get_option_chain(
     # filled the table with all-zero-volume snapshots (~48% of SPXW 0DTE rows on
     # 2026-10-06/07, 138 of 289 snapshots on 10-07). The volume is read back from
     # contract_cumulative_volume (the stream processor's export, <= ~15 s old).
-    return merge_cumulative_volume(provider.get_option_chain(underlying, expiration), storage)
+    try:
+        live_chain = provider.get_option_chain(underlying, expiration)
+    except RuntimeError:
+        if chain is None:
+            raise
+        # The provider could not deliver (2026-10-15 10:31: "no near-the-money contracts for IWM" while the
+        # Terminal was dropping packets): an older stored chain is better than a 500 that blanks the page.
+        logger.warning(
+            "Live chain fetch failed for %s %s; serving the stored snapshot from %s",
+            underlying.upper(),
+            expiration,
+            chain.as_of.isoformat(),
+            exc_info=True,
+        )
+        return chain
+    return merge_cumulative_volume(live_chain, storage)
 
 
 async def get_option_chain_async(

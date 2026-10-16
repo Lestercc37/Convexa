@@ -487,6 +487,28 @@ describe("Dashboard", () => {
     vi.useRealTimers();
   });
 
+  it("keeps the dashboard on screen when a later poll fails, and clears the notice on the next good poll", async () => {
+    // 2026-10-15 10:32: one failed request replaced the whole dashboard with the generic error message.
+    // With the symbol's data already loaded, a failed poll is a notice, not a blank page.
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    renderWithLanguage(<Dashboard />);
+    await screen.findByLabelText("Chart de velas para SPY");
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+
+    apiMocks.getMarket.mockRejectedValueOnce(new ApiError(500));
+    await vi.advanceTimersByTimeAsync(POLLING_INTERVAL_MS);
+
+    expect(await screen.findByRole("alert")).toBeInTheDocument();
+    expect(screen.getByLabelText("Chart de velas para SPY")).toBeInTheDocument();
+    expect(screen.getByRole("group", { name: "Marco temporal" })).toBeInTheDocument();
+
+    await vi.advanceTimersByTimeAsync(POLLING_INTERVAL_MS);
+    await vi.waitFor(() => expect(screen.queryByRole("alert")).not.toBeInTheDocument());
+    expect(screen.getByLabelText("Chart de velas para SPY")).toBeInTheDocument();
+
+    vi.useRealTimers();
+  });
+
   it("seeds vwapPoints from the vwap-history endpoint before polling starts, per symbol (regression)", async () => {
     // Same regression class as pricePoints above: VWAP used to reset to
     // empty on every symbol switch and only ever rebuild from live 30s

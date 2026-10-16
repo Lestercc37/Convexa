@@ -462,6 +462,13 @@ RETRY_429_MAX_DELAY_SECONDS = 30.0
 # refresh cycle's own back-to-back calls.
 NEAR_THE_MONEY_CACHE_TTL_SECONDS = 10.0
 
+# How long a root that answered 472 ("no data") for one SPECIFIC expiration is not asked for that
+# expiration again. A two-root index (SPX/SPXW, NDX/NDXP, VIX/VIXW) is asked on both roots, and the
+# AM-settled root (SPX) does not list today's 0DTE at all, so every call used to spend one request
+# answered 472 (about 4 a minute in the API log on 2026-10-15). Short on purpose: a root can still
+# list a new expiration later in the day (the weekly root lists tomorrow's after the close).
+ROOT_WITHOUT_EXPIRATION_TTL_SECONDS = 15 * 60.0
+
 # Until the scheduler/stream process split (2026-09-22), ongoing streaming-
 # contract rediscovery (catching a contract that's newly near-the-money as
 # spot drifts intraday, not just what was near-the-money at process
@@ -2372,6 +2379,8 @@ class ThetaDataProvider:
         # See NEAR_THE_MONEY_CACHE_TTL_SECONDS/OPEN_INTEREST_CACHE_TTL_SECONDS
         # above for why these exist and use different TTLs.
         self._near_the_money_cache: dict[tuple[str, date | None], tuple[float, _NearTheMoneyChain]] = {}
+        # (root, expiration) -> monotonic time until which that root is known not to list that date.
+        self._root_without_expiration: dict[tuple[str, date], float] = {}
         self._open_interest_cache: dict[
             tuple[str, date], tuple[float, dict[tuple[Decimal, str], int]]
         ] = {}
@@ -2567,6 +2576,13 @@ class ThetaDataProvider:
     def _get_json_allow_no_data(
         self, path: str, *, timeout: float | None = None, **params: object
     ) -> dict[str, Any]:
+        """`_get_json_or_none_on_no_data` with the 472 turned into an empty response (see there)."""
+        body = self._get_json_or_none_on_no_data(path, timeout=timeout, **params)
+        return {"response": []} if body is None else body
+
+    def _get_json_or_none_on_no_data(
+        self, path: str, *, timeout: float | None = None, **params: object
+    ) -> dict[str, Any] | None:
         """Same as `_get_json`, except ThetaData's 472 ("no data found for
         your request") is treated as an empty response instead of a raised
         error. Confirmed live (2026-09 investigation): querying a SPECIFIC
@@ -2589,7 +2605,7 @@ class ThetaDataProvider:
         abort as a false failure."""
         response = self._send_with_rate_limit_retry(path, timeout=timeout, **params)
         if response.status_code == 472:
-            return {"response": []}
+            return None
         if response.status_code != 200:
             raise RuntimeError(
                 f"ThetaData request failed: GET {path} {params} -> "
@@ -2708,6 +2724,15 @@ class ThetaDataProvider:
             return Decimal(0)
         return Decimal(str(put_25d["implied_vol"])) - Decimal(str(call_25d["implied_vol"]))
 
+    def _root_known_without(self, root: str, expiration: date) -> bool:
+        until = self._root_without_expiration.get((root, expiration))
+        return until is not None and time.monotonic() < until
+
+    def _remember_root_without(self, root: str, expiration: date) -> None:
+        self._root_without_expiration[(root, expiration)] = (
+            time.monotonic() + ROOT_WITHOUT_EXPIRATION_TTL_SECONDS
+        )
+
     def _fetch_near_the_money(self, symbol: str, expiration: date | None) -> _NearTheMoneyChain:
         cache_key = (symbol, expiration)
         cached = self._near_the_money_cache.get(cache_key)
@@ -2716,20 +2741,27 @@ class ThetaDataProvider:
 
         expiration_param = expiration.strftime("%Y-%m-%d") if expiration else "*"
         entries: list[dict[str, Any]] = []
-        for root in _roots_for_symbol(symbol):
-            # _get_json_allow_no_data, not _get_json: for a two-root
+        roots = _roots_for_symbol(symbol)
+        for root in roots:
+            if expiration is not None and len(roots) > 1 and self._root_known_without(root, expiration):
+                continue
+            # No-data (472) is not an error here: for a two-root
             # symbol (see _roots_for_symbol) it's normal for one root to
             # simply not list a given expiration the other root does —
             # confirmed live, ThetaData answers that with a 472, not an
             # empty 200 — and that must not abort the whole combined
             # fetch just because one of the two roots has nothing here.
-            body = self._get_json_allow_no_data(
+            body = self._get_json_or_none_on_no_data(
                 "/v3/option/snapshot/greeks/first_order",
                 symbol=root,
                 expiration=expiration_param,
                 strike_range=NEAR_THE_MONEY_OVERFETCH_STRIKE_RANGE,
                 format="json",
             )
+            if body is None:
+                if expiration is not None and len(roots) > 1:
+                    self._remember_root_without(root, expiration)
+                continue
             entries.extend(entry for entry in body.get("response", []) if entry.get("data"))
         if not entries:
             raise RuntimeError(f"ThetaData returned no near-the-money contracts for {symbol}")
@@ -2882,15 +2914,18 @@ class ThetaDataProvider:
             return cached[1]
 
         result: dict[tuple[str, Decimal, str], int] = {}
-        for root in _roots_for_symbol(symbol):
-            # _get_json_allow_no_data, not _get_json: confirmed live this
+        roots = _roots_for_symbol(symbol)
+        for root in roots:
+            if len(roots) > 1 and self._root_known_without(root, expiration):
+                continue
+            # No-data (472) is not an error here: confirmed live this
             # returns 472 (not an empty 200) when a root has nothing at
             # this specific expiration — expected for a two-root symbol
             # whenever the resolved expiration only exists on the other
             # root (e.g. SPX itself has no 2026-09-03 listing at all, only
             # SPXW does), not a real failure. See the same reasoning in
             # _fetch_near_the_money above.
-            body = self._get_json_allow_no_data(
+            body = self._get_json_or_none_on_no_data(
                 "/v3/option/snapshot/open_interest",
                 symbol=root,
                 expiration=expiration.strftime("%Y-%m-%d"),
@@ -2902,6 +2937,10 @@ class ThetaDataProvider:
                 strike_range=NEAR_THE_MONEY_OVERFETCH_STRIKE_RANGE,
                 format="json",
             )
+            if body is None:
+                if len(roots) > 1:
+                    self._remember_root_without(root, expiration)
+                continue
             for entry in body.get("response", []):
                 data_points = entry.get("data") or []
                 if not data_points:
