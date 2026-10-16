@@ -317,3 +317,25 @@ def test_proxy_vwap_is_not_shifted_by_a_bad_first_index_print() -> None:
     series = calculate_proxy_anchored_vwap_series(index, proxy, as_of)
 
     assert series and series[-1][1] == Decimal("7754")  # scaled from the median open (7754), not from 7745
+
+def test_proxy_series_caps_a_block_print_but_the_symbols_own_series_does_not() -> None:
+    # six ordinary 10,000-share intervals at 550, then a 600,000-share block at 540, then an ordinary one at 550
+    readings = [_reading(1, "550", 10_000)]
+    volume = 10_000
+    for minute in range(2, 7):
+        volume += 10_000
+        readings.append(_reading(minute, "550", volume))
+    volume += 600_000
+    readings.append(_reading(7, "540", volume))
+    volume += 10_000
+    readings.append(_reading(8, "550", volume))
+    as_of = SESSION_OPEN_UTC + timedelta(minutes=8)
+
+    own = calculate_anchored_vwap_series(readings, as_of)[-1][1]
+    clipped = calculate_anchored_vwap_series(readings, as_of, block_clip_multiple=3.0)[-1][1]
+
+    assert own < Decimal("542")  # the block dominates the symbol's own VWAP: that volume really traded
+    assert clipped > Decimal("546")  # as a proxy the block counts as at most 3x the median interval
+    index = [_index_reading(m, "7750") for m in range(1, 9)]
+    proxy = calculate_proxy_anchored_vwap_series(index, readings, as_of)
+    assert proxy[-1][1] > Decimal("7750") * (Decimal("546") / Decimal("550"))

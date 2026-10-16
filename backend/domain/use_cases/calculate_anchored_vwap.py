@@ -34,8 +34,19 @@ def opening_reference(readings: list[MarketPrice], as_of: datetime | None = None
     return median, (as_of if as_of is not None else ordered[-1].as_of) >= window_end
 
 
+# A proxy ETF (SPY for SPX/ES, QQQ for NDX/NQ) stands in for the flow of an index that has no volume of its own. Its one-off block
+# prints (SPY traded 1.27M shares in the 09:40 minute of 2026-10-16, ten times a normal minute, while ES traded an ordinary 6,434
+# contracts) are not that flow and pulled the ES VWAP 4-5 points under the futures VWAP. In a PROXY series each interval's volume is
+# capped at this multiple of the running median of the intervals seen so far (needs PROXY_CLIP_WARMUP intervals first). On that day
+# the mean error against the futures VWAP fell from 1.64 to 0.62 points (docs/hm_vwap_clip_test.py). A symbol's OWN VWAP is not clipped.
+# Block minutes are daily, not rare: Yahoo's SPY bars of 2026-10-08..16 have 4-11 minutes a day above 15x the median minute, 34-82% of the
+# session's volume. Over the 09:30-11:30 session of 2026-10-16 the largest minute-to-minute move of the ES-equivalent line fell from 7.49 to 2.89 pts.
+PROXY_BLOCK_CLIP_MULTIPLE = 3.0
+PROXY_CLIP_WARMUP = 4
+
+
 def calculate_anchored_vwap_series(
-    readings: list[MarketPrice], as_of: datetime
+    readings: list[MarketPrice], as_of: datetime, block_clip_multiple: float | None = None
 ) -> list[tuple[datetime, Decimal]]:
     """One (timestamp, vwap) pair per session reading, running
     cumulatively from the session open through that reading -- the one
@@ -78,12 +89,22 @@ def calculate_anchored_vwap_series(
     total_price_volume = Decimal(0)
     total_volume = 0
     previous_volume = 0
+    seen_intervals: list[int] = []
     for reading in session_readings:
         volume = reading.volume
         if stale_volume is not None and volume == stale_volume:
             volume = previous_volume
         interval_volume = max(volume - previous_volume, 0)
         previous_volume = volume
+        if interval_volume > 0 and block_clip_multiple is not None:
+            if len(seen_intervals) >= PROXY_CLIP_WARMUP:
+                ordered = sorted(seen_intervals)
+                median = ordered[len(ordered) // 2] if len(ordered) % 2 else (ordered[len(ordered) // 2 - 1] + ordered[len(ordered) // 2]) / 2
+                interval_volume_used = min(interval_volume, int(median * block_clip_multiple))
+            else:
+                interval_volume_used = interval_volume
+            seen_intervals.append(interval_volume)
+            interval_volume = interval_volume_used
         total_price_volume += reading.price * interval_volume
         total_volume += interval_volume
         if total_volume > 0:
@@ -136,7 +157,7 @@ def calculate_proxy_anchored_vwap_series(
     if proxy_open_price == 0:
         return []
 
-    proxy_series = calculate_anchored_vwap_series(proxy_readings, as_of)
+    proxy_series = calculate_anchored_vwap_series(proxy_readings, as_of, block_clip_multiple=PROXY_BLOCK_CLIP_MULTIPLE)
     return [
         (timestamp, index_open_price * (proxy_vwap / proxy_open_price))
         for timestamp, proxy_vwap in proxy_series
