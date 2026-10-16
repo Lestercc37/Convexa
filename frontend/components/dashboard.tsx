@@ -20,6 +20,7 @@ import {
   type Timeframe,
   type VwapPoint,
 } from "@/lib/candles";
+import { startChartLifecycleRecorder } from "@/lib/chart-lifecycle";
 import { describeError } from "@/lib/i18n/describe-error";
 import { useLanguage, type Language } from "@/lib/i18n/language-context";
 import { isWithinTheMostRecentSession } from "@/lib/market-session";
@@ -173,6 +174,9 @@ export function Dashboard() {
   // ES/NQ are SPX/NDX shifted by the opening price typed in by hand each morning. Without today's
   // price the API answers 409: say "no data" (never stale numbers, never hide the symbol).
   const hasNoOpeningPrice = isFutureSymbol && error instanceof ApiError && error.status === 409;
+
+  // Local-only flight recorder for page loads / tab visibility / network (see lib/chart-lifecycle.ts).
+  useEffect(() => startChartLifecycleRecorder(), []);
 
   useEffect(() => {
     const controller = new AbortController();

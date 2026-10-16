@@ -19,6 +19,7 @@ import {
 } from "lightweight-charts";
 import { getGammaHistory, getGammaProfile } from "@/lib/api";
 import { aggregateVwapPoints, type MinuteCandle, type Timeframe, type VwapPoint } from "@/lib/candles";
+import { recordChartEvent } from "@/lib/chart-lifecycle";
 import { useLanguage } from "@/lib/i18n/language-context";
 import type { MarketPriceStreamStatus } from "@/lib/market-price-stream";
 import { EASTERN_TIME_ZONE, mostRecentSessionRange } from "@/lib/market-session";
@@ -434,6 +435,17 @@ export function PriceChart({
     upper: null,
     lower: null,
   });
+
+  // The chart is remounted (key) only by a symbol/timeframe change; a mount with neither having changed is exactly what the
+  // 2026-10-16 16:00 ET blank chart needs explaining, so every mount/unmount is recorded locally (lib/chart-lifecycle.ts).
+  useEffect(() => {
+    recordChartEvent("chart-mount", { symbol, timeframe });
+    return () => recordChartEvent("chart-unmount", { symbol, timeframe });
+  }, [symbol, timeframe]);
+
+  useEffect(() => {
+    recordChartEvent("stream-status", { status: streamStatus });
+  }, [streamStatus]);
 
   useEffect(() => {
     const container = containerRef.current;
