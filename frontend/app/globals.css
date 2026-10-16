@@ -539,10 +539,6 @@ button, select { font: inherit; }
 /* Structural vs. Tactical (0-2 DTE) gamma view -- same "global mode"
    altitude as .tv-view-toggle above (changes what `gamma` is across
    every consuming panel at once), so it gets the identical styling. */
-.tv-gamma-view-toggle { display: flex; align-items: center; gap: 2px; }
-.tv-gamma-view-toggle button { border: 0; border-radius: 5px; background: transparent; color: var(--tv-text-dim); cursor: pointer; font-size: 0.74rem; font-weight: 700; padding: 5px 9px; }
-.tv-gamma-view-toggle button[aria-pressed="true"] { background: var(--tv-panel-raised); color: var(--tv-text); }
-.tv-structural-as-of { margin-left: 6px; color: var(--tv-text-dim); font-size: 0.68rem; white-space: nowrap; }
 
 .no-tactical-data-notice { margin: 2px 0 0; color: var(--tv-text-dim); font-size: 0.72rem; }
 
