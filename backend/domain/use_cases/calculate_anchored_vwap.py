@@ -46,13 +46,26 @@ def calculate_anchored_vwap_series(
         key=lambda reading: reading.as_of,
     )
 
+    # Stale carry-forward (2026-10-16): the stream ticks repeat the latest stored row's volume, and when the scheduler's rows
+    # are older than the stream's own latest row the carried number is the one the day started with (yesterday's total or the
+    # pre-open count) and never refreshes, so the stored volume alternates between the real session counter and that constant.
+    # The session counter only grows, so a first reading that is HIGHER than a later one was stale: its value is a carry, not
+    # volume. Readings equal to it are dropped (the last real value stands in) and the baseline restarts at zero.
+    first_volume = session_readings[0].volume if session_readings else 0
+    stale_volume = (
+        first_volume if any(reading.volume < first_volume for reading in session_readings[1:]) else None
+    )
+
     series: list[tuple[datetime, Decimal]] = []
     total_price_volume = Decimal(0)
     total_volume = 0
     previous_volume = 0
     for reading in session_readings:
-        interval_volume = max(reading.volume - previous_volume, 0)
-        previous_volume = reading.volume
+        volume = reading.volume
+        if stale_volume is not None and volume == stale_volume:
+            volume = previous_volume
+        interval_volume = max(volume - previous_volume, 0)
+        previous_volume = volume
         total_price_volume += reading.price * interval_volume
         total_volume += interval_volume
         if total_volume > 0:

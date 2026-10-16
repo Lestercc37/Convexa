@@ -101,22 +101,53 @@ def test_anchored_vwap_is_provisional_when_session_volume_is_zero() -> None:
     assert result.sample_count == 1
 
 
-def test_anchored_vwap_clamps_negative_volume_delta_from_session_rollover() -> None:
-    # Simulates a stale reading whose cumulative volume drops below the prior
-    # one (e.g. a session-boundary glitch) — its interval volume must not go
-    # negative and corrupt the weighted sum.
+def test_anchored_vwap_treats_a_first_volume_above_a_later_one_as_a_stale_carry() -> None:
+    # The session counter only grows. A first reading HIGHER than a later one was a carried-forward number (yesterday's
+    # total or the pre-open count), not session volume: it is not counted and the baseline restarts at zero.
     readings = [
-        _reading(5, "550", 1000),
-        _reading(10, "560", 400),  # volume dropped: clamp interval volume to 0
-        _reading(15, "540", 1400),  # interval volume = 1400 - 400 = 1000
+        _reading(5, "550", 1000),  # stale carry
+        _reading(10, "560", 400),  # real session volume so far: 400 at 560
+        _reading(15, "540", 1400),  # +1000 at 540
     ]
     as_of = SESSION_OPEN_UTC + timedelta(minutes=15)
 
     result = calculate_anchored_vwap(readings, as_of)
 
-    # (550*1000 + 560*0 + 540*1000) / (1000+0+1000) = 1,090,000 / 2,000 = 545
-    assert result.value == Decimal(545)
+    # (560*400 + 540*1000) / 1400 = 764,000 / 1,400 = 545.714...
+    assert result.value is not None and abs(result.value - Decimal("545.7142857")) < Decimal("0.0001")
     assert result.sample_count == 3
+
+
+def test_anchored_vwap_survives_the_stored_volume_alternating_between_real_and_stale() -> None:
+    # 2026-10-16: the scheduler wrote the real counter, the next stream tick re-wrote the stale carry (488,685 for SPY), and so on.
+    stale = 488_685
+    readings = [
+        _reading(0, "773", stale),
+        _reading(1, "772", 314_705),
+        _reading(1, "772", stale),
+        _reading(3, "771", 467_230),
+        _reading(3, "771", stale),
+        _reading(5, "770", 523_907),
+        _reading(5, "770", stale),
+    ]
+    as_of = SESSION_OPEN_UTC + timedelta(minutes=5)
+
+    series = calculate_anchored_vwap_series(readings, as_of)
+
+    expected = (
+        Decimal(772) * 314_705 + Decimal(771) * (467_230 - 314_705) + Decimal(770) * (523_907 - 467_230)
+    ) / Decimal(523_907)
+    assert abs(series[-1][1] - expected) < Decimal("0.0001")
+    # never pulled by the alternation: every point stays between the lowest and the highest traded price
+    assert all(Decimal(770) <= value <= Decimal(773) for _, value in series)
+
+
+def test_anchored_vwap_is_unchanged_when_the_volume_never_drops() -> None:
+    readings = [_reading(1, "550", 100), _reading(2, "560", 300), _reading(3, "540", 400)]
+    as_of = SESSION_OPEN_UTC + timedelta(minutes=3)
+
+    # first reading counts as-is (the counter resets at 9:30): (550*100 + 560*200 + 540*100) / 400 = 552.5
+    assert calculate_anchored_vwap(readings, as_of).value == Decimal("552.5")
 
 
 def test_anchored_vwap_not_applicable_for_pure_indices_regardless_of_readings() -> None:
