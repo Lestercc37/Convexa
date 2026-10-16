@@ -205,6 +205,7 @@ def test_alert_tags_the_nearest_gamma_level_when_spot_is_within_band() -> None:
     storage.save_gamma_aggregate(
         GammaAggregate(
             symbol="IWM",
+            view="tactical",
             as_of=datetime(2026, 1, 15, 14, 29, tzinfo=UTC),
             call_wall=Decimal("554"),  # (554-552.25)/552.25 ~= 0.32%, inside the 0.5% band
             put_wall=Decimal("400"),
@@ -236,6 +237,7 @@ def test_alert_near_gamma_level_is_none_when_spot_is_far_from_every_level() -> N
     storage.save_gamma_aggregate(
         GammaAggregate(
             symbol="IWM",
+            view="tactical",
             as_of=datetime(2026, 1, 15, 14, 29, tzinfo=UTC),
             call_wall=Decimal("700"),
             put_wall=Decimal("400"),
@@ -274,6 +276,7 @@ def test_alert_moneyness_uses_the_gamma_aggregates_atr_width_over_the_flat_perce
     storage.save_gamma_aggregate(
         GammaAggregate(
             symbol="IWM",
+            view="tactical",
             as_of=datetime(2026, 1, 15, 14, 29, tzinfo=UTC),
             near_the_money_width=Decimal("2"),
         )
@@ -309,6 +312,7 @@ def test_alert_near_gamma_level_uses_the_gamma_aggregates_atr_width_over_the_fla
     storage.save_gamma_aggregate(
         GammaAggregate(
             symbol="IWM",
+            view="tactical",
             as_of=datetime(2026, 1, 15, 14, 29, tzinfo=UTC),
             call_wall=Decimal("554"),
             put_wall=Decimal("400"),

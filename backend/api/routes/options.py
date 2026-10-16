@@ -100,7 +100,7 @@ def get_chain_expirations(symbol: str, request: Request) -> ChainExpirationsResp
 async def get_gamma(
     symbol: str,
     request: Request,
-    view: GammaView = Query(default="structural"),
+    view: GammaView = Query(default="tactical"),
 ) -> GammaResponse:
     # async def, not def: dispatched on the event loop instead of
     # Starlette's shared threadpool, which the scheduler's own 15
@@ -125,7 +125,7 @@ async def get_gamma(
 
 @router.get("/gamma/{symbol}/profile", response_model=GammaAggregateResponse)
 def gamma_profile(
-    symbol: str, request: Request, view: GammaView = Query(default="structural")
+    symbol: str, request: Request, view: GammaView = Query(default="tactical")
 ) -> GammaAggregateResponse:
     container: Container = request.app.state.container
     gamma = get_gamma_exposure(container.storage, symbol, view=view)
@@ -134,7 +134,7 @@ def gamma_profile(
 
 @router.get("/gamma/{symbol}/flip", response_model=GammaFlipResponse)
 def gamma_flip(
-    symbol: str, request: Request, view: GammaView = Query(default="structural")
+    symbol: str, request: Request, view: GammaView = Query(default="tactical")
 ) -> GammaFlipResponse:
     """The one honest, correctly-nullable representation of gamma_flip --
     GammaFlipResponse/gamma_flip_response() already existed for this
@@ -159,7 +159,7 @@ def gamma_history(
     request: Request,
     start: datetime = Query(default=datetime.min.replace(tzinfo=timezone.utc)),
     end: datetime = Query(default=datetime.max.replace(tzinfo=timezone.utc)),
-    view: GammaView = Query(default="structural"),
+    view: GammaView = Query(default="tactical"),
 ) -> GammaHistoryResponse:
     container: Container = request.app.state.container
     items = get_gamma_history(container.storage, symbol, start, end, view=view)

@@ -6,6 +6,7 @@ first price of the session)."""
 
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import UTC, date, datetime, time, timedelta
 from decimal import Decimal
 
@@ -36,6 +37,7 @@ def _clear_open_cache() -> None:
 def _gamma(symbol: str, base: int) -> GammaAggregate:
     return GammaAggregate(
         symbol=symbol,
+        view="tactical",
         as_of=SESSION_NOW,
         items=(
             GammaAggregateItem(
@@ -86,6 +88,8 @@ def _seed(storage, proxy: str, spot: int, future: str | None = None, anchor: int
     storage.save_market_price(MarketPrice(symbol=proxy, as_of=SESSION_NOW - timedelta(minutes=10), price=Decimal(spot), volume=0))
     storage.save_market_price(MarketPrice(symbol=proxy, as_of=SESSION_NOW, price=Decimal(spot + 10), volume=0))
     storage.save_gamma_aggregate(_gamma(proxy, spot))
+    # /gamma/{symbol} still reads derived_metrics from the structural aggregate (PR 2a leaves that reader alone)
+    storage.save_gamma_aggregate(replace(_gamma(proxy, spot), view="structural"))
     storage.save_chain_snapshot(_chain(proxy, spot))
     if future is not None and anchor is not None:
         storage.set_future_price_anchor(future, calculate_session_open(SESSION_NOW).date(), Decimal(anchor))
