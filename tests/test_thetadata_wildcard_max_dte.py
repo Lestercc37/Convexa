@@ -70,8 +70,10 @@ def test_open_interest_snapshots_are_untouched() -> None:
     assert oi and all("max_dte" not in params for params in oi)
 
 
-def test_the_limit_covers_the_widest_near_term_window() -> None:
+def test_the_limit_covers_the_tactical_fallback_window() -> None:
+    """The Structural view is gone from the refresh cycle; the widest consumer is the Tactical fallback (nearest LISTED
+    expiration + TACTICAL_FALLBACK_WINDOW_DAYS). VIX on a Friday lists next on Wednesday, 5 days out."""
     from backend.domain.use_cases import gamma
 
-    widest = max(gamma.STRUCTURAL_WINDOW_DAYS_BY_SYMBOL.values())
-    assert provider_module.WILDCARD_MAX_DTE >= widest + 15
+    assert provider_module.WILDCARD_MAX_DTE >= gamma.TACTICAL_FALLBACK_WINDOW_DAYS + 5
+    assert provider_module.WILDCARD_MAX_DTE >= gamma.TACTICAL_WINDOW_DAYS
