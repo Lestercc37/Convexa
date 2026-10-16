@@ -22,6 +22,9 @@ const chartMocks = vi.hoisted(() => ({
   applyOptions: vi.fn(),
   priceToCoordinate: vi.fn(),
   coordinateToPrice: vi.fn(),
+  attachPrimitive: vi.fn(),
+  detachPrimitive: vi.fn(),
+  getGammaProfile: vi.fn(),
   coordinateToTime: vi.fn(),
   subscribeVisibleLogicalRangeChange: vi.fn(),
   unsubscribeVisibleLogicalRangeChange: vi.fn(),
@@ -34,7 +37,7 @@ const chartMocks = vi.hoisted(() => ({
 
 vi.mock("@/lib/api", async () => {
   const actual = await vi.importActual<typeof import("@/lib/api")>("@/lib/api");
-  return { ...actual, getGammaHistory: chartMocks.getGammaHistory };
+  return { ...actual, getGammaHistory: chartMocks.getGammaHistory, getGammaProfile: chartMocks.getGammaProfile };
 });
 
 vi.mock("lightweight-charts", () => ({
@@ -63,6 +66,8 @@ beforeAll(() => {
           removePriceLine: chartMocks.removePriceLine,
           priceToCoordinate: chartMocks.priceToCoordinate,
           coordinateToPrice: chartMocks.coordinateToPrice,
+          attachPrimitive: chartMocks.attachPrimitive,
+          detachPrimitive: chartMocks.detachPrimitive,
         }
       : { setData: chartMocks.lineSetData },
   );
@@ -88,6 +93,7 @@ beforeEach(() => {
   chartMocks.priceToCoordinate.mockImplementation(() => null);
   chartMocks.coordinateToPrice.mockImplementation(() => null);
   chartMocks.coordinateToTime.mockImplementation(() => null);
+  chartMocks.getGammaProfile.mockResolvedValue({ schema_version: 1, symbol: "SPY", items: [{ strike: 550, net_gamma: 3, absolute_gamma: 3 }, { strike: 555, net_gamma: -6, absolute_gamma: 6 }] });
   chartMocks.getGammaHistory.mockResolvedValue({
     schema_version: 1,
     symbol: "SPY",
@@ -490,6 +496,24 @@ describe("PriceChart", () => {
     // *different* UTC epoch (20:59 UTC) -- not a fixed 4-hour offset.
     const estEpochSeconds = Date.UTC(2026, 0, 15, 20, 59, 0) / 1000;
     expect(formatter(estEpochSeconds, TickMarkType.Time, "en-US")).toBe("15:59");
+  });
+
+  it("keeps the GEX histogram off until the toggle is checked, then attaches a primitive fed by the gamma profile (draft)", async () => {
+    const user = userEvent.setup();
+    renderWithLanguage(<PriceChart symbol="SPY" candles={candlesWithRange} gamma={gamma} gammaView="tactical" />);
+    expect(chartMocks.attachPrimitive).not.toHaveBeenCalled();
+    expect(chartMocks.getGammaProfile).not.toHaveBeenCalled();
+
+    await user.click(screen.getByLabelText("Histograma GEX"));
+
+    expect(chartMocks.attachPrimitive).toHaveBeenCalledTimes(1);
+    const primitive = chartMocks.attachPrimitive.mock.calls[0][0];
+    await waitFor(() => expect(chartMocks.getGammaProfile).toHaveBeenCalledWith("SPY", "tactical", expect.any(AbortSignal)));
+    await waitFor(() => expect(primitive.bars).toEqual([{ strike: 550, net: 3, absolute: 3 }, { strike: 555, net: -6, absolute: 6 }]));
+
+    await user.click(screen.getByLabelText("Histograma GEX"));
+
+    expect(chartMocks.detachPrimitive).toHaveBeenCalledWith(primitive);
   });
 
   it("labels the chart title with the selected timeframe", () => {
