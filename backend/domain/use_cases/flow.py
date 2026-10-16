@@ -104,10 +104,10 @@ def _classify_moneyness(
 
 
 def _nearest_gamma_level(spot: Decimal | None, gamma: GammaAggregate | None) -> str | None:
-    """Which of Call Wall/Put Wall/Gamma Flip (Structural view -- the
-    always-populated one; Tactical can legitimately be empty on a day/
-    symbol with no 0-2 DTE contracts, see GammaAggregate.view's own
-    docstring) spot is currently sitting within band of, if any -- ties
+    """Which of Call Wall/Put Wall/Gamma Flip (Tactical view, 0-2 DTE; it
+    can legitimately be empty on a day/symbol with no such contracts, see
+    GammaAggregate.view's own docstring, in which case there is no tag)
+    spot is currently sitting within band of, if any -- ties
     the alert to the same levels the chart already shows, instead of
     leaving the reader to cross-reference two panels by eye. Closest
     level wins when spot happens to sit within band of more than one
@@ -475,20 +475,21 @@ class WhaleAlertsEngine:
         )
 
     def _cached_market_context(self, symbol: str) -> tuple[Decimal | None, GammaAggregate | None]:
-        """(latest spot price, latest Structural GammaAggregate) for
+        """(latest spot price, latest Tactical GammaAggregate) for
         `symbol`, cached -- see this class's own __init__ comment on
-        _market_context_cache for why. Structural, not Tactical: always
-        populated for an actively-tracked symbol (Tactical can be
-        legitimately empty, see GammaAggregate.view's own docstring), and
-        Call Wall/Put Wall/Gamma Flip are the same levels the chart's
-        Structural view already shows by default."""
+        _market_context_cache for why. Tactical (0-2 DTE) since the
+        Structural view is being retired (2026-10-15, the user never looks
+        at it): these are the same Call Wall/Put Wall/Gamma Flip the chart
+        shows. Tactical can be legitimately empty on a day/symbol with no
+        0-2 DTE contracts (see GammaAggregate.view's own docstring); the
+        callers already treat a missing level as "no tag"."""
         with self._market_context_cache_lock:
             now = time.monotonic()
             cached = self._market_context_cache.get(symbol)
             if cached is not None and now - cached[0] < self._thresholds_cache_ttl_seconds:
                 return cached[1]
             price = self._storage.get_latest_price(symbol)
-            gamma = self._storage.get_latest_gamma_aggregate(symbol, view="structural")
+            gamma = self._storage.get_latest_gamma_aggregate(symbol, view="tactical")
             context = (price.price if price is not None else None, gamma)
             self._market_context_cache[symbol] = (now, context)
             return context

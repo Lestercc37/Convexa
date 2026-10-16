@@ -157,7 +157,7 @@ def test_gamma_get_view_query_param_routes_to_the_tactical_aggregate() -> None:
     diverge."""
     with TestClient(app) as client:
         trigger = client.post("/internal/trigger-calculation/spy")
-        structural = client.get("/api/v1/gamma/spy")
+        structural = client.get("/api/v1/gamma/spy?view=structural")
         tactical = client.get("/api/v1/gamma/spy?view=tactical")
         default = client.get("/api/v1/gamma/spy")
 
@@ -180,10 +180,9 @@ def test_gamma_get_view_query_param_routes_to_the_tactical_aggregate() -> None:
     assert tactical.json()["call_wall"] == structural.json()["call_wall"]
     assert tactical.json()["put_wall"] == structural.json()["put_wall"]
 
-    # Omitting the param must still return exactly today's structural
-    # numbers -- no regression for every consumer that predates this
-    # feature and never passes `view`.
-    assert default.json() == structural.json()
+    # Omitting the param returns the Tactical view since 2026-10-15 (the
+    # Structural view is being retired; the dashboard only asks for Tactical).
+    assert default.json() == tactical.json()
 
 
 def test_gamma_profile_get_is_read_only_and_returns_uniform_not_found() -> None:
