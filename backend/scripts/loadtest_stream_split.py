@@ -38,6 +38,9 @@ STREAM_RELAY_PORT = 26601
 WHALE_RELAY_PORT = 26599
 CONTRACTS = 764  # what the production worker subscribes today
 QUOTE_SHARE = 0.86  # option QUOTEs vs option TRADEs, roughly the real mix
+# OPRA trade-condition code on every fake option TRADE, in the share measured on the 2026-10-06 09:30-09:32 raw capture
+# (18: 55%, 125: 26%, 130: 9%, 95: 4%, 131: 3%, 134: 2%, 126: 1%) -- the stream processor and the relay now carry it.
+_TRADE_CONDITIONS = [18] * 55 + [125] * 26 + [130] * 9 + [95] * 4 + [131] * 3 + [134] * 2 + [126]
 
 
 # ----------------------------------------------------------------- helpers
@@ -109,7 +112,7 @@ def _option_frames(count: int) -> list[tuple[str, str]]:
                         {
                             "header": {"type": "TRADE", "status": "CONNECTED"},
                             "contract": contract,
-                            "trade": {"size": 1 + i % 20, "price": 1.09},
+                            "trade": {"size": 1 + i % 20, "price": 1.09, "condition": _TRADE_CONDITIONS[(i // 100) % 100]},
                         }
                     ),
                 )
