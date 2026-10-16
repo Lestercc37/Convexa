@@ -56,6 +56,11 @@ RECENT_CHAIN_SNAPSHOT_WINDOW_MINUTES = 15
 LEE_READY_ONLY_SQL = "AND abs((w.estimated_buy_volume + w.estimated_sell_volume) - w.amount) < 1"
 
 
+def _optional_decimal(value: object) -> Decimal | None:
+    """A nullable numeric column as Decimal; NULL (row written before migration 0041) stays None."""
+    return None if value is None else Decimal(str(value))
+
+
 class PostgreSQLStorage:
     """Synchronous PostgreSQL implementation of the domain storage port."""
 
@@ -769,12 +774,14 @@ class PostgreSQLStorage:
                         INSERT INTO gamma_aggregate_items (
                             underlying_id, time, view, strike, total_gamma_exposure,
                             call_gamma_exposure, put_gamma_exposure, net_gamma,
-                            contract_count, absolute_gamma, open_interest, volume
+                            contract_count, absolute_gamma, open_interest, volume,
+                            delta_exposure, vanna_exposure, charm_exposure
                         )
                         VALUES (
                             :underlying_id, :time, :view, :strike, :total_gamma_exposure,
                             :call_gamma_exposure, :put_gamma_exposure, :net_gamma,
-                            :contract_count, :absolute_gamma, :open_interest, :volume
+                            :contract_count, :absolute_gamma, :open_interest, :volume,
+                            :delta_exposure, :vanna_exposure, :charm_exposure
                         )
                         ON CONFLICT (underlying_id, time, view, strike) DO UPDATE SET
                             total_gamma_exposure = EXCLUDED.total_gamma_exposure,
@@ -784,7 +791,10 @@ class PostgreSQLStorage:
                             contract_count = EXCLUDED.contract_count,
                             absolute_gamma = EXCLUDED.absolute_gamma,
                             open_interest = EXCLUDED.open_interest,
-                            volume = EXCLUDED.volume
+                            volume = EXCLUDED.volume,
+                            delta_exposure = EXCLUDED.delta_exposure,
+                            vanna_exposure = EXCLUDED.vanna_exposure,
+                            charm_exposure = EXCLUDED.charm_exposure
                         """
                     ),
                     {
@@ -800,6 +810,9 @@ class PostgreSQLStorage:
                         "absolute_gamma": item.absolute_gamma,
                         "open_interest": item.open_interest,
                         "volume": item.volume,
+                        "delta_exposure": item.delta_exposure,
+                        "vanna_exposure": item.vanna_exposure,
+                        "charm_exposure": item.charm_exposure,
                     },
                 )
 
@@ -844,7 +857,8 @@ class PostgreSQLStorage:
                 """
                 SELECT strike, total_gamma_exposure, call_gamma_exposure,
                        put_gamma_exposure, net_gamma, contract_count,
-                       absolute_gamma, open_interest, volume
+                       absolute_gamma, open_interest, volume,
+                       delta_exposure, vanna_exposure, charm_exposure
                 FROM gamma_aggregate_items
                 WHERE underlying_id = :underlying_id AND time = :time AND view = :view
                 ORDER BY strike
@@ -863,6 +877,9 @@ class PostgreSQLStorage:
                 absolute_gamma=Decimal(row["absolute_gamma"]),
                 open_interest=int(row["open_interest"]),
                 volume=int(row["volume"]),
+                delta_exposure=_optional_decimal(row["delta_exposure"]),
+                vanna_exposure=_optional_decimal(row["vanna_exposure"]),
+                charm_exposure=_optional_decimal(row["charm_exposure"]),
             )
             for row in rows
         )

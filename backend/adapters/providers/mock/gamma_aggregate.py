@@ -31,6 +31,9 @@ class FakeGammaAggregateCalculator(IGammaAggregateCalculator):
         # calls and puts), same as contract_count_by_strike above.
         open_interest_by_strike: dict[Decimal, int] = defaultdict(int)
         volume_by_strike: dict[Decimal, int] = defaultdict(int)
+        delta_by_strike: dict[Decimal, Decimal] = defaultdict(lambda: Decimal("0"))
+        vanna_by_strike: dict[Decimal, Decimal] = defaultdict(lambda: Decimal("0"))
+        charm_by_strike: dict[Decimal, Decimal] = defaultdict(lambda: Decimal("0"))
 
         for exposure in exposures:
             if exposure.contract_type == ContractType.CALL:
@@ -40,6 +43,9 @@ class FakeGammaAggregateCalculator(IGammaAggregateCalculator):
             contract_count_by_strike[exposure.strike] += 1
             open_interest_by_strike[exposure.strike] += exposure.open_interest
             volume_by_strike[exposure.strike] += exposure.volume
+            delta_by_strike[exposure.strike] += exposure.delta_exposure
+            vanna_by_strike[exposure.strike] += exposure.vanna_exposure
+            charm_by_strike[exposure.strike] += exposure.charm_exposure
 
         items: list[GammaAggregateItem] = []
         positive_gamma = Decimal("0")
@@ -65,6 +71,9 @@ class FakeGammaAggregateCalculator(IGammaAggregateCalculator):
                     absolute_gamma=absolute_gamma,
                     open_interest=open_interest_by_strike[strike],
                     volume=volume_by_strike[strike],
+                    delta_exposure=delta_by_strike[strike],
+                    vanna_exposure=vanna_by_strike[strike],
+                    charm_exposure=charm_by_strike[strike],
                 )
             )
 

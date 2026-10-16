@@ -37,6 +37,10 @@ def test_fake_gamma_aggregate_calculator_groups_gamma_exposure_by_strike() -> No
                 absolute_gamma=Decimal("27225000.000"),
                 open_interest=14000,  # 8000 (call) + 6000 (put) -- P7 fix
                 volume=6800,  # 3400 + 3400
+                # This fixture's contracts carry zero delta/vanna/charm: per-strike sums are 0, not "not stored".
+                delta_exposure=Decimal("0"),
+                vanna_exposure=Decimal("0"),
+                charm_exposure=Decimal("0"),
             ),
             GammaAggregateItem(
                 strike=Decimal("545"),
@@ -48,6 +52,9 @@ def test_fake_gamma_aggregate_calculator_groups_gamma_exposure_by_strike() -> No
                 absolute_gamma=Decimal("57475000.000"),
                 open_interest=6000,  # 5000 (call) + 1000 (put)
                 volume=6800,  # 3400 + 3400
+                delta_exposure=Decimal("0"),
+                vanna_exposure=Decimal("0"),
+                charm_exposure=Decimal("0"),
             ),
         ),
         total_market_gamma=Decimal("84700000.000"),
