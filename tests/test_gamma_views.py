@@ -72,12 +72,11 @@ def _contract(
     )
 
 
-def test_execute_both_produces_independently_scoped_structural_and_tactical_aggregates() -> None:
-    """The core of this feature: execute_both() must not just return the
-    same result twice with a different label -- Structural (SPY's own
-    30-day tier) and Tactical (fixed 0-2 DTE) genuinely see different
-    contract sets when a real one sits outside the tactical window but
-    inside the structural one."""
+def test_execute_both_builds_only_the_tactical_aggregate_and_leaves_structural_to_execute() -> None:
+    """Since 2026-10-16 the refresh cycle (execute_both) builds and persists ONLY the Tactical
+    (fixed 0-2 DTE) aggregate -- no Structural row is written. execute() (backfill scripts,
+    manual triggers) still builds the Structural one from the same chain: SPY's 30-day tier
+    sees the contracts outside the tactical window, Tactical does not."""
     storage = InMemoryStorage()
     contracts = (
         _contract(
@@ -103,7 +102,11 @@ def test_execute_both_produces_independently_scoped_structural_and_tactical_aggr
     storage.save_chain_snapshot(chain)
     orchestrator = _orchestrator(storage)
 
-    structural, tactical = orchestrator.execute_both("SPY")
+    tactical = orchestrator.execute_both("SPY")
+
+    # execute_both persisted nothing structural
+    assert storage.get_latest_gamma_aggregate("SPY", view="structural") is None
+    structural = orchestrator.execute("SPY")
 
     assert structural.view == "structural"
     assert tactical.view == "tactical"
@@ -113,9 +116,6 @@ def test_execute_both_produces_independently_scoped_structural_and_tactical_aggr
     assert tactical_strikes == {Decimal(550)}
     assert tactical_strikes < structural_strikes
 
-    # Both are actually persisted, independently.
-    assert storage.get_latest_gamma_aggregate("SPY", view="structural") is not None
-    assert storage.get_latest_gamma_aggregate("SPY", view="tactical") is not None
     saved_structural = storage.get_latest_gamma_aggregate("SPY", view="structural")
     saved_tactical = storage.get_latest_gamma_aggregate("SPY", view="tactical")
     assert saved_structural is not None and saved_tactical is not None
@@ -134,9 +134,8 @@ def test_execute_both_skips_tactical_for_a_symbol_outside_the_enabled_scope() ->
     honest-empty Tactical aggregate for AAPL (same has_data=False shape
     the frontend already handles for a real 0-2 DTE gap), not skip
     persisting entirely (which would leave get_latest_gamma_aggregate()
-    returning a permanently stale pre-fix row) -- but Structural must be
-    completely unaffected, since AAPL's own 45-day structural window was
-    never in scope for this restriction."""
+    returning a permanently stale pre-fix row). No Structural row is built
+    for AAPL any more (Structural retired 2026-10-16)."""
     storage = InMemoryStorage()
     contracts = (
         _contract(
@@ -152,10 +151,9 @@ def test_execute_both_skips_tactical_for_a_symbol_outside_the_enabled_scope() ->
     storage.save_chain_snapshot(chain)
     orchestrator = _orchestrator(storage)
 
-    structural, tactical = orchestrator.execute_both("AAPL")
+    tactical = orchestrator.execute_both("AAPL")
 
-    assert structural.view == "structural"
-    assert structural.items  # AAPL's structural computation is unaffected
+    assert storage.get_latest_gamma_aggregate("AAPL", view="structural") is None
     assert tactical.view == "tactical"
     assert tactical.items == ()
     assert tactical.gamma_flip is None
@@ -283,12 +281,7 @@ def test_execute_tactical_with_no_chain_contracts_at_all_is_an_honest_empty_resu
     assert tactical.gamma_flip is None
 
 
-def test_structural_is_not_rebuilt_before_the_refresh_interval_elapses() -> None:
-    """Added 2026-09-25 per the user's own trading style (a scalper/day
-    trader reads Tactical as their working set, Structural as slower
-    background macro context) -- STRUCTURAL_REFRESH_INTERVAL throttles
-    Structural's own rebuild+persist, Tactical stays on the full
-    scheduler cadence every call."""
+def test_execute_both_rebuilds_tactical_every_call_and_never_writes_structural() -> None:
     storage = InMemoryStorage()
     contracts = (
         _contract(
@@ -305,77 +298,16 @@ def test_structural_is_not_rebuilt_before_the_refresh_interval_elapses() -> None
     )
     orchestrator = _orchestrator(storage)
 
-    first_structural, first_tactical = orchestrator.execute_both("SPY")
+    first = orchestrator.execute_both("SPY")
 
     second_as_of = AS_OF + timedelta(minutes=5)
     storage.save_chain_snapshot(
         OptionChain(symbol="SPY", as_of=second_as_of, spot_price=SPOT_PRICE, contracts=contracts)
     )
+    second = orchestrator.execute_both("SPY")
 
-    second_structural, second_tactical = orchestrator.execute_both("SPY")
-
-    # Structural is exactly the row from the first call -- not rebuilt.
-    assert second_structural.as_of == first_structural.as_of == AS_OF
-    # Tactical is never throttled -- rebuilt every call.
-    assert second_tactical.as_of == second_as_of
-    assert second_tactical.as_of != first_tactical.as_of
-    # And no second structural row silently landed in storage either.
-    persisted_structural = storage.get_latest_gamma_aggregate("SPY", view="structural")
-    assert persisted_structural is not None
-    assert persisted_structural.as_of == AS_OF
+    assert first.as_of == AS_OF and first.view == "tactical" and first.items != ()
+    assert second.as_of == second_as_of
+    assert storage.get_latest_gamma_aggregate("SPY", view="structural") is None
 
 
-def test_structural_is_rebuilt_once_the_refresh_interval_elapses() -> None:
-    storage = InMemoryStorage()
-    contracts = (
-        _contract(
-            "SPY260115C00550000", ContractType.CALL, Decimal(550), TODAY_ET,
-            open_interest=100, gamma="0.02",
-        ),
-        _contract(
-            "SPY260115P00550000", ContractType.PUT, Decimal(550), TODAY_ET,
-            open_interest=100, gamma="0.02",
-        ),
-    )
-    storage.save_chain_snapshot(
-        OptionChain(symbol="SPY", as_of=AS_OF, spot_price=SPOT_PRICE, contracts=contracts)
-    )
-    orchestrator = _orchestrator(storage)
-
-    first_structural, _ = orchestrator.execute_both("SPY")
-
-    later_as_of = AS_OF + timedelta(minutes=16)
-    storage.save_chain_snapshot(
-        OptionChain(symbol="SPY", as_of=later_as_of, spot_price=SPOT_PRICE, contracts=contracts)
-    )
-
-    second_structural, second_tactical = orchestrator.execute_both("SPY")
-
-    assert second_structural.as_of == later_as_of
-    assert second_structural.as_of != first_structural.as_of
-    assert second_tactical.as_of == later_as_of
-
-
-def test_structural_always_builds_fresh_on_the_first_call_for_a_symbol() -> None:
-    # No prior persisted structural row -- existing_structural is None,
-    # must never be mistaken for "fresh enough to skip".
-    storage = InMemoryStorage()
-    contracts = (
-        _contract(
-            "SPY260115C00550000", ContractType.CALL, Decimal(550), TODAY_ET,
-            open_interest=100, gamma="0.02",
-        ),
-        _contract(
-            "SPY260115P00550000", ContractType.PUT, Decimal(550), TODAY_ET,
-            open_interest=100, gamma="0.02",
-        ),
-    )
-    storage.save_chain_snapshot(
-        OptionChain(symbol="SPY", as_of=AS_OF, spot_price=SPOT_PRICE, contracts=contracts)
-    )
-    orchestrator = _orchestrator(storage)
-
-    structural, _ = orchestrator.execute_both("SPY")
-
-    assert structural.as_of == AS_OF
-    assert structural.items != ()

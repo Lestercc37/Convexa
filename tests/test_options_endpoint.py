@@ -97,7 +97,7 @@ def test_internal_trigger_persists_consolidated_gamma_for_public_get() -> None:
     with TestClient(app) as client:
         trigger = client.post("/internal/trigger-calculation/spy")
         response = client.get("/api/v1/gamma/spy")
-        stored = app.state.container.storage.get_latest_gamma_aggregate("SPY")
+        stored = app.state.container.storage.get_latest_gamma_aggregate("SPY", view="tactical")
 
     assert trigger.status_code == 200
     assert response.status_code == 200
@@ -145,16 +145,11 @@ def test_internal_trigger_persists_consolidated_gamma_for_public_get() -> None:
     }
 
 
-def test_gamma_get_view_query_param_routes_to_the_tactical_aggregate() -> None:
-    """MockDataProvider's fixture chain (as_of 2026-01-15, its only
-    expiration 2026-02-20, 36 days out) lists nothing within 0-2 DTE of
-    its own as_of, so Tactical falls back to that same nearest listed
-    expiration (see TACTICAL_FALLBACK_WINDOW_DAYS' own comment) -- live
-    end to end through the real trigger-calculation -> get pipeline.
-    Both views land on the same single expiration here (the fixture only
-    has one), so they read identically; test_gamma_views.py's own
-    execute_both test covers the case where the two windows genuinely
-    diverge."""
+def test_gamma_get_serves_the_tactical_aggregate_and_no_structural_one_exists() -> None:
+    """The refresh cycle persists only the Tactical (0-2 DTE) aggregate since 2026-10-16 (Structural
+    retired): the default and ?view=tactical answer, ?view=structural has nothing to return. The
+    mock fixture lists nothing within 0-2 DTE of its as_of, so Tactical falls back to the nearest
+    listed expiration (TACTICAL_FALLBACK_WINDOW_DAYS) and still has data."""
     with TestClient(app) as client:
         trigger = client.post("/internal/trigger-calculation/spy")
         structural = client.get("/api/v1/gamma/spy?view=structural")
@@ -162,26 +157,10 @@ def test_gamma_get_view_query_param_routes_to_the_tactical_aggregate() -> None:
         default = client.get("/api/v1/gamma/spy")
 
     assert trigger.status_code == 200
-    assert structural.status_code == 200
+    assert structural.status_code == 404
     assert tactical.status_code == 200
-
-    assert structural.json()["view"] == "structural"
-    assert structural.json()["has_data"] is True
-
     assert tactical.json()["view"] == "tactical"
     assert tactical.json()["has_data"] is True
-    # Both views land on the exact same (only) expiration this fixture
-    # has, so every computed field matches structural's -- including
-    # call_wall/put_wall being None on both: the fixture's symmetric
-    # call+put open interest at every strike nets each strike's gamma to
-    # zero, a real "no candidate found" outcome (see
-    # test_tactical_walls_include_0dte_unlike_structural's own comment),
-    # not something this fallback should manufacture a value for.
-    assert tactical.json()["call_wall"] == structural.json()["call_wall"]
-    assert tactical.json()["put_wall"] == structural.json()["put_wall"]
-
-    # Omitting the param returns the Tactical view since 2026-10-15 (the
-    # Structural view is being retired; the dashboard only asks for Tactical).
     assert default.json() == tactical.json()
 
 
@@ -203,7 +182,7 @@ def test_gamma_profile_returns_frozen_snapshot_with_per_strike_items() -> None:
     with TestClient(app) as client:
         trigger = client.post("/internal/trigger-calculation/spy")
         response = client.get("/api/v1/gamma/spy/profile")
-        stored = app.state.container.storage.get_latest_gamma_aggregate("SPY")
+        stored = app.state.container.storage.get_latest_gamma_aggregate("SPY", view="tactical")
 
     assert trigger.status_code == 200
     assert response.status_code == 200
@@ -232,7 +211,7 @@ def test_gamma_profile_items_expose_the_real_open_interest_and_volume() -> None:
     with TestClient(app) as client:
         client.post("/internal/trigger-calculation/spy")
         response = client.get("/api/v1/gamma/spy/profile")
-        stored = app.state.container.storage.get_latest_gamma_aggregate("SPY")
+        stored = app.state.container.storage.get_latest_gamma_aggregate("SPY", view="tactical")
 
     assert response.status_code == 200
     payload = response.json()

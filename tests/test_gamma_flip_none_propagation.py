@@ -130,7 +130,7 @@ def test_dealer_mode_does_not_crash_when_gamma_flip_is_none() -> None:
     now = datetime(2026, 1, 15, 14, 30, tzinfo=UTC)
     storage.save_market_price(MarketPrice(symbol="SPY", as_of=now, price=Decimal("552.25"), volume=1000))
     storage.save_gamma_aggregate(
-        GammaAggregate(symbol="SPY", as_of=now, gamma_flip=None, net_gamma=Decimal("100"))
+        GammaAggregate(symbol="SPY", view="tactical", as_of=now, gamma_flip=None, net_gamma=Decimal("100"))
     )
     storage.save_chain_snapshot(MockDataProvider().get_option_chain("SPY"))
 
@@ -148,6 +148,7 @@ def test_dealer_mode_does_not_crash_when_gamma_flip_is_none() -> None:
 def test_agreement_component_does_not_crash_when_gamma_flip_is_none() -> None:
     gamma = GammaAggregate(
         symbol="SPY",
+        view="tactical",
         as_of=datetime(2026, 1, 15, 14, 30, tzinfo=UTC),
         gamma_flip=None,
         net_gamma=Decimal("100"),

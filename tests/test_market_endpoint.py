@@ -51,6 +51,7 @@ def test_market_endpoint_marks_anchored_vwap_not_applicable_for_pure_indices() -
         storage.save_gamma_aggregate(
             GammaAggregate(
                 symbol="VIX",
+                view="tactical",
                 as_of=gamma_as_of,
                 gamma_flip=Decimal(15),
                 call_wall=Decimal(16),
@@ -110,6 +111,7 @@ def test_market_endpoint_approximates_anchored_vwap_from_the_proxy_etf_for_spx()
         storage.save_gamma_aggregate(
             GammaAggregate(
                 symbol="SPX",
+                view="tactical",
                 as_of=gamma_as_of,
                 gamma_flip=Decimal(5500),
                 call_wall=Decimal(5600),
@@ -313,6 +315,7 @@ def test_market_endpoint_confirms_agreeing_dealer_mode_at_gamma_flip() -> None:
         storage.save_gamma_aggregate(
             GammaAggregate(
                 symbol="SPY",
+                view="tactical",
                 as_of=gamma_as_of,
                 gamma_flip=Decimal(550),
                 call_wall=Decimal(560),
@@ -404,6 +407,7 @@ def test_market_endpoint_prefers_price_when_dealer_mode_diverges() -> None:
         storage.save_gamma_aggregate(
             GammaAggregate(
                 symbol="SPY",
+                view="tactical",
                 as_of=as_of,
                 gamma_flip=Decimal(550),
                 net_gamma=Decimal(-100),

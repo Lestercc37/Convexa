@@ -183,26 +183,14 @@ class CalculateGammaExposureOrchestrator:
         self._storage.save_gamma_aggregate(result)
         return result
 
-    def execute_both(self, underlying: str) -> tuple[GammaAggregate, GammaAggregate]:
+    def execute_both(self, underlying: str) -> GammaAggregate:
         """The real entry point for the periodic refresh cycle (see
-        RefreshUnderlyingSnapshotUseCase) -- builds and persists the
-        tactical GammaAggregate for `underlying` on every call, and the
-        structural one only when STRUCTURAL_REFRESH_INTERVAL has actually
-        elapsed since the last one persisted (see that constant's own
-        comment for why) -- both from a single chain/daily-bars fetch.
-        Fetching once (rather than calling execute() then
-        execute_tactical(), which would fetch the same storage rows a
-        second time for no reason) is the whole justification for this
-        method existing separately from the two single-view ones above --
-        the expiration-window filter is a pure in-memory operation on an
-        already-fetched chain, so there's nothing view-specific about the
-        fetch itself.
-
-        A skipped cycle returns the still-current, previously-persisted
-        structural aggregate unchanged -- not a stale flag, not a
-        re-fetch, just the same row every consumer already reads via
-        get_latest_gamma_aggregate() the rest of the time between
-        refreshes.
+        RefreshUnderlyingSnapshotUseCase). Despite the name it builds and
+        persists ONLY the Tactical (0-2 DTE) GammaAggregate since
+        2026-10-16: the Structural view was retired (the user never looked
+        at it and it doubled the per-cycle CPU). The name is kept so the
+        call sites do not change; execute() still builds a Structural
+        aggregate for the backfill scripts and manual triggers.
 
         Tactical itself is skipped (honest-empty, still persisted so
         get_latest_gamma_aggregate() never returns a permanently stale
@@ -210,34 +198,17 @@ class CalculateGammaExposureOrchestrator:
         constant's own comment for why.
         """
         chain = self._fetch_chain(underlying)
-        daily_bars = self._storage.get_daily_bars(underlying, REQUIRED_DAILY_BARS)
-
         anchor = chain.as_of.astimezone(EASTERN_TIME).date()
         if underlying.upper() not in TACTICAL_ENABLED_SYMBOLS:
             tactical = GammaAggregate(symbol=chain.symbol, as_of=chain.as_of, view="tactical")
         else:
+            daily_bars = self._storage.get_daily_bars(underlying, REQUIRED_DAILY_BARS)
             with self._compute_semaphore:
                 tactical = self._build_view(
                     underlying, chain, daily_bars, TACTICAL_WINDOW_DAYS, anchor, "tactical"
                 )
         self._storage.save_gamma_aggregate(tactical)
-
-        existing_structural = self._storage.get_latest_gamma_aggregate(underlying, view="structural")
-        structural_is_fresh = (
-            existing_structural is not None
-            and chain.as_of - existing_structural.as_of < STRUCTURAL_REFRESH_INTERVAL
-        )
-        if structural_is_fresh:
-            assert existing_structural is not None  # narrows for the type checker
-            structural = existing_structural
-        else:
-            with self._compute_semaphore:
-                structural = self._build_view(
-                    underlying, chain, daily_bars, _structural_window_days(underlying), None, "structural"
-                )
-            self._storage.save_gamma_aggregate(structural)
-
-        return structural, tactical
+        return tactical
 
     def _fetch_chain(self, underlying: str) -> OptionChain:
         chain = self._storage.get_latest_chain_snapshot(underlying)
@@ -602,7 +573,7 @@ TACTICAL_WINDOW_DAYS = 2
 # its own gamma_aggregates + gamma_aggregate_items writes) EVERY scheduler
 # cycle, unthrottled -- quantified at ~2,646 gamma_aggregate_items rows
 # written in 15 minutes for Tactical alone vs. 403 for Structural (which
-# has its own 15-minute throttle, STRUCTURAL_REFRESH_INTERVAL above).
+# was throttled to every 15 minutes before it was retired).
 # Investigated as a likely contributor to real ThetaData WebSocket
 # keepalive-timeout reconnects appearing at market open, worsening
 # through the session -- this alone won't be enough if Theta Terminal
@@ -633,21 +604,6 @@ TACTICAL_ENABLED_SYMBOLS = frozenset({"SPX", "VIX", "NDX", "SPY", "QQQ", "IWM", 
 # days (vs. structural's 30/45) keeps it capturing only the next weekly
 # or two for VIX/DIA, not drifting into structural's own macro window.
 TACTICAL_FALLBACK_WINDOW_DAYS = 7
-
-# Structural refresh throttle, added 2026-09-25 per the user's own
-# trading style: a scalper/day trader reads Tactical as their working
-# set (needs to be as fresh as every scheduler cycle can make it) and
-# Structural as background macro context (Call Wall/Put Wall/Gamma Flip
-# on the wider window) that doesn't need the same resolution. Recomputing
-# and persisting a full Structural build every cycle -- BSM greeks,
-# three aggregations, Gamma Flip's own wide search, walls, max pain, all
-# five Greek-exposure sums, plus two Postgres writes (gamma_aggregates +
-# its per-strike items) -- was pure cost with no corresponding benefit
-# once nothing is actually looking at it that often. Tactical is
-# unaffected -- see execute_both's own skip logic below, gated on this
-# threshold rather than removing Structural's own freshness entirely.
-STRUCTURAL_REFRESH_INTERVAL = timedelta(minutes=15)
-
 
 def _filter_to_near_term_expirations(
     chain: OptionChain, window_days: int, anchor: date | None = None

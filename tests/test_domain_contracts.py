@@ -73,6 +73,7 @@ def test_chain_fetch_serializes_contract_shape_and_does_not_persist() -> None:
 def test_gamma_response_derives_dealer_position() -> None:
     gamma = GammaAggregate(
         symbol="SPY",
+        view="tactical",
         as_of=utc_now(),
         gamma_flip=Decimal("548.5"),
         call_wall=Decimal("555"),
@@ -249,6 +250,7 @@ def test_market_snapshot_is_projection_not_persisted_table_model() -> None:
     storage.save_gamma_aggregate(
         GammaAggregate(
             symbol="SPY",
+            view="tactical",
             as_of=now,
             gamma_flip=Decimal("550"),
             net_gamma=Decimal("100"),

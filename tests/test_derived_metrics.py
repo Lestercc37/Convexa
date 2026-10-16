@@ -61,6 +61,25 @@ def test_all_derived_formulas_match_known_twenty_day_case() -> None:
     assert metrics.volatility_regime.days_accumulated == 20
 
 
+def test_dealer_impact_ranks_only_tactical_scale_net_gamma_rows() -> None:
+    """Rows sampled before TACTICAL_NET_GAMMA_REFERENCES_FROM hold the old Structural-scale net_gamma:
+    Dealer Impact must not rank against them, while the other three series (market-snapshot based)
+    keep their whole history."""
+    storage = _storage_with_current_state(freshness_seconds=0)
+    # 20 rows ending 2026-10-28: only the 10 on or after 2026-10-19 are Tactical-scale
+    _seed_references(storage, 20, today=date(2026, 10, 28))
+
+    metrics = CalculateDerivedMetricsUseCase(storage).execute("SPY")
+
+    assert metrics.dealer_impact_score.value is None
+    assert metrics.dealer_impact_score.provisional is True
+    assert metrics.dealer_impact_score.days_accumulated == 10
+    assert metrics.signal_alignment_score.provisional is True
+    assert metrics.market_bias.provisional is False
+    assert metrics.market_bias.days_accumulated == 20
+    assert metrics.volatility_regime.provisional is False
+
+
 def test_percentile_freshness_and_market_threshold_boundaries() -> None:
     assert percentile_rank(
         Decimal("2"),
@@ -143,6 +162,7 @@ def _storage_with_current_state(freshness_seconds: int) -> InMemoryStorage:
 def _gamma(as_of: datetime) -> GammaAggregate:
     return GammaAggregate(
         symbol="SPY",
+        view="tactical",
         as_of=as_of,
         gamma_flip=Decimal("100"),
         call_wall=Decimal("110"),
@@ -153,8 +173,7 @@ def _gamma(as_of: datetime) -> GammaAggregate:
     )
 
 
-def _seed_references(storage: InMemoryStorage, days: int) -> None:
-    today = date(2026, 8, 3)
+def _seed_references(storage: InMemoryStorage, days: int, today: date = date(2026, 12, 21)) -> None:
     for offset in range(days):
         rank_value = days - offset
         if offset == 0:

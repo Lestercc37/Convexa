@@ -34,6 +34,7 @@ def _aggregate(
 ) -> GammaAggregate:
     return GammaAggregate(
         symbol=symbol,
+        view="tactical",
         as_of=AS_OF,
         net_gamma=Decimal(net_gamma),
         gamma_flip=Decimal("100"),

@@ -319,7 +319,7 @@ def build_market_snapshot(storage: IStorage, underlying: str) -> MarketSnapshot:
     price = storage.get_latest_price(underlying)
     if price is None:
         raise NotFoundError(f"No market price found for {underlying}")
-    gamma = storage.get_latest_gamma_aggregate(underlying)
+    gamma = storage.get_latest_gamma_aggregate(underlying, view="tactical")
     if gamma is None:
         raise NotFoundError(f"No gamma aggregate found for {underlying}")
     chain = storage.get_latest_chain_snapshot(underlying)
@@ -378,7 +378,7 @@ async def build_market_snapshot_async(
     price = await storage.get_latest_price(underlying)
     if price is None:
         raise NotFoundError(f"No market price found for {underlying}")
-    gamma = await storage.get_latest_gamma_aggregate(underlying)
+    gamma = await storage.get_latest_gamma_aggregate(underlying, view="tactical")
     if gamma is None:
         raise NotFoundError(f"No gamma aggregate found for {underlying}")
     chain = await storage.get_latest_chain_snapshot(underlying)

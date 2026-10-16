@@ -54,7 +54,7 @@ def get_screener_preset(
     aggregates = [
         aggregate
         for underlying in storage.list_underlyings()
-        if (aggregate := storage.get_latest_gamma_aggregate(underlying.symbol)) is not None
+        if (aggregate := storage.get_latest_gamma_aggregate(underlying.symbol, view="tactical")) is not None
     ]
 
     if preset is ScreenerPreset.NEGATIVE_GAMMA_BOARD:
