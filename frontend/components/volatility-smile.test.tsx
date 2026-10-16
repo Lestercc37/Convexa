@@ -220,6 +220,52 @@ describe("VolatilitySmile", () => {
     );
     vi.useRealTimers();
   });
+
+  it("draws only the strikes within 1.5% of spot, so far wings do not stretch the plot", async () => {
+    const wide = [
+      contract("SPY260807C00545000", 545, "2026-08-07", "call", 0.22),
+      contract("SPY260807P00550000", 550, "2026-08-07", "put", 0.19),
+      contract("SPY260807C00600000", 600, "2026-08-07", "call", 0.5),
+      contract("SPY260807P00500000", 500, "2026-08-07", "put", 0.6),
+    ];
+    apiMocks.getOptionChain.mockResolvedValue(chain(wide));
+    renderWithLanguage(<VolatilitySmile symbol="SPY" marketPrice={551} />);
+
+    expect(await screen.findByLabelText("call strike 545, IV 22.00%")).toBeInTheDocument();
+    expect(screen.getByLabelText("put strike 550, IV 19.00%")).toBeInTheDocument();
+    expect(screen.queryByLabelText("call strike 600, IV 50.00%")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("put strike 500, IV 60.00%")).not.toBeInTheDocument();
+    // Out-of-window contracts are not "missing IV": no note for them.
+    expect(screen.queryByText(/sin IV/)).not.toBeInTheDocument();
+  });
+
+  it("leaves IV = 0 contracts off the plot and says how many, instead of drawing them at the edge", async () => {
+    const withZeroes = [
+      contract("SPY260807C00545000", 545, "2026-08-07", "call", 0.22),
+      contract("SPY260807P00550000", 550, "2026-08-07", "put", 0.19),
+      contract("SPY260807C00548000", 548, "2026-08-07", "call", 0),
+      contract("SPY260807P00549000", 549, "2026-08-07", "put", 0),
+      contract("SPY260807P00600000", 600, "2026-08-07", "put", 0),
+    ];
+    apiMocks.getOptionChain.mockResolvedValue(chain(withZeroes));
+    renderWithLanguage(<VolatilitySmile symbol="SPY" marketPrice={551} />);
+
+    expect(await screen.findByLabelText("call strike 545, IV 22.00%")).toBeInTheDocument();
+    expect(screen.queryByLabelText("call strike 548, IV 0.00%")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("put strike 549, IV 0.00%")).not.toBeInTheDocument();
+    // Two inside the window; the IV = 0 put at 600 is outside it and is not counted.
+    expect(screen.getByText("2 contratos dentro del dinero sin IV")).toBeInTheDocument();
+  });
+
+  it("puts the strike on the vertical axis and the IV on the horizontal one", async () => {
+    renderWithLanguage(<VolatilitySmile symbol="SPY" marketPrice={551} />);
+
+    const high = await screen.findByLabelText("call strike 555, IV 21.00%");
+    const low = screen.getByLabelText("call strike 545, IV 22.00%");
+    // Higher strike -> smaller cy (higher on screen); higher IV -> larger cx (further right).
+    expect(Number(high.getAttribute("cy"))).toBeLessThan(Number(low.getAttribute("cy")));
+    expect(Number(low.getAttribute("cx"))).toBeGreaterThan(Number(high.getAttribute("cx")));
+  });
 });
 
 function withinOptions(selector: HTMLElement): string[] {

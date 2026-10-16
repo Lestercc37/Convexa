@@ -13,7 +13,13 @@ type VolatilitySmileProps = {
   marketPrice: number;
 };
 
-const PLOT = { left: 58, right: 760, top: 20, bottom: 238 };
+// Strikes run up the left axis and IV across the bottom, so the strike ladder reads like the price
+// chart beside it. Only the strikes within +-1.5% of spot are drawn: the far wings stretched the IV
+// scale and flattened the part around the money that the panel is about.
+const PLOT = { left: 50, right: 396, top: 12, bottom: 262 };
+const WINDOW_FRACTION = 0.015;
+const STRIKE_TICKS = 5;
+const IV_TICKS = 4;
 
 function nearestAtmStrike(contracts: OptionContract[], marketPrice: number): number | null {
   const strikes = [...new Set(contracts.map((contract) => contract.strike))];
@@ -28,6 +34,18 @@ function nearestAtmStrike(contracts: OptionContract[], marketPrice: number): num
 function currentExpirations(expirations: string[]): string[] {
   const today = currentEasternDate();
   return [...expirations].sort().filter((date) => date >= today);
+}
+
+// Contracts whose strike is within +-1.5% of spot; with no usable spot nothing is cut.
+function withinWindow(contracts: OptionContract[], marketPrice: number): OptionContract[] {
+  if (!Number.isFinite(marketPrice) || marketPrice <= 0) return contracts;
+  const limit = marketPrice * WINDOW_FRACTION;
+  return contracts.filter((contract) => Math.abs(contract.strike - marketPrice) <= limit);
+}
+
+function ticks(minimum: number, maximum: number, count: number): number[] {
+  if (!(maximum > minimum)) return [minimum];
+  return Array.from({ length: count }, (_, index) => minimum + ((maximum - minimum) * index) / (count - 1));
 }
 
 function scale(value: number, minimum: number, maximum: number, start: number, end: number) {
@@ -146,21 +164,29 @@ export function VolatilitySmile({ symbol, marketPrice }: VolatilitySmileProps) {
 
   const contracts = useMemo(() => chain?.contracts ?? [], [chain]);
   const plot = useMemo(() => {
-    const strikes = contracts.map((contract) => contract.strike);
-    const impliedVolatilities = contracts.map((contract) => contract.iv);
+    const windowed = withinWindow(contracts, marketPrice);
+    // IV = 0 means the provider found no solution (deep in the money), not a 0% volatility: such
+    // a contract is left off the plot and counted in the note instead of drawn at the bottom edge.
+    const points = windowed.filter((contract) => contract.iv > 0);
+    const impliedVolatilities = points.map((contract) => contract.iv);
+    const hasWindow = Number.isFinite(marketPrice) && marketPrice > 0;
+    const strikes = windowed.map((contract) => contract.strike);
     return {
-      minimumStrike: Math.min(...strikes),
-      maximumStrike: Math.max(...strikes),
-      minimumIv: Math.min(...impliedVolatilities),
-      maximumIv: Math.max(...impliedVolatilities),
-      atmStrike: nearestAtmStrike(contracts, marketPrice),
+      points,
+      missingIvCount: windowed.length - points.length,
+      minimumStrike: hasWindow ? marketPrice * (1 - WINDOW_FRACTION) : Math.min(...strikes),
+      maximumStrike: hasWindow ? marketPrice * (1 + WINDOW_FRACTION) : Math.max(...strikes),
+      minimumIv: impliedVolatilities.length ? Math.min(...impliedVolatilities) : 0,
+      maximumIv: impliedVolatilities.length ? Math.max(...impliedVolatilities) : 1,
+      atmStrike: nearestAtmStrike(windowed, marketPrice),
     };
   }, [contracts, marketPrice]);
 
-  const x = (strike: number) =>
-    scale(strike, plot.minimumStrike, plot.maximumStrike, PLOT.left, PLOT.right);
-  const y = (iv: number) =>
-    scale(iv, plot.minimumIv, plot.maximumIv, PLOT.bottom, PLOT.top);
+  const x = (iv: number) => scale(iv, plot.minimumIv, plot.maximumIv, PLOT.left, PLOT.right);
+  const y = (strike: number) =>
+    scale(strike, plot.minimumStrike, plot.maximumStrike, PLOT.bottom, PLOT.top);
+  const strikeTicks = ticks(plot.minimumStrike, plot.maximumStrike, STRIKE_TICKS).map(Math.round);
+  const ivTicks = ticks(plot.minimumIv, plot.maximumIv, IV_TICKS);
 
   return (
     <section className="panel smile-panel" aria-labelledby="smile-title">
@@ -192,19 +218,25 @@ export function VolatilitySmile({ symbol, marketPrice }: VolatilitySmileProps) {
         <div className="smile-chart-wrap">
           <svg
             className="smile-chart"
-            viewBox="0 0 800 280"
+            viewBox="0 0 420 300"
             role="img"
             aria-label={t.volatilitySmile.chartAriaLabel(symbol, selectedExpiration)}
           >
             <line className="smile-axis" x1={PLOT.left} y1={PLOT.bottom} x2={PLOT.right} y2={PLOT.bottom} />
             <line className="smile-axis" x1={PLOT.left} y1={PLOT.top} x2={PLOT.left} y2={PLOT.bottom} />
+            {strikeTicks.map((strike) => (
+              <text key={`strike-${strike}`} className="smile-tick" x={PLOT.left - 6} y={y(strike) + 4} textAnchor="end">{strike}</text>
+            ))}
+            {ivTicks.map((iv) => (
+              <text key={`iv-${iv}`} className="smile-tick" x={x(iv)} y={PLOT.bottom + 14}>{(iv * 100).toFixed(0)}%</text>
+            ))}
             {plot.atmStrike !== null && (
               <g aria-label={t.volatilitySmile.atmAriaLabel(plot.atmStrike)}>
-                <line className="smile-atm" x1={x(plot.atmStrike)} y1={PLOT.top} x2={x(plot.atmStrike)} y2={PLOT.bottom} />
-                <text className="smile-atm-label" x={x(plot.atmStrike)} y={PLOT.top + 12}>ATM {plot.atmStrike}</text>
+                <line className="smile-atm" x1={PLOT.left} y1={y(plot.atmStrike)} x2={PLOT.right} y2={y(plot.atmStrike)} />
+                <text className="smile-atm-label" x={PLOT.right - 4} y={y(plot.atmStrike) - 4} textAnchor="end">ATM {plot.atmStrike}</text>
               </g>
             )}
-            {contracts.map((contract) => {
+            {plot.points.map((contract) => {
               const label = t.volatilitySmile.pointAriaLabel(
                 contract.type,
                 contract.strike,
@@ -214,18 +246,21 @@ export function VolatilitySmile({ symbol, marketPrice }: VolatilitySmileProps) {
                 <circle
                   key={contract.occ_symbol}
                   className={`smile-point ${contract.type}`}
-                  cx={x(contract.strike)}
-                  cy={y(contract.iv)}
-                  r="5"
+                  cx={x(contract.iv)}
+                  cy={y(contract.strike)}
+                  r="4"
                   aria-label={label}
                 >
                   <title>{label}</title>
                 </circle>
               );
             })}
-            <text className="smile-axis-label" x={(PLOT.left + PLOT.right) / 2} y="274">Strike</text>
-            <text className="smile-axis-label" x="14" y={(PLOT.top + PLOT.bottom) / 2} transform={`rotate(-90 14 ${(PLOT.top + PLOT.bottom) / 2})`}>IV</text>
+            <text className="smile-axis-label" x={(PLOT.left + PLOT.right) / 2} y="294">IV</text>
+            <text className="smile-axis-label" x="12" y={(PLOT.top + PLOT.bottom) / 2} transform={`rotate(-90 12 ${(PLOT.top + PLOT.bottom) / 2})`}>Strike</text>
           </svg>
+          {plot.missingIvCount > 0 && (
+            <p className="smile-note">{t.volatilitySmile.missingIvNote(plot.missingIvCount)}</p>
+          )}
           <div className="smile-legend" aria-label={t.volatilitySmile.legendAriaLabel}>
             <span><i className="legend-dot call" /> Calls</span>
             <span><i className="legend-dot put" /> Puts</span>
