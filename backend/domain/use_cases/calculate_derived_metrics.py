@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 from zoneinfo import ZoneInfo
 
@@ -23,6 +23,22 @@ MINIMUM_HISTORY_DAYS = 20
 REFERENCE_HOUR_ET = 9
 REFERENCE_MINUTE_ET = 35
 EASTERN_TIME = ZoneInfo("America/New_York")
+# net_gamma references are only comparable with the Tactical (0-2 DTE) aggregate from these days on.
+# Older daily_gamma_reference.net_gamma rows were sampled from the Structural (30/45-day) aggregate,
+# a different scale: Dealer Impact ranks only the rows on or after the symbol's date (the other three
+# series -- put/call OI, skew, ATM IV -- come from the market snapshot, not the aggregate, and keep
+# their whole history).
+#  - SPX/SPY/QQQ: 2026-07-13, the first stage-2 session -- those rows were rebuilt from the stage-2
+#    history files with the Tactical rule (docs/hm_rebuild_tactical_reference.py + hm_load_tactical_reference.py).
+#  - every other symbol: 2026-09-26, the day after the Tactical view first existed (2026-09-25); rows up
+#    to the deploy day were rewritten from the stored Tactical aggregate at 09:35 by the same loader.
+# Lower a date only together with a matching rebuilt history, never otherwise.
+TACTICAL_NET_GAMMA_REFERENCES_FROM_DEFAULT = date(2026, 9, 26)
+TACTICAL_NET_GAMMA_REFERENCES_FROM_BY_SYMBOL: dict[str, date] = {
+    "SPX": date(2026, 7, 13),
+    "SPY": date(2026, 7, 13),
+    "QQQ": date(2026, 7, 13),
+}
 
 
 class CalculateDerivedMetricsUseCase:
@@ -41,7 +57,7 @@ class CalculateDerivedMetricsUseCase:
     def execute(self, underlying: str) -> DerivedMetrics:
         # ES/NQ have no data of their own: the scores describe the index they are proxied by
         underlying = proxy_symbol_for(underlying) or underlying
-        gamma = self._storage.get_latest_gamma_aggregate(underlying)
+        gamma = self._storage.get_latest_gamma_aggregate(underlying, view="tactical")
         if gamma is None:
             raise NotFoundError(f"No gamma aggregate found for {underlying.upper()}")
         price = self._storage.get_latest_price(underlying)
@@ -63,7 +79,7 @@ async def calculate_derived_metrics_async(
     scheduler's shared threadpool (see AsyncPostgreSQLStorage's own
     docstring)."""
     underlying = proxy_symbol_for(underlying) or underlying  # ES/NQ: the proxy index's scores
-    gamma = await storage.get_latest_gamma_aggregate(underlying)
+    gamma = await storage.get_latest_gamma_aggregate(underlying, view="tactical")
     if gamma is None:
         raise NotFoundError(f"No gamma aggregate found for {underlying.upper()}")
     price = await storage.get_latest_price(underlying)
@@ -80,13 +96,20 @@ def _compute_derived_metrics(
 ) -> DerivedMetrics:
     days = len(references)
     has_history = days >= MINIMUM_HISTORY_DAYS
+    # Dealer Impact (and the alignment score that uses it) rank net_gamma only against Tactical-scale rows
+    net_gamma_from = TACTICAL_NET_GAMMA_REFERENCES_FROM_BY_SYMBOL.get(
+        gamma.symbol.upper(), TACTICAL_NET_GAMMA_REFERENCES_FROM_DEFAULT
+    )
+    net_gamma_references = [reference for reference in references if reference.date >= net_gamma_from]
+    net_gamma_days = len(net_gamma_references)
+    has_net_gamma_history = net_gamma_days >= MINIMUM_HISTORY_DAYS
 
     dealer_impact = (
         percentile_rank(
-            abs(references[0].net_gamma),
-            [abs(reference.net_gamma) for reference in references],
+            abs(net_gamma_references[0].net_gamma),
+            [abs(reference.net_gamma) for reference in net_gamma_references],
         )
-        if has_history
+        if has_net_gamma_history
         else None
     )
     agreement = agreement_component(gamma, price.price)
@@ -126,13 +149,13 @@ def _compute_derived_metrics(
     return DerivedMetrics(
         dealer_impact_score=DerivedMetricValue(
             value=dealer_impact,
-            provisional=not has_history,
-            days_accumulated=days,
+            provisional=not has_net_gamma_history,
+            days_accumulated=net_gamma_days,
         ),
         signal_alignment_score=DerivedMetricValue(
             value=alignment,
-            provisional=not has_history,
-            days_accumulated=days,
+            provisional=not has_net_gamma_history,
+            days_accumulated=net_gamma_days,
         ),
         market_bias=MarketBiasMetric(
             score=market_score,

@@ -79,14 +79,10 @@ class RefreshUnderlyingSnapshotUseCase:
         for bar in self.market_data_provider.get_daily_bars(symbol):
             self.storage.save_daily_bar(bar)
 
-        # execute_both, not execute -- also builds and persists the
-        # Tactical (0-2 DTE) GammaAggregate alongside the Structural one,
-        # from the same chain/daily-bars fetch (see that method's own
-        # docstring). This return value only ever carried the Structural
-        # aggregate; Tactical isn't consumed synchronously anywhere in
-        # this pipeline, it's read back later via the API's own
-        # ?view=tactical query param -- so the return type stays
-        # unchanged, Tactical is persisted purely as a side effect here.
+        # execute_both builds and persists the Tactical (0-2 DTE)
+        # GammaAggregate and returns it (the Structural view was retired
+        # 2026-10-16; this return value carried the Structural aggregate
+        # before).
         #
         # Split into 3 separately-timed phases, not one combined
         # "compute" number -- confirmed live, 2026-09-28: the combined
@@ -98,15 +94,12 @@ class RefreshUnderlyingSnapshotUseCase:
         # different kinds of cost with three different fixes, not
         # diagnosable from one number.
         gamma_started_at = time.monotonic()
-        aggregate, _tactical = self.gamma_exposure_orchestrator.execute_both(symbol)
+        aggregate = self.gamma_exposure_orchestrator.execute_both(symbol)
         gamma_seconds = time.monotonic() - gamma_started_at
 
-        # Structural only, deliberately -- capture_daily_gamma_reference
-        # feeds DerivedMetrics' own historical comparisons, which stay
-        # Structural-only for this feature's first version (confirmed
-        # with the user, 2026-09-25: Dealer Impact Score/Signal Alignment
-        # Score/Market Bias would need their own tactical history to mean
-        # anything under Tactical, materially more work than this pass).
+        # The daily reference is now sampled from the Tactical aggregate
+        # (the Structural view was retired 2026-10-16); Dealer Impact only
+        # ranks rows from each symbol's TACTICAL_NET_GAMMA_REFERENCES_FROM_* date on.
         capture_started_at = time.monotonic()
         capture_daily_gamma_reference(self.storage, aggregate, market)
         capture_seconds = time.monotonic() - capture_started_at
@@ -118,7 +111,7 @@ class RefreshUnderlyingSnapshotUseCase:
         compute_seconds = gamma_seconds + capture_seconds + derived_seconds
         if compute_seconds >= SLOW_COMPUTE_SECONDS:
             logger.warning(
-                "%s: compute took %.2fs total -- gamma (Structural+Tactical) %.2fs, "
+                "%s: compute took %.2fs total -- gamma (Tactical) %.2fs, "
                 "capture_daily_gamma_reference %.2fs, derived_metrics %.2fs "
                 "-- CPU-bound, not REST latency (see ThetaDataProvider's own separate timing)",
                 symbol, compute_seconds, gamma_seconds, capture_seconds, derived_seconds,

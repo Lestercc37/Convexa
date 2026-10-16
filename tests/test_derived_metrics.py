@@ -11,6 +11,7 @@ from backend.domain.entities import (
     MarketPrice,
     MarketSnapshot,
 )
+import backend.domain.use_cases.calculate_derived_metrics as derived
 from backend.domain.use_cases.calculate_derived_metrics import (
     CalculateDerivedMetricsUseCase,
     calculate_iv_rank,
@@ -59,6 +60,37 @@ def test_all_derived_formulas_match_known_twenty_day_case() -> None:
     assert metrics.volatility_regime.label == "moderate"
     assert metrics.volatility_regime.provisional is False
     assert metrics.volatility_regime.days_accumulated == 20
+
+
+def test_dealer_impact_ranks_only_tactical_scale_net_gamma_rows(monkeypatch) -> None:
+    """Rows sampled before the symbol's cutoff hold the old Structural-scale net_gamma: Dealer Impact
+    must not rank against them, while the other three series (market-snapshot based) keep their whole history."""
+    monkeypatch.setattr(derived, "TACTICAL_NET_GAMMA_REFERENCES_FROM_BY_SYMBOL", {})
+    monkeypatch.setattr(derived, "TACTICAL_NET_GAMMA_REFERENCES_FROM_DEFAULT", date(2026, 10, 19))
+    storage = _storage_with_current_state(freshness_seconds=0)
+    # 20 rows ending 2026-10-28: only the 10 on or after 2026-10-19 are Tactical-scale
+    _seed_references(storage, 20, today=date(2026, 10, 28))
+
+    metrics = CalculateDerivedMetricsUseCase(storage).execute("SPY")
+
+    assert metrics.dealer_impact_score.value is None
+    assert metrics.dealer_impact_score.provisional is True
+    assert metrics.dealer_impact_score.days_accumulated == 10
+    assert metrics.signal_alignment_score.provisional is True
+    assert metrics.market_bias.provisional is False
+    assert metrics.market_bias.days_accumulated == 20
+    assert metrics.volatility_regime.provisional is False
+
+
+def test_rebuilt_symbols_use_their_own_earlier_cutoff() -> None:
+    """SPX/SPY/QQQ net_gamma rows were rebuilt from 2026-07-13 on: 20 consecutive rows in Aug-Sep are enough."""
+    storage = _storage_with_current_state(freshness_seconds=0)
+    _seed_references(storage, 20, today=date(2026, 9, 1))
+
+    metrics = CalculateDerivedMetricsUseCase(storage).execute("SPY")
+
+    assert metrics.dealer_impact_score.provisional is False
+    assert metrics.dealer_impact_score.days_accumulated == 20
 
 
 def test_percentile_freshness_and_market_threshold_boundaries() -> None:
@@ -143,6 +175,7 @@ def _storage_with_current_state(freshness_seconds: int) -> InMemoryStorage:
 def _gamma(as_of: datetime) -> GammaAggregate:
     return GammaAggregate(
         symbol="SPY",
+        view="tactical",
         as_of=as_of,
         gamma_flip=Decimal("100"),
         call_wall=Decimal("110"),
@@ -153,8 +186,7 @@ def _gamma(as_of: datetime) -> GammaAggregate:
     )
 
 
-def _seed_references(storage: InMemoryStorage, days: int) -> None:
-    today = date(2026, 8, 3)
+def _seed_references(storage: InMemoryStorage, days: int, today: date = date(2026, 12, 21)) -> None:
     for offset in range(days):
         rank_value = days - offset
         if offset == 0:
