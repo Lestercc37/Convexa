@@ -6,7 +6,7 @@ in the Tactical window (ONE request per expiration and root, sequential, a pause
 (migration 0044), apart from the live counter. Readers of TOTALS (the /chain reply) take max(counter, correction); anything that computes CHANGES of
 volume keeps reading the continuous counter. See docs/propuesta-volumen-suscripcion-tardia-2026-10-16.txt.
 
-Guards: refuses to run outside 10:20-16:30 ET on a weekday (the open is the stream's heaviest moment; --force overrides, for tests and reruns), stops
+Guards: refuses to run outside 09:45-16:30 ET on a weekday (the first minutes of the open are the stream's heaviest moment; --force overrides, for tests and reruns), stops
 asking at the first failing request (the partial result is still stored: each figure is a real ThetaData volume), and never runs longer than the time box.
 """
 
@@ -26,7 +26,7 @@ from backend.domain.use_cases.volume_corrections import expirations_to_correct
 
 logger = logging.getLogger(__name__)
 
-ALLOWED_FROM = time_of_day(10, 20)
+ALLOWED_FROM = time_of_day(9, 45)
 ALLOWED_UNTIL = time_of_day(16, 30)
 TIME_BOX_SECONDS = 150.0
 PAUSE_BETWEEN_REQUESTS_SECONDS = 0.3
@@ -80,7 +80,7 @@ def main(argv: list[str] | None = None) -> int:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s [%(name)s] %(message)s")
     now = datetime.now(EASTERN_TIME)
     if not args.force and not within_allowed_window(now):
-        logger.info("Volume correction pass skipped: %s ET is outside 10:20-16:30 on a weekday", now.strftime("%a %H:%M"))
+        logger.info("Volume correction pass skipped: %s ET is outside 09:45-16:30 on a weekday", now.strftime("%a %H:%M"))
         return 0
     from backend.core.container import build_container
 
