@@ -11,8 +11,8 @@ delta_exposure: ThetaData's own delta, calls positive / puts negative (no dealer
 vanna_exposure, charm_exposure: BSM from ThetaData's IV with the dealer sign of the GEX (call +1, put -1);
 vanna per 1.00 of IV (divide by 100 for one IV point), charm per year (divide by 8,760 for one hour).
 
-Revision ID: 0041_gamma_item_greeks
-Revises: 0040_option_quote_minutes
+Revision ID: 0042_gamma_item_greeks
+Revises: 0041_whale_alerts_conditions
 Create Date: 2026-10-15
 """
 
@@ -20,8 +20,8 @@ from __future__ import annotations
 
 from alembic import op
 
-revision = "0041_gamma_item_greeks"
-down_revision = "0040_option_quote_minutes"
+revision = "0042_gamma_item_greeks"
+down_revision = "0041_whale_alerts_conditions"
 branch_labels = None
 depends_on = None
 
