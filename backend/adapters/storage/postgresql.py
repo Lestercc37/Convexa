@@ -1449,6 +1449,57 @@ class PostgreSQLStorage:
                     params,
                 )
 
+    def save_volume_corrections(self, volumes: dict[str, int]) -> None:
+        """The correction pass's own write (migration 0044): the day's option volume per contract as ThetaData reports it, kept apart from the
+        live counter above. Within one TRADE DATE a correction only grows; a row from an earlier trade date is replaced."""
+        if not volumes:
+            return
+        items = list(volumes.items())
+        CHUNK_SIZE = 500
+        now = datetime.now(UTC)
+        cutoff = volume_rows_since(datetime.now(EASTERN_TIME))
+        with self.session_factory.begin() as session:
+            for start in range(0, len(items), CHUNK_SIZE):
+                batch = items[start : start + CHUNK_SIZE]
+                values_sql = ", ".join(f"(:occ_symbol_{i}, :volume_{i}, :as_of)" for i in range(len(batch)))
+                params: dict[str, object] = {"cutoff": cutoff, "as_of": now}
+                for i, (occ_symbol, volume) in enumerate(batch):
+                    params[f"occ_symbol_{i}"] = occ_symbol
+                    params[f"volume_{i}"] = volume
+                session.execute(
+                    text(
+                        f"""
+                        INSERT INTO contract_volume_corrections (occ_symbol, volume, as_of)
+                        VALUES {values_sql}
+                        ON CONFLICT (occ_symbol) DO UPDATE SET
+                            volume = CASE
+                                WHEN contract_volume_corrections.as_of >= :cutoff
+                                    THEN GREATEST(contract_volume_corrections.volume, EXCLUDED.volume)
+                                ELSE EXCLUDED.volume
+                            END,
+                            as_of = EXCLUDED.as_of
+                        """
+                    ),
+                    params,
+                )
+
+    def get_volume_corrections(self, occ_symbols: list[str]) -> dict[str, int]:
+        """The corrections of the CURRENT trade date for these contracts (an older row is a previous session's figure)."""
+        if not occ_symbols:
+            return {}
+        cutoff = volume_rows_since(datetime.now(EASTERN_TIME))
+        with self.session_factory() as session:
+            rows = session.execute(
+                text(
+                    """
+                    SELECT occ_symbol, volume FROM contract_volume_corrections
+                    WHERE occ_symbol = ANY(:occ_symbols) AND as_of >= :cutoff
+                    """
+                ),
+                {"occ_symbols": occ_symbols, "cutoff": cutoff},
+            ).mappings()
+            return {str(row["occ_symbol"]): int(row["volume"]) for row in rows}
+
     def save_minute_bar(self, bar: MinuteBar) -> None:
         """Not part of `IStorage` — used only by the one-time Indices Pro
         backfill (`backend/scripts/backfill_minute_history.py`), not by

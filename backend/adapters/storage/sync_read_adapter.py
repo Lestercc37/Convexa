@@ -54,6 +54,9 @@ class SyncStorageAsyncReadAdapter:
         # No table behind the in-memory/sqlite storages: kept in memory so tests can read it back.
         self.option_quote_minutes.extend(rows)
 
+    async def get_volume_corrections(self, occ_symbols: list[str]) -> dict[str, int]:
+        return self._storage.get_volume_corrections(occ_symbols)
+
     async def save_large_trade_prints(self, rows: list[LargeTradePrint]) -> None:
         self.large_trade_prints.extend(rows)
 
