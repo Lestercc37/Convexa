@@ -76,6 +76,8 @@ logger = logging.getLogger(__name__)
 # every width in the investigation's table, including a stress-scenario
 # ATR — see calculate_near_the_money_width.py for the width itself.
 NEAR_THE_MONEY_OVERFETCH_STRIKE_RANGE = 100
+# strike_range of the per-expiration volume snapshot (get_option_volume_snapshot): 100 strikes each side returned 342 SPXW contracts on 2026-10-16.
+VOLUME_SNAPSHOT_STRIKE_RANGE = 100
 # Guaranteed minimum entries kept even if ATR x 1.5 filtering would
 # otherwise produce zero matches (e.g. an unusually calm 14-day window
 # giving a width narrower than this symbol's own strike spacing) — the
@@ -2503,6 +2505,34 @@ class ThetaDataProvider:
                     )
                     continue
                 self._register_streaming_contracts(symbol, chain)
+
+    def get_option_volume_snapshot(self, symbol: str, expiration: date) -> dict[str, int]:
+        """The day's traded volume per contract of ONE expiration as ThetaData reports it (GET /v3/option/snapshot/ohlc, one request per root of the
+        symbol; the same call docs/hm_slow_volume_loss.py made on 2026-10-16), keyed by occ_symbol and only for contracts that traded. A root that does
+        not list that expiration answers 472 and contributes nothing. Used by the correction pass (backend/volume_correction_pass.py), which stores it
+        apart from the live counter; a 429 is retried with backoff by the shared request path and any other failure raises."""
+        volumes: dict[str, int] = {}
+        for root in _roots_for_symbol(symbol):
+            body = self._get_json_allow_no_data(
+                "/v3/option/snapshot/ohlc",
+                symbol=root,
+                expiration=expiration.isoformat(),
+                strike_range=VOLUME_SNAPSHOT_STRIKE_RANGE,
+                format="json",
+            )
+            for entry in body.get("response", []):
+                contract = entry.get("contract", {})
+                data = entry.get("data") or []
+                if not data or "strike" not in contract:
+                    continue
+                volume = int(data[0].get("volume") or 0)
+                if volume <= 0:
+                    continue
+                contract_type = (
+                    ContractType.CALL if str(contract.get("right", "")).upper().startswith("C") else ContractType.PUT
+                )
+                volumes[_build_occ_symbol(root, expiration, contract_type, Decimal(str(contract["strike"])))] = volume
+        return volumes
 
     async def stop(self) -> None:
         if self._rediscovery_task is not None:

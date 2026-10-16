@@ -28,6 +28,7 @@ from backend.api.serializers import (
 )
 from backend.core.container import Container
 from backend.domain.entities import GammaFlip, GammaView
+from backend.domain.use_cases.volume_corrections import apply_volume_corrections
 from backend.domain.use_cases import (
     calculate_derived_metrics_async,
     get_flow,
@@ -73,6 +74,12 @@ async def get_chain(
         symbol,
         expiration,
     )
+    # TOTALS only: the live counters stay continuous for everything that computes CHANGES of volume; this reply shows max(counter,
+    # correction) so a contract that entered the stream band late is not short (migration 0044, backend/volume_correction_pass.py).
+    corrections = await container.async_market_storage.get_volume_corrections(
+        [contract.occ_symbol for contract in chain.contracts]
+    )
+    chain = apply_volume_corrections(chain, corrections)
     return OptionChainResponse.model_validate(chain_response(chain))
 
 

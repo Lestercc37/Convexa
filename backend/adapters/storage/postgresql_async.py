@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from datetime import date, datetime
 from decimal import Decimal
 
@@ -26,6 +27,10 @@ from backend.domain.entities import (
 )
 from backend.domain.underlyings import ACTIVE_UNDERLYINGS_BY_SYMBOL
 from backend.domain.use_cases.flow import Moneyness, SymbolFlowPressure, WhaleAlert, WhaleAlertType
+from backend.domain.use_cases.market_hours import EASTERN_TIME
+from backend.domain.use_cases.trade_date import volume_rows_since
+
+logger = logging.getLogger(__name__)
 
 # One shared channel for every symbol's live price ticks, not one
 # channel per symbol -- a single LISTEN on the API side covers every
@@ -620,6 +625,28 @@ class AsyncPostgreSQLStorage:
                         for row in batch
                     ],
                 )
+
+    async def get_volume_corrections(self, occ_symbols: list[str]) -> dict[str, int]:
+        """The corrections of the CURRENT trade date for these contracts (migration 0044); a missing table or any read error returns {} so the
+        /chain reply keeps the live counters instead of failing."""
+        if not occ_symbols:
+            return {}
+        cutoff = volume_rows_since(datetime.now(EASTERN_TIME))
+        try:
+            async with self.session_factory() as session:
+                result = await session.execute(
+                    text(
+                        """
+                        SELECT occ_symbol, volume FROM contract_volume_corrections
+                        WHERE occ_symbol = ANY(:occ_symbols) AND as_of >= :cutoff
+                        """
+                    ),
+                    {"occ_symbols": occ_symbols, "cutoff": cutoff},
+                )
+                return {str(row["occ_symbol"]): int(row["volume"]) for row in result.mappings()}
+        except Exception:
+            logger.exception("Reading the volume corrections failed; serving the live counters")
+            return {}
 
     async def save_large_trade_prints(self, rows: list[LargeTradePrint]) -> None:
         """Appends the large SPY/QQQ prints the stream processor captured (migration 0043). A plain append: the stream delivers a print once, and a

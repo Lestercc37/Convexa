@@ -44,6 +44,7 @@ class InMemoryStorage:
         self._whale_alerts: dict[str, list[WhaleAlert]] = {}
         self._symbol_flow_pressure: dict[str, SymbolFlowPressure] = {}
         self._cumulative_volumes: dict[str, int] = {}
+        self._volume_corrections: dict[str, int] = {}
         self._future_price_anchors: dict[tuple[str, date], Decimal] = {}
         self._future_price_anchor_saved_at: dict[tuple[str, date], datetime] = {}
         self._whale_thresholds: dict[str, WhaleThreshold] = {
@@ -256,6 +257,18 @@ class InMemoryStorage:
 
     def save_cumulative_volumes(self, volumes: dict[str, int]) -> None:
         self._cumulative_volumes.update(volumes)
+
+    def save_volume_corrections(self, volumes: dict[str, int]) -> None:
+        # within one trade date a correction only grows (ThetaData's day volume never goes down)
+        for occ_symbol, volume in volumes.items():
+            self._volume_corrections[occ_symbol] = max(volume, self._volume_corrections.get(occ_symbol, 0))
+
+    def get_volume_corrections(self, occ_symbols: list[str]) -> dict[str, int]:
+        return {
+            occ_symbol: self._volume_corrections[occ_symbol]
+            for occ_symbol in occ_symbols
+            if occ_symbol in self._volume_corrections
+        }
 
     def set_future_price_anchor(
         self, symbol: str, session_date: date, anchor_price: Decimal
