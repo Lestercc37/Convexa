@@ -557,6 +557,18 @@ def _roots_for_symbol(symbol: str) -> tuple[str, ...]:
     return (symbol, weekly_root) if weekly_root else (symbol,)
 
 
+def _is_settled_am_root_entry(symbol: str, entry: dict[str, Any], today: date) -> bool:
+    """True for a contract of an index's AM-settled root (SPX, NDX, VIX: the monthly / Wednesday series) on its own expiration day.
+    Those contracts stopped trading the day before and settle at the open (SOQ), yet ThetaData keeps returning their last quotes and
+    their open interest all day. On 2026-10-16 (monthly OPEX) the 210 settled SPX-root contracts carried 561k open interest, more than
+    the live SPXW 0DTE (396k), and moved SPX's Tactical Gamma Flip by 24 pts (7721 vs 7746) and Net GEX 2.5x; NDX's Call Wall by 470 pts.
+    Only symbols that have a separate weekly (PM-settled) root are affected; their weekly root is never dropped."""
+    if symbol not in _WEEKLY_ROOT_BY_SYMBOL:
+        return False
+    contract = entry["contract"]
+    return contract.get("symbol") == symbol and date.fromisoformat(contract["expiration"]) == today
+
+
 def _parse_et_timestamp(raw: str) -> datetime:
     """ThetaData timestamps are naive strings in US Eastern Time, not UTC
     (confirmed by comparing a live quote's timestamp against the real
@@ -2835,11 +2847,13 @@ class ThetaDataProvider:
         issuing a second real REST call -- see that method's own
         docstring."""
         cache_key = symbol
-        cutoff = _nearest_expiration_cutoff(datetime.now(EASTERN_TIME))
+        now_et = datetime.now(EASTERN_TIME)
+        cutoff = _nearest_expiration_cutoff(now_et)
         unexpired_entries = [
             entry
             for entry in wildcard_entries
             if date.fromisoformat(entry["contract"]["expiration"]) >= cutoff
+            and not _is_settled_am_root_entry(symbol, entry, now_et.date())
         ]
         if not unexpired_entries:
             raise RuntimeError(
