@@ -36,6 +36,25 @@ function currentExpirations(expirations: string[]): string[] {
   return [...expirations].sort().filter((date) => date >= today);
 }
 
+// On a day when two roots list the same expiration (SPX's AM-settled monthly and SPXW's PM-settled weekly on the third Friday), the
+// same strike and right appears twice and the plot draws two smiles on top of each other -- the AM one with stale, very wide quotes.
+// Keep one contract per strike and right: the one with the tighter relative bid/ask spread (the live one).
+function relativeSpread(contract: OptionContract): number {
+  const mid = (contract.bid + contract.ask) / 2;
+  if (!(contract.ask >= contract.bid) || !(mid > 0)) return Number.POSITIVE_INFINITY;
+  return (contract.ask - contract.bid) / mid;
+}
+
+function onePerStrikeAndRight(contracts: OptionContract[]): OptionContract[] {
+  const best = new Map<string, OptionContract>();
+  for (const contract of contracts) {
+    const key = `${contract.strike}|${contract.type}`;
+    const current = best.get(key);
+    if (current === undefined || relativeSpread(contract) < relativeSpread(current)) best.set(key, contract);
+  }
+  return contracts.filter((contract) => best.get(`${contract.strike}|${contract.type}`) === contract);
+}
+
 // Contracts whose strike is within +-1.5% of spot; with no usable spot nothing is cut.
 function withinWindow(contracts: OptionContract[], marketPrice: number): OptionContract[] {
   if (!Number.isFinite(marketPrice) || marketPrice <= 0) return contracts;
@@ -162,7 +181,7 @@ export function VolatilitySmile({ symbol, marketPrice }: VolatilitySmileProps) {
     };
   }, [expirationsLoaded, selectedExpiration, symbol]);
 
-  const contracts = useMemo(() => chain?.contracts ?? [], [chain]);
+  const contracts = useMemo(() => onePerStrikeAndRight(chain?.contracts ?? []), [chain]);
   const plot = useMemo(() => {
     const windowed = withinWindow(contracts, marketPrice);
     // IV = 0 means the provider found no solution (deep in the money), not a 0% volatility: such
