@@ -117,6 +117,7 @@ from backend.core.stream_processor_relay import StreamProcessorRelayClient
 from backend.core.whale_alerts_relay import WhaleAlertsRelayServer
 from backend.domain.entities import OptionQuoteMinute, QuoteEvent, UnderlyingTradeEvent
 from backend.domain.underlyings import ACTIVE_UNDERLYINGS
+from backend.domain.use_cases.large_prints import LargePrintRecorder
 from backend.domain.use_cases.market_hours import EASTERN_TIME, is_market_open
 from backend.domain.use_cases.stream_underlying_price import (
     StreamUnderlyingPriceUseCase,
@@ -154,6 +155,10 @@ FRAME_MIX_LOG_INTERVAL_SECONDS = 60
 MINUTE_QUOTES_FLUSH_DELAY_SECONDS = 0.3
 MINUTE_QUOTES_LOG_EVERY_SECONDS = 900
 
+# large_trade_prints (migration 0043): captured in memory, flushed in one batch this often (a few hundred rows a day for SPY+QQQ).
+LARGE_PRINTS_FLUSH_SECONDS = 30
+LARGE_PRINTS_LOG_EVERY_SECONDS = 1800
+
 
 class _ProcessorState:
     """Everything one raw frame's handling needs beyond the pure
@@ -185,6 +190,8 @@ class _ProcessorState:
         self.minute_quotes: dict[str, tuple[Decimal, Decimal, datetime]] = {}
         self._minute_quotes_last_written: dict[str, tuple[Decimal, Decimal]] = {}
         self._minute_quotes_date: date | None = None
+        self.large_prints_enabled = True
+        self.large_prints = LargePrintRecorder()
         self._pending_prices: dict[str, UnderlyingTradeEvent] = {}
         self._price_writers: dict[str, asyncio.Task[None]] = {}
         self._price_write_slots = asyncio.Semaphore(PRICE_WRITE_CONCURRENCY)
@@ -346,6 +353,8 @@ def _handle_raw_frame(state: _ProcessorState, raw: str) -> None:
                     # symbol (ProcessorState.schedule_price_write) so a
                     # tick burst can't pile up unbounded writes.
                     state.schedule_price_write(parsed_underlying.event)
+                    if state.large_prints_enabled:
+                        state.large_prints.observe(parsed_underlying.event, parsed_underlying.exchange_ts)
     except Exception:
         logger.exception("Stream processor worker: failed to parse one raw frame, dropping it")
 
@@ -403,6 +412,34 @@ async def _record_option_quote_minutes_periodically(container, state: _Processor
                 minute_start.strftime("%H:%M"),
             )
             rows_since_log = 0
+            last_log = time.monotonic()
+
+
+async def _flush_large_prints_periodically(container, state: _ProcessorState) -> None:
+    """Writes the large SPY/QQQ prints captured since the last flush (large_trade_prints, migration 0043). Never raises: a failed write puts its
+    rows back for the next flush (bounded, see LargePrintRecorder), it must not take the stream processor down."""
+    written = 0
+    last_log = time.monotonic()
+    while True:
+        await asyncio.sleep(LARGE_PRINTS_FLUSH_SECONDS)
+        rows = state.large_prints.take()
+        if rows:
+            try:
+                await container.async_market_storage.save_large_trade_prints(rows)
+                written += len(rows)
+            except asyncio.CancelledError:
+                state.large_prints.put_back(rows)
+                raise
+            except Exception:
+                state.large_prints.put_back(rows)
+                logger.exception("Stream processor worker: writing %d large prints failed, they stay queued", len(rows))
+        if time.monotonic() - last_log >= LARGE_PRINTS_LOG_EVERY_SECONDS:
+            logger.info(
+                "Stream processor worker: large_trade_prints wrote %d rows in the last %.0f min",
+                written,
+                (time.monotonic() - last_log) / 60,
+            )
+            written = 0
             last_log = time.monotonic()
 
 
@@ -499,6 +536,11 @@ async def run() -> None:
         else None
     )
 
+    state.large_prints_enabled = container.settings.large_trade_prints_enabled
+    large_prints_task = (
+        asyncio.create_task(_flush_large_prints_periodically(container, state)) if state.large_prints_enabled else None
+    )
+
     relay = StreamProcessorRelayClient(
         container.settings.stream_processor_relay_host,
         container.settings.stream_processor_relay_port,
@@ -517,6 +559,8 @@ async def run() -> None:
         frame_mix_task.cancel()
         if minute_quotes_task is not None:
             minute_quotes_task.cancel()
+        if large_prints_task is not None:
+            large_prints_task.cancel()
         export_task.cancel()
         try:
             await export_task

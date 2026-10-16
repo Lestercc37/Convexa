@@ -8,6 +8,7 @@ from backend.domain.entities import (
     DailyGammaReference,
     FlowEvent,
     GammaAggregate,
+    LargeTradePrint,
     MarketPrice,
     OptionChain,
     OptionQuoteMinute,
@@ -36,6 +37,7 @@ class SyncStorageAsyncReadAdapter:
     def __init__(self, storage: IStorage) -> None:
         self._storage = storage
         self.option_quote_minutes: list[OptionQuoteMinute] = []
+        self.large_trade_prints: list[LargeTradePrint] = []
 
     async def get_latest_gamma_aggregate(
         self, underlying: str, view: str = "structural"
@@ -51,6 +53,9 @@ class SyncStorageAsyncReadAdapter:
     async def save_option_quote_minutes(self, rows: list[OptionQuoteMinute]) -> None:
         # No table behind the in-memory/sqlite storages: kept in memory so tests can read it back.
         self.option_quote_minutes.extend(rows)
+
+    async def save_large_trade_prints(self, rows: list[LargeTradePrint]) -> None:
+        self.large_trade_prints.extend(rows)
 
     async def get_price_history(
         self, underlying: str, start: datetime, end: datetime

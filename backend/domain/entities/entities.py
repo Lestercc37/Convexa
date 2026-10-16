@@ -806,6 +806,27 @@ class UnderlyingTradeEvent:
     # message did not carry one. Decides whether the print may set the displayed price: see
     # stream_underlying_price.sets_last_price.
     condition: int | None = None
+    # The venue code of the print (ThetaData's `trade.exchange`): 57 is the FINRA/Nasdaq TRF, i.e. an off-exchange print. None when the
+    # message did not carry one. Only the large-print capture reads it (see LargeTradePrint).
+    exchange: int | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class LargeTradePrint:
+    """One large print of a proxy ETF (SPY/QQQ), kept with the venue and condition the price chart throws away (migration 0043).
+    `time` is the exchange timestamp when the message had one (else the receipt time), `at_market` whether the price was within 0.1% of
+    the last price that was allowed to set the displayed price (None while there is none yet). A 2026-10-16 look at SPY found most prints
+    over $1M were NOT at market (average-price and contingent prints at fixed prices 1% away), so a level should be read from the
+    at-market ones only."""
+
+    symbol: str
+    time: datetime
+    price: Decimal
+    size: int
+    condition: int | None
+    exchange: int | None
+    at_market: bool | None
+    received_at: datetime
 
 
 @dataclass(frozen=True, slots=True)

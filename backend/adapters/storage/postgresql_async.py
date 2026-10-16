@@ -17,6 +17,7 @@ from backend.domain.entities import (
     GammaAggregate,
     GammaAggregateItem,
     Greeks,
+    LargeTradePrint,
     MarketPrice,
     OptionChain,
     OptionContract,
@@ -36,6 +37,7 @@ from backend.domain.use_cases.flow import Moneyness, SymbolFlowPressure, WhaleAl
 MARKET_PRICE_CHANNEL = "market_price_updates"
 # Rows per transaction when the stream processor flushes a minute of quotes (a minute is a few hundred).
 OPTION_QUOTE_MINUTES_BATCH = 1000
+LARGE_TRADE_PRINTS_BATCH = 500
 
 # How many of a symbol's newest distinct snapshot times the fast tier of
 # get_latest_chain_snapshot inspects when looking for the latest multi-
@@ -614,6 +616,37 @@ class AsyncPostgreSQLStorage:
                             "bid": row.bid,
                             "ask": row.ask,
                             "quote_time": row.quote_time,
+                        }
+                        for row in batch
+                    ],
+                )
+
+    async def save_large_trade_prints(self, rows: list[LargeTradePrint]) -> None:
+        """Appends the large SPY/QQQ prints the stream processor captured (migration 0043). A plain append: the stream delivers a print once, and a
+        row is only ever lost, never duplicated, when a flush fails (the processor puts a failed batch back)."""
+        if not rows:
+            return
+        statement = text(
+            """
+            INSERT INTO large_trade_prints (time, symbol, price, size, condition, exchange, at_market, received_at)
+            VALUES (:time, :symbol, :price, :size, :condition, :exchange, :at_market, :received_at)
+            """
+        )
+        for start in range(0, len(rows), LARGE_TRADE_PRINTS_BATCH):
+            batch = rows[start : start + LARGE_TRADE_PRINTS_BATCH]
+            async with self.session_factory.begin() as session:
+                await session.execute(
+                    statement,
+                    [
+                        {
+                            "time": row.time,
+                            "symbol": row.symbol,
+                            "price": row.price,
+                            "size": row.size,
+                            "condition": row.condition,
+                            "exchange": row.exchange,
+                            "at_market": row.at_market,
+                            "received_at": row.received_at,
                         }
                         for row in batch
                     ],

@@ -247,6 +247,7 @@ def parse_underlying_trade_message(
     if contract.get("security_type") != expected_security_type:
         return None
     condition = trade.get("condition")
+    exchange = trade.get("exchange")
     return ParsedUnderlyingTrade(
         event=UnderlyingTradeEvent(
             symbol=symbol,
@@ -255,6 +256,7 @@ def parse_underlying_trade_message(
             size=int(size),
             # `type(...) is int`: bool is an int subclass, and anything that is not a plain int is "unknown".
             condition=condition if type(condition) is int else None,
+            exchange=exchange if type(exchange) is int else None,
         ),
         exchange_ts=exchange_ts,
     )
