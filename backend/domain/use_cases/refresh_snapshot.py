@@ -99,7 +99,7 @@ class RefreshUnderlyingSnapshotUseCase:
 
         # The daily reference is now sampled from the Tactical aggregate
         # (the Structural view was retired 2026-10-16); Dealer Impact only
-        # ranks rows from TACTICAL_NET_GAMMA_REFERENCES_FROM on.
+        # ranks rows from each symbol's TACTICAL_NET_GAMMA_REFERENCES_FROM_* date on.
         capture_started_at = time.monotonic()
         capture_daily_gamma_reference(self.storage, aggregate, market)
         capture_seconds = time.monotonic() - capture_started_at
