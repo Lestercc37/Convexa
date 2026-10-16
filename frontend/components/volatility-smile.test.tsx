@@ -239,6 +239,18 @@ describe("VolatilitySmile", () => {
     expect(screen.queryByText(/sin IV/)).not.toBeInTheDocument();
   });
 
+  it("draws one smile when two roots list the same strike and right (third Friday: AM monthly and PM weekly), keeping the tighter quote", async () => {
+    const am = { ...contract("SPX261016C07550000", 550, "2026-08-07", "call", 0.13), bid: 41.6, ask: 47.5 };
+    const pm = { ...contract("SPXW261016C07550000", 550, "2026-08-07", "call", 0.175), bid: 39.7, ask: 39.8 };
+    const put = contract("SPXW261016P07550000", 550, "2026-08-07", "put", 0.19);
+    apiMocks.getOptionChain.mockResolvedValue(chain([am, pm, put]));
+    renderWithLanguage(<VolatilitySmile symbol="SPX" marketPrice={551} />);
+
+    expect(await screen.findByLabelText("call strike 550, IV 17.50%")).toBeInTheDocument();
+    expect(screen.queryByLabelText("call strike 550, IV 13.00%")).not.toBeInTheDocument();
+    expect(screen.getAllByLabelText(/^call strike 550/)).toHaveLength(1);
+  });
+
   it("leaves IV = 0 contracts off the plot and says how many, instead of drawing them at the edge", async () => {
     const withZeroes = [
       contract("SPY260807C00545000", 545, "2026-08-07", "call", 0.22),
