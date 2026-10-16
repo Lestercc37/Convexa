@@ -10,6 +10,7 @@ from backend.domain.use_cases.calculate_anchored_vwap import (
     calculate_proxy_anchored_vwap,
     calculate_proxy_anchored_vwap_series,
     calculate_session_open,
+    opening_reference,
 )
 
 SESSION_OPEN_UTC = datetime(2026, 8, 3, 13, 30, tzinfo=UTC)  # 9:30 ET (EDT, UTC-4)
@@ -281,3 +282,38 @@ def test_calculate_proxy_anchored_vwap_is_provisional_when_the_index_has_no_read
     assert result.provisional is True
     assert result.sample_count == 3
     assert result.proxy_symbol == "SPY"
+
+
+def test_opening_reference_is_the_first_minute_median_not_a_bad_first_print() -> None:
+    # 2026-10-16: SPX printed 7745.32 at 09:30:02 and 7754.51 three seconds later
+    base = SESSION_OPEN_UTC + timedelta(seconds=2)
+    prints = [
+        MarketPrice(symbol="SPX", as_of=base, price=Decimal("7745.32"), volume=0),
+        MarketPrice(symbol="SPX", as_of=base + timedelta(seconds=3), price=Decimal("7754.51"), volume=0),
+        MarketPrice(symbol="SPX", as_of=base + timedelta(seconds=4), price=Decimal("7752.79"), volume=0),
+        MarketPrice(symbol="SPX", as_of=base + timedelta(seconds=5), price=Decimal("7753.58"), volume=0),
+        MarketPrice(symbol="SPX", as_of=base + timedelta(seconds=90), price=Decimal("7700"), volume=0),
+    ]
+
+    price, complete = opening_reference(prints)
+
+    assert price == Decimal("7753.185")  # median of the four prints inside the first minute
+    assert complete is True
+    assert opening_reference(prints[:3])[1] is False  # first minute not over yet: callers must not cache it
+    assert opening_reference(prints[:3], as_of=base + timedelta(seconds=61))[1] is True
+    assert opening_reference([]) is None
+
+
+def test_proxy_vwap_is_not_shifted_by_a_bad_first_index_print() -> None:
+    base = SESSION_OPEN_UTC + timedelta(seconds=2)
+    index = [
+        MarketPrice(symbol="SPX", as_of=base, price=Decimal("7745"), volume=0),  # bad first print
+        MarketPrice(symbol="SPX", as_of=base + timedelta(seconds=3), price=Decimal("7754"), volume=0),
+        MarketPrice(symbol="SPX", as_of=base + timedelta(seconds=4), price=Decimal("7754"), volume=0),
+    ]
+    proxy = [_reading(0, "773", 1000), _reading(1, "773", 2000)]
+    as_of = SESSION_OPEN_UTC + timedelta(minutes=1)
+
+    series = calculate_proxy_anchored_vwap_series(index, proxy, as_of)
+
+    assert series and series[-1][1] == Decimal("7754")  # scaled from the median open (7754), not from 7745
