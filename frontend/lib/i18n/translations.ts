@@ -14,12 +14,8 @@ export type Translations = {
     liveButton: string;
     preSessionButton: string;
     scannerButton: string;
-    gammaViewGroupAriaLabel: string;
-    structuralButton: string;
-    tacticalButton: string;
     structuralOnlyBadge: string;
     noTacticalDataLabel: string;
-    structuralAsOfLabel: (minutesAgo: number) => string;
     exposureGroupAriaLabel: string;
     aggregatedGreeksEyebrow: string;
     loadingRegime: string;

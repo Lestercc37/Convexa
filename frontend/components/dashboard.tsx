@@ -143,9 +143,12 @@ export function Dashboard() {
   const [underlyings, setUnderlyings] = useState<Underlying[]>([]);
   const [symbol, setSymbol] = useState("");
   const [view, setView] = useState<"live" | "pre-session" | "scanner">("live");
-  // Structural vs. Tactical (0-2 DTE) -- named gammaView, not view, since
-  // that name is already the Live/Pre-Session/Scanner tab selector above.
-  const [gammaView, setGammaView] = useState<GammaView>("structural");
+  // Tactical (0-2 DTE) is the only view shown. The Structural tab was hidden
+  // on 2026-10-16 at the user's request (never looked at, doubles the work);
+  // the metric cards that still come from the structural computation carry
+  // the "structural-only" badge. Named gammaView, not view, since that name
+  // is already the Live/Pre-Session/Scanner tab selector above.
+  const gammaView: GammaView = "tactical";
   const [gamma, setGamma] = useState<GammaResponse | null>(null);
   const [market, setMarket] = useState<MarketResponse | null>(null);
   const [pricePoints, setPricePoints] = useState<PricePoint[]>([]);
@@ -166,18 +169,6 @@ export function Dashboard() {
     [candles, timeframe],
   );
   const latestCandle = displayedCandles.at(-1) ?? null;
-  // Structural now refreshes on its own slower cadence on the backend
-  // (STRUCTURAL_REFRESH_INTERVAL, gamma.py) -- a scalper/day trader's
-  // own request (2026-09-25): Tactical is the working set and needs
-  // every cycle's freshness, Structural is background macro context
-  // that doesn't. This surfaces gamma.as_of next to the toggle so an
-  // unmoving Call Wall/Put Wall under Structural reads as "intentionally
-  // slower," not "stuck." Only shown for Structural -- Tactical is
-  // always as fresh as the latest poll, same as every other panel.
-  const structuralMinutesAgo =
-    gamma && gammaView === "structural"
-      ? Math.max(0, Math.floor((Date.now() - Date.parse(gamma.as_of)) / 60_000))
-      : null;
   const isFutureSymbol = underlyings.find((item) => item.symbol === symbol)?.kind === "future";
   // ES/NQ are SPX/NDX shifted by the opening price typed in by hand each morning. Without today's
   // price the API answers 409: say "no data" (never stale numbers, never hide the symbol).
@@ -561,45 +552,6 @@ export function Dashboard() {
             {t.dashboard.scannerButton}
           </button>
         </div>
-        <div
-          className="tv-gamma-view-toggle"
-          role="group"
-          aria-label={t.dashboard.gammaViewGroupAriaLabel}
-        >
-          <button
-            type="button"
-            aria-pressed={gammaView === "structural"}
-            onClick={() => {
-              setGamma(null);
-              setGammaView("structural");
-              // Targeted, immediate re-fetch -- not a symbol switch, so
-              // it deliberately does NOT touch pricePoints/vwapPoints or
-              // re-seed their own history the way an actual symbol
-              // change does (see the seed-then-poll effect above). This
-              // is what makes toggling the view fast instead of feeling
-              // like a full symbol reload.
-              void refresh(symbol, "structural");
-            }}
-          >
-            {t.dashboard.structuralButton}
-          </button>
-          <button
-            type="button"
-            aria-pressed={gammaView === "tactical"}
-            onClick={() => {
-              setGamma(null);
-              setGammaView("tactical");
-              void refresh(symbol, "tactical");
-            }}
-          >
-            {t.dashboard.tacticalButton}
-          </button>
-        </div>
-        {structuralMinutesAgo !== null && (
-          <span className="tv-structural-as-of" role="status">
-            {t.dashboard.structuralAsOfLabel(structuralMinutesAgo)}
-          </span>
-        )}
         <div className="tv-topbar-right">
           <button
             type="button"

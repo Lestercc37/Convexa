@@ -370,7 +370,7 @@ describe("Dashboard", () => {
     await waitFor(() =>
       expect(apiMocks.getGammaProfile).toHaveBeenCalledWith(
         "SPY",
-        "structural",
+        "tactical",
         expect.any(AbortSignal),
       ),
     );
@@ -469,14 +469,14 @@ describe("Dashboard", () => {
     await screen.findByLabelText("Chart de velas para SPY");
 
     await vi.waitFor(() =>
-      expect(apiMocks.getGamma).toHaveBeenCalledWith("SPY", "structural", expect.any(AbortSignal)),
+      expect(apiMocks.getGamma).toHaveBeenCalledWith("SPY", "tactical", expect.any(AbortSignal)),
     );
 
     await vi.advanceTimersByTimeAsync(POLLING_INTERVAL_MS);
     await vi.waitFor(() =>
       expect(apiMocks.getGamma).toHaveBeenLastCalledWith(
         "SPY",
-        "structural",
+        "tactical",
         expect.any(AbortSignal),
       ),
     );
@@ -638,7 +638,7 @@ describe("Dashboard", () => {
     await waitFor(() =>
       expect(apiMocks.getGammaProfile).toHaveBeenCalledWith(
         "SPY",
-        "structural",
+        "tactical",
         expect.any(AbortSignal),
       ),
     );

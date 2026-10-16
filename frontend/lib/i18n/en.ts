@@ -16,13 +16,8 @@ export const en: Translations = {
     liveButton: "Live",
     preSessionButton: "Pre-Session",
     scannerButton: "Quick Scanner",
-    gammaViewGroupAriaLabel: "Gamma View",
-    structuralButton: "Structural",
-    tacticalButton: "Tactical",
     structuralOnlyBadge: "(Structural)",
     noTacticalDataLabel: "No option data available yet for this symbol",
-    structuralAsOfLabel: (minutesAgo) =>
-      minutesAgo <= 0 ? "Structural: just now" : `Structural: ${minutesAgo}m ago`,
     exposureGroupAriaLabel: "Charm and Vanna Exposure",
     aggregatedGreeksEyebrow: "Aggregated Greeks",
     loadingRegime: "Loading regime and levels…",
