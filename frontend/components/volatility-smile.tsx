@@ -55,6 +55,17 @@ function onePerStrikeAndRight(contracts: OptionContract[]): OptionContract[] {
   return contracts.filter((contract) => best.get(`${contract.strike}|${contract.type}`) === contract);
 }
 
+// An in-the-money contract whose price barely exceeds its intrinsic value carries no readable IV: the time value is smaller than
+// the bid/ask can resolve, so the solved IV is noise (NDX 2026-10-16: puts 280-410 pts in the money with 10% spreads showed IV 21-22%
+// against 30-37% for their neighbours and drew stray dots). Keep a contract only when its time value is at least half its spread.
+function hasReadableIv(contract: OptionContract, marketPrice: number): boolean {
+  if (!Number.isFinite(marketPrice) || marketPrice <= 0) return true;
+  if (!(contract.ask >= contract.bid) || !(contract.ask > 0)) return true;
+  const intrinsic = contract.type === "call" ? Math.max(marketPrice - contract.strike, 0) : Math.max(contract.strike - marketPrice, 0);
+  const mid = (contract.bid + contract.ask) / 2;
+  return mid - intrinsic >= (contract.ask - contract.bid) / 2;
+}
+
 // Contracts whose strike is within +-1.5% of spot; with no usable spot nothing is cut.
 function withinWindow(contracts: OptionContract[], marketPrice: number): OptionContract[] {
   if (!Number.isFinite(marketPrice) || marketPrice <= 0) return contracts;
@@ -186,7 +197,7 @@ export function VolatilitySmile({ symbol, marketPrice }: VolatilitySmileProps) {
     const windowed = withinWindow(contracts, marketPrice);
     // IV = 0 means the provider found no solution (deep in the money), not a 0% volatility: such
     // a contract is left off the plot and counted in the note instead of drawn at the bottom edge.
-    const points = windowed.filter((contract) => contract.iv > 0);
+    const points = windowed.filter((contract) => contract.iv > 0 && hasReadableIv(contract, marketPrice));
     const impliedVolatilities = points.map((contract) => contract.iv);
     const hasWindow = Number.isFinite(marketPrice) && marketPrice > 0;
     const strikes = windowed.map((contract) => contract.strike);
