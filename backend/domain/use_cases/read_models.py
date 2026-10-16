@@ -15,6 +15,7 @@ from backend.domain.use_cases.calculate_anchored_vwap import (
     calculate_proxy_anchored_vwap,
     calculate_proxy_anchored_vwap_series,
     calculate_session_open,
+    opening_reference,
 )
 from backend.domain.use_cases.calculate_atr_range import REQUIRED_DAILY_BARS, calculate_atr_range
 from backend.domain.use_cases.calculate_closing_dynamics import calculate_closing_dynamics
@@ -129,7 +130,7 @@ async def future_price_offset(
     )
     if not proxy_history:
         return None
-    offset = anchor - proxy_history[0].price
+    offset = anchor - opening_reference(proxy_history, latest_proxy_price.as_of)[0]
     return offset, proxy_history
 
 

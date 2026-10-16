@@ -19,7 +19,7 @@ from datetime import date, datetime
 from decimal import Decimal
 
 from backend.domain.entities import GammaAggregate, MarketSnapshot, OptionChain
-from backend.domain.use_cases.calculate_anchored_vwap import calculate_session_open
+from backend.domain.use_cases.calculate_anchored_vwap import calculate_session_open, opening_reference
 from backend.domain.use_cases.market_hours import EASTERN_TIME, MARKET_OPEN_ET
 
 # future -> the index whose own data stands in for it.
@@ -93,8 +93,9 @@ def future_level_offset(storage, future_symbol: str, proxy_symbol: str) -> Decim
         history = storage.get_price_history(proxy_symbol, session_open, latest.as_of)
         if not history:
             return None
-        open_price = history[0].price
-        _remember_open(proxy_symbol, session_open.date(), open_price)
+        open_price, complete = opening_reference(history, latest.as_of)
+        if complete:
+            _remember_open(proxy_symbol, session_open.date(), open_price)
     return anchor - open_price
 
 
@@ -112,8 +113,9 @@ async def future_level_offset_async(storage, future_symbol: str, proxy_symbol: s
         history = await storage.get_price_history(proxy_symbol, session_open, latest.as_of)
         if not history:
             return None
-        open_price = history[0].price
-        _remember_open(proxy_symbol, session_open.date(), open_price)
+        open_price, complete = opening_reference(history, latest.as_of)
+        if complete:
+            _remember_open(proxy_symbol, session_open.date(), open_price)
     return anchor - open_price
 
 

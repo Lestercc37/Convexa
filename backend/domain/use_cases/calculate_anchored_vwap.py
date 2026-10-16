@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime, time
+from datetime import UTC, datetime, time, timedelta
 from decimal import Decimal
 from zoneinfo import ZoneInfo
 
@@ -14,6 +14,24 @@ def calculate_session_open(as_of: datetime) -> datetime:
     """Return the 9:30 ET session anchor for the trading day of `as_of`."""
     local = as_of.astimezone(NEW_YORK)
     return datetime.combine(local.date(), SESSION_OPEN, NEW_YORK)
+
+
+OPENING_REFERENCE_SECONDS = 60
+
+
+def opening_reference(readings: list[MarketPrice], as_of: datetime | None = None) -> tuple[Decimal, bool] | None:
+    """The price a session is measured from: the MEDIAN of the readings in the first minute after the first one, not the first print
+    alone. The first print of an index can be a bad one (SPX printed 7745.32 at 09:30:02 on 2026-10-16 and 7754.51 three seconds later,
+    which shifted the whole proxy VWAP and the ES offset by ~9 points). Second value: True once `as_of` (default: the last reading) is past that first minute, so a
+    caller that caches the result does not freeze a half-formed one. None when there are no readings."""
+    ordered = sorted(readings, key=lambda reading: reading.as_of)
+    if not ordered:
+        return None
+    window_end = ordered[0].as_of + timedelta(seconds=OPENING_REFERENCE_SECONDS)
+    prices = sorted(reading.price for reading in ordered if reading.as_of <= window_end)
+    middle = len(prices) // 2
+    median = prices[middle] if len(prices) % 2 else (prices[middle - 1] + prices[middle]) / 2
+    return median, (as_of if as_of is not None else ordered[-1].as_of) >= window_end
 
 
 def calculate_anchored_vwap_series(
@@ -106,7 +124,7 @@ def calculate_proxy_anchored_vwap_series(
     )
     if not index_session_readings:
         return []
-    index_open_price = index_session_readings[0].price
+    index_open_price = opening_reference(index_session_readings)[0]
 
     proxy_session_readings = sorted(
         (reading for reading in proxy_readings if anchor <= reading.as_of <= as_of),
@@ -114,7 +132,7 @@ def calculate_proxy_anchored_vwap_series(
     )
     if not proxy_session_readings:
         return []
-    proxy_open_price = proxy_session_readings[0].price
+    proxy_open_price = opening_reference(proxy_session_readings)[0]
     if proxy_open_price == 0:
         return []
 
