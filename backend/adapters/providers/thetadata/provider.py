@@ -469,6 +469,15 @@ NEAR_THE_MONEY_CACHE_TTL_SECONDS = 10.0
 # list a new expiration later in the day (the weekly root lists tomorrow's after the close).
 ROOT_WITHOUT_EXPIRATION_TTL_SECONDS = 15 * 60.0
 
+# Wildcard (expiration="*") greeks snapshots ask the Terminal only for expirations up to this many days out. Before this, they
+# returned EVERY listed expiration (SPX: 56, out to 2031; 24% of the stored SPX chain was beyond 90 days, 39-44% for NVDA/VIX) and
+# gamma.py's near-term filter (30 days for indices/ETFs, 45 for stocks, anchor offsets included) threw them away afterwards, so the
+# calculation does not change; only the Terminal's payload, the scheduler's CPU/memory and the stored table do. Verified on the real
+# Terminal 2026-10-15 (docs/hm_max_dte_probe.py: HTTP 200, 0.8 s, 29 expirations 0-43 days for SPXW with max_dte=45). Must stay
+# >= the largest near-term window in gamma.py plus the days between today and the nearest listed expiration (VIX, NVDA).
+# NOT applied to the open-interest snapshots: max_dte has not been verified there.
+WILDCARD_MAX_DTE = 60
+
 # Until the scheduler/stream process split (2026-09-22), ongoing streaming-
 # contract rediscovery (catching a contract that's newly near-the-money as
 # spot drifts intraday, not just what was near-the-money at process
@@ -2757,6 +2766,7 @@ class ThetaDataProvider:
                 expiration=expiration_param,
                 strike_range=NEAR_THE_MONEY_OVERFETCH_STRIKE_RANGE,
                 format="json",
+                **({"max_dte": WILDCARD_MAX_DTE} if expiration is None else {}),
             )
             if body is None:
                 if expiration is not None and len(roots) > 1:
@@ -2878,6 +2888,7 @@ class ThetaDataProvider:
                     symbol=root,
                     expiration="*",
                     strike_range=NEAR_THE_MONEY_OVERFETCH_STRIKE_RANGE,
+                    max_dte=WILDCARD_MAX_DTE,
                     format="json",
                 )
                 entries.extend(entry for entry in body.get("response", []) if entry.get("data"))
