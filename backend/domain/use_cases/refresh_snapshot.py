@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import time
+from datetime import timedelta
 from dataclasses import dataclass
 
 from backend.domain.entities import DerivedMetrics, GammaAggregate, MarketPrice, OptionChain
@@ -27,6 +28,19 @@ logger = logging.getLogger(__name__)
 # in ThetaDataProvider._get_json) is a meaningful contributor to slow
 # scheduler cycles -- not assumed either way until this logs real data.
 SLOW_COMPUTE_SECONDS = 2.0
+
+
+def scheduler_price_row(market, latest: MarketPrice | None) -> MarketPrice:
+    """The row the scheduler stores for `market`. If a FRESHER row already exists (a stream tick), keep that row's price and put the
+    scheduler's real volume on it, one millisecond later, so it becomes the latest row and the next stream tick carries the real volume."""
+    if latest is not None and latest.as_of >= market.as_of:
+        return MarketPrice(
+            symbol=market.symbol,
+            as_of=latest.as_of + timedelta(milliseconds=1),
+            price=latest.price,
+            volume=market.volume,
+        )
+    return MarketPrice(symbol=market.symbol, as_of=market.as_of, price=market.price, volume=market.volume)
 
 
 @dataclass(frozen=True, slots=True)
@@ -68,13 +82,12 @@ class RefreshUnderlyingSnapshotUseCase:
         # instance process_trade() actually feeds), persists it directly
         # from there now instead.
         market = self.market_data_provider.get_underlying_snapshot(symbol)
+        # The scheduler is the ONLY writer of the real session volume; the stream ticks carry the LATEST stored row's volume forward.
+        # `market.as_of` is the quote time of the option snapshot (seconds old under load), so this row used to sort BEHIND the stream's
+        # newest row and its volume was never seen again: the stored volume sat at the day's first value (SPY 488,685 since at least
+        # 2026-10-06). When a fresher row already exists, write the scheduler's volume on top of THAT row's price, one millisecond later.
         self.storage.save_market_price(
-            MarketPrice(
-                symbol=market.symbol,
-                as_of=market.as_of,
-                price=market.price,
-                volume=market.volume,
-            )
+            scheduler_price_row(market, self.storage.get_latest_price(market.symbol))
         )
         for bar in self.market_data_provider.get_daily_bars(symbol):
             self.storage.save_daily_bar(bar)

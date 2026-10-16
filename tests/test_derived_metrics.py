@@ -209,3 +209,23 @@ def _seed_references(storage: InMemoryStorage, days: int, today: date = date(202
                 atm_iv=atm_iv,
             )
         )
+
+
+def test_capture_takes_the_first_cycle_after_09_35_when_none_landed_in_that_minute() -> None:
+    storage = InMemoryStorage()
+    gamma = _gamma(datetime(2026, 8, 3, 13, 41, tzinfo=timezone.utc))
+
+    def snapshot(hour: int, minute: int) -> MarketSnapshot:
+        return MarketSnapshot(
+            symbol="SPY", as_of=datetime(2026, 8, 3, hour, minute, tzinfo=timezone.utc), price=Decimal("90"), volume=1000,
+            pc_oi_ratio=Decimal("1.25"), skew_25d=Decimal("0.06"), atm_iv=Decimal("0.25"),
+        )
+
+    assert capture_daily_gamma_reference(storage, gamma, snapshot(13, 20)) is False  # 09:20 ET, before the minute
+    assert capture_daily_gamma_reference(storage, gamma, snapshot(13, 41)) is True  # 09:41 ET: first cycle after, no row yet
+    assert capture_daily_gamma_reference(storage, gamma, snapshot(13, 42)) is False  # the day already has its row
+    other_day_late = MarketSnapshot(
+        symbol="SPY", as_of=datetime(2026, 8, 4, 14, 45, tzinfo=timezone.utc), price=Decimal("90"), volume=1000,
+        pc_oi_ratio=Decimal("1.25"), skew_25d=Decimal("0.06"), atm_iv=Decimal("0.25"),
+    )
+    assert capture_daily_gamma_reference(storage, gamma, other_day_late) is False  # 10:45 ET: past the 10:30 cutoff

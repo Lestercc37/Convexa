@@ -22,6 +22,7 @@ DEFAULT_HISTORY_DAYS = 60
 MINIMUM_HISTORY_DAYS = 20
 REFERENCE_HOUR_ET = 9
 REFERENCE_MINUTE_ET = 35
+LATE_CAPTURE_UNTIL_ET = (10, 30)  # (hour, minute) ET: latest a catch-up sample may still be taken
 EASTERN_TIME = ZoneInfo("America/New_York")
 # net_gamma references are only comparable with the Tactical (0-2 DTE) aggregate from these days on.
 # Older daily_gamma_reference.net_gamma rows were sampled from the Structural (30/45-day) aggregate,
@@ -236,13 +237,24 @@ def capture_daily_gamma_reference(
     gamma: GammaAggregate,
     market: MarketSnapshot,
 ) -> bool:
-    """Persist the daily sample only during 09:35:00-09:35:59 ET."""
+    """Persist the daily sample during 09:35:00-09:35:59 ET -- or, when no cycle landed in that minute (the scheduler's cycle is
+    ~60-90 s, so many days have no row: SPX had none for 2026-10-13..16 and Dealer Impact then measures against a stale 'latest'
+    row), at the FIRST cycle after it, up to LATE_CAPTURE_UNTIL_ET, if that day still has no row for the symbol."""
     eastern_timestamp = market.as_of.astimezone(EASTERN_TIME)
-    if (
-        eastern_timestamp.hour != REFERENCE_HOUR_ET
-        or eastern_timestamp.minute != REFERENCE_MINUTE_ET
-    ):
-        return False
+    in_the_minute = (
+        eastern_timestamp.hour == REFERENCE_HOUR_ET and eastern_timestamp.minute == REFERENCE_MINUTE_ET
+    )
+    if not in_the_minute:
+        after_the_minute = (eastern_timestamp.hour, eastern_timestamp.minute) > (
+            REFERENCE_HOUR_ET,
+            REFERENCE_MINUTE_ET,
+        )
+        before_cutoff = (eastern_timestamp.hour, eastern_timestamp.minute) <= LATE_CAPTURE_UNTIL_ET
+        if not (after_the_minute and before_cutoff):
+            return False
+        latest = storage.get_daily_gamma_references(gamma.symbol, 1)
+        if latest and latest[0].date == eastern_timestamp.date():
+            return False
     storage.save_daily_gamma_reference(
         DailyGammaReference(
             date=eastern_timestamp.date(),

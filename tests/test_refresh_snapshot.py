@@ -104,3 +104,33 @@ def test_merges_only_the_zero_volume_contracts_in_a_mixed_chain() -> None:
 
     assert merged.contracts[0].volume == 10
     assert merged.contracts[1].volume == 77
+
+
+def test_scheduler_row_goes_on_top_of_a_fresher_stream_row_and_carries_the_real_volume() -> None:
+    from datetime import UTC, datetime, timedelta
+    from decimal import Decimal
+
+    from backend.domain.entities import MarketPrice
+    from backend.domain.use_cases.refresh_snapshot import scheduler_price_row
+
+    class _Market:
+        symbol = "SPY"
+        as_of = datetime(2026, 10, 16, 13, 40, 5, tzinfo=UTC)  # option-quote time, a few seconds old
+        price = Decimal("771.00")
+        volume = 4_237_474
+
+    fresher_stream_row = MarketPrice(
+        symbol="SPY", as_of=_Market.as_of + timedelta(seconds=7), price=Decimal("771.40"), volume=488_685
+    )
+
+    row = scheduler_price_row(_Market, fresher_stream_row)
+
+    assert row.volume == 4_237_474  # the scheduler's real counter
+    assert row.price == Decimal("771.40")  # the fresher price is kept, no stale-price blip
+    assert row.as_of == fresher_stream_row.as_of + timedelta(milliseconds=1)  # it is now the latest row
+
+    # nothing fresher stored (first cycle of the day, or an older row): unchanged behavior
+    older = MarketPrice(symbol="SPY", as_of=_Market.as_of - timedelta(hours=17), price=Decimal("770"), volume=50_000_000)
+    plain = scheduler_price_row(_Market, older)
+    assert (plain.as_of, plain.price, plain.volume) == (_Market.as_of, Decimal("771.00"), 4_237_474)
+    assert scheduler_price_row(_Market, None).volume == 4_237_474
