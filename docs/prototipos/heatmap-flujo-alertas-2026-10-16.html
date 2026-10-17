@@ -523,7 +523,7 @@ canvas { display: block; width: 100%; }
     var tipo = a.type === 'UNUSUAL' ? 'Inusual' : (a.type === 'WHALE' ? 'Ballena' : 'Flujo sostenido'), dist = a.strike - data.S.px;
     var side = bp >= 0.6 ? '<b style="color:var(--up)">COMPRA</b>' : (bp <= 0.4 ? '<b style="color:#ff6b70">VENTA</b>' : '<b style="color:var(--warning)">SIN LADO CLARO</b>');
     var money = zoneOf(a) + ', delta ' + Math.abs(a.delta).toFixed(2);
-    var NAMES = { simple: 'simple', subasta: 'subasta (una pata)', 'multi-leg': 'multi-leg', otra: 'otra (cód. 129, sin clasificar)' }, parts = [];
+    var NAMES = { simple: 'simple', subasta: 'subasta (una pata)', 'multi-leg': 'multi-leg', otra: 'piso, una pata (cód. 129)' }, parts = [];
     Object.keys(a.cond).sort(function (x, y) { return a.cond[y] - a.cond[x]; }).forEach(function (k) { if (a.cond[k] >= 10 && parts.length < 2) parts.push(NAMES[k] + ' ' + a.cond[k] + ' %'); });
     var condTxt = 'Condición: ' + parts.join(' · ') + (a.approx ? ' <span style="color:var(--dim)">(aprox.)</span>' : '');
     if ((a.cond['multi-leg'] || 0) >= 50) condTxt += '<br><span style="color:var(--warning)">Mayormente multi-leg: comprar o vender por pata puede no ser direccional</span>';
