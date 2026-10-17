@@ -31,13 +31,22 @@ function drawWith(primitive: GammaHeatmapPrimitive, context: FakeContext) {
   renderer?.draw(target as never);
 }
 
-// Strike 100 at y=700, 105 at y=600, 110 at y=500; columns at x = 100, 140, 180 (40 px apart).
-function attached(timeToX: (time: number) => number | null = (time) => (time - 1000) * 4 + 100) {
+// Strike 100 at y=700, 105 at y=600, 110 at y=500. Bars every 10 s from t=1000, 40 px apart (x = index * 40 + 100), so the columns at
+// 1000 / 1010 / 1020 sit at x = 100, 140, 180. `offGrid` lists times the time scale has no index for at all.
+function attached(offGrid: number[] = []) {
   const primitive = new GammaHeatmapPrimitive();
   const requestUpdate = vi.fn();
   primitive.attached({
-    series: { priceToCoordinate: (price: number) => 1500 - price * 8 + 0 * price },
-    chart: { timeScale: () => ({ timeToCoordinate: timeToX }) },
+    series: {
+      priceToCoordinate: (price: number) => 1500 - price * 8 + 0 * price,
+      dataByIndex: (index: number) => (index >= 0 && index < 100 ? { time: 1000 + index * 10 } : null),
+    },
+    chart: {
+      timeScale: () => ({
+        timeToIndex: (time: number) => (offGrid.includes(time) ? null : Math.max(0, Math.min(99, Math.round((time - 1000) / 10)))),
+        logicalToCoordinate: (index: number) => index * 40 + 100,
+      }),
+    },
     requestUpdate,
   } as never);
   return { primitive, requestUpdate };
@@ -115,7 +124,7 @@ describe("GammaHeatmapPrimitive", () => {
   });
 
   it("skips a column that is off the time scale and a strike that is off the price scale", () => {
-    const { primitive } = attached((time) => (time === 1010 ? null : (time - 1000) * 4 + 100));
+    const { primitive } = attached([1010]);
     primitive.setData(DATA);
     const context = fakeContext();
     drawWith(primitive, context);

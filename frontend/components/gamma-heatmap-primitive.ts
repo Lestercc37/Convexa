@@ -7,10 +7,11 @@ import type {
   SeriesAttachedParameter,
   Time,
 } from "lightweight-charts";
+import { timeToX } from "@/lib/chart-time";
 import type { GammaHeatmapResponse } from "@/lib/types";
 
 // Gamma heatmap: one rectangle per (time bucket, strike), drawn BEHIND the candles at the same coordinates they use
-// (timeScale().timeToCoordinate / series.priceToCoordinate), so it follows zoom and scrolling with the chart instead of being a
+// (timeToX in lib/chart-time.ts, which places a time between bars / series.priceToCoordinate), so it follows zoom and scrolling with the chart instead of being a
 // second chart kept in sync by hand. Same attachPrimitive pattern as the GEX histogram.
 //
 // Color = the stored per-strike figure of that bucket, scaled by the 98th percentile of |value| over the whole matrix (the API sends it as
@@ -111,7 +112,7 @@ class GammaHeatmapRenderer implements IPrimitivePaneRenderer {
       const step = medianStep(rows.map((row) => row.y));
       const rowHeight = Math.max(MINIMUM_ROW_HEIGHT_BITMAP_PX, (step ?? scope.verticalPixelRatio * 6) * ROW_FILL_FRACTION);
 
-      const xs = data.columns.map((column) => timeScale.timeToCoordinate(column.time as Time));
+      const xs = data.columns.map((column) => timeToX(timeScale, series, column.time));
       let lastWidth = 0;
       data.columns.forEach((column, position) => {
         const x = xs[position];
