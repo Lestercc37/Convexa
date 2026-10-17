@@ -1313,6 +1313,25 @@ class PostgreSQLStorage:
                 },
             )
 
+    def get_latest_option_delta(self, occ_symbol: str) -> Decimal | None:
+        """ThetaData's delta of one contract in its most recent stored chain snapshot (None when the contract has none). One indexed
+        lookup (option_contracts.occ_symbol is UNIQUE, idx_option_chain_snapshots_contract_time): used per FIRED whale alert, not
+        per trade, to tell ITM / ATM / OTM from the contract's own delta."""
+        with self.session_factory() as session:
+            row = session.execute(
+                text(
+                    """
+                    SELECT c.delta
+                    FROM option_chain_snapshots AS c
+                    WHERE c.contract_id = (SELECT id FROM option_contracts WHERE occ_symbol = :occ)
+                    ORDER BY c.time DESC
+                    LIMIT 1
+                    """
+                ),
+                {"occ": occ_symbol},
+            ).first()
+        return None if row is None or row[0] is None else Decimal(row[0])
+
     def get_symbol_flow_pressure(self, underlying: str) -> SymbolFlowPressure | None:
         with self.session_factory() as session:
             row = (

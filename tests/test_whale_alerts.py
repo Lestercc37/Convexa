@@ -196,7 +196,7 @@ def test_alert_moneyness_defaults_to_atm_when_no_market_price_is_recorded_yet() 
     assert alerts[0].moneyness is Moneyness.ATM
 
 
-def test_alert_tags_the_nearest_gamma_level_when_spot_is_within_band() -> None:
+def test_alert_tags_the_nearest_gamma_level_when_the_strike_is_at_it() -> None:
     storage = InMemoryStorage()
     storage.save_market_price(
         MarketPrice(symbol="IWM", as_of=datetime(2026, 1, 15, 14, 29, tzinfo=UTC),
@@ -207,7 +207,7 @@ def test_alert_tags_the_nearest_gamma_level_when_spot_is_within_band() -> None:
             symbol="IWM",
             view="tactical",
             as_of=datetime(2026, 1, 15, 14, 29, tzinfo=UTC),
-            call_wall=Decimal("554"),  # (554-552.25)/552.25 ~= 0.32%, inside the 0.5% band
+            call_wall=Decimal("540.3"),  # the alerted contract's strike is 540: 0.3 away, inside the flat 0.1% band (0.55)
             put_wall=Decimal("400"),
             gamma_flip=Decimal("300"),
         )
@@ -228,7 +228,9 @@ def test_alert_tags_the_nearest_gamma_level_when_spot_is_within_band() -> None:
     assert alerts[0].near_gamma_level == "Call Wall"
 
 
-def test_alert_near_gamma_level_is_none_when_spot_is_far_from_every_level() -> None:
+def test_alert_near_gamma_level_is_none_when_the_strike_is_far_from_every_level() -> None:
+    # The spot (552.25) is 2 points from a 554 Call Wall -- the old spot-based tag would have said "Call Wall" -- but the alerted
+    # strike is 540, so nothing is tagged.
     storage = InMemoryStorage()
     storage.save_market_price(
         MarketPrice(symbol="IWM", as_of=datetime(2026, 1, 15, 14, 29, tzinfo=UTC),
@@ -239,7 +241,7 @@ def test_alert_near_gamma_level_is_none_when_spot_is_far_from_every_level() -> N
             symbol="IWM",
             view="tactical",
             as_of=datetime(2026, 1, 15, 14, 29, tzinfo=UTC),
-            call_wall=Decimal("700"),
+            call_wall=Decimal("554"),
             put_wall=Decimal("400"),
             gamma_flip=Decimal("450"),
         )
@@ -298,12 +300,8 @@ def test_alert_moneyness_uses_the_gamma_aggregates_atr_width_over_the_flat_perce
 
 
 def test_alert_near_gamma_level_uses_the_gamma_aggregates_atr_width_over_the_flat_percentage() -> None:
-    # Same Call Wall (554) and spot (552.25) as
-    # test_alert_tags_the_nearest_gamma_level_when_spot_is_within_band --
-    # $1.75 away, inside the old flat NEAR_GAMMA_LEVEL_BAND_PCT (0.5%,
-    # ~$2.76), which tagged it "Call Wall". A GammaAggregate with a real
-    # near_the_money_width now takes priority: band becomes width x 0.5 =
-    # $1, and $1.75 > $1, so nothing is tagged.
+    # Call Wall 540.5 is 0.5 from the alerted 540 strike, inside the flat 0.1% band (0.55) that would tag it. A GammaAggregate with a
+    # real near_the_money_width takes priority: band = width x 0.1 = 0.2, and 0.5 > 0.2, so nothing is tagged.
     storage = InMemoryStorage()
     storage.save_market_price(
         MarketPrice(symbol="IWM", as_of=datetime(2026, 1, 15, 14, 29, tzinfo=UTC),
@@ -314,7 +312,7 @@ def test_alert_near_gamma_level_uses_the_gamma_aggregates_atr_width_over_the_fla
             symbol="IWM",
             view="tactical",
             as_of=datetime(2026, 1, 15, 14, 29, tzinfo=UTC),
-            call_wall=Decimal("554"),
+            call_wall=Decimal("540.5"),
             put_wall=Decimal("400"),
             gamma_flip=Decimal("300"),
             near_the_money_width=Decimal("2"),
@@ -1035,3 +1033,65 @@ def test_process_never_feeds_symbol_flow_to_avoid_double_counting_the_trade_stre
         engine.process(_chain(base, cumulative, period))
 
     assert engine.symbol_flow("IWM") is None
+
+
+class _DeltaStorage(InMemoryStorage):
+    """InMemoryStorage whose stored delta for any contract is whatever the test says (or raises)."""
+
+    def __init__(self, delta: Decimal | None, error: bool = False) -> None:
+        super().__init__()
+        self._delta = delta
+        self._error = error
+        self.delta_reads = 0
+
+    def get_latest_option_delta(self, occ_symbol: str) -> Decimal | None:
+        self.delta_reads += 1
+        if self._error:
+            raise RuntimeError("database unavailable")
+        return self._delta
+
+
+def _fire_one_alert(storage: InMemoryStorage, spot: str = "543"):
+    storage.save_market_price(
+        MarketPrice(symbol="IWM", as_of=datetime(2026, 1, 15, 14, 29, tzinfo=UTC), price=Decimal(spot), volume=0)
+    )
+    engine = WhaleAlertsEngine(storage)
+    base = MockDataProvider().get_option_chain("IWM")
+    cumulative = 100
+    engine.process(_chain(base, cumulative, 0))
+    for period in range(1, 6):
+        cumulative += 200
+        engine.process(_chain(base, cumulative, period))
+    cumulative += 1600
+    engine.process(_chain(base, cumulative, 6))
+    alerts = engine.process(_chain(base, cumulative, 7))
+    assert len(alerts) == 1
+    return alerts[0]
+
+
+def test_alert_moneyness_comes_from_the_contracts_delta_when_one_is_stored() -> None:
+    # Spot 543 vs the 540 call strike is within the flat 1% band (ATM by the old rule); the stored delta decides instead.
+    assert _fire_one_alert(_DeltaStorage(Decimal("0.85"))).moneyness is Moneyness.ITM
+    assert _fire_one_alert(_DeltaStorage(Decimal("0.60"))).moneyness is Moneyness.ITM
+    assert _fire_one_alert(_DeltaStorage(Decimal("0.55"))).moneyness is Moneyness.ATM
+    assert _fire_one_alert(_DeltaStorage(Decimal("0.40"))).moneyness is Moneyness.ATM
+    assert _fire_one_alert(_DeltaStorage(Decimal("0.39"))).moneyness is Moneyness.OTM
+    # A put's delta is negative: its magnitude is what counts.
+    assert _fire_one_alert(_DeltaStorage(Decimal("-0.70"))).moneyness is Moneyness.ITM
+
+
+def test_alert_moneyness_falls_back_to_the_strike_rule_without_a_usable_delta() -> None:
+    # No delta stored, a zero delta (ThetaData sends 0 when the IV has no solution), or a failing read: the old rule applies
+    # (spot 543, strike 540, inside the flat 1% band -> ATM) and the alert is still emitted.
+    assert _fire_one_alert(_DeltaStorage(None)).moneyness is Moneyness.ATM
+    assert _fire_one_alert(_DeltaStorage(Decimal("0"))).moneyness is Moneyness.ATM
+    assert _fire_one_alert(_DeltaStorage(None, error=True)).moneyness is Moneyness.ATM
+
+
+def test_the_delta_of_a_contract_is_read_once_per_minute_not_once_per_alert() -> None:
+    storage = _DeltaStorage(Decimal("0.5"))
+    engine = WhaleAlertsEngine(storage)
+    engine._cached_option_delta("IWM260220C00540000")
+    engine._cached_option_delta("IWM260220C00540000")
+    engine._cached_option_delta("IWM260220P00540000")
+    assert storage.delta_reads == 2

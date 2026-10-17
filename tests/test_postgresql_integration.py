@@ -120,6 +120,20 @@ def test_option_chain_round_trip_against_postgresql(
     assert loaded.contracts == source.contracts
 
 
+def test_get_latest_option_delta_reads_the_newest_stored_delta_of_one_contract(
+    postgresql_storage: tuple[PostgreSQLStorage, Engine, str],
+) -> None:
+    """The ITM/ATM/OTM tag of a fired whale alert reads its contract's delta from the latest stored chain snapshot; a contract
+    that was never stored has none."""
+    storage, _, symbol = postgresql_storage
+    source = MockDataProvider().get_option_chain(symbol)
+    storage.save_chain_snapshot(source)
+    contract = source.contracts[0]
+
+    assert storage.get_latest_option_delta(contract.occ_symbol) == contract.greeks.delta
+    assert storage.get_latest_option_delta(f"{symbol}990101C00001000") is None
+
+
 def test_get_latest_chain_snapshot_ignores_fresher_narrow_write_for_index_against_postgresql(
     postgresql_storage: tuple[PostgreSQLStorage, Engine, str],
 ) -> None:

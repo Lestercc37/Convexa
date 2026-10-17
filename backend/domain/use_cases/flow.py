@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import threading
 import time
 from collections import deque
@@ -26,6 +27,8 @@ from backend.domain.use_cases.calculate_bvc import (
 from backend.domain.use_cases.calculate_lee_ready import classify_trade_side
 from backend.domain.use_cases.market_hours import EASTERN_TIME, is_market_open
 
+logger = logging.getLogger(__name__)
+
 
 class WhaleAlertType(StrEnum):
     UNUSUAL = "UNUSUAL"
@@ -41,7 +44,7 @@ class Moneyness(StrEnum):
 
 # Fallback only, used when no GammaAggregate (and therefore no ATR-based
 # GammaAggregate.near_the_money_width) is cached for this symbol yet -- see
-# _classify_moneyness/_nearest_gamma_level's own docstrings for the real
+# _classify_moneyness's own docstring for the real
 # band. A fixed dollar/point band would be wrong across symbols spanning
 # $30 stocks to 7,000+-point indices, so this is relative -- but a FLAT
 # percentage has exactly that same problem one level up: 1% of a $230
@@ -51,17 +54,6 @@ class Moneyness(StrEnum):
 # user flagged as nonsensically tagged ATM. Kept only as a same-day,
 # gamma-not-cached-yet fallback, not the primary definition anymore.
 ATM_BAND_PCT = Decimal("0.01")
-
-# Same reasoning as ATM_BAND_PCT, same fallback-only status, tighter:
-# "near a level" is meant to flag spot genuinely testing Call Wall/Put
-# Wall/Gamma Flip, not merely somewhere in the same neighborhood.
-NEAR_GAMMA_LEVEL_BAND_PCT = Decimal("0.005")
-
-# NEAR_GAMMA_LEVEL_BAND_PCT was half of ATM_BAND_PCT (0.005 vs. 0.01) --
-# same ratio applied to the real, ATR-based band now that one exists, so
-# "near a level" stays the tighter of the two even when both use
-# GammaAggregate.near_the_money_width instead of their own flat percentage.
-NEAR_GAMMA_LEVEL_WIDTH_RATIO = Decimal("0.5")
 
 
 def _atm_band(spot: Decimal, near_the_money_width: Decimal | None) -> Decimal:
@@ -104,39 +96,49 @@ def _classify_moneyness(
     return Moneyness.ITM if in_the_money else Moneyness.OTM
 
 
-def _nearest_gamma_level(spot: Decimal | None, gamma: GammaAggregate | None) -> str | None:
-    """Which of Call Wall/Put Wall/Gamma Flip (Tactical view, 0-2 DTE; it
-    can legitimately be empty on a day/symbol with no such contracts, see
-    GammaAggregate.view's own docstring, in which case there is no tag)
-    spot is currently sitting within band of, if any -- ties
-    the alert to the same levels the chart already shows, instead of
-    leaving the reader to cross-reference two panels by eye. Closest
-    level wins when spot happens to sit within band of more than one
-    (only possible for a very narrow/collapsed gamma landscape). Band is
-    NEAR_GAMMA_LEVEL_WIDTH_RATIO of gamma.near_the_money_width when
-    available, else the flat NEAR_GAMMA_LEVEL_BAND_PCT fallback -- see
-    _atm_band's own docstring for why a flat percentage alone is wrong
-    across symbols."""
-    if spot is None or spot <= 0 or gamma is None:
+# Moneyness from the contract's own |delta| (the zones Lester picked for the heatmap's alert cubes, 2026-10-16): ITM from 0.60 up,
+# ATM from 0.40 up to 0.60, OTM below 0.40. The strike-vs-ATR-width rule above stays as the fallback when no delta is stored.
+ITM_DELTA_MIN = Decimal("0.60")
+ATM_DELTA_MIN = Decimal("0.40")
+
+# A strike counts as "at" a gamma level when it lies within this fraction of the ATR-based near_the_money_width (SPX 94.69 -> about
+# 9.5 points, two strikes). The previous tag measured SPOT against half that width (about 47 points) and was on for every alert.
+STRIKE_NEAR_LEVEL_WIDTH_RATIO = Decimal("0.1")
+STRIKE_NEAR_LEVEL_BAND_PCT = Decimal("0.001")
+
+
+def _moneyness_from_delta(delta: Decimal | None) -> Moneyness | None:
+    """None when there is no usable delta (missing, or 0 as ThetaData sends for contracts without an IV solution)."""
+    if delta is None:
+        return None
+    magnitude = abs(delta)
+    if magnitude <= 0:
+        return None
+    if magnitude >= ITM_DELTA_MIN:
+        return Moneyness.ITM
+    if magnitude >= ATM_DELTA_MIN:
+        return Moneyness.ATM
+    return Moneyness.OTM
+
+
+def _nearest_level_to_strike(strike: Decimal, spot: Decimal | None, gamma: GammaAggregate | None) -> str | None:
+    """Which of Call Wall / Put Wall / Gamma Flip (Tactical) the contract's STRIKE sits at, if any. Measured against the strike, not
+    the spot: the spot is what the chart's current price already shows, while a card is about one contract."""
+    if gamma is None:
         return None
     if gamma.near_the_money_width is not None and gamma.near_the_money_width > 0:
-        band = gamma.near_the_money_width * NEAR_GAMMA_LEVEL_WIDTH_RATIO
+        band = gamma.near_the_money_width * STRIKE_NEAR_LEVEL_WIDTH_RATIO
+    elif spot is not None and spot > 0:
+        band = spot * STRIKE_NEAR_LEVEL_BAND_PCT
     else:
-        band = spot * NEAR_GAMMA_LEVEL_BAND_PCT
-    candidates: tuple[tuple[str, Decimal | None], ...] = (
-        ("Call Wall", gamma.call_wall),
-        ("Put Wall", gamma.put_wall),
-        ("Gamma Flip", gamma.gamma_flip),
-    )
+        return None
     best_label: str | None = None
     best_distance: Decimal | None = None
-    for label, level in candidates:
+    for label, level in (("Call Wall", gamma.call_wall), ("Put Wall", gamma.put_wall), ("Gamma Flip", gamma.gamma_flip)):
         if level is None:
             continue
-        distance = abs(level - spot)
-        if distance > band:
-            continue
-        if best_distance is None or distance < best_distance:
+        distance = abs(level - strike)
+        if distance <= band and (best_distance is None or distance < best_distance):
             best_distance = distance
             best_label = label
     return best_label
@@ -177,6 +179,9 @@ class WhaleAlert:
     # cotización") for this, reserving "Mixto" for an exact split that
     # wasn't caused by missing quote data.
     quote_unavailable: bool = False
+    # From 2026-10-17 the tag comes from the contract's own |delta| when one is stored (ITM >= 0.60, ATM 0.40 to 0.60, OTM below 0.40:
+    # _moneyness_from_delta) and only falls back to the strike-vs-ATR-width rule below when it is not. near_gamma_level now means the
+    # STRIKE sits at that level (within a tenth of the ATR width), not that the spot is near it.
     # Strike vs. spot at the moment this alert fired -- see
     # _classify_moneyness's own docstring for why this matters: a deep-ITM
     # call behaves like the underlying itself, not a leveraged directional
@@ -492,6 +497,10 @@ class WhaleAlertsEngine:
         # single trade across ~15 concurrent symbol threads.
         self._market_context_cache: dict[str, tuple[float, tuple[Decimal | None, GammaAggregate | None]]] = {}
         self._market_context_cache_lock = threading.Lock()
+        # occ_symbol -> (monotonic time, |delta| or None): the contract's delta is read once per fired alert and kept for a minute
+        # (an alert repeats on the same strikes), see _cached_option_delta.
+        self._option_delta_cache: dict[str, tuple[float, Decimal | None]] = {}
+        self._option_delta_cache_lock = threading.Lock()
         self._states: dict[str, _ContractState] = {}
         # Separate from _states (process()/BVC) on purpose — process_trade()
         # (Lee-Ready) keeps its own per-contract bucketing state so the two
@@ -550,6 +559,27 @@ class WhaleAlertsEngine:
             context = (price.price if price is not None else None, gamma)
             self._market_context_cache[symbol] = (now, context)
             return context
+
+    _OPTION_DELTA_CACHE_TTL_SECONDS = 60.0
+
+    def _cached_option_delta(self, occ_symbol: str) -> Decimal | None:
+        """The contract's delta from its latest stored chain snapshot, cached for a minute. Called only when an alert FIRES (never per
+        trade), so the one indexed query it costs is not on the trade path."""
+        with self._option_delta_cache_lock:
+            now = time.monotonic()
+            cached = self._option_delta_cache.get(occ_symbol)
+            if cached is not None and now - cached[0] < self._OPTION_DELTA_CACHE_TTL_SECONDS:
+                return cached[1]
+            if len(self._option_delta_cache) > 5000:
+                self._option_delta_cache.clear()
+        try:
+            delta = self._storage.get_latest_option_delta(occ_symbol)
+        except Exception:  # a context tag must never stop an alert from being emitted
+            logger.warning("Could not read the delta of %s for its moneyness tag", occ_symbol, exc_info=True)
+            delta = None
+        with self._option_delta_cache_lock:
+            self._option_delta_cache[occ_symbol] = (now, delta)
+        return delta
 
     def process(self, chain: OptionChain) -> tuple[WhaleAlert, ...]:
         if not self._bvc_alerts_enabled:
@@ -910,13 +940,14 @@ class WhaleAlertsEngine:
             estimated_buy_volume=estimated_buy_volume,
             estimated_sell_volume=estimated_sell_volume,
             quote_unavailable=quote_unavailable,
-            moneyness=_classify_moneyness(
+            moneyness=_moneyness_from_delta(self._cached_option_delta(occ_symbol))
+            or _classify_moneyness(
                 contract_type,
                 strike,
                 spot,
                 gamma.near_the_money_width if gamma is not None else None,
             ),
-            near_gamma_level=_nearest_gamma_level(spot, gamma),
+            near_gamma_level=_nearest_level_to_strike(strike, spot, gamma),
             repeat_count=state.alert_count,
             condition_premium=(
                 {str(code): value for code, value in condition_premium.items()} if condition_premium else None
