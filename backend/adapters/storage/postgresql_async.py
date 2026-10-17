@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import date, datetime
+from datetime import UTC, date, datetime
 from decimal import Decimal
 
 from sqlalchemy import text
@@ -25,6 +25,7 @@ from backend.domain.entities import (
     OptionChain,
     OptionContract,
     OptionQuoteMinute,
+    PriceCandle,
     UnderlyingKind,
 )
 from backend.domain.underlyings import ACTIVE_UNDERLYINGS_BY_SYMBOL
@@ -238,6 +239,55 @@ class AsyncPostgreSQLStorage:
             price=Decimal(row["price"]),
             volume=int(row["volume"]),
         )
+
+    async def get_price_candles(
+        self, underlying: str, bucket_seconds: int, sessions: int, since: datetime
+    ) -> list[PriceCandle]:
+        """OHLC candles of the last `sessions` trading dates of regular-session prices (09:30 to 16:00 ET), bucketed in ET wall-clock time
+        from 09:30 so 15-minute and hourly buckets line up with the session. open/close = first/last stored price of the bucket. `since`
+        bounds the scan (the stored rows of a few weeks, not the whole table)."""
+        async with self.session_factory() as session:
+            rows = (
+                await session.execute(
+                    text(
+                        """
+                        WITH series AS (
+                            SELECT id FROM underlyings WHERE symbol = :symbol
+                        ), local_prices AS (
+                            SELECT m.time, m.price, m.time AT TIME ZONE 'America/New_York' AS local_time
+                            FROM market_snapshots AS m
+                            WHERE m.underlying_id = (SELECT id FROM series) AND m.time >= :since
+                        ), regular AS (
+                            SELECT * FROM local_prices
+                            WHERE local_time::time >= TIME '09:30' AND local_time::time < TIME '16:00'
+                        ), recent_days AS (
+                            SELECT DISTINCT local_time::date AS day FROM regular ORDER BY day DESC LIMIT :sessions
+                        )
+                        SELECT date_bin(make_interval(secs => CAST(:bucket AS double precision)), local_time,
+                                        TIMESTAMP '2000-01-03 09:30') AS bucket_local,
+                               (array_agg(price ORDER BY time))[1] AS open,
+                               max(price) AS high,
+                               min(price) AS low,
+                               (array_agg(price ORDER BY time DESC))[1] AS close
+                        FROM regular
+                        WHERE local_time::date IN (SELECT day FROM recent_days)
+                        GROUP BY bucket_local
+                        ORDER BY bucket_local
+                        """
+                    ),
+                    {"symbol": underlying.upper(), "since": since, "sessions": sessions, "bucket": bucket_seconds},
+                )
+            ).all()
+        return [
+            PriceCandle(
+                time=row.bucket_local.replace(tzinfo=EASTERN_TIME).astimezone(UTC),
+                open=Decimal(row.open),
+                high=Decimal(row.high),
+                low=Decimal(row.low),
+                close=Decimal(row.close),
+            )
+            for row in rows
+        ]
 
     async def get_price_history(
         self, underlying: str, start: datetime, end: datetime

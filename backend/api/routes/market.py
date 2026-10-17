@@ -1,12 +1,25 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Request
+from typing import Literal
 
-from backend.api.schemas import MarketSnapshotResponse, PriceHistoryResponse, VwapHistoryResponse
-from backend.api.serializers import market_response, price_history_response, vwap_history_response
+from fastapi import APIRouter, Query, Request
+
+from backend.api.schemas import (
+    MarketSnapshotResponse,
+    PriceCandlesResponse,
+    PriceHistoryResponse,
+    VwapHistoryResponse,
+)
+from backend.api.serializers import (
+    market_response,
+    price_candles_response,
+    price_history_response,
+    vwap_history_response,
+)
 from backend.core.container import Container
 from backend.domain.use_cases import (
     build_market_snapshot_async,
+    get_price_candles_async,
     get_price_history_async,
     get_vwap_history_async,
 )
@@ -63,6 +76,24 @@ async def get_price_history(symbol: str, request: Request) -> PriceHistoryRespon
     container: Container = request.app.state.container
     points = await get_price_history_async(container.async_market_storage, symbol)
     return PriceHistoryResponse.model_validate(price_history_response(symbol, points))
+
+
+@router.get(
+    "/market/{symbol}/candles",
+    response_model=PriceCandlesResponse,
+    summary="Get regular-session OHLC candles of the last N trading dates",
+)
+async def get_price_candles(
+    symbol: str,
+    request: Request,
+    timeframe: Literal["5m", "15m", "30m", "1h"] = Query(default="5m"),
+    sessions: int = Query(default=5, ge=1, le=10),
+) -> PriceCandlesResponse:
+    """The multi-session view of the chart ("Semana"): candles aggregated in SQL from the stored prices, regular session only (09:30 to
+    16:00 ET), bucketed from 09:30 ET. Day mode keeps using /market/{symbol}/history. 404 for ES/NQ (see get_price_candles_async)."""
+    container: Container = request.app.state.container
+    candles = await get_price_candles_async(container.async_market_storage, symbol, timeframe, sessions)
+    return PriceCandlesResponse.model_validate(price_candles_response(symbol, timeframe, sessions, candles))
 
 
 @router.get(

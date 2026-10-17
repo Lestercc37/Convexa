@@ -19,6 +19,7 @@ from backend.domain.entities import (
     MaxPain,
     OptionChain,
     OptionContract,
+    PriceCandle,
     Underlying,
     Walls,
 )
@@ -341,6 +342,25 @@ def market_response(snapshot: MarketSnapshot) -> dict[str, Any]:
             "vanna_interpretation": closing_dynamics.vanna_interpretation,
             "max_pain": _num(closing_dynamics.max_pain),
         },
+    }
+
+
+def price_candles_response(symbol: str, timeframe: str, sessions: int, candles: list[PriceCandle]) -> dict[str, Any]:
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "symbol": symbol.upper(),
+        "timeframe": timeframe,
+        "sessions": sessions,
+        "candles": [
+            {
+                "time": int(candle.time.timestamp()),
+                "open": _num(candle.open),
+                "high": _num(candle.high),
+                "low": _num(candle.low),
+                "close": _num(candle.close),
+            }
+            for candle in candles
+        ],
     }
 
 

@@ -2,11 +2,12 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from dataclasses import replace
-from datetime import UTC, date, datetime, timezone
+from datetime import UTC, date, datetime, timedelta, timezone
 from decimal import Decimal
 
-from backend.domain.entities import GammaHeatmap, MarketPrice, MarketSnapshot, OptionChain, UnderlyingKind
+from backend.domain.entities import GammaHeatmap, MarketPrice, MarketSnapshot, OptionChain, PriceCandle, UnderlyingKind
 from backend.domain.ports import IAsyncMarketReadStorage, IDataProvider, IStorage
 from backend.domain.underlyings import ACTIVE_UNDERLYINGS_BY_SYMBOL
 from backend.domain.use_cases.calculate_anchored_vwap import (
@@ -343,6 +344,37 @@ async def get_gamma_heatmap_async(
     return replace(
         heatmap, symbol=underlying.upper(), strikes=tuple(strike + offset for strike in heatmap.strikes)
     )
+
+
+# timeframe -> bucket seconds of the multi-session candle endpoint (1m stays on /market/{symbol}/history: a week of 1-minute candles is ~2,000).
+CANDLE_TIMEFRAME_SECONDS = {"5m": 300, "15m": 900, "30m": 1800, "1h": 3600}
+_CANDLE_CACHE_TTL_SECONDS = 30.0
+_CANDLE_SCAN_DAYS = 14  # calendar days scanned to find `sessions` trading dates (covers holidays and long weekends)
+_candle_cache: dict[tuple[str, int, int], tuple[float, list[PriceCandle]]] = {}
+
+
+async def get_price_candles_async(
+    storage: IAsyncMarketReadStorage, underlying: str, timeframe: str, sessions: int
+) -> list[PriceCandle]:
+    """`/market/{symbol}/candles`: regular-session OHLC candles of the last `sessions` trading dates, aggregated in SQL so a week of the
+    chart does not ship a week of raw price rows (SPX 5 days is ~38k rows; ~390 candles at 5 minutes). Cached for 30 s per
+    (symbol, bucket, sessions): the chart polls it and the stored prices only grow by the minute. ES/NQ have no stored prices of
+    their own (they are SPX/NDX shifted by TODAY'S opening-price offset, which would be wrong for past sessions), so they have none."""
+    if proxy_symbol_for(underlying) is not None:
+        raise NotFoundError(f"{underlying.upper()} has no multi-session candles (it is the index shifted by today's opening price)")
+    bucket_seconds = CANDLE_TIMEFRAME_SECONDS[timeframe]
+    key = (underlying.upper(), bucket_seconds, sessions)
+    now = time.monotonic()
+    cached = _candle_cache.get(key)
+    if cached is not None and now - cached[0] < _CANDLE_CACHE_TTL_SECONDS:
+        return cached[1]
+    candles = await storage.get_price_candles(
+        underlying, bucket_seconds, sessions, datetime.now(UTC) - timedelta(days=_CANDLE_SCAN_DAYS)
+    )
+    if len(_candle_cache) > 64:
+        _candle_cache.clear()
+    _candle_cache[key] = (now, candles)
+    return candles
 
 
 async def get_symbol_flow_pressure_async(

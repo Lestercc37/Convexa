@@ -13,6 +13,7 @@ from backend.domain.entities import (
     MarketPrice,
     OptionChain,
     OptionQuoteMinute,
+    PriceCandle,
 )
 from backend.domain.ports import IStorage
 from backend.domain.use_cases.flow import SymbolFlowPressure, WhaleAlert
@@ -60,6 +61,12 @@ class SyncStorageAsyncReadAdapter:
 
     async def save_large_trade_prints(self, rows: list[LargeTradePrint]) -> None:
         self.large_trade_prints.extend(rows)
+
+    async def get_price_candles(
+        self, underlying: str, bucket_seconds: int, sessions: int, since: datetime
+    ) -> list[PriceCandle]:
+        # No SQL behind the in-memory/sqlite storages: nothing to aggregate server-side.
+        return []
 
     async def get_price_history(
         self, underlying: str, start: datetime, end: datetime
