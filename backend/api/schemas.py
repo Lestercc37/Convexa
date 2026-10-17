@@ -88,6 +88,24 @@ class PricePointResponse(BaseModel):
     price: Number = Field(examples=[552.25])
 
 
+class PriceCandleResponse(BaseModel):
+    time: int = Field(description="Unix seconds of the START of the bucket (UTC).", examples=[1760625000])
+    open: Number
+    high: Number
+    low: Number
+    close: Number
+
+
+class PriceCandlesResponse(BaseModel):
+    """Regular-session OHLC candles of the last `sessions` trading dates, aggregated server-side from the stored prices. No volume."""
+
+    schema_version: int = Field(examples=[1])
+    symbol: str = Field(examples=["SPY"])
+    timeframe: Literal["5m", "15m", "30m", "1h"]
+    sessions: int = Field(examples=[5])
+    candles: list[PriceCandleResponse]
+
+
 class PriceHistoryResponse(BaseModel):
     schema_version: int = Field(examples=[1])
     symbol: str = Field(examples=["SPY"])

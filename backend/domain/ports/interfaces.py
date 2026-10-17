@@ -29,6 +29,7 @@ from backend.domain.entities import (
     MaxPain,
     OptionChain,
     OptionQuoteMinute,
+    PriceCandle,
     QuoteEvent,
     ScreenerPreset,
     ScreenerPresetSettings,
@@ -196,6 +197,9 @@ class IAsyncMarketReadStorage(Protocol):
     async def save_option_quote_minutes(self, rows: list[OptionQuoteMinute]) -> None: ...
     async def save_large_trade_prints(self, rows: list[LargeTradePrint]) -> None: ...
     async def get_volume_corrections(self, occ_symbols: list[str]) -> dict[str, int]: ...
+    async def get_price_candles(
+        self, underlying: str, bucket_seconds: int, sessions: int, since: datetime
+    ) -> list[PriceCandle]: ...
     async def get_price_history(
         self, underlying: str, start: datetime, end: datetime
     ) -> list[MarketPrice]: ...

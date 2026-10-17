@@ -830,6 +830,18 @@ class LargeTradePrint:
 
 
 @dataclass(frozen=True, slots=True)
+class PriceCandle:
+    """One OHLC candle of a symbol's stored prices (market_snapshots) over a time bucket of its regular sessions.
+    `time` is the START of the bucket in UTC; no volume (the stored price rows carry a cumulative day counter, not per-bucket volume)."""
+
+    time: datetime
+    open: Decimal
+    high: Decimal
+    low: Decimal
+    close: Decimal
+
+
+@dataclass(frozen=True, slots=True)
 class OptionQuoteMinute:
     """The last bid/ask of one option contract in one ET minute in which it changed (see migration 0040).
     `minute` is the START of the minute; a minute without a row still holds the previous row's quote."""
