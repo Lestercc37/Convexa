@@ -12,6 +12,9 @@ export const en: Translations = {
   dashboard: {
     underlyingLabel: "Underlying",
     timeframeGroupAriaLabel: "Timeframe",
+    rangeGroupAriaLabel: "Chart range",
+    rangeDay: "Day",
+    rangeWeek: "Week",
     viewGroupAriaLabel: "View",
     liveButton: "Live",
     preSessionButton: "Pre-Session",

@@ -15,6 +15,7 @@ const apiMocks = vi.hoisted(() => ({
   getGammaProfile: vi.fn(),
   getMarket: vi.fn(),
   getMarketPriceHistory: vi.fn(),
+  getPriceCandles: vi.fn(),
   getOptionChain: vi.fn(),
   getOptionChainExpirations: vi.fn(),
   getScreenerPreset: vi.fn(),
@@ -252,6 +253,18 @@ beforeEach(() => {
   );
   apiMocks.getVwapHistory.mockImplementation((symbol: string) =>
     Promise.resolve({ schema_version: 1, symbol, not_applicable: false, points: [] }),
+  );
+  apiMocks.getPriceCandles.mockImplementation((symbol: string, timeframe: string, sessions: number) =>
+    Promise.resolve({
+      schema_version: 1,
+      symbol,
+      timeframe,
+      sessions,
+      candles: [
+        { time: 1_785_763_800, open: 548, high: 550, low: 547, close: 549 },
+        { time: 1_785_764_100, open: 549, high: 551, low: 548.5, close: 550 },
+      ],
+    }),
   );
   apiMocks.getOptionChain.mockResolvedValue({
     schema_version: 1,
@@ -836,6 +849,67 @@ describe("Dashboard", () => {
     expect(fiveMinuteButton).toHaveAttribute("aria-pressed", "true");
     expect(oneMinuteButton).toHaveAttribute("aria-pressed", "false");
     expect(screen.getByText("SPY · Velas de 5 minutos")).toBeInTheDocument();
+  });
+
+  describe("Semana range", () => {
+    it("opens on Dia, and Semana is not fetched until it is chosen", async () => {
+      renderWithLanguage(<Dashboard />);
+      await screen.findByLabelText("Chart de velas para SPY");
+
+      expect(screen.getByRole("button", { name: "Día" })).toHaveAttribute("aria-pressed", "true");
+      expect(screen.getByRole("button", { name: "Semana" })).toHaveAttribute("aria-pressed", "false");
+      expect(apiMocks.getPriceCandles).not.toHaveBeenCalled();
+    });
+
+    it("asks the API for 5 sessions of server-aggregated candles, drops the 1m option and the day-only overlays", async () => {
+      const user = userEvent.setup();
+      renderWithLanguage(<Dashboard />);
+      await screen.findByLabelText("Chart de velas para SPY");
+
+      await user.click(screen.getByRole("button", { name: "Semana" }));
+
+      await waitFor(() => expect(apiMocks.getPriceCandles).toHaveBeenCalledWith("SPY", "5m", 5, expect.any(AbortSignal)));
+      expect(screen.getByRole("button", { name: "Semana" })).toHaveAttribute("aria-pressed", "true");
+      expect(screen.queryByRole("button", { name: "1m" })).not.toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "5m" })).toHaveAttribute("aria-pressed", "true");
+      expect(screen.getByLabelText(/VWAP Anclado/)).toBeDisabled();
+
+      await user.click(screen.getByRole("button", { name: "1h" }));
+      await waitFor(() => expect(apiMocks.getPriceCandles).toHaveBeenLastCalledWith("SPY", "1h", 5, expect.any(AbortSignal)));
+    });
+
+    it("goes back to the untouched Dia mode, with 1m available again", async () => {
+      const user = userEvent.setup();
+      renderWithLanguage(<Dashboard />);
+      await screen.findByLabelText("Chart de velas para SPY");
+      await user.click(screen.getByRole("button", { name: "Semana" }));
+      await waitFor(() => expect(apiMocks.getPriceCandles).toHaveBeenCalled());
+
+      await user.click(screen.getByRole("button", { name: "Día" }));
+
+      expect(screen.getByRole("button", { name: "1m" })).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Día" })).toHaveAttribute("aria-pressed", "true");
+    });
+
+    it("does not offer Semana for a future (ES/NQ have no stored prices of their own)", async () => {
+      window.localStorage.setItem("convexa:last-symbol", "ES");
+      apiMocks.getUnderlyings.mockResolvedValueOnce({
+        schema_version: 1,
+        underlyings: [{ symbol: "ES", kind: "future", is_priority: true }],
+      });
+      apiMocks.getFutureOpeningPrice.mockResolvedValue({
+        schema_version: 1,
+        symbol: "ES",
+        proxy_symbol: "SPX",
+        session_date: "2026-10-08",
+        opening_price: 7800,
+      });
+      renderWithLanguage(<Dashboard />);
+      await screen.findByLabelText("Chart de velas para ES");
+
+      expect(screen.queryByRole("button", { name: "Semana" })).not.toBeInTheDocument();
+      expect(apiMocks.getPriceCandles).not.toHaveBeenCalled();
+    });
   });
 
   describe("resizable main panels", () => {

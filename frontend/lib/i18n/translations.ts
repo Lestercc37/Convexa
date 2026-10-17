@@ -10,6 +10,9 @@ export type Translations = {
   dashboard: {
     underlyingLabel: string;
     timeframeGroupAriaLabel: string;
+    rangeGroupAriaLabel: string;
+    rangeDay: string;
+    rangeWeek: string;
     viewGroupAriaLabel: string;
     liveButton: string;
     preSessionButton: string;
