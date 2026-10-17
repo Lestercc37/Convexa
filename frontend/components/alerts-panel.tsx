@@ -103,7 +103,7 @@ function dominantSide(alert: WhaleAlert, buyPct: number): DominantSide {
 // Deliberately not translated, same convention TYPE_LABEL/SIDE_LABEL
 // above already follow -- ITM/ATM/OTM is fixed options vocabulary, not UI
 // prose (see WhaleAlert.moneyness's own backend docstring).
-const MONEYNESS_LABEL: Record<WhaleAlert["moneyness"], string> = {
+const MONEYNESS_LABEL: Record<Exclude<WhaleAlert["moneyness"], "FAR">, string> = {
   ITM: "ITM",
   ATM: "ATM",
   OTM: "OTM",
@@ -140,7 +140,7 @@ function AlertCard({
       <span
         className={`alert-moneyness alert-moneyness-${alert.moneyness.toLowerCase()}`}
       >
-        {MONEYNESS_LABEL[alert.moneyness]}
+        {alert.moneyness === "FAR" ? t.alertsPanel.moneynessFarLabel : MONEYNESS_LABEL[alert.moneyness]}
       </span>
       {alert.near_gamma_level && (
         <span className="alert-near-level">

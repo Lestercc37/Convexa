@@ -163,7 +163,7 @@ class WhaleAlertResponse(BaseModel):
     # See WhaleAlert.moneyness/near_gamma_level/repeat_count's own
     # docstrings (backend/domain/use_cases/flow.py) for what each means
     # and why they were added.
-    moneyness: Literal["ITM", "ATM", "OTM"]
+    moneyness: Literal["ITM", "ATM", "OTM", "FAR"]
     near_gamma_level: Literal["Call Wall", "Put Wall", "Gamma Flip"] | None
     repeat_count: int
 

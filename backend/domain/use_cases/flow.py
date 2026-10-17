@@ -40,6 +40,9 @@ class Moneyness(StrEnum):
     ITM = "ITM"
     ATM = "ATM"
     OTM = "OTM"
+    # |delta| outside 0.25 to 0.85: too far from the money to be a directional bet (far OTM) or so deep in it that it trades like the
+    # index itself. The heatmap design leaves these out by default ("Lejos"); only produced from a stored delta, never by the fallback.
+    FAR = "FAR"
 
 
 # Fallback only, used when no GammaAggregate (and therefore no ATR-based
@@ -96,10 +99,13 @@ def _classify_moneyness(
     return Moneyness.ITM if in_the_money else Moneyness.OTM
 
 
-# Moneyness from the contract's own |delta| (the zones Lester picked for the heatmap's alert cubes, 2026-10-16): ITM from 0.60 up,
-# ATM from 0.40 up to 0.60, OTM below 0.40. The strike-vs-ATR-width rule above stays as the fallback when no delta is stored.
+# Moneyness from the contract's own |delta|, the zones Lester and I settled for the heatmap's alert cubes (2026-10-16): only deltas from
+# 0.25 to 0.85 count as a directional bet, split OTM 0.25-0.40, ATM 0.40-0.60, ITM 0.60-0.85; anything outside that range is FAR ("Lejos").
+# The strike-vs-ATR-width rule above stays as the fallback when no delta is stored.
+FAR_DELTA_BELOW = Decimal("0.25")
+OTM_DELTA_BELOW = Decimal("0.40")
 ITM_DELTA_MIN = Decimal("0.60")
-ATM_DELTA_MIN = Decimal("0.40")
+FAR_DELTA_ABOVE = Decimal("0.85")
 
 # A strike counts as "at" a gamma level when it lies within this fraction of the ATR-based near_the_money_width (SPX 94.69 -> about
 # 9.5 points, two strikes). The previous tag measured SPOT against half that width (about 47 points) and was on for every alert.
@@ -114,9 +120,11 @@ def _moneyness_from_delta(delta: Decimal | None) -> Moneyness | None:
     magnitude = abs(delta)
     if magnitude <= 0:
         return None
+    if magnitude < FAR_DELTA_BELOW or magnitude > FAR_DELTA_ABOVE:
+        return Moneyness.FAR
     if magnitude >= ITM_DELTA_MIN:
         return Moneyness.ITM
-    if magnitude >= ATM_DELTA_MIN:
+    if magnitude >= OTM_DELTA_BELOW:
         return Moneyness.ATM
     return Moneyness.OTM
 
@@ -179,8 +187,8 @@ class WhaleAlert:
     # cotización") for this, reserving "Mixto" for an exact split that
     # wasn't caused by missing quote data.
     quote_unavailable: bool = False
-    # From 2026-10-17 the tag comes from the contract's own |delta| when one is stored (ITM >= 0.60, ATM 0.40 to 0.60, OTM below 0.40:
-    # _moneyness_from_delta) and only falls back to the strike-vs-ATR-width rule below when it is not. near_gamma_level now means the
+    # From 2026-10-17 the tag comes from the contract's own |delta| when one is stored (OTM 0.25-0.40, ATM 0.40-0.60, ITM 0.60-0.85, FAR
+    # outside 0.25-0.85: _moneyness_from_delta) and only falls back to the strike-vs-ATR-width rule below when it is not. near_gamma_level now means the
     # STRIKE sits at that level (within a tenth of the ATR width), not that the spot is near it.
     # Strike vs. spot at the moment this alert fired -- see
     # _classify_moneyness's own docstring for why this matters: a deep-ITM

@@ -1071,13 +1071,23 @@ def _fire_one_alert(storage: InMemoryStorage, spot: str = "543"):
 
 def test_alert_moneyness_comes_from_the_contracts_delta_when_one_is_stored() -> None:
     # Spot 543 vs the 540 call strike is within the flat 1% band (ATM by the old rule); the stored delta decides instead.
+    # Zones agreed for the heatmap: OTM 0.25-0.40, ATM 0.40-0.60, ITM 0.60-0.85, FAR outside 0.25-0.85.
     assert _fire_one_alert(_DeltaStorage(Decimal("0.85"))).moneyness is Moneyness.ITM
     assert _fire_one_alert(_DeltaStorage(Decimal("0.60"))).moneyness is Moneyness.ITM
     assert _fire_one_alert(_DeltaStorage(Decimal("0.55"))).moneyness is Moneyness.ATM
     assert _fire_one_alert(_DeltaStorage(Decimal("0.40"))).moneyness is Moneyness.ATM
     assert _fire_one_alert(_DeltaStorage(Decimal("0.39"))).moneyness is Moneyness.OTM
+    assert _fire_one_alert(_DeltaStorage(Decimal("0.25"))).moneyness is Moneyness.OTM
     # A put's delta is negative: its magnitude is what counts.
     assert _fire_one_alert(_DeltaStorage(Decimal("-0.70"))).moneyness is Moneyness.ITM
+    assert _fire_one_alert(_DeltaStorage(Decimal("-0.30"))).moneyness is Moneyness.OTM
+
+
+def test_alert_moneyness_is_far_outside_the_0_25_to_0_85_delta_range() -> None:
+    assert _fire_one_alert(_DeltaStorage(Decimal("0.24"))).moneyness is Moneyness.FAR  # far OTM
+    assert _fire_one_alert(_DeltaStorage(Decimal("0.13"))).moneyness is Moneyness.FAR
+    assert _fire_one_alert(_DeltaStorage(Decimal("0.851"))).moneyness is Moneyness.FAR  # deep ITM, trades like the index
+    assert _fire_one_alert(_DeltaStorage(Decimal("-0.95"))).moneyness is Moneyness.FAR
 
 
 def test_alert_moneyness_falls_back_to_the_strike_rule_without_a_usable_delta() -> None:
