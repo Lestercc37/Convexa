@@ -58,6 +58,34 @@ describe("AlertsPanel", () => {
     expect(cards[0]).toHaveTextContent("$45,000");
   });
 
+  it("shows the delta-based moneyness tag, with 'Lejos' for a contract outside the 0.25-0.85 delta range", async () => {
+    const base = {
+      symbol: "SPY",
+      type: "UNUSUAL" as const,
+      amount: 45000,
+      timestamp: "2026-08-03T14:00:00Z",
+      estimated_buy_volume: 22500,
+      estimated_sell_volume: 22500,
+      quote_unavailable: false,
+      near_gamma_level: null,
+      repeat_count: 1,
+    };
+    apiMocks.getAlerts.mockResolvedValue(
+      alertsResponse("SPY", [
+        { ...base, contract: "SPY260220C00540000", moneyness: "OTM" },
+        { ...base, contract: "SPY260220C00545000", moneyness: "FAR", timestamp: "2026-08-03T14:01:00Z" },
+      ]),
+    );
+
+    renderWithLanguage(<AlertsPanel symbol="SPY" />);
+
+    const cards = await screen.findAllByRole("article");
+    expect(cards).toHaveLength(2);
+    const tags = cards.map((card) => card.querySelector(".alert-moneyness")?.textContent);
+    expect(tags).toEqual(expect.arrayContaining(["OTM", "Lejos"]));
+    expect(document.querySelector(".alert-moneyness-far")).not.toBeNull();
+  });
+
   it("renders two distinct cards when the same contract+timestamp trips two alert types (regression)", async () => {
     // Same collision already fixed in quick-screener.tsx's key: a single
     // reading can independently trip a magnitude threshold (WHALE/

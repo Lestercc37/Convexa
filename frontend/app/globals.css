@@ -648,6 +648,7 @@ button, select { font: inherit; }
 .alert-moneyness-itm { color: var(--tv-text-dim); }
 .alert-moneyness-atm { color: var(--warning); }
 .alert-moneyness-otm { color: var(--calm); }
+.alert-moneyness-far { color: var(--tv-text-dim); opacity: 0.7; }
 .alert-near-level { align-self: flex-start; font-size: 0.66rem; font-weight: 600; color: var(--accent); }
 .alert-repeat-count { align-self: flex-start; font-size: 0.66rem; font-weight: 600; color: var(--tv-text-dim); }
 

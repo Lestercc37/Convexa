@@ -135,6 +135,7 @@ export type Translations = {
     dominantMixed: string;
     dominantQuoteUnavailable: string;
     nearLevelLabel: (level: string) => string;
+    moneynessFarLabel: string;
     repeatCountLabel: (count: number) => string;
     includesWhaleMinute: string;
   };

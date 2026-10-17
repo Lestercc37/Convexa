@@ -331,7 +331,7 @@ export type WhaleAlert = {
   // flow.py's WhaleAlert.moneyness docstring for why this matters (a deep
   // ITM call trades almost like the underlying itself, a much weaker
   // directional signal than the same dollar amount hitting ATM/OTM).
-  moneyness: "ITM" | "ATM" | "OTM";
+  moneyness: "ITM" | "ATM" | "OTM" | "FAR";
   // Which of Call Wall/Put Wall/Gamma Flip spot was sitting within band
   // of when this alert fired, if any.
   near_gamma_level: "Call Wall" | "Put Wall" | "Gamma Flip" | null;

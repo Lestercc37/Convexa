@@ -155,6 +155,7 @@ export const es: Translations = {
     dominantMixed: "Mixto",
     dominantQuoteUnavailable: "Sin cotización",
     nearLevelLabel: (level) => `Cerca de ${level}`,
+    moneynessFarLabel: "Lejos",
     repeatCountLabel: (count) => `Mismo strike ×${count}`,
     includesWhaleMinute: "incluye el minuto de la alerta WHALE",
   },

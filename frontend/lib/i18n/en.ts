@@ -153,6 +153,7 @@ export const en: Translations = {
     dominantMixed: "Mixed",
     dominantQuoteUnavailable: "No quote",
     nearLevelLabel: (level) => `Near ${level}`,
+    moneynessFarLabel: "Far",
     repeatCountLabel: (count) => `Same strike ×${count}`,
     includesWhaleMinute: "includes the minute of the WHALE alert",
   },
