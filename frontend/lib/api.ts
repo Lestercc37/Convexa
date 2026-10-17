@@ -8,6 +8,7 @@ import type {
   MarketPriceHistoryResponse,
   MarketResponse,
   OptionChainResponse,
+  PriceCandlesResponse,
   ScreenerPresetName,
   ScreenerPresetResponse,
   ScreenerPresetSettings,
@@ -130,6 +131,16 @@ export function getGammaHistory(symbol: string, view?: GammaView, signal?: Abort
     `/gamma/${encodeURIComponent(symbol)}/history${query}`,
     signal,
   );
+}
+
+export function getPriceCandles(
+  symbol: string,
+  timeframe: PriceCandlesResponse["timeframe"],
+  sessions = 5,
+  signal?: AbortSignal,
+) {
+  const params = new URLSearchParams({ timeframe, sessions: String(sessions) });
+  return getJson<PriceCandlesResponse>(`/market/${encodeURIComponent(symbol)}/candles?${params.toString()}`, signal);
 }
 
 export function getGammaProfile(symbol: string, view?: GammaView, signal?: AbortSignal) {
