@@ -1,7 +1,7 @@
 "use client";
 
 import Image from "next/image";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   CandlestickSeries,
   ColorType,
@@ -17,14 +17,17 @@ import {
   type ISeriesApi,
   type UTCTimestamp,
 } from "lightweight-charts";
-import { getGammaHistory, getGammaProfile } from "@/lib/api";
+import { getAlerts, getGammaHistory, getGammaProfile } from "@/lib/api";
+import { buildCubes, CUBE_MIN_OPTIONS, DEFAULT_CUBE_FILTER } from "@/lib/alert-cubes";
 import { aggregateVwapPoints, type MinuteCandle, type Timeframe, type VwapPoint } from "@/lib/candles";
 import { recordChartEvent } from "@/lib/chart-lifecycle";
 import { useLanguage } from "@/lib/i18n/language-context";
 import type { MarketPriceStreamStatus } from "@/lib/market-price-stream";
 import { EASTERN_TIME_ZONE, mostRecentSessionRange } from "@/lib/market-session";
-import type { AtrRange, ExpectedMove, GammaHistoryItem, GammaResponse, GammaView } from "@/lib/types";
+import type { AtrRange, ExpectedMove, GammaHistoryItem, GammaResponse, GammaView, WhaleAlert } from "@/lib/types";
 import { LEVEL_MERGE_THRESHOLD } from "./gravity-map";
+import { AlertCubesPrimitive } from "./alert-cubes-primitive";
+import { AlertCubeTooltip } from "./alert-cube-tooltip";
 import { GexHistogramPrimitive } from "./gex-histogram-primitive";
 import { POLLING_INTERVAL_MS } from "@/lib/polling";
 import { RegimeCompactBadge } from "./regime-badge";
@@ -426,6 +429,17 @@ export function PriceChart({
   const [showExpectedMove, setShowExpectedMove] = useState(true);
   // GEX histogram aligned with the price axis (draft, off by default so the current view is untouched).
   const [showGexHistogram, setShowGexHistogram] = useState(false);
+  // Whale alerts as small squares on the chart (design 12.8 to 12.14); off by default until it is checked against live alerts.
+  const [showAlertCubes, setShowAlertCubes] = useState(false);
+  const [cubeMinDeq, setCubeMinDeq] = useState<number>(DEFAULT_CUBE_FILTER.minDeq);
+  const [cubeShowFar, setCubeShowFar] = useState(DEFAULT_CUBE_FILTER.showFar);
+  const [cubeAlerts, setCubeAlerts] = useState<WhaleAlert[]>([]);
+  const [hoveredCube, setHoveredCube] = useState<{ id: string; x: number; y: number } | null>(null);
+  const cubesPrimitiveRef = useRef<AlertCubesPrimitive | null>(null);
+  const cubes = useMemo(
+    () => buildCubes(cubeAlerts, { minDeq: cubeMinDeq, showFar: cubeShowFar }),
+    [cubeAlerts, cubeMinDeq, cubeShowFar],
+  );
   const [drawMode, setDrawMode] = useState(false);
   const [trendline, setTrendline] = useState<Trendline | null>(null);
   const referenceLevelsRef = useRef(
@@ -723,6 +737,45 @@ export function PriceChart({
       series.detachPrimitive(primitive);
     };
   }, [showGexHistogram, symbol, gammaView]);
+
+  // Alert cubes: a series primitive drawn on top of the candles. Attached only while the toggle is on; the alerts of the symbol are polled like
+  // the other live panels and a failed poll keeps what is drawn. The chart reports the hovered cube (hitTest) through its crosshair event.
+  useEffect(() => {
+    const series = seriesRef.current;
+    const chart = chartRef.current;
+    if (!showAlertCubes || !series || !chart) return;
+    const primitive = new AlertCubesPrimitive();
+    cubesPrimitiveRef.current = primitive;
+    series.attachPrimitive(primitive);
+    const onCrosshairMove: Parameters<typeof chart.subscribeCrosshairMove>[0] = (param) => {
+      const id = typeof param.hoveredObjectId === "string" ? param.hoveredObjectId : null;
+      primitive.setHovered(id);
+      setHoveredCube(id && param.point ? { id, x: param.point.x, y: param.point.y } : null);
+    };
+    chart.subscribeCrosshairMove(onCrosshairMove);
+    const controller = new AbortController();
+    const refresh = () => {
+      getAlerts(symbol, controller.signal, 500)
+        .then((response) => setCubeAlerts(response.alerts))
+        .catch(() => {
+          // A failed poll keeps the cubes already drawn; the next one retries.
+        });
+    };
+    refresh();
+    const interval = window.setInterval(refresh, POLLING_INTERVAL_MS);
+    return () => {
+      controller.abort();
+      window.clearInterval(interval);
+      chart.unsubscribeCrosshairMove(onCrosshairMove);
+      series.detachPrimitive(primitive);
+      cubesPrimitiveRef.current = null;
+      setHoveredCube(null);
+    };
+  }, [showAlertCubes, symbol]);
+
+  useEffect(() => {
+    cubesPrimitiveRef.current?.setCubes(cubes);
+  }, [cubes, showAlertCubes]);
 
   useEffect(() => {
     trendlineSeriesRef.current?.setData(
@@ -1081,6 +1134,38 @@ export function PriceChart({
               />
               {t.priceChart.gexHistogramLabel}
             </label>
+            <label className="chart-toggle">
+              <input
+                type="checkbox"
+                checked={showAlertCubes}
+                onChange={(event) => setShowAlertCubes(event.target.checked)}
+              />
+              {t.priceChart.alertCubesLabel}
+            </label>
+            {showAlertCubes && (
+              <>
+                <select
+                  aria-label={t.priceChart.alertCubesMinAriaLabel}
+                  value={cubeMinDeq}
+                  onChange={(event) => setCubeMinDeq(Number(event.target.value))}
+                >
+                  {CUBE_MIN_OPTIONS.map((option) => (
+                    <option key={option} value={option}>
+                      {"≥ "}
+                      {option}
+                    </option>
+                  ))}
+                </select>
+                <label className="chart-toggle">
+                  <input
+                    type="checkbox"
+                    checked={cubeShowFar}
+                    onChange={(event) => setCubeShowFar(event.target.checked)}
+                  />
+                  {t.priceChart.alertCubesFarLabel}
+                </label>
+              </>
+            )}
           </fieldset>
           <fieldset
             className="level-mode-selector drawing-tools"
@@ -1134,6 +1219,18 @@ export function PriceChart({
             aria-hidden="true"
           />
         )}
+        {showAlertCubes && hoveredCube && (() => {
+          const hovered = cubes.find((cube) => cube.id === hoveredCube.id);
+          if (!hovered) return null;
+          return (
+            <AlertCubeTooltip
+              cube={hovered}
+              price={candles.at(-1)?.close ?? null}
+              t={t.priceChart}
+              style={{ left: hoveredCube.x + 14, top: hoveredCube.y + 14 }}
+            />
+          );
+        })()}
         <Image
           src="/logo-watermark.png"
           alt=""
