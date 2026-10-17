@@ -17,14 +17,22 @@ import {
   type ISeriesApi,
   type UTCTimestamp,
 } from "lightweight-charts";
-import { getGammaHistory, getGammaProfile } from "@/lib/api";
+import { getGammaHeatmap, getGammaHistory, getGammaProfile } from "@/lib/api";
 import { aggregateVwapPoints, type MinuteCandle, type Timeframe, type VwapPoint } from "@/lib/candles";
 import { recordChartEvent } from "@/lib/chart-lifecycle";
 import { useLanguage } from "@/lib/i18n/language-context";
 import type { MarketPriceStreamStatus } from "@/lib/market-price-stream";
 import { EASTERN_TIME_ZONE, mostRecentSessionRange } from "@/lib/market-session";
-import type { AtrRange, ExpectedMove, GammaHistoryItem, GammaResponse, GammaView } from "@/lib/types";
+import type {
+  AtrRange,
+  ExpectedMove,
+  GammaHeatmapMetric,
+  GammaHistoryItem,
+  GammaResponse,
+  GammaView,
+} from "@/lib/types";
 import { LEVEL_MERGE_THRESHOLD } from "./gravity-map";
+import { GammaHeatmapPrimitive, heatmapFromResponse } from "./gamma-heatmap-primitive";
 import { GexHistogramPrimitive } from "./gex-histogram-primitive";
 import { POLLING_INTERVAL_MS } from "@/lib/polling";
 import { RegimeCompactBadge } from "./regime-badge";
@@ -426,6 +434,9 @@ export function PriceChart({
   const [showExpectedMove, setShowExpectedMove] = useState(true);
   // GEX histogram aligned with the price axis (draft, off by default so the current view is untouched).
   const [showGexHistogram, setShowGexHistogram] = useState(false);
+  // Gamma heatmap behind the candles (off by default): strike x time matrix read from /gamma/{symbol}/heatmap.
+  const [showHeatmap, setShowHeatmap] = useState(false);
+  const [heatmapMetric, setHeatmapMetric] = useState<GammaHeatmapMetric>("gamma");
   const [drawMode, setDrawMode] = useState(false);
   const [trendline, setTrendline] = useState<Trendline | null>(null);
   const referenceLevelsRef = useRef(
@@ -723,6 +734,32 @@ export function PriceChart({
       series.detachPrimitive(primitive);
     };
   }, [showGexHistogram, symbol, gammaView]);
+
+  // Gamma heatmap: a series primitive drawn behind the candles. The matrix covers the most recent session (from an hour before the open) and is
+  // refreshed like the other live panels; a failed poll keeps what is drawn, and a symbol without data (ES/NQ before the opening price
+  // is entered, a weekend) simply stays empty.
+  useEffect(() => {
+    const series = seriesRef.current;
+    if (!showHeatmap || !series) return;
+    const primitive = new GammaHeatmapPrimitive();
+    series.attachPrimitive(primitive);
+    const controller = new AbortController();
+    const refresh = () => {
+      const start = new Date((mostRecentSessionRange(Date.now()).openSeconds - 3600) * 1000);
+      getGammaHeatmap(symbol, { view: gammaView, metric: heatmapMetric, start }, controller.signal)
+        .then((response) => primitive.setData(heatmapFromResponse(response)))
+        .catch(() => {
+          // A failed poll keeps the cells already drawn; the next one retries.
+        });
+    };
+    refresh();
+    const interval = window.setInterval(refresh, POLLING_INTERVAL_MS);
+    return () => {
+      controller.abort();
+      window.clearInterval(interval);
+      series.detachPrimitive(primitive);
+    };
+  }, [showHeatmap, symbol, gammaView, heatmapMetric]);
 
   useEffect(() => {
     trendlineSeriesRef.current?.setData(
@@ -1081,6 +1118,25 @@ export function PriceChart({
               />
               {t.priceChart.gexHistogramLabel}
             </label>
+            <label className="chart-toggle">
+              <input
+                type="checkbox"
+                checked={showHeatmap}
+                onChange={(event) => setShowHeatmap(event.target.checked)}
+              />
+              {t.priceChart.heatmapLabel}
+            </label>
+            {showHeatmap && (
+              <select
+                aria-label={t.priceChart.heatmapMetricAriaLabel}
+                value={heatmapMetric}
+                onChange={(event) => setHeatmapMetric(event.target.value as GammaHeatmapMetric)}
+              >
+                <option value="gamma">{t.priceChart.heatmapMetricGamma}</option>
+                <option value="absolute_gamma">{t.priceChart.heatmapMetricAbsolute}</option>
+                <option value="delta">{t.priceChart.heatmapMetricDelta}</option>
+              </select>
+            )}
           </fieldset>
           <fieldset
             className="level-mode-selector drawing-tools"
