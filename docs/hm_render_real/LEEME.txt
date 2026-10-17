@@ -1,0 +1,4 @@
+Render del heatmap real (primitive de #302) con datos guardados, fuera de la app (2026-10-17).
+1) python docs/hm_heatmap_dump.py SPX 2026-10-16 gamma   (en el servidor; escribe un JSON con la forma del endpoint + velas de 5 min)  -> copiar a esta carpeta como dump.json
+2) vite build con vite.config.mjs (alias @ al frontend del PR #302 y a lightweight-charts) -> out/bundle.js ; servir esta carpeta por http y abrir index.html?w=1100&h=520
+Rutas absolutas del config son de la PC de Lester: ajustarlas.
