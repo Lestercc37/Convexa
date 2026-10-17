@@ -12,6 +12,7 @@ from backend.domain.entities import (
     GammaAggregate,
     GammaExposure,
     GammaFlip,
+    GammaHeatmap,
     Greeks,
     MarketPrice,
     MarketSnapshot,
@@ -250,6 +251,26 @@ def gamma_history_response(symbol: str, items: list[GammaAggregate]) -> dict[str
         "schema_version": SCHEMA_VERSION,
         "symbol": symbol.upper(),
         "items": [gamma_response(item) for item in items],
+    }
+
+
+def gamma_heatmap_response(heatmap: GammaHeatmap) -> dict[str, Any]:
+    magnitudes = sorted(abs(value) for column in heatmap.columns for value in column.values if value is not None)
+    scale = None
+    if magnitudes:
+        scale = _num(magnitudes[min(len(magnitudes) - 1, int(0.98 * len(magnitudes)))])
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "symbol": heatmap.symbol.upper(),
+        "view": heatmap.view,
+        "metric": heatmap.metric,
+        "bucket_seconds": heatmap.bucket_seconds,
+        "strikes": [_num(strike) for strike in heatmap.strikes],
+        "columns": [
+            {"as_of": _dt(column.as_of), "values": [None if value is None else _num(value) for value in column.values]}
+            for column in heatmap.columns
+        ],
+        "scale_p98": scale,
     }
 
 

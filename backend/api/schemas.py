@@ -335,6 +335,26 @@ class GammaHistoryResponse(BaseModel):
     items: list[GammaSummaryResponse]
 
 
+class GammaHeatmapColumnResponse(BaseModel):
+    as_of: str
+    values: list[Number | None] = Field(description="One value per entry of `strikes`, same order; null = no stored value.")
+
+
+class GammaHeatmapResponse(BaseModel):
+    """Strike x time matrix of one stored per-strike figure (gamma_aggregate_items), binned by `bucket_seconds`; each column is
+    the last stored snapshot of its bucket. Read-only: nothing is calculated here. `scale_p98` is the 98th percentile of
+    |value| over the whole matrix, offered so a client can scale colors without a second pass."""
+
+    schema_version: int = Field(examples=[1])
+    symbol: str = Field(examples=["SPX"])
+    view: Literal["tactical", "structural"]
+    metric: Literal["gamma", "absolute_gamma", "delta"]
+    bucket_seconds: int = Field(examples=[120])
+    strikes: list[Number]
+    columns: list[GammaHeatmapColumnResponse]
+    scale_p98: Number | None = Field(description="Null when the matrix has no values.")
+
+
 class UnderlyingResponse(BaseModel):
     symbol: str
     kind: Literal["equity", "index", "future"]

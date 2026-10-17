@@ -1095,6 +1095,57 @@ def test_whale_alert_simple_flow_is_stored_as_jsonb_and_never_read_back(
     assert storage.get_recent_whale_alerts(symbol) == [without_flow, replace(with_flow, simple_flow=None)]
 
 
+def _heatmap_item(strike: str, net_gamma: str, delta: str | None = None) -> GammaAggregateItem:
+    return GammaAggregateItem(
+        strike=Decimal(strike),
+        total_gamma_exposure=abs(Decimal(net_gamma)),
+        call_gamma_exposure=abs(Decimal(net_gamma)),
+        put_gamma_exposure=Decimal("0"),
+        net_gamma=Decimal(net_gamma),
+        contract_count=1,
+        absolute_gamma=abs(Decimal(net_gamma)),
+        delta_exposure=None if delta is None else Decimal(delta),
+    )
+
+
+@pytest.mark.asyncio
+async def test_gamma_heatmap_bins_by_time_keeps_the_last_snapshot_per_strike_and_ignores_other_views(
+    postgresql_storage: tuple[PostgreSQLStorage, Engine, str],
+) -> None:
+    """GET /gamma/{symbol}/heatmap's read against the real table: 120 s buckets (date_bin), the LAST stored snapshot of each
+    strike inside a bucket, None for a strike a column has no row for, the other view left out, the requested metric column."""
+    sync_storage, _, symbol = postgresql_storage
+    base = datetime(2026, 8, 3, 14, 0, tzinfo=timezone.utc)
+
+    def save(offset_seconds: int, view: str, items: tuple[GammaAggregateItem, ...]) -> None:
+        sync_storage.save_gamma_aggregate(
+            GammaAggregate(symbol=symbol, as_of=base + timedelta(seconds=offset_seconds), view=view, items=items)
+        )
+
+    save(10, "tactical", (_heatmap_item("550", "10", "100"), _heatmap_item("555", "-20", "-200")))
+    save(50, "tactical", (_heatmap_item("550", "11", "110"),))  # 555 missing in the bucket's last snapshot: keeps its 14:00:10 value
+    save(130, "tactical", (_heatmap_item("550", "12", "120"), _heatmap_item("555", "-22"), _heatmap_item("560", "5")))
+    save(20, "structural", (_heatmap_item("999", "777"),))
+
+    async_engine = create_engine(_require_test_database_url())
+    try:
+        storage = AsyncPostgreSQLStorage(create_session_factory(async_engine))
+        gamma = await storage.get_gamma_heatmap(symbol, "tactical", "gamma", base, base + timedelta(minutes=10), 120)
+        delta = await storage.get_gamma_heatmap(symbol, "tactical", "delta", base, base + timedelta(minutes=10), 120)
+        outside = await storage.get_gamma_heatmap(symbol, "tactical", "gamma", base + timedelta(hours=1), base + timedelta(hours=2), 120)
+    finally:
+        await async_engine.dispose()
+
+    assert gamma.strikes == (Decimal("550"), Decimal("555"), Decimal("560"))
+    assert [column.as_of for column in gamma.columns] == [base + timedelta(seconds=50), base + timedelta(seconds=130)]
+    assert gamma.columns[0].values == (Decimal("11"), Decimal("-20"), None)
+    assert gamma.columns[1].values == (Decimal("12"), Decimal("-22"), Decimal("5"))
+    # delta_exposure: stored for some rows, NULL ("not stored") for others -> None, never 0.
+    assert delta.columns[0].values == (Decimal("110"), Decimal("-200"), None)
+    assert delta.columns[1].values == (Decimal("120"), None, None)
+    assert outside.strikes == () and outside.columns == ()
+
+
 @pytest.mark.asyncio
 async def test_async_postgresql_storage_get_recent_whale_alerts_reads_what_the_sync_storage_wrote(
     postgresql_storage: tuple[PostgreSQLStorage, Engine, str],
