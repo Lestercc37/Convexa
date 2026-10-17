@@ -2,6 +2,8 @@ import type {
   ChainExpirationsResponse,
   FutureOpeningPriceResponse,
   GammaAggregateResponse,
+  GammaHeatmapMetric,
+  GammaHeatmapResponse,
   GammaHistoryResponse,
   GammaResponse,
   GammaView,
@@ -130,6 +132,19 @@ export function getGammaHistory(symbol: string, view?: GammaView, signal?: Abort
     `/gamma/${encodeURIComponent(symbol)}/history${query}`,
     signal,
   );
+}
+
+export function getGammaHeatmap(
+  symbol: string,
+  options: { view?: GammaView; metric?: GammaHeatmapMetric; start?: Date },
+  signal?: AbortSignal,
+) {
+  const params = new URLSearchParams();
+  if (options.view) params.set("view", options.view);
+  if (options.metric) params.set("metric", options.metric);
+  if (options.start) params.set("start", options.start.toISOString());
+  const query = params.toString() ? `?${params.toString()}` : "";
+  return getJson<GammaHeatmapResponse>(`/gamma/${encodeURIComponent(symbol)}/heatmap${query}`, signal);
 }
 
 export function getGammaProfile(symbol: string, view?: GammaView, signal?: AbortSignal) {

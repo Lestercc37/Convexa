@@ -33,11 +33,17 @@ const chartMocks = vi.hoisted(() => ({
   fitContent: vi.fn(),
   setVisibleRange: vi.fn(),
   getGammaHistory: vi.fn(),
+  getGammaHeatmap: vi.fn(),
 }));
 
 vi.mock("@/lib/api", async () => {
   const actual = await vi.importActual<typeof import("@/lib/api")>("@/lib/api");
-  return { ...actual, getGammaHistory: chartMocks.getGammaHistory, getGammaProfile: chartMocks.getGammaProfile };
+  return {
+    ...actual,
+    getGammaHistory: chartMocks.getGammaHistory,
+    getGammaProfile: chartMocks.getGammaProfile,
+    getGammaHeatmap: chartMocks.getGammaHeatmap,
+  };
 });
 
 vi.mock("lightweight-charts", () => ({
@@ -514,6 +520,67 @@ describe("PriceChart", () => {
     await user.click(screen.getByLabelText("Histograma GEX"));
 
     expect(chartMocks.detachPrimitive).toHaveBeenCalledWith(primitive);
+  });
+
+  it("keeps the gamma heatmap off until the toggle is checked, then attaches a primitive fed by the heatmap endpoint", async () => {
+    chartMocks.getGammaHeatmap.mockResolvedValue({
+      schema_version: 1,
+      symbol: "SPY",
+      view: "tactical",
+      metric: "gamma",
+      bucket_seconds: 120,
+      strikes: [550, 555],
+      columns: [{ as_of: "2026-08-06T14:31:40Z", values: [3, null] }],
+      scale_p98: 6,
+    });
+    const user = userEvent.setup();
+    renderWithLanguage(<PriceChart symbol="SPY" candles={candlesWithRange} gamma={gamma} gammaView="tactical" />);
+    expect(chartMocks.attachPrimitive).not.toHaveBeenCalled();
+    expect(chartMocks.getGammaHeatmap).not.toHaveBeenCalled();
+    expect(screen.queryByLabelText("Métrica del heatmap")).not.toBeInTheDocument();
+
+    await user.click(screen.getByLabelText("Heatmap"));
+
+    expect(chartMocks.attachPrimitive).toHaveBeenCalledTimes(1);
+    const primitive = chartMocks.attachPrimitive.mock.calls[0][0];
+    await waitFor(() =>
+      expect(chartMocks.getGammaHeatmap).toHaveBeenCalledWith(
+        "SPY",
+        expect.objectContaining({ view: "tactical", metric: "gamma", start: expect.any(Date) }),
+        expect.any(AbortSignal),
+      ),
+    );
+    // The column is floored to its minute so it lands on a candle.
+    await waitFor(() =>
+      expect(primitive.data).toEqual({
+        strikes: [550, 555],
+        scale: 6,
+        columns: [{ time: Date.parse("2026-08-06T14:31:00Z") / 1000, values: [3, null] }],
+      }),
+    );
+
+    await user.selectOptions(screen.getByLabelText("Métrica del heatmap"), "delta");
+    await waitFor(() =>
+      expect(chartMocks.getGammaHeatmap).toHaveBeenLastCalledWith(
+        "SPY",
+        expect.objectContaining({ metric: "delta" }),
+        expect.any(AbortSignal),
+      ),
+    );
+
+    await user.click(screen.getByLabelText("Heatmap"));
+    expect(chartMocks.detachPrimitive).toHaveBeenCalled();
+  });
+
+  it("keeps drawing what it has when a heatmap poll fails", async () => {
+    chartMocks.getGammaHeatmap.mockRejectedValue(new Error("409"));
+    const user = userEvent.setup();
+    renderWithLanguage(<PriceChart symbol="ES" candles={candlesWithRange} gamma={gamma} gammaView="tactical" />);
+
+    await user.click(screen.getByLabelText("Heatmap"));
+
+    await waitFor(() => expect(chartMocks.getGammaHeatmap).toHaveBeenCalled());
+    expect(chartMocks.attachPrimitive.mock.calls[0][0].data).toBeNull();
   });
 
   it("labels the chart title with the selected timeframe", () => {
