@@ -1192,13 +1192,13 @@ class PostgreSQLStorage:
                     INSERT INTO whale_alerts (
                         time, underlying_id, occ_symbol, alert_type, amount,
                         estimated_buy_volume, estimated_sell_volume, quote_unavailable,
-                        moneyness, near_gamma_level, repeat_count, condition_premium
+                        moneyness, near_gamma_level, repeat_count, condition_premium, simple_flow
                     )
                     VALUES (
                         :time, :underlying_id, :occ_symbol, :alert_type, :amount,
                         :estimated_buy_volume, :estimated_sell_volume, :quote_unavailable,
                         :moneyness, :near_gamma_level, :repeat_count,
-                        CAST(:condition_premium AS jsonb)
+                        CAST(:condition_premium AS jsonb), CAST(:simple_flow AS jsonb)
                     )
                     """
                 ),
@@ -1218,6 +1218,12 @@ class PostgreSQLStorage:
                     "condition_premium": (
                         json.dumps({code: float(value) for code, value in alert.condition_premium.items()})
                         if alert.condition_premium
+                        else None
+                    ),
+                    # Trial second label (WhaleAlert.simple_flow): capture only, never read back.
+                    "simple_flow": (
+                        json.dumps({side: float(value) for side, value in alert.simple_flow.items()})
+                        if alert.simple_flow
                         else None
                     ),
                 },

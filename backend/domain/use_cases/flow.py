@@ -204,6 +204,12 @@ class WhaleAlert:
     # nothing signs, filters or weights by it yet. None for BVC-derived
     # alerts, when capture is switched off, and for rows written before it.
     condition_premium: dict[str, Decimal] | None = None
+    # TRIAL second label (2026-10-16, design 12.14): the alert's buy/sell premium counting ONLY trades whose condition is in
+    # SIGNED_CONDITIONS, as {"buy": ..., "sell": ...} (a signed trade whose side is unknown splits half and half, like the
+    # main figures). Premium of every other condition is left out, so amount - buy - sell is what stays "no side". The main
+    # estimated_buy_volume / estimated_sell_volume are NOT changed. Same coverage as condition_premium, same kill switch;
+    # None for BVC-derived alerts, when capture is off, and for rows written before it.
+    simple_flow: dict[str, Decimal] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -264,6 +270,20 @@ def _floor_to_minute(moment: datetime) -> datetime:
 
 
 _ZERO = Decimal(0)
+
+# Trade-condition codes whose buy/sell side is trusted for the second ("simple only") label of an alert: 18 auto-execution,
+# 95 intermarket sweep, 125/126 single-leg auction. Multi-leg (130-144), floor (129), crosses (127/128), cancels... stay
+# unsigned there. TRIAL: the main label keeps signing every trade (see WhaleAlert.simple_flow).
+SIGNED_CONDITIONS: frozenset[int] = frozenset({18, 95, 125, 126})
+
+
+def _merge_simple_flow(buckets: Iterable[tuple[Decimal, Decimal]]) -> tuple[Decimal, Decimal]:
+    """Sum of per-bucket (buy, sell) premium pairs of the signed-conditions-only split (SUSTAINED_FLOW's 15 minutes)."""
+    buy = sell = _ZERO
+    for bucket_buy, bucket_sell in buckets:
+        buy += bucket_buy
+        sell += bucket_sell
+    return buy, sell
 
 
 def _merge_condition_premium(buckets: Iterable[dict[int, Decimal]]) -> dict[int, Decimal]:
@@ -350,6 +370,10 @@ class _ContractState:
     # process()/BVC, which never writes them.
     bucket_condition_premium: dict[int, Decimal] = field(default_factory=dict)
     sustained_condition_premium: deque[dict[int, Decimal]] = field(default_factory=lambda: deque(maxlen=15))
+    # Same lifetime as bucket_condition_premium: [buy, sell] premium of the current bucket from SIGNED_CONDITIONS trades only,
+    # and the last 15 finalized buckets' pairs.
+    bucket_simple_flow: list[Decimal] = field(default_factory=lambda: [_ZERO, _ZERO])
+    sustained_simple_flow: deque[tuple[Decimal, Decimal]] = field(default_factory=lambda: deque(maxlen=15))
 
 
 @dataclass(slots=True)
@@ -704,6 +728,9 @@ class WhaleAlertsEngine:
             code = -1 if event.condition is None else event.condition
             tally = state.bucket_condition_premium
             tally[code] = tally.get(code, _ZERO) + event.premium
+            if code in SIGNED_CONDITIONS:
+                state.bucket_simple_flow[0] += buy_volume
+                state.bucket_simple_flow[1] += sell_volume
         # AND-accumulation, not assignment: stays True only if EVERY
         # trade contributing to this bucket (including ones already
         # folded in before this call) was Side.UNKNOWN. One real BUY/SELL
@@ -788,6 +815,7 @@ class WhaleAlertsEngine:
         finalized_sell_volume = state.bucket_sell_volume
         finalized_quote_unavailable = state.bucket_quote_unavailable
         finalized_condition_premium = state.bucket_condition_premium
+        finalized_simple_flow = (state.bucket_simple_flow[0], state.bucket_simple_flow[1])
 
         if len(state.previous_amounts) == self._WINDOW_SIZE:
             average_amount = sum(state.previous_amounts, Decimal()) / self._WINDOW_SIZE
@@ -805,6 +833,7 @@ class WhaleAlertsEngine:
                         finalized_sell_volume,
                         finalized_quote_unavailable,
                         finalized_condition_premium,
+                        finalized_simple_flow,
                     )
                 )
 
@@ -813,6 +842,7 @@ class WhaleAlertsEngine:
         state.sustained_sell_volumes.append(finalized_sell_volume)
         state.sustained_quote_unavailable.append(finalized_quote_unavailable)
         state.sustained_condition_premium.append(finalized_condition_premium)
+        state.sustained_simple_flow.append(finalized_simple_flow)
         if len(state.sustained_amounts) == self._SUSTAINED_WINDOW_SIZE:
             sustained_total = sum(state.sustained_amounts, Decimal())
             if sustained_total >= thresholds.sustained_flow_min:
@@ -830,6 +860,7 @@ class WhaleAlertsEngine:
                             sum(state.sustained_sell_volumes, Decimal()),
                             all(state.sustained_quote_unavailable),
                             _merge_condition_premium(state.sustained_condition_premium),
+                            _merge_simple_flow(state.sustained_simple_flow),
                         )
                     )
             else:
@@ -849,6 +880,7 @@ class WhaleAlertsEngine:
         # A NEW dict, not .clear(): the one just finalized is also held by
         # sustained_condition_premium.
         state.bucket_condition_premium = {}
+        state.bucket_simple_flow = [_ZERO, _ZERO]
         return generated
 
     def _emit(
@@ -863,6 +895,7 @@ class WhaleAlertsEngine:
         estimated_sell_volume: Decimal,
         quote_unavailable: bool = False,
         condition_premium: dict[int, Decimal] | None = None,
+        simple_flow: tuple[Decimal, Decimal] | None = None,
     ) -> WhaleAlert:
         spot, gamma = self._cached_market_context(symbol)
         strike = _parse_strike(occ_symbol)
@@ -887,6 +920,10 @@ class WhaleAlertsEngine:
             repeat_count=state.alert_count,
             condition_premium=(
                 {str(code): value for code, value in condition_premium.items()} if condition_premium else None
+            ),
+            # Present exactly when condition_premium is (both come from the same capture switch).
+            simple_flow=(
+                {"buy": simple_flow[0], "sell": simple_flow[1]} if simple_flow is not None and condition_premium else None
             ),
         )
         self._alerts.append(alert)

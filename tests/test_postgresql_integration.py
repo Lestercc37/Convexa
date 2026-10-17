@@ -1053,6 +1053,48 @@ def test_whale_alert_condition_premium_is_stored_as_jsonb_and_never_read_back(
     ]
 
 
+def test_whale_alert_simple_flow_is_stored_as_jsonb_and_never_read_back(
+    postgresql_storage: tuple[PostgreSQLStorage, Engine, str],
+) -> None:
+    """Trial second label (migration 0045): whale_alerts.simple_flow (jsonb) stores the buy/sell premium of the trusted
+    conditions only; no query reads it, so the alert reads back with simple_flow None, and an alert without it stores NULL."""
+    storage, engine, symbol = postgresql_storage
+    with_flow = WhaleAlert(
+        symbol=symbol,
+        occ_symbol=f"{symbol}260220C00540000",
+        alert_type=WhaleAlertType.WHALE,
+        amount=Decimal("65000"),
+        as_of=datetime(2026, 8, 3, 14, 0, tzinfo=timezone.utc),
+        estimated_buy_volume=Decimal("65000"),
+        estimated_sell_volume=Decimal("0"),
+        simple_flow={"buy": Decimal("10000"), "sell": Decimal("2500")},
+    )
+    without_flow = WhaleAlert(
+        symbol=symbol,
+        occ_symbol=f"{symbol}260220P00540000",
+        alert_type=WhaleAlertType.UNUSUAL,
+        amount=Decimal("45000"),
+        as_of=datetime(2026, 8, 3, 14, 5, tzinfo=timezone.utc),
+        estimated_buy_volume=Decimal("22500"),
+        estimated_sell_volume=Decimal("22500"),
+    )
+
+    storage.save_whale_alert(with_flow)
+    storage.save_whale_alert(without_flow)
+
+    with engine.connect() as connection:
+        rows = {
+            row.occ_symbol: row.simple_flow
+            for row in connection.execute(
+                text("SELECT occ_symbol, simple_flow FROM whale_alerts WHERE occ_symbol LIKE :p"),
+                {"p": f"{symbol}%"},
+            )
+        }
+    assert rows[with_flow.occ_symbol] == {"buy": 10000.0, "sell": 2500.0}
+    assert rows[without_flow.occ_symbol] is None
+    assert storage.get_recent_whale_alerts(symbol) == [without_flow, replace(with_flow, simple_flow=None)]
+
+
 @pytest.mark.asyncio
 async def test_async_postgresql_storage_get_recent_whale_alerts_reads_what_the_sync_storage_wrote(
     postgresql_storage: tuple[PostgreSQLStorage, Engine, str],
