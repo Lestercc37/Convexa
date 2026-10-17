@@ -265,18 +265,20 @@ canvas { display: block; width: 100%; }
     [{ simple: 50, 'multi-leg': 46, subasta: 4 }, 0], [{ simple: 64, 'multi-leg': 32, subasta: 5 }, 0], [{ simple: 63, 'multi-leg': 28, subasta: 9, otra: 1 }, 0], [{ 'multi-leg': 56, simple: 31, subasta: 14 }, 1],
     [{ simple: 80, 'multi-leg': 19, subasta: 1 }, 0], [{ 'multi-leg': 70, simple: 27, subasta: 3 }, 0], [{ 'multi-leg': 51, simple: 41, subasta: 6, otra: 3 }, 0], [{ 'multi-leg': 47, simple: 42, subasta: 11 }, 0],
     [{ 'multi-leg': 50, simple: 45, subasta: 5 }, 0], [{ simple: 48, 'multi-leg': 46, subasta: 5 }, 0], [{ 'multi-leg': 55, simple: 42, subasta: 3 }, 0], [{ simple: 59, 'multi-leg': 34, subasta: 7 }, 1]];
+  /* Segunda etiqueta (etapa de prueba, opción C): firmando SOLO condiciones simples (18, 95, 125, 126); C compra, V venta, N sin lado claro, X sin lado. Mismo orden que ALERTS_REAL (hm_sign_by_condition_1016.py). */
+  var ALERT_ALT = "XCXNXCNXCXNNNCCXNXXVNCXC".split("");
   function buildAlerts(candles, flow, S, r) {
     var out = [], i;
     if (flow.real) {
       ALERTS_REAL.forEach(function (a, ai) {
         var p = a[0].split(':'), pos = (parseInt(p[0], 10) * 60 + parseInt(p[1], 10) - (10 * 60 + 41)) + parseInt(p[2], 10) / 60, g = ALERT_GREEKS[ai];
-        if (pos >= 0 && pos < candles.length) out.push({ pos: pos, t: a[0], right: a[1], strike: a[2], type: a[3], amt: a[4], buy: a[5], sell: a[6], delta: g[0], mid: g[1], deq: Math.round(a[4] / (g[1] * 100) * g[0]), rep: a[9], cond: ALERT_COND[ai][0], approx: ALERT_COND[ai][1] === 1 });
+        if (pos >= 0 && pos < candles.length) out.push({ pos: pos, t: a[0], right: a[1], strike: a[2], type: a[3], amt: a[4], buy: a[5], sell: a[6], delta: g[0], mid: g[1], deq: Math.round(a[4] / (g[1] * 100) * g[0]), rep: a[9], cond: ALERT_COND[ai][0], approx: ALERT_COND[ai][1] === 1, alt: ALERT_ALT[ai] });
       });
     } else {
       for (i = 0; i < 16; i++) {
         var dl = 0.08 + 0.85 * r(), mid = 1.5 + 45 * dl * dl + r() * 3, contracts = 120 + Math.round(r() * r() * 3200), amt = Math.round(contracts * mid * 100), bf = r();
         var st = Math.round((S.px + gauss(r) * S.atr * 0.35) / S.step) * S.step, pos2 = r() * (candles.length - 1), mm = 570 + Math.round(pos2 * 2);
-        out.push({ pos: pos2, t: ('0' + Math.floor(mm / 60)).slice(-2) + ':' + ('0' + (mm % 60)).slice(-2) + ':00', right: r() < 0.5 ? 'C' : 'P', strike: st, type: amt > 1000000 ? 'UNUSUAL' : 'SUSTAINED_FLOW', amt: amt, buy: Math.round(amt * bf), sell: Math.round(amt * (1 - bf)), delta: dl, mid: mid, deq: Math.round(contracts * dl), rep: 1 + Math.floor(r() * 3), cond: (function () { var ml = Math.round(r() * 100); return { simple: 100 - ml, 'multi-leg': ml }; })(), approx: false });
+        out.push({ pos: pos2, t: ('0' + Math.floor(mm / 60)).slice(-2) + ':' + ('0' + (mm % 60)).slice(-2) + ':00', right: r() < 0.5 ? 'C' : 'P', strike: st, type: amt > 1000000 ? 'UNUSUAL' : 'SUSTAINED_FLOW', amt: amt, buy: Math.round(amt * bf), sell: Math.round(amt * (1 - bf)), delta: dl, mid: mid, deq: Math.round(contracts * dl), rep: 1 + Math.floor(r() * 3), cond: (function () { var ml = Math.round(r() * 100); return { simple: 100 - ml, 'multi-leg': ml }; })(), approx: false, alt: null });
       }
     }
     return out;
@@ -527,6 +529,8 @@ canvas { display: block; width: 100%; }
     Object.keys(a.cond).sort(function (x, y) { return a.cond[y] - a.cond[x]; }).forEach(function (k) { if (a.cond[k] >= 10 && parts.length < 2) parts.push(NAMES[k] + ' ' + a.cond[k] + ' %'); });
     var condTxt = 'Condición: ' + parts.join(' · ') + (a.approx ? ' <span style="color:var(--dim)">(aprox.)</span>' : '');
     if ((a.cond['multi-leg'] || 0) >= 50) condTxt += '<br><span style="color:var(--warning)">Mayormente multi-leg: comprar o vender por pata puede no ser direccional</span>';
+    var ALT = { C: '<b style="color:var(--up)">COMPRA</b>', V: '<b style="color:#ff6b70">VENTA</b>', N: '<b style="color:var(--warning)">SIN LADO CLARO</b>', X: '<b style="color:var(--dim)">SIN LADO</b>' };
+    if (a.alt) condTxt += '<br>Etiqueta firmando solo simples: ' + ALT[a.alt] + ' <span style="color:var(--dim)">(prueba)</span>';
     return '<b>' + a.t + '</b> · ' + tipo + '<br>' + side + ' · ' + (a.right === 'C' ? 'Call ' : 'Put ') + a.strike + ' (' + money + ')<br>Tamaño: ' + a.deq + ' contratos-delta · prima ' + usd + ' · ×' + a.rep + '<br>' + condTxt
       + '<br><span style="color:var(--dim)">Strike a ' + (dist >= 0 ? '+' : '−') + Math.abs(dist).toFixed(0) + ' pts del precio' + (c.inside ? '' : ' (fuera de la ventana)') + '</span>';
   }
