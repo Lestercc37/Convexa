@@ -683,6 +683,44 @@ describe("PriceChart", () => {
     ]);
   });
 
+  it("plots history rows whose has_data is false, because the history endpoint never loads the items it derives from", async () => {
+    // Found 2026-10-09: every row of /gamma/{symbol}/history has has_data=false (PostgreSQLStorage._gamma_from_row builds the
+    // aggregate without items) while call_wall, gamma_flip and put_wall are present, so a has_data filter drew nothing.
+    const row = (as_of: string, gamma_flip: number | null) => ({
+      schema_version: 1,
+      symbol: "SPY",
+      as_of,
+      view: "tactical",
+      has_data: false,
+      gamma_flip,
+      call_wall: 560,
+      put_wall: 540,
+      absolute_gamma_strike: 550,
+      max_pain: 549,
+      net_gamma: 1,
+      vega_exposure: 2,
+      theta_exposure: 3,
+      charm_exposure: 4,
+      vanna_exposure: 5,
+      delta_exposure: 6,
+      dealer_position: "long_gamma",
+    });
+    chartMocks.getGammaHistory.mockResolvedValue({
+      schema_version: 1,
+      symbol: "SPY",
+      items: [row("2026-08-03T14:00:00Z", 545), row("2026-08-03T14:30:00Z", null), row("2026-08-03T15:00:00Z", 0)],
+    });
+    const user = userEvent.setup();
+    renderWithLanguage(<PriceChart symbol="SPY" gamma={gamma} candles={[]} />);
+
+    await user.click(screen.getByRole("button", { name: "Histórico" }));
+    await waitFor(() => expect(chartMocks.lineSetData).toHaveBeenCalledTimes(4));
+
+    // Call Wall (1st addition) keeps all three rows; Gamma Flip (2nd) keeps only the row with a real value (null and 0 dropped).
+    expect(chartMocks.lineSetData.mock.calls[1][0]).toHaveLength(3);
+    expect(chartMocks.lineSetData.mock.calls[2][0]).toEqual([{ time: 1_785_765_600, value: 545 }]);
+  });
+
   it("collapses two history items that round to the same second, keeping the latest (regression)", async () => {
     // Confirmed live, 2026-09 investigation: two genuinely separate
     // GammaAggregate rows for SPY, saved ~373ms apart

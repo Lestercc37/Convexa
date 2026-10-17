@@ -921,11 +921,12 @@ export function PriceChart({
       line.setData(
         dedupeAscendingByTime(
           history
-            // has_data: false is the honest-empty Tactical case (see
-            // GammaResponse.has_data's own comment) -- same reasoning as
-            // gammaLevels() skipping it entirely in static mode, applied
-            // per-point here since historical mode plots a whole series.
-            .filter((item) => item.has_data && item[level.field] !== null)
+            // Do NOT filter on item.has_data here: every /gamma/{symbol}/history row comes back with has_data=false because
+            // the history query does not load the per-strike items has_data is derived from (found 2026-10-09: 103 of 103
+            // tactical rows false while call_wall, gamma_flip and put_wall were present), so that filter dropped every
+            // point and no colored trace was drawn since PR #186. The honest-empty Tactical case has no levels at all
+            // (null or 0), which this filter drops per point.
+            .filter((item) => item[level.field] !== null && (item[level.field] as number) > 0)
             .map((item) => ({
               time: Math.floor(new Date(item.as_of).getTime() / 1000) as UTCTimestamp,
               value: item[level.field] as number,
