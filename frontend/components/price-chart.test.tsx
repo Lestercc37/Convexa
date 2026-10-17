@@ -236,6 +236,36 @@ describe("PriceChart", () => {
     vi.useRealTimers();
   });
 
+  it("resyncs the whole series when a bulk seed lands over a few existing candles (ES/NQ dots after saving the opening price)", () => {
+    vi.setSystemTime(new Date("2026-08-06T15:00:00Z"));
+    const sessionOpenAnchor = mostRecentSessionRange(Date.now()).openSeconds - 1;
+    const candle = (index: number) => ({
+      time: 1_786_026_600 + index * 60,
+      open: 548 + index,
+      high: 552 + index,
+      low: 547 + index,
+      close: 550 + index,
+    });
+    const few = [candle(0), candle(1)];
+    const seeded = Array.from({ length: 30 }, (_, index) => candle(index));
+
+    const { rerender } = renderWithLanguage(<PriceChart symbol="SPY" gamma={gamma} candles={few} />);
+    chartMocks.setData.mockClear();
+    chartMocks.update.mockClear();
+
+    rerender(<PriceChart symbol="SPY" gamma={gamma} candles={seeded} />);
+
+    expect(chartMocks.setData).toHaveBeenCalledWith([{ time: sessionOpenAnchor }, ...seeded]);
+    expect(chartMocks.update).not.toHaveBeenCalled();
+
+    // A single new bar after that still goes through update(), not a full resync.
+    chartMocks.setData.mockClear();
+    rerender(<PriceChart symbol="SPY" gamma={gamma} candles={[...seeded, candle(30)]} />);
+    expect(chartMocks.update).toHaveBeenCalledWith(candle(30));
+    expect(chartMocks.setData).not.toHaveBeenCalledWith([{ time: sessionOpenAnchor }, ...seeded, candle(30)]);
+    vi.useRealTimers();
+  });
+
   it("anchors the x-axis at the session open even with only a handful of candles (regression)", () => {
     // Plain fitContent() zooms into just the sliver of real data -- right
     // after the open there's almost none, so the chart would read as if
