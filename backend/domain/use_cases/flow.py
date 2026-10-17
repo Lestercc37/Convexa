@@ -223,6 +223,11 @@ class WhaleAlert:
     # estimated_buy_volume / estimated_sell_volume are NOT changed. Same coverage as condition_premium, same kill switch;
     # None for BVC-derived alerts, when capture is off, and for rows written before it.
     simple_flow: dict[str, Decimal] | None = None
+    # What the alert cubes on the chart need (migration 0046): the contract's |delta| when the alert fired (None when no delta was stored) and
+    # the contracts traded in the alert's window (same window as `amount`; every trade counts, whatever its condition). None for BVC-derived
+    # alerts and for rows written before the migration. delta-equivalent size of a cube = contracts x delta.
+    delta: Decimal | None = None
+    contracts: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -385,6 +390,8 @@ class _ContractState:
     sustained_condition_premium: deque[dict[int, Decimal]] = field(default_factory=lambda: deque(maxlen=15))
     # Same lifetime as bucket_condition_premium: [buy, sell] premium of the current bucket from SIGNED_CONDITIONS trades only,
     # and the last 15 finalized buckets' pairs.
+    bucket_contracts: int = 0
+    sustained_contracts: deque[int] = field(default_factory=lambda: deque(maxlen=15))
     bucket_simple_flow: list[Decimal] = field(default_factory=lambda: [_ZERO, _ZERO])
     sustained_simple_flow: deque[tuple[Decimal, Decimal]] = field(default_factory=lambda: deque(maxlen=15))
 
@@ -760,6 +767,7 @@ class WhaleAlertsEngine:
             )
 
         state.bucket_amount += event.premium
+        state.bucket_contracts += event.size
         state.bucket_buy_volume += buy_volume
         state.bucket_sell_volume += sell_volume
         if self._store_conditions:
@@ -854,6 +862,7 @@ class WhaleAlertsEngine:
         finalized_quote_unavailable = state.bucket_quote_unavailable
         finalized_condition_premium = state.bucket_condition_premium
         finalized_simple_flow = (state.bucket_simple_flow[0], state.bucket_simple_flow[1])
+        finalized_contracts = state.bucket_contracts
 
         if len(state.previous_amounts) == self._WINDOW_SIZE:
             average_amount = sum(state.previous_amounts, Decimal()) / self._WINDOW_SIZE
@@ -872,6 +881,7 @@ class WhaleAlertsEngine:
                         finalized_quote_unavailable,
                         finalized_condition_premium,
                         finalized_simple_flow,
+                        finalized_contracts,
                     )
                 )
 
@@ -881,6 +891,7 @@ class WhaleAlertsEngine:
         state.sustained_quote_unavailable.append(finalized_quote_unavailable)
         state.sustained_condition_premium.append(finalized_condition_premium)
         state.sustained_simple_flow.append(finalized_simple_flow)
+        state.sustained_contracts.append(finalized_contracts)
         if len(state.sustained_amounts) == self._SUSTAINED_WINDOW_SIZE:
             sustained_total = sum(state.sustained_amounts, Decimal())
             if sustained_total >= thresholds.sustained_flow_min:
@@ -899,6 +910,7 @@ class WhaleAlertsEngine:
                             all(state.sustained_quote_unavailable),
                             _merge_condition_premium(state.sustained_condition_premium),
                             _merge_simple_flow(state.sustained_simple_flow),
+                            sum(state.sustained_contracts),
                         )
                     )
             else:
@@ -919,6 +931,7 @@ class WhaleAlertsEngine:
         # sustained_condition_premium.
         state.bucket_condition_premium = {}
         state.bucket_simple_flow = [_ZERO, _ZERO]
+        state.bucket_contracts = 0
         return generated
 
     def _emit(
@@ -934,11 +947,13 @@ class WhaleAlertsEngine:
         quote_unavailable: bool = False,
         condition_premium: dict[int, Decimal] | None = None,
         simple_flow: tuple[Decimal, Decimal] | None = None,
+        contracts: int | None = None,
     ) -> WhaleAlert:
         spot, gamma = self._cached_market_context(symbol)
         strike = _parse_strike(occ_symbol)
         contract_type = _contract_type_from_occ_symbol(occ_symbol)
         state.alert_count += 1
+        delta = self._cached_option_delta(occ_symbol)
         alert = WhaleAlert(
             symbol=symbol,
             occ_symbol=occ_symbol,
@@ -948,7 +963,7 @@ class WhaleAlertsEngine:
             estimated_buy_volume=estimated_buy_volume,
             estimated_sell_volume=estimated_sell_volume,
             quote_unavailable=quote_unavailable,
-            moneyness=_moneyness_from_delta(self._cached_option_delta(occ_symbol))
+            moneyness=_moneyness_from_delta(delta)
             or _classify_moneyness(
                 contract_type,
                 strike,
@@ -956,6 +971,9 @@ class WhaleAlertsEngine:
                 gamma.near_the_money_width if gamma is not None else None,
             ),
             near_gamma_level=_nearest_level_to_strike(strike, spot, gamma),
+            delta=abs(delta) if delta is not None and delta != 0 else None,
+            # Only the Lee-Ready path (process_trade) sees trade sizes; BVC-derived alerts tally none (0 here), which reads as unknown.
+            contracts=contracts or None,
             repeat_count=state.alert_count,
             condition_premium=(
                 {str(code): value for code, value in condition_premium.items()} if condition_premium else None

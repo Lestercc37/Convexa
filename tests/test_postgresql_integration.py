@@ -1015,12 +1015,12 @@ def test_whale_alert_save_and_get_recent_against_postgresql(
     assert storage.get_recent_whale_alerts(symbol, limit=1) == [newer]
 
 
-def test_whale_alert_condition_premium_is_stored_as_jsonb_and_never_read_back(
+def test_whale_alert_condition_premium_is_stored_as_jsonb_and_read_back_for_the_cubes(
     postgresql_storage: tuple[PostgreSQLStorage, Engine, str],
 ) -> None:
-    """Phase 1 of the multi-leg work (migration 0040): the per-condition-code premium split is CAPTURED in
-    whale_alerts.condition_premium (jsonb) and not read by any query -- the alert reads back exactly as before,
-    with condition_premium None -- while an alert without a split stores SQL NULL."""
+    """Phase 1 of the multi-leg work (migration 0041): the per-condition-code premium split is stored in
+    whale_alerts.condition_premium (jsonb) and, since the alert cubes need it for their tooltip (2026-10-17), read back as
+    {code: Decimal}; an alert without a split stores SQL NULL and reads back None."""
     storage, engine, symbol = postgresql_storage
     with_split = WhaleAlert(
         symbol=symbol,
@@ -1060,18 +1060,14 @@ def test_whale_alert_condition_premium_is_stored_as_jsonb_and_never_read_back(
     assert rows[with_split.occ_symbol] == {"130": 35000.0, "18": 10000.0, "-1": 20000.0}
     assert rows[without_split.occ_symbol] is None
     assert Decimal(str(total)) == with_split.amount
-    # Not read back: same alert, split dropped.
-    assert storage.get_recent_whale_alerts(symbol) == [
-        without_split,
-        replace(with_split, condition_premium=None),
-    ]
+    assert storage.get_recent_whale_alerts(symbol) == [without_split, with_split]
 
 
-def test_whale_alert_simple_flow_is_stored_as_jsonb_and_never_read_back(
+def test_whale_alert_simple_flow_is_stored_as_jsonb_and_read_back(
     postgresql_storage: tuple[PostgreSQLStorage, Engine, str],
 ) -> None:
     """Trial second label (migration 0045): whale_alerts.simple_flow (jsonb) stores the buy/sell premium of the trusted
-    conditions only; no query reads it, so the alert reads back with simple_flow None, and an alert without it stores NULL."""
+    conditions only and is read back for the alert cubes' tooltip; an alert without it stores NULL and reads back None."""
     storage, engine, symbol = postgresql_storage
     with_flow = WhaleAlert(
         symbol=symbol,
@@ -1106,7 +1102,54 @@ def test_whale_alert_simple_flow_is_stored_as_jsonb_and_never_read_back(
         }
     assert rows[with_flow.occ_symbol] == {"buy": 10000.0, "sell": 2500.0}
     assert rows[without_flow.occ_symbol] is None
-    assert storage.get_recent_whale_alerts(symbol) == [without_flow, replace(with_flow, simple_flow=None)]
+    assert storage.get_recent_whale_alerts(symbol) == [without_flow, with_flow]
+
+
+@pytest.mark.asyncio
+async def test_whale_alert_cube_data_round_trips_through_both_storages(
+    postgresql_storage: tuple[PostgreSQLStorage, Engine, str],
+) -> None:
+    """Migration 0046: delta and contracts are stored with the alert and read back by the sync and the async storage, together with the
+    condition split and the trial label (asyncpg hands jsonb back as a string, psycopg as a dict: both must give the same alert)."""
+    sync_storage, engine, symbol = postgresql_storage
+    full = WhaleAlert(
+        symbol=symbol,
+        occ_symbol=f"{symbol}260220C00540000",
+        alert_type=WhaleAlertType.UNUSUAL,
+        amount=Decimal("65000"),
+        as_of=datetime(2026, 8, 3, 14, 0, tzinfo=timezone.utc),
+        estimated_buy_volume=Decimal("65000"),
+        estimated_sell_volume=Decimal("0"),
+        condition_premium={"130": Decimal("35000"), "18": Decimal("30000")},
+        simple_flow={"buy": Decimal("30000"), "sell": Decimal("0")},
+        delta=Decimal("0.4231"),
+        contracts=212,
+    )
+    legacy = WhaleAlert(  # an alert written before the cube data: every new field None
+        symbol=symbol,
+        occ_symbol=f"{symbol}260220P00540000",
+        alert_type=WhaleAlertType.WHALE,
+        amount=Decimal("210000"),
+        as_of=datetime(2026, 8, 3, 14, 5, tzinfo=timezone.utc),
+        estimated_buy_volume=Decimal("150000"),
+        estimated_sell_volume=Decimal("60000"),
+    )
+    sync_storage.save_whale_alert(full)
+    sync_storage.save_whale_alert(legacy)
+
+    async_engine = create_engine(_require_test_database_url())
+    try:
+        async_storage = AsyncPostgreSQLStorage(create_session_factory(async_engine))
+        from_async = await async_storage.get_recent_whale_alerts(symbol)
+    finally:
+        await async_engine.dispose()
+    assert from_async == [legacy, full]
+    assert sync_storage.get_recent_whale_alerts(symbol) == [legacy, full]
+    with engine.connect() as connection:
+        stored = connection.execute(
+            text("SELECT delta, contracts FROM whale_alerts WHERE occ_symbol = :o"), {"o": full.occ_symbol}
+        ).one()
+    assert (stored.delta, stored.contracts) == (Decimal("0.4231"), 212)
 
 
 @pytest.mark.asyncio

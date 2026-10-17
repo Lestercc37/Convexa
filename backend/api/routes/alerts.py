@@ -43,6 +43,10 @@ async def get_alerts(
                     "moneyness": alert.moneyness.value,
                     "near_gamma_level": alert.near_gamma_level,
                     "repeat_count": alert.repeat_count,
+                    "delta": alert.delta,
+                    "contracts": alert.contracts,
+                    "condition_premium": alert.condition_premium,
+                    "simple_flow": alert.simple_flow,
                 }
                 for alert in alerts
             ],
