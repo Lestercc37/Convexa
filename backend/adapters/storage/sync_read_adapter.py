@@ -8,6 +8,7 @@ from backend.domain.entities import (
     DailyGammaReference,
     FlowEvent,
     GammaAggregate,
+    GammaHeatmap,
     LargeTradePrint,
     MarketPrice,
     OptionChain,
@@ -64,6 +65,14 @@ class SyncStorageAsyncReadAdapter:
         self, underlying: str, start: datetime, end: datetime
     ) -> list[MarketPrice]:
         return self._storage.get_price_history(underlying, start, end)
+
+    async def get_gamma_heatmap(
+        self, underlying: str, view: str, metric: str, start: datetime, end: datetime, bucket_seconds: int
+    ) -> GammaHeatmap:
+        # The in-memory/sqlite storages keep no per-strike history, so there is nothing to bin: an empty matrix.
+        return GammaHeatmap(
+            symbol=underlying.upper(), view=view, metric=metric, bucket_seconds=bucket_seconds, strikes=(), columns=()
+        )
 
     async def get_latest_chain_snapshot(
         self, underlying: str, expiration: date | None = None

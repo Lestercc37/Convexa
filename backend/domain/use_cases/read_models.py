@@ -6,7 +6,7 @@ from dataclasses import replace
 from datetime import UTC, date, datetime, timezone
 from decimal import Decimal
 
-from backend.domain.entities import MarketPrice, MarketSnapshot, OptionChain, UnderlyingKind
+from backend.domain.entities import GammaHeatmap, MarketPrice, MarketSnapshot, OptionChain, UnderlyingKind
 from backend.domain.ports import IAsyncMarketReadStorage, IDataProvider, IStorage
 from backend.domain.underlyings import ACTIVE_UNDERLYINGS_BY_SYMBOL
 from backend.domain.use_cases.calculate_anchored_vwap import (
@@ -316,6 +316,33 @@ def get_option_chain_expirations(storage: IStorage, underlying: str) -> OptionCh
 
 def get_flow(storage: IStorage, underlying: str, since: datetime | None = None, limit: int = 100):
     return storage.get_flow_events(underlying, since, limit)
+
+
+async def get_gamma_heatmap_async(
+    storage: IAsyncMarketReadStorage,
+    underlying: str,
+    view: str,
+    metric: str,
+    start: datetime,
+    end: datetime,
+    bucket_seconds: int,
+) -> GammaHeatmap:
+    """`/gamma/{symbol}/heatmap`'s own read: a pure storage read of gamma_aggregate_items, binned by time (no new calculation).
+    ES/NQ have no stored gamma of their own: they read the proxy index (SPX/NDX) and shift every strike by today's
+    opening-price offset, exactly like their levels and option chain (so a window that reaches into an earlier session
+    would shift old strikes by today's offset; the route limits futures to the current session)."""
+    proxy_symbol = proxy_symbol_for(underlying)
+    if proxy_symbol is None:
+        return await storage.get_gamma_heatmap(underlying, view, metric, start, end, bucket_seconds)
+    offset = await future_level_offset_async(storage, underlying.upper(), proxy_symbol)
+    if offset is None:
+        raise NoOpeningPriceError(
+            f"No data for {underlying.upper()}: today's {underlying.upper()} 9:30 ET opening price has not been entered"
+        )
+    heatmap = await storage.get_gamma_heatmap(proxy_symbol, view, metric, start, end, bucket_seconds)
+    return replace(
+        heatmap, symbol=underlying.upper(), strikes=tuple(strike + offset for strike in heatmap.strikes)
+    )
 
 
 async def get_symbol_flow_pressure_async(

@@ -21,6 +21,7 @@ from backend.domain.entities import (
     GammaAggregate,
     GammaExposure,
     GammaFlip,
+    GammaHeatmap,
     Invite,
     LargeTradePrint,
     MarketHoliday,
@@ -199,6 +200,9 @@ class IAsyncMarketReadStorage(Protocol):
     async def get_price_history(
         self, underlying: str, start: datetime, end: datetime
     ) -> list[MarketPrice]: ...
+    async def get_gamma_heatmap(
+        self, underlying: str, view: str, metric: str, start: datetime, end: datetime, bucket_seconds: int
+    ) -> GammaHeatmap: ...
     async def get_latest_chain_snapshot(
         self, underlying: str, expiration: date | None = None
     ) -> OptionChain | None: ...
