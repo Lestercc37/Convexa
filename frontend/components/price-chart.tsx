@@ -622,7 +622,11 @@ export function PriceChart({
     const latest = candles.at(-1);
     const series = seriesRef.current;
     if (!latest || !series) return;
-    if (previousCandleCount === 0) {
+    // A bulk jump of more than one candle (the day's history seeded over a few dots, e.g. ES/NQ right after the opening price is
+    // saved: confirmed 2026-10-12, only dots until F5) must also resync with setData(): update() appends ONE bar, so
+    // the seeded candles before the last one never reached the series.
+    const bulkJump = candles.length - previousCandleCount > 1;
+    if (previousCandleCount === 0 || bulkJump) {
       // The series currently holds *zero* bars, not even the whitespace
       // anchor -- either the mount effect's own setData(withSessionOpenAnchor
       // ([], ...)) ran with no real candle yet (right after a symbol
