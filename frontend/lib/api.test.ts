@@ -1,11 +1,14 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   getGamma,
+  getGammaHeatmap,
+  getGammaHistory,
   getGammaProfile,
   getMarket,
   getOptionChain,
   getOptionChainExpirations,
   getUnderlyings,
+  historyWindowStart,
   setFutureOpeningPrice,
 } from "./api";
 
@@ -14,6 +17,23 @@ const fetchMock = vi.fn();
 beforeEach(() => {
   fetchMock.mockReset();
   vi.stubGlobal("fetch", fetchMock);
+});
+
+describe("getGammaHeatmap", () => {
+  it("sends the view, metric, start and the column size in seconds", async () => {
+    fetchMock.mockResolvedValue(response({}));
+
+    await getGammaHeatmap("SPX", { view: "tactical", metric: "gamma", start: new Date("2026-10-16T12:30:00Z"), bucketSeconds: 60 });
+    await getGammaHeatmap("SPX", {});
+
+    const first = String(fetchMock.mock.calls[0][0]);
+    expect(first).toContain("/gamma/SPX/heatmap?");
+    expect(first).toContain("view=tactical");
+    expect(first).toContain("metric=gamma");
+    expect(first).toContain("start=2026-10-16T12%3A30%3A00.000Z");
+    expect(first).toContain("bucket_seconds=60");
+    expect(String(fetchMock.mock.calls[1][0])).not.toContain("bucket_seconds"); // omitted: the server default
+  });
 });
 
 describe("API client cache policy", () => {
@@ -107,5 +127,24 @@ describe("ApiError code", () => {
       },
     });
     await expect(setFutureOpeningPrice("ES", 7826)).rejects.toMatchObject({ status: 502, code: null });
+  });
+});
+
+describe("Historical level window", () => {
+  it("starts five weekdays plus one day back, skipping weekends", () => {
+    // Fri 2026-10-16 -> back over Thu, Wed, Tue, Mon, then Fri 10-09 is the 5th weekday; one more day back = Thu 10-08.
+    expect(historyWindowStart(new Date("2026-10-16T18:00:00Z")).toISOString()).toBe("2026-10-08T00:00:00.000Z");
+    // Mon 2026-10-19 -> Fri, Thu, Wed, Tue, Mon (10-12) is the 5th weekday; one more day back = Sun 10-11.
+    expect(historyWindowStart(new Date("2026-10-19T13:00:00Z")).toISOString()).toBe("2026-10-11T00:00:00.000Z");
+  });
+
+  it("asks the endpoint for a bounded range instead of the whole history", async () => {
+    fetchMock.mockResolvedValue(response({ schema_version: 1, symbol: "SPY", items: [] }));
+    await getGammaHistory("SPY", "tactical");
+    const [url] = fetchMock.mock.calls[0];
+    const parsed = new URL(String(url), "http://localhost");
+    expect(parsed.pathname.endsWith("/gamma/SPY/history")).toBe(true);
+    expect(parsed.searchParams.get("view")).toBe("tactical");
+    expect(parsed.searchParams.get("start")).toBe(historyWindowStart().toISOString());
   });
 });

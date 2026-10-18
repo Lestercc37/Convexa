@@ -12,12 +12,14 @@ from backend.domain.entities import (
     GammaAggregate,
     GammaExposure,
     GammaFlip,
+    GammaHeatmap,
     Greeks,
     MarketPrice,
     MarketSnapshot,
     MaxPain,
     OptionChain,
     OptionContract,
+    PriceCandle,
     Underlying,
     Walls,
 )
@@ -253,6 +255,26 @@ def gamma_history_response(symbol: str, items: list[GammaAggregate]) -> dict[str
     }
 
 
+def gamma_heatmap_response(heatmap: GammaHeatmap) -> dict[str, Any]:
+    magnitudes = sorted(abs(value) for column in heatmap.columns for value in column.values if value is not None)
+    scale = None
+    if magnitudes:
+        scale = _num(magnitudes[min(len(magnitudes) - 1, int(0.98 * len(magnitudes)))])
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "symbol": heatmap.symbol.upper(),
+        "view": heatmap.view,
+        "metric": heatmap.metric,
+        "bucket_seconds": heatmap.bucket_seconds,
+        "strikes": [_num(strike) for strike in heatmap.strikes],
+        "columns": [
+            {"as_of": _dt(column.as_of), "values": [None if value is None else _num(value) for value in column.values]}
+            for column in heatmap.columns
+        ],
+        "scale_p98": scale,
+    }
+
+
 def market_response(snapshot: MarketSnapshot) -> dict[str, Any]:
     gamma = snapshot.gamma
     if gamma is None:
@@ -320,6 +342,25 @@ def market_response(snapshot: MarketSnapshot) -> dict[str, Any]:
             "vanna_interpretation": closing_dynamics.vanna_interpretation,
             "max_pain": _num(closing_dynamics.max_pain),
         },
+    }
+
+
+def price_candles_response(symbol: str, timeframe: str, sessions: int, candles: list[PriceCandle]) -> dict[str, Any]:
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "symbol": symbol.upper(),
+        "timeframe": timeframe,
+        "sessions": sessions,
+        "candles": [
+            {
+                "time": int(candle.time.timestamp()),
+                "open": _num(candle.open),
+                "high": _num(candle.high),
+                "low": _num(candle.low),
+                "close": _num(candle.close),
+            }
+            for candle in candles
+        ],
     }
 
 
