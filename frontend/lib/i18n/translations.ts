@@ -19,8 +19,6 @@ export type Translations = {
     scannerButton: string;
     structuralOnlyBadge: string;
     noTacticalDataLabel: string;
-    exposureGroupAriaLabel: string;
-    aggregatedGreeksEyebrow: string;
     loadingRegime: string;
     settingsButtonAriaLabel: string;
     resizeSeparatorAriaLabel: string;
@@ -52,11 +50,6 @@ export type Translations = {
     hidePanel: string;
     volatilityWindowNote: string;
     accumulating: (daysAccumulated: number) => string;
-  };
-  expectedMoveWidget: {
-    ariaLabel: string;
-    primary: (dollars: string, pct: string, lower: string, upper: string) => string;
-    remaining: (dollars: string, pct: string) => string;
   };
   priceChart: {
     eyebrow: string;
@@ -106,22 +99,6 @@ export type Translations = {
     chartAriaLabel: (symbol: string) => string;
     emptyState: string;
   };
-  chartSecondaryPanel: {
-    ariaLabel: string;
-    eyebrow: string;
-    toggleGroupAriaLabel: string;
-    gexToggleButton: string;
-    flowToggleButton: string;
-    gexChartAriaLabel: (symbol: string) => string;
-    gexSpotPriceAriaLabel: (price: string) => string;
-    gexLoading: string;
-    gexNoBreakdown: string;
-    gexLevelsLegendAriaLabel: string;
-    flowChartAriaLabel: (symbol: string) => string;
-    flowLoading: string;
-    flowEmpty: string;
-    flowSinceLabel: (time: string) => string;
-  };
   preSessionPanel: {
     eyebrow: string;
     title: (symbol: string) => string;
@@ -130,32 +107,6 @@ export type Translations = {
     noBreakdown: string;
     loading: string;
     legendAriaLabel: string;
-  };
-  closingDynamicsPanel: {
-    ariaLabel: string;
-    eyebrow: string;
-    pinRiskScoreLabel: string;
-    magnetStrikeLabel: string;
-    magnetStrikeTooltip: string;
-    magnetStrikeDistance: (distancePoints: number) => string;
-    charmTimeDecayBuy: string;
-    charmTimeDecaySell: string;
-    charmNeutral: string;
-    vannaIvIncreaseBuy: string;
-    vannaIvIncreaseSell: string;
-    vannaNeutral: string;
-  };
-  volatilitySmile: {
-    noCurrentExpiration: string;
-    eyebrow: string;
-    roleSubtitle: string;
-    expirationLabel: string;
-    chartAriaLabel: (symbol: string, expiration: string) => string;
-    atmAriaLabel: (strike: number) => string;
-    pointAriaLabel: (type: string, strike: number, ivPct: string) => string;
-    legendAriaLabel: string;
-    missingIvNote: (count: number) => string;
-    loading: string;
   };
   alertsPanel: {
     eyebrow: string;

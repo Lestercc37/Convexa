@@ -33,16 +33,12 @@ import {
 import { POLLING_INTERVAL_MS } from "@/lib/polling";
 import type { GammaResponse, GammaView, MarketResponse, Underlying } from "@/lib/types";
 import { AlertsPanel } from "./alerts-panel";
-import { ChartSecondaryPanel } from "./chart-secondary-panel";
-import { ClosingDynamicsPanel } from "./closing-dynamics-panel";
 import { DealersPanel } from "./derived-metrics-bar";
 import { EnginesGuidePanel } from "./engines-guide-panel";
-import { ExpectedMoveWidget } from "./expected-move-widget";
 import { FutureOpeningPriceControl } from "./future-opening-price-control";
 import { PreSessionPanel } from "./pre-session-panel";
 import { PriceChart } from "./price-chart";
 import { QuickScreener } from "./quick-screener";
-import { VolatilitySmile } from "./volatility-smile";
 
 // Only 1-minute candles are ever fetched (client-side accumulated,
 // dashboard-spec.md section 2.2) — the other timeframes are pure
@@ -122,11 +118,6 @@ function useIsNarrowLayout(): boolean {
 const PRICE_FORMAT = new Intl.NumberFormat("en-US", {
   minimumFractionDigits: 2,
   maximumFractionDigits: 2,
-});
-
-const EXPOSURE_FORMAT = new Intl.NumberFormat("en-US", {
-  notation: "compact",
-  maximumFractionDigits: 1,
 });
 
 export function Dashboard() {
@@ -653,77 +644,15 @@ export function Dashboard() {
               <AlertsPanel symbol={symbol} orientation="vertical" />
             </aside>
           );
-          // Under the chart, the Dealers group of the approved mockup: folded tabs with their number; a click opens the detail cards and, below them, what used to live
-          // in the right-hand column (aggregated greeks, the closing window, the expected move, the Volatility Smile with its own expiration selector, and the old
-          // bottom panel: GEX by strike and the cumulative whale-alerts flow). Nothing was dropped, it moved here.
+          // Under the chart, the Dealers group of the approved mockup: folded tabs that show only their number; one click opens the four cards together
+          // (dealer impact, signal alignment, market bias, volatility regime). The aggregated greeks, the closing window, the expected-move text and the
+          // Volatility Smile panel are gone on purpose (Lester, 2026-10-18): the heatmap tabs (delta, vanna, charm), the Smile dots on the AHORA line and the
+          // expected-move lines of the chart already carry them. The per-minute flow bars panel will go between the chart and this group once it exists.
           const dealersDock = (
             <DealersPanel
               metrics={gamma.derived_metrics}
               showStructuralOnlyBadge={gammaView === "tactical"}
-            >
-              <div className="dealers-extra">
-                <section
-                  className="panel exposure-panel"
-                  aria-label={t.dashboard.exposureGroupAriaLabel}
-                >
-                  <p className="eyebrow">{t.dashboard.aggregatedGreeksEyebrow}</p>
-                  <div className="exposure-row">
-                    <div>
-                      <span className="exposure-label">Delta Exposure</span>
-                      <strong className="exposure-value">
-                        {EXPOSURE_FORMAT.format(gamma.delta_exposure)}
-                      </strong>
-                    </div>
-                    <div>
-                      <span className="exposure-label">Vega Exposure</span>
-                      <strong className="exposure-value">
-                        {EXPOSURE_FORMAT.format(gamma.vega_exposure)}
-                      </strong>
-                    </div>
-                  </div>
-                  <div className="exposure-row">
-                    <div>
-                      <span className="exposure-label">Theta Exposure</span>
-                      <strong className="exposure-value">
-                        {EXPOSURE_FORMAT.format(gamma.theta_exposure)}
-                      </strong>
-                    </div>
-                    <div>
-                      <span className="exposure-label">Charm Exposure</span>
-                      <strong className="exposure-value">
-                        {EXPOSURE_FORMAT.format(gamma.charm_exposure)}
-                      </strong>
-                    </div>
-                  </div>
-                  <div className="exposure-row">
-                    <div>
-                      <span className="exposure-label">Vanna Exposure</span>
-                      <strong className="exposure-value">
-                        {EXPOSURE_FORMAT.format(gamma.vanna_exposure)}
-                      </strong>
-                    </div>
-                  </div>
-                </section>
-                {/* The translated, closing-window-scoped reading of charm and vanna — conditional by design (dashboard-spec.md section 9), so it
-                    renders nothing outside the closing window. Vanna and charm by strike now also live in the heatmap's tabs. */}
-                <ClosingDynamicsPanel closingDynamics={market.closing_dynamics} spotPrice={market.price} />
-                <ExpectedMoveWidget key={`expected-move-${symbol}`} expectedMove={market.expected_move} />
-                <VolatilitySmile
-                  key={`volatility-smile-${symbol}`}
-                  symbol={symbol}
-                  marketPrice={market.price}
-                />
-                <div className="dock-secondary">
-                  <ChartSecondaryPanel
-                    key={`chart-secondary-${symbol}`}
-                    symbol={symbol}
-                    spotPrice={market.price}
-                    gamma={gamma}
-                    gammaView={gammaView}
-                  />
-                </div>
-              </div>
-            </DealersPanel>
+            />
           );
           const centerContent = (
             <div className="tv-center">

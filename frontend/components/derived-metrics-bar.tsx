@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from "react";
+import { useState } from "react";
 import { useLanguage } from "@/lib/i18n/language-context";
 import type { DerivedMetrics } from "@/lib/types";
 
@@ -11,8 +11,6 @@ type DerivedMetricsBarProps = {
   // instead of silently looking unchanged next to every other panel
   // that DOES follow the toggle.
   showStructuralOnlyBadge?: boolean;
-  /** Extra detail sections shown under the cards while the panel is open (DealersPanel only). */
-  children?: ReactNode;
 };
 
 type MetricCardProps = {
@@ -114,7 +112,7 @@ type DealersPanelState = "folded" | "open" | "hidden";
  * each tab shows its own number, one click opens the detail cards, "Ocultar panel" hides the whole group (a small button brings it back).
  * The state lives in the page only (a reload starts folded again).
  */
-export function DealersPanel({ metrics, showStructuralOnlyBadge, children }: DerivedMetricsBarProps) {
+export function DealersPanel({ metrics, showStructuralOnlyBadge }: DerivedMetricsBarProps) {
   const { t } = useLanguage();
   const [state, setState] = useState<DealersPanelState>("folded");
   if (state === "hidden") {
@@ -157,7 +155,6 @@ export function DealersPanel({ metrics, showStructuralOnlyBadge, children }: Der
       {open && (
         <div className="dealers-detail">
           <DerivedMetricsBar metrics={metrics} showStructuralOnlyBadge={showStructuralOnlyBadge} />
-          {children}
         </div>
       )}
     </div>

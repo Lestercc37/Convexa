@@ -21,8 +21,6 @@ export const en: Translations = {
     scannerButton: "Quick Scanner",
     structuralOnlyBadge: "(Structural)",
     noTacticalDataLabel: "No option data available yet for this symbol",
-    exposureGroupAriaLabel: "Charm and Vanna Exposure",
-    aggregatedGreeksEyebrow: "Aggregated Greeks",
     loadingRegime: "Loading regime and levels…",
     settingsButtonAriaLabel: "Whale Alerts threshold settings",
     resizeSeparatorAriaLabel: "Resize panels",
@@ -59,12 +57,6 @@ export const en: Translations = {
     hidePanel: "Hide panel",
     volatilityWindowNote: "Window: 60 days",
     accumulating: (daysAccumulated) => `Accumulating data — ${daysAccumulated}d/20d`,
-  },
-  expectedMoveWidget: {
-    ariaLabel: "Expected move",
-    primary: (dollars, pct, lower, upper) =>
-      `Expected move: ±${dollars} (${pct}%) — Range: ${lower} – ${upper}`,
-    remaining: (dollars, pct) => `Remaining for the day: ±${dollars} (${pct}%)`,
   },
   priceChart: {
     eyebrow: "Intraday price · client-side memory",
@@ -134,22 +126,6 @@ export const en: Translations = {
     chartAriaLabel: (symbol) => `Candlestick chart for ${symbol}`,
     emptyState: "Waiting for the first price sample…",
   },
-  chartSecondaryPanel: {
-    ariaLabel: "GEX by strike and accumulated Whale Alerts flow",
-    eyebrow: "Convexa",
-    toggleGroupAriaLabel: "Secondary panel view",
-    gexToggleButton: "GEX by Strike",
-    flowToggleButton: "Whale Alerts Flow",
-    gexChartAriaLabel: (symbol) => `GEX by strike for ${symbol}`,
-    gexSpotPriceAriaLabel: (price) => `Spot price: ${price}`,
-    gexLoading: "Loading GEX by strike…",
-    gexNoBreakdown: "No per-strike breakdown available.",
-    gexLevelsLegendAriaLabel: "GEX structural levels",
-    flowChartAriaLabel: (symbol) => `Accumulated Whale Alerts flow for ${symbol}`,
-    flowLoading: "Loading Whale Alerts flow…",
-    flowEmpty: "No alerts yet this session.",
-    flowSinceLabel: (time) => `Data since ${time} — backend memory only, not persisted`,
-  },
   preSessionPanel: {
     eyebrow: "Pre-session preparation",
     title: (symbol) => `GEX Profile — ${symbol}`,
@@ -158,36 +134,6 @@ export const en: Translations = {
     noBreakdown: "No per-strike breakdown available for this snapshot.",
     loading: "Loading the frozen snapshot from the previous close…",
     legendAriaLabel: "Legend",
-  },
-  closingDynamicsPanel: {
-    ariaLabel: "Closing Dynamics",
-    eyebrow: "Closing dynamics",
-    pinRiskScoreLabel: "Pin Risk Score",
-    magnetStrikeLabel: "Magnet strike",
-    magnetStrikeTooltip:
-      "A reference price level (highest gamma concentration) — not a prediction of how far the price will move.",
-    magnetStrikeDistance: (distancePoints) =>
-      distancePoints === 0
-        ? "Current price is already at the magnet strike"
-        : `${Math.abs(distancePoints).toFixed(2)} pts ${distancePoints > 0 ? "above" : "below"} the current price`,
-    charmTimeDecayBuy: "Time decay is pushing dealers to buy",
-    charmTimeDecaySell: "Time decay is pushing dealers to sell",
-    charmNeutral: "Neutral — no directional pressure from time decay",
-    vannaIvIncreaseBuy: "A rise in volatility would push dealers to buy",
-    vannaIvIncreaseSell: "A rise in volatility would push dealers to sell",
-    vannaNeutral: "Neutral — no directional pressure from volatility",
-  },
-  volatilitySmile: {
-    eyebrow: "Options Chain · Raw IV by strike",
-    roleSubtitle: "Premium risk sentiment · not a gravitational level",
-    expirationLabel: "Expiration",
-    chartAriaLabel: (symbol, expiration) => `Volatility Smile for ${symbol} on ${expiration}`,
-    atmAriaLabel: (strike) => `ATM strike ${strike}`,
-    pointAriaLabel: (type, strike, ivPct) => `${type} strike ${strike}, IV ${ivPct}%`,
-    missingIvNote: (count) => `${count} in-the-money contracts without IV`,
-    legendAriaLabel: "Legend",
-    loading: "Loading expirations and implied volatility…",
-    noCurrentExpiration: "No current expirations right now (the earlier ones have already expired).",
   },
   alertsPanel: {
     eyebrow: "Whale Alerts",

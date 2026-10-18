@@ -21,8 +21,6 @@ export const es: Translations = {
     scannerButton: "Escáner Rápido",
     structuralOnlyBadge: "(Estructural)",
     noTacticalDataLabel: "Sin datos de opciones disponibles para este símbolo",
-    exposureGroupAriaLabel: "Charm y Vanna Exposure",
-    aggregatedGreeksEyebrow: "Griegas agregadas",
     loadingRegime: "Cargando régimen y niveles…",
     settingsButtonAriaLabel: "Configuración de umbrales de Whale Alerts",
     resizeSeparatorAriaLabel: "Redimensionar paneles",
@@ -59,12 +57,6 @@ export const es: Translations = {
     hidePanel: "Ocultar panel",
     volatilityWindowNote: "Ventana: 60 días",
     accumulating: (daysAccumulated) => `Acumulando datos — ${daysAccumulated}d/20d`,
-  },
-  expectedMoveWidget: {
-    ariaLabel: "Movimiento esperado",
-    primary: (dollars, pct, lower, upper) =>
-      `Movimiento esperado: ±${dollars} (${pct}%) — Rango: ${lower} – ${upper}`,
-    remaining: (dollars, pct) => `Remanente del día: ±${dollars} (${pct}%)`,
   },
   priceChart: {
     eyebrow: "Precio intradía · memoria local",
@@ -134,23 +126,6 @@ export const es: Translations = {
     chartAriaLabel: (symbol) => `Chart de velas para ${symbol}`,
     emptyState: "Esperando la primera muestra de precio…",
   },
-  chartSecondaryPanel: {
-    ariaLabel: "GEX por strike y flujo acumulado de Whale Alerts",
-    eyebrow: "Convexa",
-    toggleGroupAriaLabel: "Vista del panel secundario",
-    gexToggleButton: "GEX por Strike",
-    flowToggleButton: "Flujo Whale Alerts",
-    gexChartAriaLabel: (symbol) => `GEX por strike para ${symbol}`,
-    gexSpotPriceAriaLabel: (price) => `Precio spot: ${price}`,
-    gexLoading: "Cargando GEX por strike…",
-    gexNoBreakdown: "Sin desglose por strike disponible.",
-    gexLevelsLegendAriaLabel: "Niveles estructurales de GEX",
-    flowChartAriaLabel: (symbol) => `Flujo acumulado de Whale Alerts para ${symbol}`,
-    flowLoading: "Cargando flujo de Whale Alerts…",
-    flowEmpty: "Sin alertas todavía en esta sesión.",
-    flowSinceLabel: (time) =>
-      `Datos desde las ${time} — memoria del backend, sin persistencia`,
-  },
   preSessionPanel: {
     eyebrow: "Preparación pre-sesión",
     title: (symbol) => `GEX Profile — ${symbol}`,
@@ -160,36 +135,6 @@ export const es: Translations = {
     noBreakdown: "Sin desglose por strike disponible para este snapshot.",
     loading: "Cargando snapshot congelado del cierre anterior…",
     legendAriaLabel: "Leyenda",
-  },
-  closingDynamicsPanel: {
-    ariaLabel: "Dinámica de Cierre",
-    eyebrow: "Dinámica de cierre",
-    pinRiskScoreLabel: "Pin Risk Score",
-    magnetStrikeLabel: "Strike imán",
-    magnetStrikeTooltip:
-      "Nivel de precio de referencia (mayor concentración de gamma) — no es una predicción de cuánto se moverá el precio.",
-    magnetStrikeDistance: (distancePoints) =>
-      distancePoints === 0
-        ? "El precio actual ya está en el strike imán"
-        : `${Math.abs(distancePoints).toFixed(2)} pts ${distancePoints > 0 ? "por encima" : "por debajo"} del precio actual`,
-    charmTimeDecayBuy: "El paso del tiempo empuja a los dealers a comprar",
-    charmTimeDecaySell: "El paso del tiempo empuja a los dealers a vender",
-    charmNeutral: "Neutral — sin presión direccional por paso del tiempo",
-    vannaIvIncreaseBuy: "Un aumento de volatilidad empujaría a los dealers a comprar",
-    vannaIvIncreaseSell: "Un aumento de volatilidad empujaría a los dealers a vender",
-    vannaNeutral: "Neutral — sin presión direccional por volatilidad",
-  },
-  volatilitySmile: {
-    eyebrow: "Options Chain · IV cruda por strike",
-    roleSubtitle: "Sentimiento de riesgo en prima · no es un nivel de gravitación",
-    expirationLabel: "Vencimiento",
-    chartAriaLabel: (symbol, expiration) => `Volatility Smile de ${symbol} para ${expiration}`,
-    atmAriaLabel: (strike) => `Strike ATM ${strike}`,
-    pointAriaLabel: (type, strike, ivPct) => `${type} strike ${strike}, IV ${ivPct}%`,
-    missingIvNote: (count) => `${count} contratos dentro del dinero sin IV`,
-    legendAriaLabel: "Leyenda",
-    loading: "Cargando vencimientos y volatilidad implícita…",
-    noCurrentExpiration: "No hay vencimientos vigentes por ahora (los anteriores ya vencieron).",
   },
   alertsPanel: {
     eyebrow: "Whale Alerts",
