@@ -53,6 +53,10 @@ export const HEATMAP_NEGATIVE_STOPS: Stop[] = [[74, 10, 13], [130, 8, 14], [190,
 export const HEATMAP_MINIMUM_SHARE = 0.04;
 export const HEATMAP_TOP_SHARE = 0.985;
 export const HEATMAP_ALPHA = 0.62;
+/** Blur of the smooth drawing, in CSS pixels (same value as the approved prototype). */
+export const HEATMAP_BLUR_CSS_PX = 3;
+// A grid with more rows than this is not drawn as one image (the sharp per-cell drawing is used instead).
+const MAX_IMAGE_ROWS = 1500;
 const ROW_FILL_FRACTION = 0.92;
 const MINIMUM_ROW_HEIGHT_BITMAP_PX = 1;
 
@@ -71,14 +75,20 @@ export function rampColor(stops: Stop[], fraction: number): [number, number, num
   ];
 }
 
-/** CSS color of a cell, or null when it is too faint to draw. */
-export function cellColor(value: number | null, scale: number | null): string | null {
+/** RGB of a cell, or null when it is too faint to draw. */
+export function cellRgb(value: number | null, scale: number | null): [number, number, number] | null {
   if (value === null || scale === null || !(scale > 0)) return null;
   const share = Math.abs(value) / scale;
   if (share < HEATMAP_MINIMUM_SHARE) return null;
   const stops = value >= 0 ? HEATMAP_POSITIVE_STOPS : HEATMAP_NEGATIVE_STOPS;
-  const [red, green, blue] = rampColor(stops, share >= HEATMAP_TOP_SHARE ? 1 : Math.min(1, share) * 0.96);
-  return `rgba(${red}, ${green}, ${blue}, ${HEATMAP_ALPHA})`;
+  return rampColor(stops, share >= HEATMAP_TOP_SHARE ? 1 : Math.min(1, share) * 0.96);
+}
+
+/** CSS color of a cell, or null when it is too faint to draw. */
+export function cellColor(value: number | null, scale: number | null): string | null {
+  const rgb = cellRgb(value, scale);
+  if (rgb === null) return null;
+  return `rgba(${rgb[0]}, ${rgb[1]}, ${rgb[2]}, ${HEATMAP_ALPHA})`;
 }
 
 // Typical vertical distance between adjacent strikes on screen (median, so one far strike never stretches every row).
@@ -94,13 +104,160 @@ function medianStep(values: number[]): number | null {
   return steps[Math.floor(steps.length / 2)];
 }
 
+/** Step between strikes when every strike sits on the grid of the median step (gaps allowed), else null: then the sharp per-cell drawing is used. */
+export function uniformStrikeStep(strikes: number[]): number | null {
+  if (strikes.length < 2) return null;
+  const sorted = [...strikes].sort((a, b) => a - b);
+  const step = medianStep(sorted);
+  if (step === null) return null;
+  for (const strike of sorted) {
+    const position = (strike - sorted[0]) / step;
+    if (Math.abs(position - Math.round(position)) > 0.02) return null;
+  }
+  const rows = Math.round((sorted[sorted.length - 1] - sorted[0]) / step) + 1;
+  return rows <= MAX_IMAGE_ROWS ? step : null;
+}
+
+export type HeatmapImage = {
+  /** One pixel per column. */
+  width: number;
+  /** One pixel per strike row of the regular grid, the highest strike first (row 0). */
+  height: number;
+  pixels: Uint8ClampedArray<ArrayBuffer>;
+  lowStrike: number;
+  highStrike: number;
+};
+
+/** The matrix as a one-pixel-per-cell RGBA image (what the smooth drawing scales up and blurs), or null when the strikes are not on one regular grid. */
+export function heatmapImage(data: HeatmapData): HeatmapImage | null {
+  if (!data.columns.length) return null;
+  const step = uniformStrikeStep(data.strikes);
+  if (step === null) return null;
+  const lowStrike = Math.min(...data.strikes);
+  const highStrike = Math.max(...data.strikes);
+  const height = Math.round((highStrike - lowStrike) / step) + 1;
+  const width = data.columns.length;
+  const pixels = new Uint8ClampedArray(new ArrayBuffer(width * height * 4));
+  data.columns.forEach((column, columnIndex) => {
+    data.strikes.forEach((strike, strikeIndex) => {
+      const rgb = cellRgb(column.values[strikeIndex] ?? null, data.scale);
+      if (rgb === null) return;
+      const row = height - 1 - Math.round((strike - lowStrike) / step);
+      const offset = (row * width + columnIndex) * 4;
+      pixels[offset] = rgb[0];
+      pixels[offset + 1] = rgb[1];
+      pixels[offset + 2] = rgb[2];
+      pixels[offset + 3] = Math.round(HEATMAP_ALPHA * 255);
+    });
+  });
+  return { width, height, pixels, lowStrike, highStrike };
+}
+
+type CachedImage = { source: HeatmapData; image: HeatmapImage; canvas: HTMLCanvasElement };
+
 class GammaHeatmapRenderer implements IPrimitivePaneRenderer {
+  private cached: CachedImage | null = null;
+  private scratch: HTMLCanvasElement | null = null;
+
   constructor(private readonly source: GammaHeatmapPrimitive) {}
+
+  /** The one-pixel-per-cell image of the current data, rebuilt only when the data changes; null when it cannot be built here. */
+  private imageFor(data: HeatmapData): CachedImage | null {
+    if (this.cached && this.cached.source === data) return this.cached;
+    const image = heatmapImage(data);
+    if (!image || typeof document === "undefined" || typeof ImageData === "undefined") return null;
+    const canvas = document.createElement("canvas");
+    canvas.width = image.width;
+    canvas.height = image.height;
+    const context = canvas.getContext("2d");
+    if (!context) return null;
+    context.putImageData(new ImageData(image.pixels, image.width, image.height), 0, 0);
+    this.cached = { source: data, image, canvas };
+    return this.cached;
+  }
+
+  /**
+   * Smooth drawing, like the approved prototype: the matrix is one pixel per cell, each column is stretched to its width and the full height of the
+   * strike range with interpolation, and the result is blurred. Only the visible part is composed, so zooming in never builds a huge canvas.
+   * Returns false when it cannot be used (no canvas, strikes not on one grid, prices off screen): the caller then draws the sharp cells.
+   */
+  private drawSmooth(scope: Parameters<Parameters<DrawTarget["useBitmapCoordinateSpace"]>[0]>[0]): boolean {
+    const { series, chart, data } = this.source;
+    if (!series || !chart || !data) return false;
+    const cached = this.imageFor(data);
+    if (!cached) return false;
+    const { image, canvas } = cached;
+    const yHigh = series.priceToCoordinate(image.highStrike);
+    const yLow = series.priceToCoordinate(image.lowStrike);
+    if (yHigh === null || yLow === null || !Number.isFinite(yHigh) || !Number.isFinite(yLow) || image.height < 2) return false;
+    const hpr = scope.horizontalPixelRatio;
+    const vpr = scope.verticalPixelRatio;
+    const halfRow = (Math.abs(yLow - yHigh) / (image.height - 1) / 2) * vpr;
+    const top = Math.min(yHigh, yLow) * vpr - halfRow;
+    const bottom = Math.max(yHigh, yLow) * vpr + halfRow;
+
+    const timeScale = chart.timeScale();
+    const xs = data.columns.map((column) => timeToX(timeScale, series, column.time));
+    const placed: { index: number; left: number; width: number }[] = [];
+    let lastWidth = 0;
+    data.columns.forEach((_, index) => {
+      const x = xs[index];
+      if (x === null || !Number.isFinite(x)) return;
+      const next = xs[index + 1];
+      const width =
+        next !== null && next !== undefined && Number.isFinite(next) && next > x ? (next - x) * hpr : lastWidth || 8 * hpr;
+      lastWidth = width;
+      placed.push({ index, left: x * hpr, width });
+    });
+    if (!placed.length) return false;
+
+    // Compose only what is on screen (plus a margin so the blur has real pixels at the edges).
+    const margin = (HEATMAP_BLUR_CSS_PX * 3 + 2) * hpr;
+    const totalLeft = placed[0].left;
+    const totalRight = placed[placed.length - 1].left + placed[placed.length - 1].width;
+    const left = Math.max(totalLeft, -margin);
+    const right = Math.min(totalRight, scope.bitmapSize.width + margin);
+    const visibleTop = Math.max(top, -margin);
+    const visibleBottom = Math.min(bottom, scope.bitmapSize.height + margin);
+    if (right <= left || visibleBottom <= visibleTop) return true; // everything off screen: nothing to draw
+    const width = Math.ceil(right - left);
+    const height = Math.ceil(visibleBottom - visibleTop);
+
+    const scratch = this.scratch ?? document.createElement("canvas");
+    this.scratch = scratch;
+    if (scratch.width !== width || scratch.height !== height) {
+      scratch.width = width;
+      scratch.height = height;
+    }
+    const scratchContext = scratch.getContext("2d");
+    if (!scratchContext) return false;
+    scratchContext.clearRect(0, 0, width, height);
+    scratchContext.imageSmoothingEnabled = true;
+    scratchContext.imageSmoothingQuality = "high";
+    for (const column of placed) {
+      if (column.left + column.width < left || column.left > right) continue;
+      scratchContext.drawImage(canvas, column.index, 0, 1, image.height, column.left - left, top - visibleTop, column.width + 0.75, bottom - top);
+    }
+
+    const context = scope.context;
+    context.save();
+    context.beginPath();
+    context.rect(left, visibleTop, width, height);
+    context.clip();
+    context.imageSmoothingEnabled = true;
+    context.imageSmoothingQuality = "high";
+    context.filter = `blur(${HEATMAP_BLUR_CSS_PX * hpr}px)`;
+    context.drawImage(scratch, left, visibleTop);
+    context.filter = "none";
+    context.restore();
+    return true;
+  }
 
   draw(target: DrawTarget): void {
     target.useBitmapCoordinateSpace((scope) => {
       const { series, chart, data } = this.source;
       if (!series || !chart || !data || !data.columns.length || !data.strikes.length) return;
+      if (this.source.smooth && this.drawSmooth(scope)) return;
       const timeScale = chart.timeScale();
 
       const rows: { index: number; y: number }[] = [];
@@ -141,8 +298,11 @@ export class GammaHeatmapPrimitive implements ISeriesPrimitive<Time> {
   data: HeatmapData | null = null;
   private requestUpdate: (() => void) | null = null;
   private readonly view: IPrimitivePaneView;
+  /** Smooth drawing (scaled and blurred, like the prototype) instead of one sharp rectangle per cell. The chart turns it on; it falls back to the sharp cells when it cannot run. */
+  readonly smooth: boolean;
 
-  constructor() {
+  constructor(options: { smooth?: boolean } = {}) {
+    this.smooth = options.smooth ?? false;
     const renderer = new GammaHeatmapRenderer(this);
     this.view = { zOrder: () => "bottom", renderer: () => renderer };
   }

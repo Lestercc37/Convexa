@@ -1,11 +1,15 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   cellColor,
+  cellRgb,
   GammaHeatmapPrimitive,
+  HEATMAP_ALPHA,
   HEATMAP_MINIMUM_SHARE,
   HEATMAP_NEGATIVE_STOPS,
   HEATMAP_POSITIVE_STOPS,
+  heatmapImage,
   rampColor,
+  uniformStrikeStep,
   type HeatmapData,
 } from "./gamma-heatmap-primitive";
 
@@ -33,8 +37,8 @@ function drawWith(primitive: GammaHeatmapPrimitive, context: FakeContext) {
 
 // Strike 100 at y=700, 105 at y=600, 110 at y=500. Bars every 10 s from t=1000, 40 px apart (x = index * 40 + 100), so the columns at
 // 1000 / 1010 / 1020 sit at x = 100, 140, 180. `offGrid` lists times the time scale has no index for at all.
-function attached(offGrid: number[] = []) {
-  const primitive = new GammaHeatmapPrimitive();
+function attached(offGrid: number[] = [], smooth = false) {
+  const primitive = new GammaHeatmapPrimitive({ smooth });
   const requestUpdate = vi.fn();
   primitive.attached({
     series: {
@@ -50,6 +54,10 @@ function attached(offGrid: number[] = []) {
     requestUpdate,
   } as never);
   return { primitive, requestUpdate };
+}
+
+function attachedSmooth() {
+  return attached([], true);
 }
 
 const DATA: HeatmapData = {
@@ -139,5 +147,52 @@ describe("GammaHeatmapPrimitive", () => {
     primitive.setData(null);
     expect(requestUpdate).toHaveBeenCalledTimes(1);
     expect(primitive.series).toBeNull();
+  });
+});
+
+describe("smooth drawing helpers", () => {
+  it("uniformStrikeStep returns the grid step, tolerates gaps and refuses strikes that are not on one grid", () => {
+    expect(uniformStrikeStep([100, 105, 110, 115])).toBe(5);
+    expect(uniformStrikeStep([100, 105, 115, 120])).toBe(5); // a missing strike leaves a blank row
+    expect(uniformStrikeStep([100, 102.5, 105, 110, 120])).toBeNull(); // mixed 2.5 / 5 / 10 spacing: sharp cells instead
+    expect(uniformStrikeStep([100])).toBeNull();
+    expect(uniformStrikeStep([])).toBeNull();
+  });
+
+  it("heatmapImage makes one pixel per column and strike row, highest strike first, faint and empty cells transparent", () => {
+    const image = heatmapImage(DATA)!;
+    expect(image.width).toBe(3);
+    expect(image.height).toBe(3); // strikes 100, 105, 110
+    expect([image.lowStrike, image.highStrike]).toEqual([100, 110]);
+    const pixel = (column: number, strike: number) => {
+      const row = image.height - 1 - (strike - 100) / 5;
+      const offset = (row * image.width + column) * 4;
+      return Array.from(image.pixels.slice(offset, offset + 4));
+    };
+    expect(pixel(0, 100)).toEqual([255, 255, 255, Math.round(HEATMAP_ALPHA * 255)]); // value 100 = the scale: white end of the ramp
+    expect(pixel(0, 105)).toEqual([0, 0, 0, 0]); // 2% of the scale: undrawn
+    expect(pixel(1, 100)).toEqual([0, 0, 0, 0]); // null
+    expect(pixel(2, 110)[3]).toBe(0); // null
+    const negative = pixel(0, 110);
+    expect(negative[0]).toBeGreaterThan(negative[1]); // value -50 (half the scale): red side of the ramp
+  });
+
+  it("heatmapImage is null without columns or on an irregular strike grid", () => {
+    expect(heatmapImage({ strikes: [100, 105], scale: 1, columns: [] })).toBeNull();
+    expect(heatmapImage({ strikes: [100, 102.5, 105, 110, 120], scale: 1, columns: [{ time: 1000, values: [1, 1, 1, 1, 1] }] })).toBeNull();
+  });
+
+  it("cellRgb and cellColor agree", () => {
+    expect(cellRgb(null, 100)).toBeNull();
+    expect(cellRgb(100, 100)).toEqual([255, 255, 255]);
+    expect(cellColor(100, 100)).toBe(`rgba(255, 255, 255, ${HEATMAP_ALPHA})`);
+  });
+
+  it("falls back to the sharp cells when the smooth drawing cannot run (no canvas image support in the test environment)", () => {
+    const { primitive } = attachedSmooth();
+    primitive.setData(DATA);
+    const context = fakeContext();
+    drawWith(primitive, context);
+    expect(context.fills).toHaveLength(5); // same cells as the sharp drawing
   });
 });

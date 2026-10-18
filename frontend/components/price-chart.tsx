@@ -741,7 +741,7 @@ export function PriceChart({
   useEffect(() => {
     const series = seriesRef.current;
     if (!showHeatmap || !series) return;
-    const primitive = new GammaHeatmapPrimitive();
+    const primitive = new GammaHeatmapPrimitive({ smooth: true });
     series.attachPrimitive(primitive);
     const controller = new AbortController();
     const refresh = () => {
