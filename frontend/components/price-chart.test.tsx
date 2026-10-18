@@ -36,6 +36,7 @@ const chartMocks = vi.hoisted(() => ({
   fitContent: vi.fn(),
   setVisibleRange: vi.fn(),
   getGammaHistory: vi.fn(),
+  getGammaHeatmap: vi.fn(),
 }));
 
 vi.mock("@/lib/api", async () => {
@@ -45,6 +46,7 @@ vi.mock("@/lib/api", async () => {
     getGammaHistory: chartMocks.getGammaHistory,
     getGammaProfile: chartMocks.getGammaProfile,
     getAlerts: chartMocks.getAlerts,
+    getGammaHeatmap: chartMocks.getGammaHeatmap,
   };
 });
 
@@ -243,6 +245,50 @@ describe("PriceChart", () => {
     expect(consoleWarn).toHaveBeenCalled();
 
     consoleWarn.mockRestore();
+    vi.useRealTimers();
+  });
+
+  it("adds no session-open anchor to a multi-session series that already starts before the open (Semana), keeping setData ascending", () => {
+    vi.setSystemTime(new Date("2026-08-06T15:00:00Z"));
+    const day = 86_400;
+    const olderCandle = { time: 1_786_026_600 - 3 * day, open: 540, high: 545, low: 539, close: 544 };
+    const todayCandle = { time: 1_786_026_600, open: 548, high: 552, low: 548, close: 550 };
+
+    renderWithLanguage(<PriceChart symbol="SPY" gamma={gamma} candles={[olderCandle, todayCandle]} />);
+
+    const seriesData = chartMocks.setData.mock.calls.map((call) => call[0]).find((data) => data.length === 2);
+    expect(seriesData).toEqual([olderCandle, todayCandle]);
+    expect(seriesData.every((point: { time: number }, index: number, all: { time: number }[]) => index === 0 || point.time > all[index - 1].time)).toBe(true);
+    vi.useRealTimers();
+  });
+
+  it("resyncs the whole series when a bulk seed lands over a few existing candles (ES/NQ dots after saving the opening price)", () => {
+    vi.setSystemTime(new Date("2026-08-06T15:00:00Z"));
+    const sessionOpenAnchor = mostRecentSessionRange(Date.now()).openSeconds - 1;
+    const candle = (index: number) => ({
+      time: 1_786_026_600 + index * 60,
+      open: 548 + index,
+      high: 552 + index,
+      low: 547 + index,
+      close: 550 + index,
+    });
+    const few = [candle(0), candle(1)];
+    const seeded = Array.from({ length: 30 }, (_, index) => candle(index));
+
+    const { rerender } = renderWithLanguage(<PriceChart symbol="SPY" gamma={gamma} candles={few} />);
+    chartMocks.setData.mockClear();
+    chartMocks.update.mockClear();
+
+    rerender(<PriceChart symbol="SPY" gamma={gamma} candles={seeded} />);
+
+    expect(chartMocks.setData).toHaveBeenCalledWith([{ time: sessionOpenAnchor }, ...seeded]);
+    expect(chartMocks.update).not.toHaveBeenCalled();
+
+    // A single new bar after that still goes through update(), not a full resync.
+    chartMocks.setData.mockClear();
+    rerender(<PriceChart symbol="SPY" gamma={gamma} candles={[...seeded, candle(30)]} />);
+    expect(chartMocks.update).toHaveBeenCalledWith(candle(30));
+    expect(chartMocks.setData).not.toHaveBeenCalledWith([{ time: sessionOpenAnchor }, ...seeded, candle(30)]);
     vi.useRealTimers();
   });
 
@@ -594,6 +640,67 @@ describe("PriceChart", () => {
     expect(chartMocks.unsubscribeCrosshairMove).toHaveBeenCalledWith(onCrosshairMove);
   });
 
+  it("keeps the gamma heatmap off until the toggle is checked, then attaches a primitive fed by the heatmap endpoint", async () => {
+    chartMocks.getGammaHeatmap.mockResolvedValue({
+      schema_version: 1,
+      symbol: "SPY",
+      view: "tactical",
+      metric: "gamma",
+      bucket_seconds: 120,
+      strikes: [550, 555],
+      columns: [{ as_of: "2026-08-06T14:31:40Z", values: [3, null] }],
+      scale_p98: 6,
+    });
+    const user = userEvent.setup();
+    renderWithLanguage(<PriceChart symbol="SPY" candles={candlesWithRange} gamma={gamma} gammaView="tactical" />);
+    expect(chartMocks.attachPrimitive).not.toHaveBeenCalled();
+    expect(chartMocks.getGammaHeatmap).not.toHaveBeenCalled();
+    expect(screen.queryByLabelText("Métrica del heatmap")).not.toBeInTheDocument();
+
+    await user.click(screen.getByLabelText("Heatmap"));
+
+    expect(chartMocks.attachPrimitive).toHaveBeenCalledTimes(1);
+    const primitive = chartMocks.attachPrimitive.mock.calls[0][0];
+    await waitFor(() =>
+      expect(chartMocks.getGammaHeatmap).toHaveBeenCalledWith(
+        "SPY",
+        expect.objectContaining({ view: "tactical", metric: "gamma", start: expect.any(Date), bucketSeconds: 60 }),
+        expect.any(AbortSignal),
+      ),
+    );
+    // The column is floored to its minute so it lands on a candle.
+    await waitFor(() =>
+      expect(primitive.data).toEqual({
+        strikes: [550, 555],
+        scale: 6,
+        columns: [{ time: Date.parse("2026-08-06T14:31:00Z") / 1000, values: [3, null] }],
+      }),
+    );
+
+    await user.selectOptions(screen.getByLabelText("Métrica del heatmap"), "delta");
+    await waitFor(() =>
+      expect(chartMocks.getGammaHeatmap).toHaveBeenLastCalledWith(
+        "SPY",
+        expect.objectContaining({ metric: "delta" }),
+        expect.any(AbortSignal),
+      ),
+    );
+
+    await user.click(screen.getByLabelText("Heatmap"));
+    expect(chartMocks.detachPrimitive).toHaveBeenCalled();
+  });
+
+  it("keeps drawing what it has when a heatmap poll fails", async () => {
+    chartMocks.getGammaHeatmap.mockRejectedValue(new Error("409"));
+    const user = userEvent.setup();
+    renderWithLanguage(<PriceChart symbol="ES" candles={candlesWithRange} gamma={gamma} gammaView="tactical" />);
+
+    await user.click(screen.getByLabelText("Heatmap"));
+
+    await waitFor(() => expect(chartMocks.getGammaHeatmap).toHaveBeenCalled());
+    expect(chartMocks.attachPrimitive.mock.calls[0][0].data).toBeNull();
+  });
+
   it("labels the chart title with the selected timeframe", () => {
     renderWithLanguage(
       <PriceChart
@@ -759,6 +866,44 @@ describe("PriceChart", () => {
     expect(chartMocks.lineSetData.mock.calls[2][0]).toEqual([
       { time: 1_785_765_600, value: 545 },
     ]);
+  });
+
+  it("plots history rows whose has_data is false, because the history endpoint never loads the items it derives from", async () => {
+    // Found 2026-10-09: every row of /gamma/{symbol}/history has has_data=false (PostgreSQLStorage._gamma_from_row builds the
+    // aggregate without items) while call_wall, gamma_flip and put_wall are present, so a has_data filter drew nothing.
+    const row = (as_of: string, gamma_flip: number | null) => ({
+      schema_version: 1,
+      symbol: "SPY",
+      as_of,
+      view: "tactical",
+      has_data: false,
+      gamma_flip,
+      call_wall: 560,
+      put_wall: 540,
+      absolute_gamma_strike: 550,
+      max_pain: 549,
+      net_gamma: 1,
+      vega_exposure: 2,
+      theta_exposure: 3,
+      charm_exposure: 4,
+      vanna_exposure: 5,
+      delta_exposure: 6,
+      dealer_position: "long_gamma",
+    });
+    chartMocks.getGammaHistory.mockResolvedValue({
+      schema_version: 1,
+      symbol: "SPY",
+      items: [row("2026-08-03T14:00:00Z", 545), row("2026-08-03T14:30:00Z", null), row("2026-08-03T15:00:00Z", 0)],
+    });
+    const user = userEvent.setup();
+    renderWithLanguage(<PriceChart symbol="SPY" gamma={gamma} candles={[]} />);
+
+    await user.click(screen.getByRole("button", { name: "Histórico" }));
+    await waitFor(() => expect(chartMocks.lineSetData).toHaveBeenCalledTimes(4));
+
+    // Call Wall (1st addition) keeps all three rows; Gamma Flip (2nd) keeps only the row with a real value (null and 0 dropped).
+    expect(chartMocks.lineSetData.mock.calls[1][0]).toHaveLength(3);
+    expect(chartMocks.lineSetData.mock.calls[2][0]).toEqual([{ time: 1_785_765_600, value: 545 }]);
   });
 
   it("collapses two history items that round to the same second, keeping the latest (regression)", async () => {

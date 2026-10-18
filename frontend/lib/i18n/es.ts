@@ -12,6 +12,9 @@ export const es: Translations = {
   dashboard: {
     underlyingLabel: "Subyacente",
     timeframeGroupAriaLabel: "Marco temporal",
+    rangeGroupAriaLabel: "Rango del gráfico",
+    rangeDay: "Día",
+    rangeWeek: "Semana",
     viewGroupAriaLabel: "Vista",
     liveButton: "En vivo",
     preSessionButton: "Pre-Sesión",
@@ -99,6 +102,11 @@ export const es: Translations = {
     cubeTrialLine: (label) => `Etiqueta firmando solo simples: ${label} (prueba)`,
     cubeDistanceLine: (signedPoints) =>
       `Strike a ${signedPoints >= 0 ? "+" : "−"}${Math.abs(signedPoints).toFixed(0)} pts del precio`,
+    heatmapLabel: "Heatmap",
+    heatmapMetricAriaLabel: "Métrica del heatmap",
+    heatmapMetricGamma: "Gamma neta",
+    heatmapMetricAbsolute: "Gamma absoluta",
+    heatmapMetricDelta: "Delta",
     expectedMoveRangeLabel: "Movimiento Esperado",
     streamFallbackLabel: "Conexión en tiempo real perdida — actualizando cada 30s",
     drawingToolsAriaLabel: "Herramientas de dibujo",

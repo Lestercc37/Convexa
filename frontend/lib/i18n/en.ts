@@ -12,6 +12,9 @@ export const en: Translations = {
   dashboard: {
     underlyingLabel: "Underlying",
     timeframeGroupAriaLabel: "Timeframe",
+    rangeGroupAriaLabel: "Chart range",
+    rangeDay: "Day",
+    rangeWeek: "Week",
     viewGroupAriaLabel: "View",
     liveButton: "Live",
     preSessionButton: "Pre-Session",
@@ -99,6 +102,11 @@ export const en: Translations = {
     cubeTrialLine: (label) => `Label counting only simple trades: ${label} (trial)`,
     cubeDistanceLine: (signedPoints) =>
       `Strike ${signedPoints >= 0 ? "+" : "−"}${Math.abs(signedPoints).toFixed(0)} pts from the price`,
+    heatmapLabel: "Heatmap",
+    heatmapMetricAriaLabel: "Heatmap metric",
+    heatmapMetricGamma: "Net gamma",
+    heatmapMetricAbsolute: "Absolute gamma",
+    heatmapMetricDelta: "Delta",
     expectedMoveRangeLabel: "Expected Move",
     streamFallbackLabel: "Real-time connection lost — updating every 30s",
     drawingToolsAriaLabel: "Drawing tools",

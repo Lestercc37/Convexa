@@ -2,12 +2,15 @@ import type {
   ChainExpirationsResponse,
   FutureOpeningPriceResponse,
   GammaAggregateResponse,
+  GammaHeatmapMetric,
+  GammaHeatmapResponse,
   GammaHistoryResponse,
   GammaResponse,
   GammaView,
   MarketPriceHistoryResponse,
   MarketResponse,
   OptionChainResponse,
+  PriceCandlesResponse,
   ScreenerPresetName,
   ScreenerPresetResponse,
   ScreenerPresetSettings,
@@ -124,12 +127,55 @@ export function getGamma(symbol: string, view?: GammaView, signal?: AbortSignal)
   return getJson<GammaResponse>(`/gamma/${encodeURIComponent(symbol)}${query}`, signal);
 }
 
+/**
+ * Start of the window the Historical level traces cover: `sessions` weekdays back plus one extra day, at 00:00 UTC of that
+ * date. The endpoint's default start is the beginning of time, which sent every stored row (8,436 rows / 2.8 MB for SPX
+ * tactical, 2026-10-09) to draw a chart that shows a few sessions. Holidays are not subtracted: the window is only a bound,
+ * a longer one is harmless.
+ */
+export function historyWindowStart(now: Date = new Date(), sessions = 5): Date {
+  const day = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+  let remaining = sessions;
+  while (remaining > 0) {
+    day.setUTCDate(day.getUTCDate() - 1);
+    const weekday = day.getUTCDay();
+    if (weekday !== 0 && weekday !== 6) remaining -= 1;
+  }
+  day.setUTCDate(day.getUTCDate() - 1);
+  return day;
+}
+
 export function getGammaHistory(symbol: string, view?: GammaView, signal?: AbortSignal) {
-  const query = view ? `?${new URLSearchParams({ view }).toString()}` : "";
+  const params = new URLSearchParams({ start: historyWindowStart().toISOString() });
+  if (view) params.set("view", view);
   return getJson<GammaHistoryResponse>(
-    `/gamma/${encodeURIComponent(symbol)}/history${query}`,
+    `/gamma/${encodeURIComponent(symbol)}/history?${params.toString()}`,
     signal,
   );
+}
+
+export function getPriceCandles(
+  symbol: string,
+  timeframe: PriceCandlesResponse["timeframe"],
+  sessions = 5,
+  signal?: AbortSignal,
+) {
+  const params = new URLSearchParams({ timeframe, sessions: String(sessions) });
+  return getJson<PriceCandlesResponse>(`/market/${encodeURIComponent(symbol)}/candles?${params.toString()}`, signal);
+}
+
+export function getGammaHeatmap(
+  symbol: string,
+  options: { view?: GammaView; metric?: GammaHeatmapMetric; start?: Date; bucketSeconds?: number },
+  signal?: AbortSignal,
+) {
+  const params = new URLSearchParams();
+  if (options.view) params.set("view", options.view);
+  if (options.metric) params.set("metric", options.metric);
+  if (options.start) params.set("start", options.start.toISOString());
+  if (options.bucketSeconds) params.set("bucket_seconds", String(options.bucketSeconds));
+  const query = params.toString() ? `?${params.toString()}` : "";
+  return getJson<GammaHeatmapResponse>(`/gamma/${encodeURIComponent(symbol)}/heatmap${query}`, signal);
 }
 
 export function getGammaProfile(symbol: string, view?: GammaView, signal?: AbortSignal) {

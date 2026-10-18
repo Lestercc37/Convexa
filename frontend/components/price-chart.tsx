@@ -17,19 +17,28 @@ import {
   type ISeriesApi,
   type UTCTimestamp,
 } from "lightweight-charts";
-import { getAlerts, getGammaHistory, getGammaProfile } from "@/lib/api";
+import { getAlerts, getGammaHeatmap, getGammaHistory, getGammaProfile } from "@/lib/api";
 import { buildCubes, CUBE_MIN_OPTIONS, DEFAULT_CUBE_FILTER } from "@/lib/alert-cubes";
 import { aggregateVwapPoints, type MinuteCandle, type Timeframe, type VwapPoint } from "@/lib/candles";
 import { recordChartEvent } from "@/lib/chart-lifecycle";
 import { useLanguage } from "@/lib/i18n/language-context";
 import type { MarketPriceStreamStatus } from "@/lib/market-price-stream";
 import { EASTERN_TIME_ZONE, mostRecentSessionRange } from "@/lib/market-session";
-import type { AtrRange, ExpectedMove, GammaHistoryItem, GammaResponse, GammaView, WhaleAlert } from "@/lib/types";
+import type {
+  AtrRange,
+  ExpectedMove,
+  GammaHeatmapMetric,
+  GammaHistoryItem,
+  GammaResponse,
+  GammaView,
+  WhaleAlert,
+} from "@/lib/types";
 import { LEVEL_MERGE_THRESHOLD } from "./gravity-map";
 import { AlertCubesPrimitive } from "./alert-cubes-primitive";
 import { AlertCubeTooltip } from "./alert-cube-tooltip";
+import { GammaHeatmapPrimitive, heatmapFromResponse } from "./gamma-heatmap-primitive";
 import { GexHistogramPrimitive } from "./gex-histogram-primitive";
-import { POLLING_INTERVAL_MS } from "@/lib/polling";
+import { LIVE_LEVELS_POLLING_INTERVAL_MS, POLLING_INTERVAL_MS } from "@/lib/polling";
 import { RegimeCompactBadge } from "./regime-badge";
 
 type PriceChartProps = {
@@ -210,6 +219,9 @@ function tickMarkFormatter(timeSeconds: UTCTimestamp, tickMarkType: TickMarkType
 // read UTC). Same EASTERN_TIME_ZONE conversion, just always full
 // date+time since the crosshair label doesn't get the axis's own
 // zoom-dependent granularity to fall back on.
+// One heatmap column per minute (the smallest bucket the endpoint accepts): the backend stores a profile about every minute.
+const HEATMAP_BUCKET_SECONDS = 60;
+
 function crosshairTimeFormatter(timeSeconds: UTCTimestamp): string {
   const date = new Date(timeSeconds * 1000);
   return new Intl.DateTimeFormat(undefined, {
@@ -247,7 +259,12 @@ function withSessionOpenAnchor(
   // pin fitContent()'s left edge next to *real* bars -- with none, there's
   // nothing for it to anchor anyway.
   if (candles.length === 0) return [];
-  const anchor = { time: (sessionOpenSeconds - 1) as UTCTimestamp };
+  // A multi-session series (the Semana range) starts days before today's open: a whitespace point at today's open would sit BEFORE
+  // older candles and break the strictly ascending order setData() requires. The series already begins at or before the anchor, so
+  // it needs none.
+  const anchorTime = sessionOpenSeconds - 1;
+  if (candles[0].time <= anchorTime) return candles.map(chartCandle);
+  const anchor = { time: anchorTime as UTCTimestamp };
   return [anchor, ...candles.map(chartCandle)];
 }
 
@@ -440,6 +457,9 @@ export function PriceChart({
     () => buildCubes(cubeAlerts, { minDeq: cubeMinDeq, showFar: cubeShowFar }),
     [cubeAlerts, cubeMinDeq, cubeShowFar],
   );
+  // Gamma heatmap behind the candles (off by default): strike x time matrix read from /gamma/{symbol}/heatmap.
+  const [showHeatmap, setShowHeatmap] = useState(false);
+  const [heatmapMetric, setHeatmapMetric] = useState<GammaHeatmapMetric>("gamma");
   const [drawMode, setDrawMode] = useState(false);
   const [trendline, setTrendline] = useState<Trendline | null>(null);
   const referenceLevelsRef = useRef(
@@ -636,7 +656,11 @@ export function PriceChart({
     const latest = candles.at(-1);
     const series = seriesRef.current;
     if (!latest || !series) return;
-    if (previousCandleCount === 0) {
+    // A bulk jump of more than one candle (the day's history seeded over a few dots, e.g. ES/NQ right after the opening price is
+    // saved: confirmed 2026-10-12, only dots until F5) must also resync with setData(): update() appends ONE bar, so
+    // the seeded candles before the last one never reached the series.
+    const bulkJump = candles.length - previousCandleCount > 1;
+    if (previousCandleCount === 0 || bulkJump) {
       // The series currently holds *zero* bars, not even the whitespace
       // anchor -- either the mount effect's own setData(withSessionOpenAnchor
       // ([], ...)) ran with no real candle yet (right after a symbol
@@ -730,7 +754,7 @@ export function PriceChart({
         });
     };
     refresh();
-    const interval = window.setInterval(refresh, POLLING_INTERVAL_MS);
+    const interval = window.setInterval(refresh, LIVE_LEVELS_POLLING_INTERVAL_MS);
     return () => {
       controller.abort();
       window.clearInterval(interval);
@@ -776,6 +800,31 @@ export function PriceChart({
   useEffect(() => {
     cubesPrimitiveRef.current?.setCubes(cubes);
   }, [cubes, showAlertCubes]);
+  // Gamma heatmap: a series primitive drawn behind the candles. The matrix covers the most recent session (from an hour before the open) and is
+  // refreshed like the other live panels; a failed poll keeps what is drawn, and a symbol without data (ES/NQ before the opening price
+  // is entered, a weekend) simply stays empty.
+  useEffect(() => {
+    const series = seriesRef.current;
+    if (!showHeatmap || !series) return;
+    const primitive = new GammaHeatmapPrimitive({ smooth: true });
+    series.attachPrimitive(primitive);
+    const controller = new AbortController();
+    const refresh = () => {
+      const start = new Date((mostRecentSessionRange(Date.now()).openSeconds - 3600) * 1000);
+      getGammaHeatmap(symbol, { view: gammaView, metric: heatmapMetric, start, bucketSeconds: HEATMAP_BUCKET_SECONDS }, controller.signal)
+        .then((response) => primitive.setData(heatmapFromResponse(response)))
+        .catch(() => {
+          // A failed poll keeps the cells already drawn; the next one retries.
+        });
+    };
+    refresh();
+    const interval = window.setInterval(refresh, LIVE_LEVELS_POLLING_INTERVAL_MS);
+    return () => {
+      controller.abort();
+      window.clearInterval(interval);
+      series.detachPrimitive(primitive);
+    };
+  }, [showHeatmap, symbol, gammaView, heatmapMetric]);
 
   useEffect(() => {
     trendlineSeriesRef.current?.setData(
@@ -974,11 +1023,12 @@ export function PriceChart({
       line.setData(
         dedupeAscendingByTime(
           history
-            // has_data: false is the honest-empty Tactical case (see
-            // GammaResponse.has_data's own comment) -- same reasoning as
-            // gammaLevels() skipping it entirely in static mode, applied
-            // per-point here since historical mode plots a whole series.
-            .filter((item) => item.has_data && item[level.field] !== null)
+            // Do NOT filter on item.has_data here: every /gamma/{symbol}/history row comes back with has_data=false because
+            // the history query does not load the per-strike items has_data is derived from (found 2026-10-09: 103 of 103
+            // tactical rows false while call_wall, gamma_flip and put_wall were present), so that filter dropped every
+            // point and no colored trace was drawn since PR #186. The honest-empty Tactical case has no levels at all
+            // (null or 0), which this filter drops per point.
+            .filter((item) => item[level.field] !== null && (item[level.field] as number) > 0)
             .map((item) => ({
               time: Math.floor(new Date(item.as_of).getTime() / 1000) as UTCTimestamp,
               value: item[level.field] as number,
@@ -1134,6 +1184,25 @@ export function PriceChart({
               />
               {t.priceChart.gexHistogramLabel}
             </label>
+            <label className="chart-toggle">
+              <input
+                type="checkbox"
+                checked={showHeatmap}
+                onChange={(event) => setShowHeatmap(event.target.checked)}
+              />
+              {t.priceChart.heatmapLabel}
+            </label>
+            {showHeatmap && (
+              <select
+                aria-label={t.priceChart.heatmapMetricAriaLabel}
+                value={heatmapMetric}
+                onChange={(event) => setHeatmapMetric(event.target.value as GammaHeatmapMetric)}
+              >
+                <option value="gamma">{t.priceChart.heatmapMetricGamma}</option>
+                <option value="absolute_gamma">{t.priceChart.heatmapMetricAbsolute}</option>
+                <option value="delta">{t.priceChart.heatmapMetricDelta}</option>
+              </select>
+            )}
             <label className="chart-toggle">
               <input
                 type="checkbox"

@@ -10,6 +10,9 @@ export type Translations = {
   dashboard: {
     underlyingLabel: string;
     timeframeGroupAriaLabel: string;
+    rangeGroupAriaLabel: string;
+    rangeDay: string;
+    rangeWeek: string;
     viewGroupAriaLabel: string;
     liveButton: string;
     preSessionButton: string;
@@ -76,6 +79,11 @@ export type Translations = {
     cubeMultilegWarning: string;
     cubeTrialLine: (label: string) => string;
     cubeDistanceLine: (signedPoints: number) => string;
+    heatmapLabel: string;
+    heatmapMetricAriaLabel: string;
+    heatmapMetricGamma: string;
+    heatmapMetricAbsolute: string;
+    heatmapMetricDelta: string;
     expectedMoveRangeLabel: string;
     streamFallbackLabel: string;
     drawingToolsAriaLabel: string;

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import date, datetime
+from datetime import UTC, date, datetime
 from decimal import Decimal
 
 from sqlalchemy import text
@@ -17,18 +17,26 @@ from backend.domain.entities import (
     FlowEventType,
     GammaAggregate,
     GammaAggregateItem,
+    GammaHeatmap,
+    GammaHeatmapColumn,
     Greeks,
     LargeTradePrint,
     MarketPrice,
     OptionChain,
     OptionContract,
     OptionQuoteMinute,
+    PriceCandle,
     UnderlyingKind,
 )
 from backend.domain.underlyings import ACTIVE_UNDERLYINGS_BY_SYMBOL
 from backend.domain.use_cases.flow import Moneyness, SymbolFlowPressure, WhaleAlert, WhaleAlertType
 from backend.domain.use_cases.market_hours import EASTERN_TIME
 from backend.domain.use_cases.trade_date import volume_rows_since
+
+# Heatmap metric name -> gamma_aggregate_items column. A whitelist: the column name is formatted into the SQL.
+_HEATMAP_METRIC_COLUMNS = {"gamma": "net_gamma", "absolute_gamma": "absolute_gamma", "delta": "delta_exposure"}
+# Safety cap on the rows one request may read (5 sessions x ~400 snapshots x ~60 strikes is ~120k before bucketing).
+_HEATMAP_ROW_LIMIT = 200_000
 
 logger = logging.getLogger(__name__)
 
@@ -240,6 +248,55 @@ class AsyncPostgreSQLStorage:
             volume=int(row["volume"]),
         )
 
+    async def get_price_candles(
+        self, underlying: str, bucket_seconds: int, sessions: int, since: datetime
+    ) -> list[PriceCandle]:
+        """OHLC candles of the last `sessions` trading dates of regular-session prices (09:30 to 16:00 ET), bucketed in ET wall-clock time
+        from 09:30 so 15-minute and hourly buckets line up with the session. open/close = first/last stored price of the bucket. `since`
+        bounds the scan (the stored rows of a few weeks, not the whole table)."""
+        async with self.session_factory() as session:
+            rows = (
+                await session.execute(
+                    text(
+                        """
+                        WITH series AS (
+                            SELECT id FROM underlyings WHERE symbol = :symbol
+                        ), local_prices AS (
+                            SELECT m.time, m.price, m.time AT TIME ZONE 'America/New_York' AS local_time
+                            FROM market_snapshots AS m
+                            WHERE m.underlying_id = (SELECT id FROM series) AND m.time >= :since
+                        ), regular AS (
+                            SELECT * FROM local_prices
+                            WHERE local_time::time >= TIME '09:30' AND local_time::time < TIME '16:00'
+                        ), recent_days AS (
+                            SELECT DISTINCT local_time::date AS day FROM regular ORDER BY day DESC LIMIT :sessions
+                        )
+                        SELECT date_bin(make_interval(secs => CAST(:bucket AS double precision)), local_time,
+                                        TIMESTAMP '2000-01-03 09:30') AS bucket_local,
+                               (array_agg(price ORDER BY time))[1] AS open,
+                               max(price) AS high,
+                               min(price) AS low,
+                               (array_agg(price ORDER BY time DESC))[1] AS close
+                        FROM regular
+                        WHERE local_time::date IN (SELECT day FROM recent_days)
+                        GROUP BY bucket_local
+                        ORDER BY bucket_local
+                        """
+                    ),
+                    {"symbol": underlying.upper(), "since": since, "sessions": sessions, "bucket": bucket_seconds},
+                )
+            ).all()
+        return [
+            PriceCandle(
+                time=row.bucket_local.replace(tzinfo=EASTERN_TIME).astimezone(UTC),
+                open=Decimal(row.open),
+                high=Decimal(row.high),
+                low=Decimal(row.low),
+                close=Decimal(row.close),
+            )
+            for row in rows
+        ]
+
     async def get_price_history(
         self, underlying: str, start: datetime, end: datetime
     ) -> list[MarketPrice]:
@@ -267,6 +324,61 @@ class AsyncPostgreSQLStorage:
             )
             for row in rows
         ]
+
+    async def get_gamma_heatmap(
+        self, underlying: str, view: str, metric: str, start: datetime, end: datetime, bucket_seconds: int
+    ) -> GammaHeatmap:
+        """Strike x time matrix for the heatmap: per time bucket, the LAST stored snapshot of each strike (gamma_aggregate_items
+        already holds one row per strike per scheduler cycle, so this only reads). `metric` is mapped through a fixed
+        whitelist, never interpolated from the request. Buckets and strikes without a stored value come back as None."""
+        column = _HEATMAP_METRIC_COLUMNS[metric]
+        async with self.session_factory() as session:
+            rows = (
+                await session.execute(
+                    text(
+                        f"""
+                        SELECT DISTINCT ON (bucket, strike) bucket, time AS snapshot_time, strike, value
+                        FROM (
+                            SELECT date_bin(make_interval(secs => CAST(:bucket AS double precision)), time,
+                                            TIMESTAMPTZ '2000-01-03 00:00+00') AS bucket,
+                                   time, strike, {column} AS value
+                            FROM gamma_aggregate_items
+                            WHERE underlying_id = (SELECT id FROM underlyings WHERE symbol = :symbol)
+                              AND view = :view AND time >= :start AND time < :end
+                        ) AS binned
+                        ORDER BY bucket, strike, time DESC
+                        LIMIT :row_limit
+                        """
+                    ),
+                    {
+                        "symbol": underlying.upper(),
+                        "view": view,
+                        "start": start,
+                        "end": end,
+                        "bucket": bucket_seconds,
+                        "row_limit": _HEATMAP_ROW_LIMIT,
+                    },
+                )
+            ).all()
+        strikes = sorted({Decimal(row.strike) for row in rows})
+        index = {strike: position for position, strike in enumerate(strikes)}
+        cells: dict[datetime, list[Decimal | None]] = {}
+        last_seen: dict[datetime, datetime] = {}
+        for row in rows:
+            values = cells.setdefault(row.bucket, [None] * len(strikes))
+            values[index[Decimal(row.strike)]] = None if row.value is None else Decimal(row.value)
+            if row.bucket not in last_seen or row.snapshot_time > last_seen[row.bucket]:
+                last_seen[row.bucket] = row.snapshot_time
+        return GammaHeatmap(
+            symbol=underlying.upper(),
+            view=view,
+            metric=metric,
+            bucket_seconds=bucket_seconds,
+            strikes=tuple(strikes),
+            columns=tuple(
+                GammaHeatmapColumn(as_of=last_seen[bucket], values=tuple(cells[bucket])) for bucket in sorted(cells)
+            ),
+        )
 
     async def get_latest_chain_snapshot(
         self, underlying: str, expiration: date | None = None

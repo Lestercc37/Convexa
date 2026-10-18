@@ -9,6 +9,7 @@ import {
   getGamma,
   getMarket,
   getMarketPriceHistory,
+  getPriceCandles,
   getUnderlyings,
   getVwapHistory,
   logout,
@@ -16,6 +17,7 @@ import {
 import {
   aggregateCandles,
   aggregateMinuteCandles,
+  type MinuteCandle,
   type PricePoint,
   type Timeframe,
   type VwapPoint,
@@ -46,6 +48,10 @@ import { VolatilitySmile } from "./volatility-smile";
 // dashboard-spec.md section 2.2) — the other timeframes are pure
 // client-side aggregation of that same data, via aggregateCandles.
 const TIMEFRAMES: Timeframe[] = ["1m", "5m", "15m", "1h"];
+// The Semana range has no 1-minute candles (a week of them is ~2,000): its timeframes start at 5m.
+const WEEK_TIMEFRAMES: Timeframe[] = ["5m", "15m", "1h"];
+const WEEK_SESSIONS = 5;
+const EMPTY_CANDLES: MinuteCandle[] = [];
 
 // Same three columns' fixed pixel widths this layout has always had
 // (256px/400px) — now the *default*/min/max for a resizable Group
@@ -164,13 +170,23 @@ export function Dashboard() {
   const [error, setError] = useState<unknown>(null);
   const [showEnginesGuide, setShowEnginesGuide] = useState(false);
   const [timeframe, setTimeframe] = useState<Timeframe>("1m");
+  // Day (default) or Semana: the last 5 trading dates as server-aggregated candles. Day mode is untouched by it.
+  const [chartRange, setChartRange] = useState<"day" | "week">("day");
+  // Keyed by symbol and timeframe so a response (or a leftover) for another one is never shown.
+  const [weekData, setWeekData] = useState<{ key: string; candles: MinuteCandle[] }>({ key: "", candles: [] });
   const candles = useMemo(() => aggregateMinuteCandles(pricePoints), [pricePoints]);
-  const displayedCandles = useMemo(
+  const dayCandles = useMemo(
     () => aggregateCandles(candles, timeframe),
     [candles, timeframe],
   );
-  const latestCandle = displayedCandles.at(-1) ?? null;
   const isFutureSymbol = underlyings.find((item) => item.symbol === symbol)?.kind === "future";
+  // ES/NQ have no stored prices of their own (the index shifted by today's opening price): Semana does not exist for them.
+  const isWeek = chartRange === "week" && !isFutureSymbol;
+  const shownTimeframe: Timeframe = isWeek && timeframe === "1m" ? "5m" : timeframe;
+  const weekKey = `${symbol}|${shownTimeframe}`;
+  const weekCandles = weekData.key === weekKey ? weekData.candles : EMPTY_CANDLES;
+  const displayedCandles = isWeek ? weekCandles : dayCandles;
+  const latestCandle = displayedCandles.at(-1) ?? null;
   // ES/NQ are SPX/NDX shifted by the opening price typed in by hand each morning. Without today's
   // price the API answers 409: say "no data" (never stale numbers, never hide the symbol).
   const hasNoOpeningPrice = isFutureSymbol && error instanceof ApiError && error.status === 409;
@@ -415,6 +431,27 @@ export function Dashboard() {
     };
   }, [refresh, seedPriceAndVwap, symbol]);
 
+  // Semana: the candles of the last 5 trading dates come ready-made from the API (cached there for 30 s), so they are re-read every minute
+  // and never accumulated from ticks. Day mode does not run any of this.
+  useEffect(() => {
+    if (!isWeek || !symbol) return;
+    const controller = new AbortController();
+    const load = () =>
+      getPriceCandles(symbol, shownTimeframe as "5m" | "15m" | "1h", WEEK_SESSIONS, controller.signal)
+        .then((response) => {
+          if (!controller.signal.aborted) setWeekData({ key: `${symbol}|${shownTimeframe}`, candles: response.candles });
+        })
+        .catch((reason: unknown) => {
+          if (!controller.signal.aborted) console.error("No se pudieron cargar las velas de la semana", reason);
+        });
+    void load();
+    const interval = window.setInterval(() => void load(), 60_000);
+    return () => {
+      controller.abort();
+      window.clearInterval(interval);
+    };
+  }, [isWeek, symbol, shownTimeframe]);
+
   // Real-time push, additive to the 30s poll above -- never a
   // replacement for it (see market-price-stream.ts's own comment). A
   // tick appends to pricePoints exactly like the poll's own append
@@ -521,18 +558,33 @@ export function Dashboard() {
           )}
         </div>
         <div className="tv-timeframes" role="group" aria-label={t.dashboard.timeframeGroupAriaLabel}>
-          {TIMEFRAMES.map((option) => (
+          {(isWeek ? WEEK_TIMEFRAMES : TIMEFRAMES).map((option) => (
             <button
               key={option}
               type="button"
               className="tv-timeframe"
-              aria-pressed={timeframe === option}
+              aria-pressed={shownTimeframe === option}
               onClick={() => setTimeframe(option)}
             >
               {option}
             </button>
           ))}
         </div>
+        {!isFutureSymbol && (
+          <div className="tv-timeframes" role="group" aria-label={t.dashboard.rangeGroupAriaLabel}>
+            {(["day", "week"] as const).map((option) => (
+              <button
+                key={option}
+                type="button"
+                className="tv-timeframe"
+                aria-pressed={chartRange === option}
+                onClick={() => setChartRange(option)}
+              >
+                {option === "day" ? t.dashboard.rangeDay : t.dashboard.rangeWeek}
+              </button>
+            ))}
+          </div>
+        )}
         <div className="tv-view-toggle" role="group" aria-label={t.dashboard.viewGroupAriaLabel}>
           <button
             type="button"
@@ -610,17 +662,18 @@ export function Dashboard() {
               {view === "live" ? (
                 <>
                   <PriceChart
-                    key={`price-chart-${symbol}-${timeframe}`}
+                    key={`price-chart-${symbol}-${shownTimeframe}-${isWeek ? "week" : "day"}`}
                     symbol={symbol}
                     candles={displayedCandles}
                     gamma={gamma}
                     gammaView={gammaView}
-                    vwapPoints={vwapPoints}
-                    vwapNotApplicable={vwapNotApplicable}
+                    // VWAP restarts every session and the ATR / Expected Move bands are today's: none of them is drawn over a week.
+                    vwapPoints={isWeek ? [] : vwapPoints}
+                    vwapNotApplicable={isWeek ? true : vwapNotApplicable}
                     vwapProxySymbol={vwapProxySymbol}
-                    atrRange={market.atr_range}
-                    expectedMove={market.expected_move}
-                    timeframe={timeframe}
+                    atrRange={isWeek ? undefined : market.atr_range}
+                    expectedMove={isWeek ? undefined : market.expected_move}
+                    timeframe={shownTimeframe}
                     streamStatus={streamStatus}
                   />
                   <ChartSecondaryPanel

@@ -42,8 +42,9 @@ function contract(
     strike,
     expiration,
     type,
-    bid: 1,
-    ask: 1.1,
+    // quotes consistent with the fixtures' spot (551): intrinsic value + 1 of time value, a 0.1 spread
+    bid: Math.max(type === "call" ? 551 - strike : strike - 551, 0) + 1,
+    ask: Math.max(type === "call" ? 551 - strike : strike - 551, 0) + 1.1,
     iv,
     delta: 0.5,
     gamma: 0.02,
@@ -249,6 +250,17 @@ describe("VolatilitySmile", () => {
     expect(await screen.findByLabelText("call strike 550, IV 17.50%")).toBeInTheDocument();
     expect(screen.queryByLabelText("call strike 550, IV 13.00%")).not.toBeInTheDocument();
     expect(screen.getAllByLabelText(/^call strike 550/)).toHaveLength(1);
+  });
+
+  it("leaves off an in-the-money contract whose time value is smaller than its spread (its IV is noise)", async () => {
+    // spot 551: a put at 556 is 5 in the money; mid 4.8 is below its intrinsic value and the spread (1.6) is wider than any time value
+    const noise = { ...contract("SPY260807P00556000", 556, "2026-08-07", "put", 0.12), bid: 4.0, ask: 5.6 };
+    const fine = contract("SPY260807P00549000", 549, "2026-08-07", "put", 0.21);
+    apiMocks.getOptionChain.mockResolvedValue(chain([noise, fine]));
+    renderWithLanguage(<VolatilitySmile symbol="SPY" marketPrice={551} />);
+
+    expect(await screen.findByLabelText("put strike 549, IV 21.00%")).toBeInTheDocument();
+    expect(screen.queryByLabelText("put strike 556, IV 12.00%")).not.toBeInTheDocument();
   });
 
   it("leaves IV = 0 contracts off the plot and says how many, instead of drawing them at the edge", async () => {
