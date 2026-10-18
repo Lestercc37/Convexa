@@ -406,6 +406,9 @@ button, select { font: inherit; }
    in price-chart.tsx) -- height is a small fixed pixel thickness, not
    price-derived, since each rectangle represents a single price level. */
 .atr-band { position: absolute; left: 0; right: 0; z-index: 3; pointer-events: none; background: rgba(190, 194, 204, 0.55); }
+/* Tooltip of the gamma heatmap: one small label that follows the pointer (strike, time, value of the cell under it). z-index 4, above the chart's own canvases
+   (up to 2) and the ATR bands (3), for the same reason as .atr-band. */
+.heatmap-tip { position: absolute; z-index: 4; pointer-events: none; padding: 5px 8px; border: 1px solid var(--tv-border); border-radius: 4px; background: rgba(11, 15, 23, 0.92); color: var(--tv-text); font-size: 0.74rem; line-height: 1.35; white-space: pre; font-variant-numeric: tabular-nums; }
 .chart-watermark { position: absolute; left: 14px; bottom: 14px; z-index: 2; width: 72px; height: auto; opacity: 0.14; pointer-events: none; user-select: none; }
 /* z-index: 3, same as .atr-band above and for the identical reason -- the
    chart's own canvas layers (up to z-index 2) now paint a solid, opaque

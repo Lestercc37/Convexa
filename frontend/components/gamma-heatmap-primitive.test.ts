@@ -43,6 +43,7 @@ function attached(offGrid: number[] = [], smooth = false) {
   primitive.attached({
     series: {
       priceToCoordinate: (price: number) => 1500 - price * 8 + 0 * price,
+      coordinateToPrice: (y: number) => (1500 - y) / 8,
       dataByIndex: (index: number) => (index >= 0 && index < 100 ? { time: 1000 + index * 10 } : null),
     },
     chart: {
@@ -194,5 +195,26 @@ describe("smooth drawing helpers", () => {
     const context = fakeContext();
     drawWith(primitive, context);
     expect(context.fills).toHaveLength(5); // same cells as the sharp drawing
+  });
+});
+
+describe("cellAt (tooltip lookup)", () => {
+  it("returns the strike row nearest to the pointer and the column whose span contains it", () => {
+    const { primitive } = attached();
+    primitive.setData(DATA);
+    // Columns at x = 100 / 140 / 180 (40 px each); strikes 100 / 105 / 110 at y = 700 / 660 / 620.
+    expect(primitive.cellAt(120, 700)).toEqual({ time: 1000, strike: 100, value: 100 });
+    expect(primitive.cellAt(150, 662)).toEqual({ time: 1010, strike: 105, value: -100 });
+    expect(primitive.cellAt(199, 620)).toEqual({ time: 1020, strike: 110, value: null }); // last column keeps the previous width
+  });
+
+  it("is null outside the matrix, before attaching or without data", () => {
+    const { primitive } = attached();
+    expect(primitive.cellAt(120, 700)).toBeNull(); // no data yet
+    primitive.setData(DATA);
+    expect(primitive.cellAt(50, 700)).toBeNull(); // left of the first column
+    expect(primitive.cellAt(300, 700)).toBeNull(); // right of the last column
+    expect(primitive.cellAt(120, 500)).toBeNull(); // price 125: far from every strike
+    expect(new GammaHeatmapPrimitive().cellAt(120, 700)).toBeNull(); // not attached
   });
 });

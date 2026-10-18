@@ -292,6 +292,14 @@ class GammaHeatmapRenderer implements IPrimitivePaneRenderer {
   }
 }
 
+export type HeatmapCell = {
+  /** Unix seconds of the column (floored to the minute, as in HeatmapColumn). */
+  time: number;
+  strike: number;
+  /** The stored value of the cell, null when nothing is stored there. */
+  value: number | null;
+};
+
 export class GammaHeatmapPrimitive implements ISeriesPrimitive<Time> {
   series: ISeriesApi<"Candlestick"> | null = null;
   chart: IChartApi | null = null;
@@ -326,5 +334,42 @@ export class GammaHeatmapPrimitive implements ISeriesPrimitive<Time> {
   setData(data: HeatmapData | null): void {
     this.data = data;
     this.requestUpdate?.();
+  }
+
+  /**
+   * The cell under a point of the chart (CSS pixels, as the crosshair reports it), for the tooltip: the strike row nearest to the price at `y`
+   * (within half a strike step) and the column whose time span contains `x`. A tooltip that follows the pointer reads one cell at a time, so
+   * thin neighbouring cells never overlap each other. Null when the point is outside the matrix.
+   */
+  cellAt(x: number, y: number): HeatmapCell | null {
+    const { series, chart, data } = this;
+    if (!series || !chart || !data || !data.columns.length || !data.strikes.length) return null;
+    const price = series.coordinateToPrice(y);
+    if (price === null || !Number.isFinite(price)) return null;
+    let strikeIndex = -1;
+    let bestDistance = Infinity;
+    data.strikes.forEach((strike, index) => {
+      const distance = Math.abs(strike - price);
+      if (distance < bestDistance) {
+        bestDistance = distance;
+        strikeIndex = index;
+      }
+    });
+    const step = medianStep(data.strikes);
+    if (strikeIndex < 0 || (step !== null && bestDistance > step / 2)) return null;
+    const timeScale = chart.timeScale();
+    const xs = data.columns.map((column) => timeToX(timeScale, series, column.time));
+    let lastWidth = 0;
+    for (let index = 0; index < xs.length; index += 1) {
+      const left = xs[index];
+      if (left === null || !Number.isFinite(left)) continue;
+      const next = xs[index + 1];
+      const width = next !== null && next !== undefined && Number.isFinite(next) && next > left ? next - left : lastWidth || 8;
+      lastWidth = width;
+      if (x >= left && x < left + width) {
+        return { time: data.columns[index].time, strike: data.strikes[strikeIndex], value: data.columns[index].values[strikeIndex] ?? null };
+      }
+    }
+    return null;
   }
 }
