@@ -78,6 +78,14 @@ e) Etiquetas: su "SWEEP" en Actividad Inusual es solo Vol/OI mayor que 3x (no es
     El Call Wall (7450) no se toco en todo el dia (maximo 7443.50) y el Put Wall/MVS (7400) quedo a 6 puntos del cierre: un dia consistente con "los strikes grandes atraen el cierre" (estudio del 2026-10-14: cierre cerca del ABS 32% contra 15% azar). Un solo dia, no prueba.
 4.5 Flujo (Net Flow / Net Drift / Actividad Inusual): NO reconstruible para el 23 de julio (no hay operaciones de esa fecha). Net Flow = premium de calls menos puts (sin lado); Net Drift = premium firmado por el lado agresor (calls -3.49M, puts +58.15M, neto -61.64M), ventana movil de largo desconocido.
 
+4.6 PRUEBA DEL MOVIMIENTO ESPERADO PROPIO DE CONVEXA (2026-10-17, docs/hm_expected_move_test.py; calculate_expected_move sobre la cadena 0DTE de los archivos de etapa 2; 2,510 muestras cada 30 min de 10:00 a 15:00, 60 sesiones, SPX/SPY/QQQ/NDX; contra el movimiento real hasta el cierre de las 16:00)
+    Objetivo de una banda de 1 sigma: 68.3% dentro (95.4% dentro de 2 sigma), RMS z 1.00.
+    A  implied_1sd alrededor del precio: 84.8% / 98.9%, RMS z 0.72 (demasiado ancha ~1.4x). SPX: 82.7%.
+    B  remaining_1sd (implied x raiz del tiempo que falta, un segundo escalado por tiempo): 69.7% / 94.1%, RMS z 1.08: CALIBRADA EN PROMEDIO. SPX: 68.8%. Por hora (todos los simbolos): 10:xx 79.7% (ancha), 11:xx 73.4%, 12:xx 73.0%, 13:xx 65.3%, 14:xx 60.5% (RMS z 1.34), 15:xx 56.7% (RMS z 1.78: angosta).
+    C  banda dibujada en el grafico (implied_1sd alrededor del precio de apertura de la sesion): contiene el cierre 57.0% (SPX 59.8%, SPY 61.7%, QQQ 52.6%, NDX 53.9%) contra 68.3% esperado.
+    Por regimen de gamma (largo / corto): A 83.0% / 86.8% y B 69.1% / 70.4%: el movimiento esperado propio NO es mas ancho en short gamma; la IV ya trae el efecto del regimen. El efecto de 6% a 25% de la seccion 4.3 se midio contra la volatilidad realizada desde la apertura, no contra este rango, asi que no hay que ensancharlo otra vez.
+    Lectura: el movimiento esperado de Convexa no esta mal en promedio (B), pero la forma de escalar con la hora no es la correcta (ancho de mas por la manana, de menos desde las 14:00), y la banda anclada a la apertura contiene el cierre solo ~57-60%. Un ajuste por hora (por ejemplo un factor que baje de ~0.8 a ~0.55 sobre implied_1sd) lo mejoraria, pero fue ajustado en esta misma muestra: falta validarlo con dias nuevos antes de cambiar nada.
+
 =====================================================================
 5. IDEAS APLICABLES A CONVEXA (como contexto para decidir, no como prediccion). Ordenadas por valor / facilidad
 =====================================================================
@@ -116,6 +124,6 @@ NO aplicable por evidencia: la parte de direccion de su pestana Predictions (Fue
 =====================================================================
 8. ARCHIVOS
 =====================================================================
-Scripts (docs/): hm_mentor_0723.py, hm_mentor_0723b.py, hm_wall_rules_0723.py, hm_oi_smile_0723.py, hm_side_stats_0723.py, hm_side_stats_window_0723.py, hm_gex_strike_0723.py, hm_gex_by_exp_0723.py, hm_unusual_oi_0723.py, hm_heat_strike_0723.py, hm_path_0723.py, hm_stage3_inventory.py, hm_cone_tests.py (opcion --zero-dte), hm_cone_analysis.py.
+Scripts (docs/): hm_mentor_0723.py, hm_mentor_0723b.py, hm_wall_rules_0723.py, hm_oi_smile_0723.py, hm_side_stats_0723.py, hm_side_stats_window_0723.py, hm_gex_strike_0723.py, hm_gex_by_exp_0723.py, hm_unusual_oi_0723.py, hm_heat_strike_0723.py, hm_path_0723.py, hm_stage3_inventory.py, hm_cone_tests.py (opcion --zero-dte), hm_cone_analysis.py, hm_expected_move_test.py.
 Datos en el servidor: V:\Convexa\bench\hm_stage2\cone_bars.csv, cone_gamma.csv, cone_gamma_0dte.csv.
 Memoria: mentor_predictions_tab_study_2026_10_17.md.
