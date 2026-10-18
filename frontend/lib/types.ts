@@ -213,6 +213,21 @@ export type GammaHistoryResponse = {
   items: GammaHistoryItem[];
 };
 
+export type GammaHeatmapMetric = "gamma" | "absolute_gamma" | "delta";
+
+// GET /gamma/{symbol}/heatmap: a strike x time matrix of one stored per-strike figure. `values` of each column are aligned to
+// `strikes`; null = no stored value (delta is null for rows written before it was stored, never 0).
+export type GammaHeatmapResponse = {
+  schema_version: number;
+  symbol: string;
+  view: GammaView;
+  metric: GammaHeatmapMetric;
+  bucket_seconds: number;
+  strikes: number[];
+  columns: { as_of: string; values: (number | null)[] }[];
+  scale_p98: number | null;
+};
+
 export type GammaAggregateItem = {
   strike: number;
   total_gamma_exposure: number;

@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   getGamma,
+  getGammaHeatmap,
   getGammaHistory,
   getGammaProfile,
   getMarket,
@@ -16,6 +17,23 @@ const fetchMock = vi.fn();
 beforeEach(() => {
   fetchMock.mockReset();
   vi.stubGlobal("fetch", fetchMock);
+});
+
+describe("getGammaHeatmap", () => {
+  it("sends the view, metric, start and the column size in seconds", async () => {
+    fetchMock.mockResolvedValue(response({}));
+
+    await getGammaHeatmap("SPX", { view: "tactical", metric: "gamma", start: new Date("2026-10-16T12:30:00Z"), bucketSeconds: 60 });
+    await getGammaHeatmap("SPX", {});
+
+    const first = String(fetchMock.mock.calls[0][0]);
+    expect(first).toContain("/gamma/SPX/heatmap?");
+    expect(first).toContain("view=tactical");
+    expect(first).toContain("metric=gamma");
+    expect(first).toContain("start=2026-10-16T12%3A30%3A00.000Z");
+    expect(first).toContain("bucket_seconds=60");
+    expect(String(fetchMock.mock.calls[1][0])).not.toContain("bucket_seconds"); // omitted: the server default
+  });
 });
 
 describe("API client cache policy", () => {
