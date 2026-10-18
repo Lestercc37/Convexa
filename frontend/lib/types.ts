@@ -355,10 +355,16 @@ export type WhaleAlert = {
   // flow.py's WhaleAlert.moneyness docstring for why this matters (a deep
   // ITM call trades almost like the underlying itself, a much weaker
   // directional signal than the same dollar amount hitting ATM/OTM).
-  moneyness: "ITM" | "ATM" | "OTM";
+  moneyness: "ITM" | "ATM" | "OTM" | "FAR";
   // Which of Call Wall/Put Wall/Gamma Flip spot was sitting within band
   // of when this alert fired, if any.
   near_gamma_level: "Call Wall" | "Put Wall" | "Gamma Flip" | null;
+  // Alert cube data (null for alerts written before migration 0046): |delta| and contracts of the window, premium by trade-condition code, and the
+  // premium of simple-condition trades only ({buy, sell}).
+  delta?: number | null;
+  contracts?: number | null;
+  condition_premium?: Record<string, number> | null;
+  simple_flow?: { buy: number; sell: number } | null;
   // How many alerts this exact contract has produced so far this session,
   // this one included (1 the first time). Flags real accumulation at one
   // strike versus an isolated print.

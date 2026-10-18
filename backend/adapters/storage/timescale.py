@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import date, datetime
+from decimal import Decimal
 
 from backend.domain.entities import (
     DailyBar,
@@ -39,6 +40,9 @@ class TimescaleStorage:
     def get_gamma_history(
         self, underlying: str, start: datetime, end: datetime
     ) -> list[GammaAggregate]:
+        raise NotImplementedError
+
+    def get_latest_option_delta(self, occ_symbol: str) -> Decimal | None:
         raise NotImplementedError
 
     def save_market_price(self, price: MarketPrice) -> None:
