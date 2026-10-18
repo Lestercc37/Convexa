@@ -66,6 +66,11 @@ export type Translations = {
     vwapProxyLabel: (proxySymbol: string) => string;
     atrRangeLabel: string;
     gexHistogramLabel: string;
+    heatmapLabel: string;
+    heatmapMetricAriaLabel: string;
+    heatmapMetricGamma: string;
+    heatmapMetricAbsolute: string;
+    heatmapMetricDelta: string;
     expectedMoveRangeLabel: string;
     streamFallbackLabel: string;
     drawingToolsAriaLabel: string;

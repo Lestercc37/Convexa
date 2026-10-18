@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
+from typing import Literal
 
-from fastapi import APIRouter, Query, Request
+from fastapi import APIRouter, HTTPException, Query, Request
 
 from backend.api.schemas import (
     ChainExpirationsResponse,
@@ -10,6 +11,7 @@ from backend.api.schemas import (
     FlowResponse,
     GammaAggregateResponse,
     GammaFlipResponse,
+    GammaHeatmapResponse,
     GammaHistoryResponse,
     GammaResponse,
     OptionChainResponse,
@@ -22,18 +24,22 @@ from backend.api.serializers import (
     flow_response,
     gamma_aggregate_response,
     gamma_flip_response,
+    gamma_heatmap_response,
     gamma_history_response,
     gamma_response,
     underlyings_response,
 )
 from backend.core.container import Container
 from backend.domain.entities import GammaFlip, GammaView
+from backend.domain.use_cases.market_hours import EASTERN_TIME
 from backend.domain.use_cases.volume_corrections import apply_volume_corrections
 from backend.domain.use_cases import (
+    PRICE_PROXY_SYMBOL_BY_FUTURE,
     calculate_derived_metrics_async,
     get_flow,
     get_gamma_exposure,
     get_gamma_exposure_async,
+    get_gamma_heatmap_async,
     get_gamma_history,
     get_option_chain_async,
     get_option_chain_expirations,
@@ -171,6 +177,49 @@ def gamma_history(
     container: Container = request.app.state.container
     items = get_gamma_history(container.storage, symbol, start, end, view=view)
     return GammaHistoryResponse.model_validate(gamma_history_response(symbol, items))
+
+
+HEATMAP_MAX_RANGE = timedelta(days=5)
+
+
+@router.get(
+    "/gamma/{symbol}/heatmap",
+    response_model=GammaHeatmapResponse,
+    summary="Strike x time matrix of a stored per-strike figure",
+    description=(
+        "Reads gamma_aggregate_items (written every scheduler cycle) and bins it in time; nothing is calculated here. "
+        "Defaults to the last 24 hours, at most 5 days per request. ES/NQ are SPX/NDX shifted by today's opening price, "
+        "so they only cover the current ET date."
+    ),
+)
+async def gamma_heatmap(
+    symbol: str,
+    request: Request,
+    view: Literal["tactical", "structural"] = Query(default="tactical"),
+    metric: Literal["gamma", "absolute_gamma", "delta"] = Query(default="gamma"),
+    start: datetime | None = None,
+    end: datetime | None = None,
+    bucket_seconds: int = Query(default=120, ge=60, le=3600),
+) -> GammaHeatmapResponse:
+    # async def, not def: a plain storage read, same reasoning as /gamma and /market.
+    container: Container = request.app.state.container
+    is_future = symbol.upper() in PRICE_PROXY_SYMBOL_BY_FUTURE
+    today_start = datetime.now(EASTERN_TIME).replace(hour=0, minute=0, second=0, microsecond=0)
+    end = end or datetime.now(timezone.utc)
+    start = start or (today_start if is_future else end - timedelta(days=1))
+    if start.tzinfo is None or end.tzinfo is None:
+        raise HTTPException(status_code=422, detail="start and end must include a timezone (e.g. ...Z)")
+    if end <= start:
+        raise HTTPException(status_code=422, detail="end must be after start")
+    if end - start > HEATMAP_MAX_RANGE:
+        raise HTTPException(status_code=422, detail="the heatmap range is limited to 5 days per request")
+    if is_future:
+        if start < today_start:
+            raise HTTPException(status_code=422, detail=f"{symbol.upper()} heatmap covers the current ET date only")
+    heatmap = await get_gamma_heatmap_async(
+        container.async_market_storage, symbol, view, metric, start, end, bucket_seconds
+    )
+    return GammaHeatmapResponse.model_validate(gamma_heatmap_response(heatmap))
 
 
 @router.get("/flow/{symbol}", response_model=FlowResponse)

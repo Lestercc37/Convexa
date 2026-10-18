@@ -830,6 +830,40 @@ class LargeTradePrint:
 
 
 @dataclass(frozen=True, slots=True)
+class GammaHeatmapColumn:
+    """One time bucket of the gamma heatmap: the last stored snapshot of the bucket (`as_of`) and its value at each strike of the
+    heatmap, in the order of GammaHeatmap.strikes (None where that snapshot had no row for the strike, or no stored value)."""
+
+    as_of: datetime
+    values: tuple[Decimal | None, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class GammaHeatmap:
+    """Strike x time matrix read from gamma_aggregate_items for the heatmap (docs/diseno-heatmap-gamma-2026-10-14.txt, sections 3-4).
+    `metric` is the stored per-strike figure shown: gamma (net_gamma, signed), absolute_gamma or delta (delta_exposure, signed)."""
+
+    symbol: str
+    view: str
+    metric: str
+    bucket_seconds: int
+    strikes: tuple[Decimal, ...]
+    columns: tuple[GammaHeatmapColumn, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class PriceCandle:
+    """One OHLC candle of a symbol's stored prices (market_snapshots) over a time bucket of its regular sessions.
+    `time` is the START of the bucket in UTC; no volume (the stored price rows carry a cumulative day counter, not per-bucket volume)."""
+
+    time: datetime
+    open: Decimal
+    high: Decimal
+    low: Decimal
+    close: Decimal
+
+
+@dataclass(frozen=True, slots=True)
 class OptionQuoteMinute:
     """The last bid/ask of one option contract in one ET minute in which it changed (see migration 0040).
     `minute` is the START of the minute; a minute without a row still holds the previous row's quote."""

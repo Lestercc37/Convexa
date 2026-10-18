@@ -10,6 +10,7 @@ from dataclasses import replace
 from datetime import UTC, date, datetime, timedelta, timezone
 from decimal import Decimal
 from uuid import uuid4
+from zoneinfo import ZoneInfo
 
 import asyncpg
 import pytest
@@ -118,6 +119,57 @@ def test_option_chain_round_trip_against_postgresql(
     assert loaded.as_of == source.as_of
     assert loaded.spot_price == source.spot_price
     assert loaded.contracts == source.contracts
+
+
+@pytest.mark.asyncio
+async def test_price_candles_aggregate_regular_session_prices_into_et_buckets_for_the_last_n_dates(
+    postgresql_storage: tuple[PostgreSQLStorage, Engine, str],
+) -> None:
+    """GET /market/{symbol}/candles's SQL against the real table: regular session only (09:30 inclusive, 16:00 exclusive ET), buckets counted
+    from 09:30 ET, open/close = first/last stored price of the bucket, only the last N trading dates, UTC start times across a DST change."""
+    sync_storage, _, symbol = postgresql_storage
+    et = ZoneInfo("America/New_York")
+
+    def save(day: tuple[int, int, int], hour: int, minute: int, second: int, price: str) -> None:
+        moment = datetime(*day, hour, minute, second, tzinfo=et).astimezone(timezone.utc)
+        sync_storage.save_market_price(MarketPrice(symbol=symbol, as_of=moment, price=Decimal(price), volume=0))
+
+    oct14, oct16, dec1 = (2026, 10, 14), (2026, 10, 16), (2026, 12, 1)  # EDT, EDT, EST
+    save(oct14, 10, 0, 0, "100")  # a third, older date: left out when 2 sessions are asked
+    save(oct16, 9, 0, 0, "50")  # pre-market: excluded
+    save(oct16, 9, 30, 0, "101")  # first of the 09:30 bucket
+    save(oct16, 9, 32, 0, "105")
+    save(oct16, 9, 34, 59, "99")
+    save(oct16, 9, 35, 0, "102")  # second bucket
+    save(oct16, 9, 36, 0, "103")
+    save(oct16, 15, 59, 59, "110")
+    save(oct16, 16, 0, 0, "777")  # 16:00 exactly: excluded
+    save(dec1, 9, 45, 0, "200")
+    save(dec1, 9, 46, 0, "198")
+
+    async_engine = create_engine(_require_test_database_url())
+    try:
+        storage = AsyncPostgreSQLStorage(create_session_factory(async_engine))
+        since = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        five = await storage.get_price_candles(symbol, 300, 2, since)
+        hourly = await storage.get_price_candles(symbol, 3600, 2, since)
+        three = await storage.get_price_candles(symbol, 300, 3, since)
+    finally:
+        await async_engine.dispose()
+
+    def utc(day: tuple[int, int, int], hour: int, minute: int) -> datetime:
+        return datetime(*day, hour, minute, tzinfo=et).astimezone(timezone.utc)
+
+    by_time = {(candle.time): (candle.open, candle.high, candle.low, candle.close) for candle in five}
+    assert by_time[utc(oct16, 9, 30)] == (Decimal("101"), Decimal("105"), Decimal("99"), Decimal("99"))
+    assert by_time[utc(oct16, 9, 35)] == (Decimal("102"), Decimal("103"), Decimal("102"), Decimal("103"))
+    assert by_time[utc(oct16, 15, 55)] == (Decimal("110"), Decimal("110"), Decimal("110"), Decimal("110"))
+    assert by_time[utc(dec1, 9, 45)] == (Decimal("200"), Decimal("200"), Decimal("198"), Decimal("198"))  # EST start time
+    assert len(five) == 4  # nothing at 09:00, 16:00 or on the older date
+    assert [candle.time for candle in five] == sorted(candle.time for candle in five)
+    # One-hour buckets start at 09:30 ET: 09:30-10:30 holds every morning price of that date.
+    assert {candle.time: candle.open for candle in hourly}[utc(oct16, 9, 30)] == Decimal("101")
+    assert len(three) == 5  # the third date (oct 14, 10:00) now counts
 
 
 def test_get_latest_chain_snapshot_ignores_fresher_narrow_write_for_index_against_postgresql(
@@ -1093,6 +1145,57 @@ def test_whale_alert_simple_flow_is_stored_as_jsonb_and_never_read_back(
     assert rows[with_flow.occ_symbol] == {"buy": 10000.0, "sell": 2500.0}
     assert rows[without_flow.occ_symbol] is None
     assert storage.get_recent_whale_alerts(symbol) == [without_flow, replace(with_flow, simple_flow=None)]
+
+
+def _heatmap_item(strike: str, net_gamma: str, delta: str | None = None) -> GammaAggregateItem:
+    return GammaAggregateItem(
+        strike=Decimal(strike),
+        total_gamma_exposure=abs(Decimal(net_gamma)),
+        call_gamma_exposure=abs(Decimal(net_gamma)),
+        put_gamma_exposure=Decimal("0"),
+        net_gamma=Decimal(net_gamma),
+        contract_count=1,
+        absolute_gamma=abs(Decimal(net_gamma)),
+        delta_exposure=None if delta is None else Decimal(delta),
+    )
+
+
+@pytest.mark.asyncio
+async def test_gamma_heatmap_bins_by_time_keeps_the_last_snapshot_per_strike_and_ignores_other_views(
+    postgresql_storage: tuple[PostgreSQLStorage, Engine, str],
+) -> None:
+    """GET /gamma/{symbol}/heatmap's read against the real table: 120 s buckets (date_bin), the LAST stored snapshot of each
+    strike inside a bucket, None for a strike a column has no row for, the other view left out, the requested metric column."""
+    sync_storage, _, symbol = postgresql_storage
+    base = datetime(2026, 8, 3, 14, 0, tzinfo=timezone.utc)
+
+    def save(offset_seconds: int, view: str, items: tuple[GammaAggregateItem, ...]) -> None:
+        sync_storage.save_gamma_aggregate(
+            GammaAggregate(symbol=symbol, as_of=base + timedelta(seconds=offset_seconds), view=view, items=items)
+        )
+
+    save(10, "tactical", (_heatmap_item("550", "10", "100"), _heatmap_item("555", "-20", "-200")))
+    save(50, "tactical", (_heatmap_item("550", "11", "110"),))  # 555 missing in the bucket's last snapshot: keeps its 14:00:10 value
+    save(130, "tactical", (_heatmap_item("550", "12", "120"), _heatmap_item("555", "-22"), _heatmap_item("560", "5")))
+    save(20, "structural", (_heatmap_item("999", "777"),))
+
+    async_engine = create_engine(_require_test_database_url())
+    try:
+        storage = AsyncPostgreSQLStorage(create_session_factory(async_engine))
+        gamma = await storage.get_gamma_heatmap(symbol, "tactical", "gamma", base, base + timedelta(minutes=10), 120)
+        delta = await storage.get_gamma_heatmap(symbol, "tactical", "delta", base, base + timedelta(minutes=10), 120)
+        outside = await storage.get_gamma_heatmap(symbol, "tactical", "gamma", base + timedelta(hours=1), base + timedelta(hours=2), 120)
+    finally:
+        await async_engine.dispose()
+
+    assert gamma.strikes == (Decimal("550"), Decimal("555"), Decimal("560"))
+    assert [column.as_of for column in gamma.columns] == [base + timedelta(seconds=50), base + timedelta(seconds=130)]
+    assert gamma.columns[0].values == (Decimal("11"), Decimal("-20"), None)
+    assert gamma.columns[1].values == (Decimal("12"), Decimal("-22"), Decimal("5"))
+    # delta_exposure: stored for some rows, NULL ("not stored") for others -> None, never 0.
+    assert delta.columns[0].values == (Decimal("110"), Decimal("-200"), None)
+    assert delta.columns[1].values == (Decimal("120"), None, None)
+    assert outside.strikes == () and outside.columns == ()
 
 
 @pytest.mark.asyncio

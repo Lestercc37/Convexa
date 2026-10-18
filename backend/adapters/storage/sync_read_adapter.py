@@ -8,10 +8,12 @@ from backend.domain.entities import (
     DailyGammaReference,
     FlowEvent,
     GammaAggregate,
+    GammaHeatmap,
     LargeTradePrint,
     MarketPrice,
     OptionChain,
     OptionQuoteMinute,
+    PriceCandle,
 )
 from backend.domain.ports import IStorage
 from backend.domain.use_cases.flow import SymbolFlowPressure, WhaleAlert
@@ -60,10 +62,24 @@ class SyncStorageAsyncReadAdapter:
     async def save_large_trade_prints(self, rows: list[LargeTradePrint]) -> None:
         self.large_trade_prints.extend(rows)
 
+    async def get_price_candles(
+        self, underlying: str, bucket_seconds: int, sessions: int, since: datetime
+    ) -> list[PriceCandle]:
+        # No SQL behind the in-memory/sqlite storages: nothing to aggregate server-side.
+        return []
+
     async def get_price_history(
         self, underlying: str, start: datetime, end: datetime
     ) -> list[MarketPrice]:
         return self._storage.get_price_history(underlying, start, end)
+
+    async def get_gamma_heatmap(
+        self, underlying: str, view: str, metric: str, start: datetime, end: datetime, bucket_seconds: int
+    ) -> GammaHeatmap:
+        # The in-memory/sqlite storages keep no per-strike history, so there is nothing to bin: an empty matrix.
+        return GammaHeatmap(
+            symbol=underlying.upper(), view=view, metric=metric, bucket_seconds=bucket_seconds, strikes=(), columns=()
+        )
 
     async def get_latest_chain_snapshot(
         self, underlying: str, expiration: date | None = None
