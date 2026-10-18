@@ -25,6 +25,9 @@ const chartMocks = vi.hoisted(() => ({
   attachPrimitive: vi.fn(),
   detachPrimitive: vi.fn(),
   getGammaProfile: vi.fn(),
+  getAlerts: vi.fn(),
+  subscribeCrosshairMove: vi.fn(),
+  unsubscribeCrosshairMove: vi.fn(),
   coordinateToTime: vi.fn(),
   subscribeVisibleLogicalRangeChange: vi.fn(),
   unsubscribeVisibleLogicalRangeChange: vi.fn(),
@@ -42,6 +45,7 @@ vi.mock("@/lib/api", async () => {
     ...actual,
     getGammaHistory: chartMocks.getGammaHistory,
     getGammaProfile: chartMocks.getGammaProfile,
+    getAlerts: chartMocks.getAlerts,
     getGammaHeatmap: chartMocks.getGammaHeatmap,
   };
 });
@@ -81,6 +85,8 @@ beforeAll(() => {
     addSeries: chartMocks.addSeries,
     removeSeries: chartMocks.removeSeries,
     applyOptions: chartMocks.applyOptions,
+    subscribeCrosshairMove: chartMocks.subscribeCrosshairMove,
+    unsubscribeCrosshairMove: chartMocks.unsubscribeCrosshairMove,
     timeScale: () => ({
       fitContent: chartMocks.fitContent,
       setVisibleRange: chartMocks.setVisibleRange,
@@ -564,6 +570,74 @@ describe("PriceChart", () => {
     await user.click(screen.getByLabelText("Histograma GEX"));
 
     expect(chartMocks.detachPrimitive).toHaveBeenCalledWith(primitive);
+  });
+
+  it("keeps the alert cubes off until the toggle is checked, then draws the alerts big enough to size, with a tooltip on hover", async () => {
+    const alertBase = {
+      symbol: "SPY",
+      type: "UNUSUAL" as const,
+      amount: 1_550_000,
+      estimated_buy_volume: 50_000,
+      estimated_sell_volume: 1_500_000,
+      quote_unavailable: false,
+      near_gamma_level: null,
+      repeat_count: 2,
+    };
+    chartMocks.getAlerts.mockResolvedValue({
+      schema_version: 1,
+      symbol: "SPY",
+      alerts: [
+        {
+          ...alertBase,
+          contract: "SPY260220C00540000",
+          timestamp: "2026-08-06T14:52:05Z",
+          moneyness: "ITM",
+          delta: 0.84,
+          contracts: 529, // 444 delta contracts: drawn
+          condition_premium: { "130": 1_500_000, "18": 50_000 },
+          simple_flow: { buy: 0, sell: 50_000 },
+        },
+        { ...alertBase, contract: "SPY260220P00535000", timestamp: "2026-08-06T14:53:00Z", moneyness: "OTM", delta: 0.3, contracts: 400 }, // 120: under 200, over 100
+        { ...alertBase, contract: "SPY260220C00600000", timestamp: "2026-08-06T14:54:00Z", moneyness: "FAR", delta: 0.1, contracts: 9000 }, // 'Lejos'
+        { ...alertBase, contract: "SPY260220C00541000", timestamp: "2026-08-06T14:55:00Z", moneyness: "ATM", delta: null, contracts: null }, // not sized
+      ],
+    });
+    const user = userEvent.setup();
+    renderWithLanguage(<PriceChart symbol="SPY" candles={candlesWithRange} gamma={gamma} gammaView="tactical" />);
+    expect(chartMocks.getAlerts).not.toHaveBeenCalled();
+    expect(chartMocks.subscribeCrosshairMove).not.toHaveBeenCalled();
+    expect(screen.queryByLabelText("Tamaño mínimo de las alertas (contratos-delta)")).not.toBeInTheDocument();
+
+    await user.click(screen.getByLabelText("Alertas"));
+
+    const primitive = chartMocks.attachPrimitive.mock.calls[0][0];
+    await waitFor(() => expect(chartMocks.getAlerts).toHaveBeenCalledWith("SPY", expect.any(AbortSignal), 500));
+    await waitFor(() => expect(primitive.cubes.map((cube: { strike: number }) => cube.strike)).toEqual([540]));
+    expect(chartMocks.subscribeCrosshairMove).toHaveBeenCalledTimes(1);
+
+    // Hovering the cube (the chart reports it through the crosshair event) shows its tooltip.
+    const onCrosshairMove = chartMocks.subscribeCrosshairMove.mock.calls[0][0];
+    const hoveredId = primitive.cubes[0].id;
+    act(() => onCrosshairMove({ hoveredObjectId: hoveredId, point: { x: 120, y: 80 } }));
+    const tooltip = await screen.findByRole("tooltip");
+    expect(tooltip).toHaveTextContent("VENTA");
+    expect(tooltip).toHaveTextContent("Call 540 (ITM, delta 0.84)");
+    expect(tooltip).toHaveTextContent("Tamaño: 444 contratos-delta · prima $1.55M · ×2");
+    expect(tooltip).toHaveTextContent("Condición: multi-leg 97 %"); // simple (3 %) is under the 10 % shown
+    expect(tooltip).toHaveTextContent("Mayormente multi-leg");
+    expect(tooltip).toHaveTextContent("Etiqueta firmando solo simples: SIN LADO (prueba)");
+    act(() => onCrosshairMove({ hoveredObjectId: undefined, point: { x: 300, y: 300 } }));
+    expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
+
+    // The size filter and the 'Lejos' switch change what is drawn.
+    await user.selectOptions(screen.getByLabelText("Tamaño mínimo de las alertas (contratos-delta)"), "100");
+    await waitFor(() => expect(primitive.cubes.map((cube: { strike: number }) => cube.strike).sort()).toEqual([535, 540]));
+    await user.click(screen.getByLabelText("Lejos"));
+    await waitFor(() => expect(primitive.cubes).toHaveLength(3));
+
+    await user.click(screen.getByLabelText("Alertas"));
+    expect(chartMocks.detachPrimitive).toHaveBeenCalledWith(primitive);
+    expect(chartMocks.unsubscribeCrosshairMove).toHaveBeenCalledWith(onCrosshairMove);
   });
 
   it("keeps the gamma heatmap off until the toggle is checked, then attaches a primitive fed by the heatmap endpoint", async () => {
