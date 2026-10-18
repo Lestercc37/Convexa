@@ -242,6 +242,20 @@ describe("PriceChart", () => {
     vi.useRealTimers();
   });
 
+  it("adds no session-open anchor to a multi-session series that already starts before the open (Semana), keeping setData ascending", () => {
+    vi.setSystemTime(new Date("2026-08-06T15:00:00Z"));
+    const day = 86_400;
+    const olderCandle = { time: 1_786_026_600 - 3 * day, open: 540, high: 545, low: 539, close: 544 };
+    const todayCandle = { time: 1_786_026_600, open: 548, high: 552, low: 548, close: 550 };
+
+    renderWithLanguage(<PriceChart symbol="SPY" gamma={gamma} candles={[olderCandle, todayCandle]} />);
+
+    const seriesData = chartMocks.setData.mock.calls.map((call) => call[0]).find((data) => data.length === 2);
+    expect(seriesData).toEqual([olderCandle, todayCandle]);
+    expect(seriesData.every((point: { time: number }, index: number, all: { time: number }[]) => index === 0 || point.time > all[index - 1].time)).toBe(true);
+    vi.useRealTimers();
+  });
+
   it("resyncs the whole series when a bulk seed lands over a few existing candles (ES/NQ dots after saving the opening price)", () => {
     vi.setSystemTime(new Date("2026-08-06T15:00:00Z"));
     const sessionOpenAnchor = mostRecentSessionRange(Date.now()).openSeconds - 1;

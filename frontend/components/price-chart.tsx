@@ -255,7 +255,12 @@ function withSessionOpenAnchor(
   // pin fitContent()'s left edge next to *real* bars -- with none, there's
   // nothing for it to anchor anyway.
   if (candles.length === 0) return [];
-  const anchor = { time: (sessionOpenSeconds - 1) as UTCTimestamp };
+  // A multi-session series (the Semana range) starts days before today's open: a whitespace point at today's open would sit BEFORE
+  // older candles and break the strictly ascending order setData() requires. The series already begins at or before the anchor, so
+  // it needs none.
+  const anchorTime = sessionOpenSeconds - 1;
+  if (candles[0].time <= anchorTime) return candles.map(chartCandle);
+  const anchor = { time: anchorTime as UTCTimestamp };
   return [anchor, ...candles.map(chartCandle)];
 }
 

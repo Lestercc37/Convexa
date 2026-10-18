@@ -213,6 +213,15 @@ export type GammaHistoryResponse = {
   items: GammaHistoryItem[];
 };
 
+// GET /market/{symbol}/candles: regular-session OHLC candles of the last N trading dates, aggregated by the API (no volume).
+export type PriceCandlesResponse = {
+  schema_version: number;
+  symbol: string;
+  timeframe: "5m" | "15m" | "30m" | "1h";
+  sessions: number;
+  candles: { time: number; open: number; high: number; low: number; close: number }[];
+};
+
 export type GammaHeatmapMetric = "gamma" | "absolute_gamma" | "delta";
 
 // GET /gamma/{symbol}/heatmap: a strike x time matrix of one stored per-strike figure. `values` of each column are aligned to
