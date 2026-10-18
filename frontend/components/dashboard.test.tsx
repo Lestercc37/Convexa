@@ -364,6 +364,9 @@ describe("Dashboard", () => {
     renderWithLanguage(<Dashboard />);
 
     await screen.findByLabelText("Chart de velas para SPY");
+    // The Dealers group sits folded under the chart (approved mockup); one click on any tab opens its detail and the sections that moved there.
+    expect(screen.queryByText("Delta Exposure")).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: /Dealer impact/ }));
 
     expect(screen.getByText("Delta Exposure")).toBeInTheDocument();
     expect(screen.getByText("45K")).toBeInTheDocument();
@@ -375,10 +378,11 @@ describe("Dashboard", () => {
     expect(screen.getByText("-8.3K")).toBeInTheDocument();
   });
 
-  it("renders the GEX/Whale Alerts flow panel below the price chart, in the live view", async () => {
+  it("keeps the GEX/Whale Alerts flow panel reachable from the Dealers dock under the price chart, in the live view", async () => {
     renderWithLanguage(<Dashboard />);
 
     await screen.findByLabelText("Chart de velas para SPY");
+    await userEvent.click(screen.getByRole("button", { name: /Dealer impact/ }));
 
     expect(
       await screen.findByLabelText("GEX por strike y flujo acumulado de Whale Alerts"),
@@ -717,6 +721,7 @@ describe("Dashboard", () => {
     // Spanish by default, spot-checked across dashboard.tsx itself and
     // PriceChart — two independent components in the live view (RegimeBadge
     // only renders in Pre-Sesión now, section 23 — covered separately below).
+    await user.click(screen.getByRole("button", { name: /Dealer impact/ }));
     expect(screen.getByText("Griegas agregadas")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Estático" })).toBeInTheDocument();
 
@@ -921,12 +926,11 @@ describe("Dashboard", () => {
   describe("resizable main panels", () => {
     // Real drag/constraint behavior can't be meaningfully asserted in
     // jsdom (see the react-resizable-panels mock above) — these tests
-    // instead prove Dashboard wires the three columns to the exact same
-    // pixel values the layout previously hardcoded as fixed CSS
-    // (256px/400px), which is what react-resizable-panels needs in
-    // order to enforce those limits once real layout is available.
+    // instead prove Dashboard wires the two columns (alerts | centre; the right-hand metrics column is gone since the approved mockup) to the
+    // pixel values the layout hardcoded as fixed CSS (256px), which is what react-resizable-panels needs in order to enforce those limits once
+    // real layout is available.
 
-    it("wires the three columns to the same default/min/max pixel sizes the layout previously hardcoded", async () => {
+    it("wires the two columns to the same default/min/max pixel sizes the layout previously hardcoded", async () => {
       renderWithLanguage(<Dashboard />);
       await screen.findByLabelText("Chart de velas para SPY");
 
@@ -939,10 +943,8 @@ describe("Dashboard", () => {
       expect(center).not.toHaveAttribute("data-default-size");
       expect(center).toHaveAttribute("data-min-size", "420");
 
-      const metrics = screen.getByTestId("panel-metrics");
-      expect(metrics).toHaveAttribute("data-default-size", "400");
-      expect(metrics).toHaveAttribute("data-min-size", "300");
-      expect(metrics).toHaveAttribute("data-max-size", "640");
+      // No right-hand metrics column any more: the Dealers group sits under the chart.
+      expect(screen.queryByTestId("panel-metrics")).not.toBeInTheDocument();
     });
 
     it("renders a draggable separator between each pair of adjacent columns", async () => {
@@ -950,7 +952,7 @@ describe("Dashboard", () => {
       await screen.findByLabelText("Chart de velas para SPY");
 
       const separators = screen.getAllByRole("separator", { name: "Redimensionar paneles" });
-      expect(separators).toHaveLength(2);
+      expect(separators).toHaveLength(1);
     });
 
     it("keeps each column's real content inside its resizable Panel", async () => {
@@ -961,7 +963,9 @@ describe("Dashboard", () => {
         screen.getByTestId("panel-alerts").querySelector(".tv-alerts-sidebar"),
       ).toBeInTheDocument();
       expect(screen.getByTestId("panel-center").querySelector(".tv-center")).toBeInTheDocument();
-      expect(screen.getByTestId("panel-metrics").querySelector(".tv-sidebar")).toBeInTheDocument();
+      // The Dealers group lives inside the centre column, under the chart.
+      expect(screen.getByTestId("panel-center").querySelector(".dealers-panel")).toBeInTheDocument();
+      expect(document.querySelector(".tv-sidebar")).not.toBeInTheDocument();
     });
 
     it("persists the layout via useDefaultLayout, keyed by a stable id and backed by localStorage", async () => {
@@ -969,10 +973,10 @@ describe("Dashboard", () => {
       await screen.findByLabelText("Chart de velas para SPY");
 
       expect(panelsMocks.useDefaultLayout).toHaveBeenCalledWith(
-        expect.objectContaining({ id: "convexa-dashboard-panels", storage: window.localStorage }),
+        expect.objectContaining({ id: "convexa-dashboard-panels-v2", storage: window.localStorage }),
       );
 
-      const group = screen.getByTestId("group-convexa-dashboard-panels");
+      const group = screen.getByTestId("group-convexa-dashboard-panels-v2");
       expect(group).toHaveAttribute("data-has-on-layout-changed", "true");
     });
 
@@ -992,14 +996,14 @@ describe("Dashboard", () => {
       renderWithLanguage(<Dashboard />);
       await screen.findByLabelText("Chart de velas para SPY");
 
-      expect(screen.queryByTestId("group-convexa-dashboard-panels")).not.toBeInTheDocument();
+      expect(screen.queryByTestId("group-convexa-dashboard-panels-v2")).not.toBeInTheDocument();
       expect(screen.queryByTestId("panel-alerts")).not.toBeInTheDocument();
       expect(screen.queryByRole("separator", { name: "Redimensionar paneles" })).not.toBeInTheDocument();
 
       const body = document.querySelector(".tv-body");
       expect(body?.querySelector(".tv-alerts-sidebar")).toBeInTheDocument();
       expect(body?.querySelector(".tv-center")).toBeInTheDocument();
-      expect(body?.querySelector(".tv-sidebar")).toBeInTheDocument();
+      expect(body?.querySelector(".tv-sidebar")).not.toBeInTheDocument();
     });
   });
 

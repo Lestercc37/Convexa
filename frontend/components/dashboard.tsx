@@ -53,24 +53,20 @@ const WEEK_TIMEFRAMES: Timeframe[] = ["5m", "15m", "1h"];
 const WEEK_SESSIONS = 5;
 const EMPTY_CANDLES: MinuteCandle[] = [];
 
-// Same three columns' fixed pixel widths this layout has always had
-// (256px/400px) — now the *default*/min/max for a resizable Group
-// instead of a hardcoded CSS flex-basis (dashboard-spec.md section 28).
-// Mins are generous enough that neither sidebar can collapse into an
-// unusable sliver; the center panel gets its own min so the chart can't
-// be squeezed to nothing if both sidebars are dragged toward their max
-// at once.
-const PANELS_LAYOUT_ID = "convexa-dashboard-panels";
+// The alerts column's pixel width this layout has always had (256px) — the
+// *default*/min/max for a resizable Group instead of a hardcoded CSS
+// flex-basis (dashboard-spec.md section 28). The right-hand metrics column
+// is gone (approved mockup, 2026-10-18): the chart takes the whole width and
+// the Dealers group sits under it. The min keeps the alerts column from
+// collapsing into an unusable sliver; the center panel gets its own min so
+// the chart can't be squeezed to nothing.
+const PANELS_LAYOUT_ID = "convexa-dashboard-panels-v2";
 const ALERTS_PANEL_ID = "alerts";
 const CENTER_PANEL_ID = "center";
-const METRICS_PANEL_ID = "metrics";
 const ALERTS_PANEL_MIN_PX = 200;
 const ALERTS_PANEL_DEFAULT_PX = 256;
 const ALERTS_PANEL_MAX_PX = 480;
 const CENTER_PANEL_MIN_PX = 420;
-const METRICS_PANEL_MIN_PX = 300;
-const METRICS_PANEL_DEFAULT_PX = 400;
-const METRICS_PANEL_MAX_PX = 640;
 
 // react-resizable-panels' useDefaultLayout falls back to referencing the
 // bare `localStorage` global internally when `storage` is left
@@ -657,6 +653,78 @@ export function Dashboard() {
               <AlertsPanel symbol={symbol} orientation="vertical" />
             </aside>
           );
+          // Under the chart, the Dealers group of the approved mockup: folded tabs with their number; a click opens the detail cards and, below them, what used to live
+          // in the right-hand column (aggregated greeks, the closing window, the expected move, the Volatility Smile with its own expiration selector, and the old
+          // bottom panel: GEX by strike and the cumulative whale-alerts flow). Nothing was dropped, it moved here.
+          const dealersDock = (
+            <DealersPanel
+              metrics={gamma.derived_metrics}
+              showStructuralOnlyBadge={gammaView === "tactical"}
+            >
+              <div className="dealers-extra">
+                <section
+                  className="panel exposure-panel"
+                  aria-label={t.dashboard.exposureGroupAriaLabel}
+                >
+                  <p className="eyebrow">{t.dashboard.aggregatedGreeksEyebrow}</p>
+                  <div className="exposure-row">
+                    <div>
+                      <span className="exposure-label">Delta Exposure</span>
+                      <strong className="exposure-value">
+                        {EXPOSURE_FORMAT.format(gamma.delta_exposure)}
+                      </strong>
+                    </div>
+                    <div>
+                      <span className="exposure-label">Vega Exposure</span>
+                      <strong className="exposure-value">
+                        {EXPOSURE_FORMAT.format(gamma.vega_exposure)}
+                      </strong>
+                    </div>
+                  </div>
+                  <div className="exposure-row">
+                    <div>
+                      <span className="exposure-label">Theta Exposure</span>
+                      <strong className="exposure-value">
+                        {EXPOSURE_FORMAT.format(gamma.theta_exposure)}
+                      </strong>
+                    </div>
+                    <div>
+                      <span className="exposure-label">Charm Exposure</span>
+                      <strong className="exposure-value">
+                        {EXPOSURE_FORMAT.format(gamma.charm_exposure)}
+                      </strong>
+                    </div>
+                  </div>
+                  <div className="exposure-row">
+                    <div>
+                      <span className="exposure-label">Vanna Exposure</span>
+                      <strong className="exposure-value">
+                        {EXPOSURE_FORMAT.format(gamma.vanna_exposure)}
+                      </strong>
+                    </div>
+                  </div>
+                </section>
+                {/* The translated, closing-window-scoped reading of charm and vanna — conditional by design (dashboard-spec.md section 9), so it
+                    renders nothing outside the closing window. Vanna and charm by strike now also live in the heatmap's tabs. */}
+                <ClosingDynamicsPanel closingDynamics={market.closing_dynamics} spotPrice={market.price} />
+                <ExpectedMoveWidget key={`expected-move-${symbol}`} expectedMove={market.expected_move} />
+                <VolatilitySmile
+                  key={`volatility-smile-${symbol}`}
+                  symbol={symbol}
+                  marketPrice={market.price}
+                />
+                <div className="dock-secondary">
+                  <ChartSecondaryPanel
+                    key={`chart-secondary-${symbol}`}
+                    symbol={symbol}
+                    spotPrice={market.price}
+                    gamma={gamma}
+                    gammaView={gammaView}
+                  />
+                </div>
+              </div>
+            </DealersPanel>
+          );
           const centerContent = (
             <div className="tv-center">
               {view === "live" ? (
@@ -676,13 +744,7 @@ export function Dashboard() {
                     timeframe={shownTimeframe}
                     streamStatus={streamStatus}
                   />
-                  <ChartSecondaryPanel
-                    key={`chart-secondary-${symbol}`}
-                    symbol={symbol}
-                    spotPrice={market.price}
-                    gamma={gamma}
-                    gammaView={gammaView}
-                  />
+                  {dealersDock}
                 </>
               ) : view === "pre-session" ? (
                 <PreSessionPanel
@@ -696,68 +758,6 @@ export function Dashboard() {
               )}
             </div>
           );
-          const metricsContent = (
-            <aside className="tv-sidebar">
-              <DealersPanel
-                metrics={gamma.derived_metrics}
-                showStructuralOnlyBadge={gammaView === "tactical"}
-              />
-              <section
-                className="panel exposure-panel"
-                aria-label={t.dashboard.exposureGroupAriaLabel}
-              >
-                <p className="eyebrow">{t.dashboard.aggregatedGreeksEyebrow}</p>
-                <div className="exposure-row">
-                  <div>
-                    <span className="exposure-label">Delta Exposure</span>
-                    <strong className="exposure-value">
-                      {EXPOSURE_FORMAT.format(gamma.delta_exposure)}
-                    </strong>
-                  </div>
-                  <div>
-                    <span className="exposure-label">Vega Exposure</span>
-                    <strong className="exposure-value">
-                      {EXPOSURE_FORMAT.format(gamma.vega_exposure)}
-                    </strong>
-                  </div>
-                </div>
-                <div className="exposure-row">
-                  <div>
-                    <span className="exposure-label">Theta Exposure</span>
-                    <strong className="exposure-value">
-                      {EXPOSURE_FORMAT.format(gamma.theta_exposure)}
-                    </strong>
-                  </div>
-                  <div>
-                    <span className="exposure-label">Charm Exposure</span>
-                    <strong className="exposure-value">
-                      {EXPOSURE_FORMAT.format(gamma.charm_exposure)}
-                    </strong>
-                  </div>
-                </div>
-                <div className="exposure-row">
-                  <div>
-                    <span className="exposure-label">Vanna Exposure</span>
-                    <strong className="exposure-value">
-                      {EXPOSURE_FORMAT.format(gamma.vanna_exposure)}
-                    </strong>
-                  </div>
-                </div>
-              </section>
-              {/* Right after the raw Charm/Vanna Exposure numbers above, since
-                  this panel is their translated, closing-window-scoped
-                  interpretation — conditional by design (dashboard-spec.md
-                  section 9), not a toggle, so it renders nothing outside the
-                  closing window. */}
-              <ClosingDynamicsPanel closingDynamics={market.closing_dynamics} spotPrice={market.price} />
-              <ExpectedMoveWidget key={`expected-move-${symbol}`} expectedMove={market.expected_move} />
-              <VolatilitySmile
-                key={`volatility-smile-${symbol}`}
-                symbol={symbol}
-                marketPrice={market.price}
-              />
-            </aside>
-          );
 
           // Narrow viewports keep the original plain-flex stacked layout
           // (unchanged from before react-resizable-panels) rather than a
@@ -770,7 +770,6 @@ export function Dashboard() {
               <div className="tv-body">
                 {alertsContent}
                 {centerContent}
-                {metricsContent}
               </div>
             );
           }
@@ -799,20 +798,6 @@ export function Dashboard() {
 
               <Panel id={CENTER_PANEL_ID} minSize={CENTER_PANEL_MIN_PX}>
                 {centerContent}
-              </Panel>
-
-              <Separator
-                className="tv-resize-separator"
-                aria-label={t.dashboard.resizeSeparatorAriaLabel}
-              />
-
-              <Panel
-                id={METRICS_PANEL_ID}
-                defaultSize={METRICS_PANEL_DEFAULT_PX}
-                minSize={METRICS_PANEL_MIN_PX}
-                maxSize={METRICS_PANEL_MAX_PX}
-              >
-                {metricsContent}
               </Panel>
             </Group>
           );

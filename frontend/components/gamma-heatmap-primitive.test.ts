@@ -230,20 +230,58 @@ describe("smooth drawing helpers", () => {
 describe("unsigned metric (absolute gamma)", () => {
   it("is drawn with the neutral blue ramp, whatever the sign of the stored number, and never the green or red one", () => {
     const channels = (rgb: [number, number, number] | null) => rgb!;
-    const unsigned = channels(cellRgb(40, 100, true));
+    const unsigned = channels(cellRgb(40, 100, "unsigned"));
     expect(unsigned[2]).toBeGreaterThan(unsigned[1]); // blue dominant
     expect(unsigned[2]).toBeGreaterThan(unsigned[0]);
-    expect(cellRgb(-40, 100, true)).toEqual(cellRgb(40, 100, true)); // no sign
-    expect(cellRgb(100, 100, true)).toEqual([255, 255, 255]); // the strongest strike is still white
+    expect(cellRgb(-40, 100, "unsigned")).toEqual(cellRgb(40, 100, "unsigned")); // no sign
+    expect(cellRgb(100, 100, "unsigned")).toEqual([255, 255, 255]); // the strongest strike is still white
     const signed = channels(cellRgb(40, 100));
     expect(signed[1]).toBeGreaterThan(signed[2]); // the signed ramp is unchanged: positive stays green
-    expect(cellColor(40, 100, true)).toMatch(/^rgba\(\d+, \d+, \d+, 0\.62\)$/);
+    expect(cellColor(40, 100, "unsigned")).toMatch(/^rgba\(\d+, \d+, \d+, 0\.62\)$/);
   });
 
-  it("heatmapFromResponse marks only absolute gamma as unsigned", () => {
+  it("heatmapFromResponse picks the ramp of the metric: blue for absolute gamma, purple for vanna, orange for charm, green/red for the rest", () => {
     const response = { schema_version: 1, symbol: "SPY", view: "tactical" as const, bucket_seconds: 60, strikes: [100], columns: [], scale_p98: 1 };
-    expect(heatmapFromResponse({ ...response, metric: "absolute_gamma" }).unsigned).toBe(true);
-    expect(heatmapFromResponse({ ...response, metric: "gamma" }).unsigned).toBe(false);
-    expect(heatmapFromResponse({ ...response, metric: "delta" }).unsigned).toBe(false);
+    expect(heatmapFromResponse({ ...response, metric: "absolute_gamma" }).palette).toBe("unsigned");
+    expect(heatmapFromResponse({ ...response, metric: "gamma" }).palette).toBe("gamma");
+    expect(heatmapFromResponse({ ...response, metric: "delta" }).palette).toBe("gamma");
+    expect(heatmapFromResponse({ ...response, metric: "vanna" }).palette).toBe("vanna");
+    expect(heatmapFromResponse({ ...response, metric: "charm" }).palette).toBe("charm");
+  });
+});
+
+describe("vanna (purple) and charm (muted orange) palettes", () => {
+  const hue = ([r, g, b]: [number, number, number]) => ({ r, g, b });
+
+  it("vanna is purple when positive (blue and red above green) and plum when negative (red above blue), white at the strongest strike", () => {
+    const positive = hue(cellRgb(60, 100, "vanna")!);
+    expect(positive.b).toBeGreaterThan(positive.g);
+    expect(positive.r).toBeGreaterThan(positive.g);
+    const negative = hue(cellRgb(-60, 100, "vanna")!);
+    expect(negative.r).toBeGreaterThan(negative.g);
+    expect(negative.r).toBeGreaterThanOrEqual(negative.b);
+    expect(cellRgb(60, 100, "vanna")).not.toEqual(cellRgb(-60, 100, "vanna")); // the sign still reads
+    expect(cellRgb(100, 100, "vanna")).toEqual([255, 255, 255]);
+    expect(cellRgb(-100, 100, "vanna")).toEqual([255, 255, 255]);
+  });
+
+  it("charm is a MUTED orange: red above green above blue, and no channel as bright as the gamma greens and reds", () => {
+    for (const share of [0.3, 0.6, 0.9]) {
+      const orange = hue(cellRgb(share * 100, 100, "charm")!);
+      expect(orange.r).toBeGreaterThan(orange.g);
+      expect(orange.g).toBeGreaterThan(orange.b);
+    }
+    // Up to the body of the ramp it stays below the full-bright 250 red of the gamma ramps (only the top of the scale fades to white).
+    expect(cellRgb(60, 100, "charm")![0]).toBeLessThan(230);
+    const ochre = hue(cellRgb(-60, 100, "charm")!);
+    expect(ochre.r).toBeGreaterThan(ochre.b);
+    expect(cellRgb(60, 100, "charm")).not.toEqual(cellRgb(-60, 100, "charm"));
+    expect(cellRgb(100, 100, "charm")).toEqual([255, 255, 255]);
+  });
+
+  it("both leave faint cells empty like every other metric", () => {
+    expect(cellRgb(3, 100, "vanna")).toBeNull();
+    expect(cellRgb(3, 100, "charm")).toBeNull();
+    expect(cellRgb(null, 100, "vanna")).toBeNull();
   });
 });

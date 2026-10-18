@@ -73,6 +73,7 @@ export type Translations = {
     vwapProxyLabel: (proxySymbol: string) => string;
     atrRangeLabel: string;
     gexHistogramLabel: string;
+    smileLabel: string;
     alertCubesLabel: string;
     alertCubesMinAriaLabel: string;
     alertCubesFarLabel: string;
@@ -90,7 +91,12 @@ export type Translations = {
     heatmapMetricAriaLabel: string;
     heatmapMetricGamma: string;
     heatmapMetricAbsolute: string;
+    heatmapMetricAbsoluteTitle: string;
     heatmapMetricDelta: string;
+    heatmapMetricVanna: string;
+    heatmapMetricCharm: string;
+    /** The caption at the foot of the live profile column, per figure. */
+    profileCaptions: Record<"gamma" | "absolute_gamma" | "delta" | "vanna" | "charm", string>;
     expectedMoveRangeLabel: string;
     streamFallbackLabel: string;
     drawingToolsAriaLabel: string;

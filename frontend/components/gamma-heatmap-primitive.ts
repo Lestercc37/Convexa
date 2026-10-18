@@ -16,7 +16,8 @@ import type { GammaHeatmapResponse } from "@/lib/types";
 //
 // Color = the stored per-strike figure of that bucket, scaled by the 98th percentile of |value| over the whole matrix (the API sends it as
 // scale_p98): values at or above it get the top of the ramp, which is WHITE, so the strike(s) with the most exposure of the moment read as the
-// brightest cells. Positive = green ramp, negative = red ramp. "Absolute gamma" has no sign and uses the green ramp.
+// brightest cells. Gamma and delta: positive = green ramp, negative = red ramp. Absolute gamma has no sign: one blue ramp. Vanna: purple (positive) and plum
+// (negative). Charm: a muted orange (positive) and olive-ochre (negative), deliberately less bright than the gamma greens and reds.
 
 export type HeatmapColumn = {
   /** Unix seconds of the column (floored to the minute so it lands on a candle). */
@@ -29,16 +30,26 @@ export type HeatmapData = {
   strikes: number[];
   columns: HeatmapColumn[];
   scale: number | null;
-  /** True for a figure with no sign (absolute gamma): drawn with the neutral blue ramp, never the green one that means positive. */
-  unsigned?: boolean;
+  /** Which ramp draws the figure; gamma (green/red) when left out. */
+  palette?: HeatmapPalette;
 };
+
+export type HeatmapPalette = "gamma" | "unsigned" | "vanna" | "charm";
+
+/** The ramp of each stored figure: absolute gamma has no sign (blue, never the green that means positive), vanna is purple, charm muted orange. */
+export function paletteForMetric(metric: GammaHeatmapResponse["metric"]): HeatmapPalette {
+  if (metric === "absolute_gamma") return "unsigned";
+  if (metric === "vanna") return "vanna";
+  if (metric === "charm") return "charm";
+  return "gamma";
+}
 
 /** The API response as the primitive wants it: columns floored to the minute so they land on a candle. */
 export function heatmapFromResponse(response: GammaHeatmapResponse): HeatmapData {
   return {
     strikes: response.strikes,
     scale: response.scale_p98,
-    unsigned: response.metric === "absolute_gamma",
+    palette: paletteForMetric(response.metric),
     columns: response.columns.map((column) => ({
       time: Math.floor(Date.parse(column.as_of) / 60_000) * 60,
       values: column.values,
@@ -53,6 +64,25 @@ export const HEATMAP_POSITIVE_STOPS: Stop[] = [[10, 61, 34], [8, 120, 60], [0, 1
 export const HEATMAP_NEGATIVE_STOPS: Stop[] = [[74, 10, 13], [130, 8, 14], [190, 6, 12], [250, 0, 10], [255, 120, 110], [255, 255, 255]];
 // A magnitude with no sign (absolute gamma): blue, so nobody reads it as 'bullish green' or 'bearish red'.
 export const HEATMAP_UNSIGNED_STOPS: Stop[] = [[22, 36, 84], [34, 62, 150], [52, 100, 214], [96, 156, 255], [170, 206, 255], [255, 255, 255]];
+// Vanna: purple when positive, plum (a hue step toward magenta) when negative, so the sign still reads without the green/red pair.
+export const HEATMAP_VANNA_POSITIVE_STOPS: Stop[] = [[40, 22, 70], [78, 40, 140], [124, 70, 200], [168, 120, 235], [210, 180, 250], [255, 255, 255]];
+export const HEATMAP_VANNA_NEGATIVE_STOPS: Stop[] = [[60, 18, 52], [110, 26, 92], [160, 40, 128], [205, 80, 170], [235, 150, 210], [255, 255, 255]];
+// Charm: a muted orange when positive (softer than the gamma ramps on purpose), olive-ochre when negative.
+export const HEATMAP_CHARM_POSITIVE_STOPS: Stop[] = [[58, 34, 14], [110, 62, 22], [158, 92, 32], [196, 124, 52], [226, 164, 102], [255, 255, 255]];
+export const HEATMAP_CHARM_NEGATIVE_STOPS: Stop[] = [[44, 34, 18], [82, 66, 28], [120, 98, 38], [158, 134, 62], [200, 180, 110], [255, 255, 255]];
+
+function rampStops(palette: HeatmapPalette, positive: boolean): Stop[] {
+  switch (palette) {
+    case "unsigned":
+      return HEATMAP_UNSIGNED_STOPS;
+    case "vanna":
+      return positive ? HEATMAP_VANNA_POSITIVE_STOPS : HEATMAP_VANNA_NEGATIVE_STOPS;
+    case "charm":
+      return positive ? HEATMAP_CHARM_POSITIVE_STOPS : HEATMAP_CHARM_NEGATIVE_STOPS;
+    default:
+      return positive ? HEATMAP_POSITIVE_STOPS : HEATMAP_NEGATIVE_STOPS;
+  }
+}
 
 // Below this share of the scale a cell is left empty: the background of a quiet strike is the chart, not a dark tile.
 export const HEATMAP_MINIMUM_SHARE = 0.04;
@@ -81,17 +111,21 @@ export function rampColor(stops: Stop[], fraction: number): [number, number, num
 }
 
 /** RGB of a cell, or null when it is too faint to draw. */
-export function cellRgb(value: number | null, scale: number | null, unsigned = false): [number, number, number] | null {
+export function cellRgb(value: number | null, scale: number | null, palette: HeatmapPalette = "gamma"): [number, number, number] | null {
   if (value === null || scale === null || !(scale > 0)) return null;
+  if (Math.abs(value) / scale < HEATMAP_MINIMUM_SHARE) return null;
+  return rampRgb(value, scale, palette);
+}
+
+/** Same ramp as cellRgb but with no faint-cell floor: a bar of a profile is always drawn, however small. */
+export function rampRgb(value: number, scale: number, palette: HeatmapPalette = "gamma"): [number, number, number] {
   const share = Math.abs(value) / scale;
-  if (share < HEATMAP_MINIMUM_SHARE) return null;
-  const stops = unsigned ? HEATMAP_UNSIGNED_STOPS : value >= 0 ? HEATMAP_POSITIVE_STOPS : HEATMAP_NEGATIVE_STOPS;
-  return rampColor(stops, share >= HEATMAP_TOP_SHARE ? 1 : Math.min(1, share) * 0.96);
+  return rampColor(rampStops(palette, value >= 0), share >= HEATMAP_TOP_SHARE ? 1 : Math.min(1, share) * 0.96);
 }
 
 /** CSS color of a cell, or null when it is too faint to draw. */
-export function cellColor(value: number | null, scale: number | null, unsigned = false): string | null {
-  const rgb = cellRgb(value, scale, unsigned);
+export function cellColor(value: number | null, scale: number | null, palette: HeatmapPalette = "gamma"): string | null {
+  const rgb = cellRgb(value, scale, palette);
   if (rgb === null) return null;
   return `rgba(${rgb[0]}, ${rgb[1]}, ${rgb[2]}, ${HEATMAP_ALPHA})`;
 }
@@ -172,7 +206,7 @@ export function heatmapImage(data: HeatmapData): HeatmapImage | null {
     for (let row = 0; row < height; row += 1) {
       const strikeIndex = rowStrike[row];
       if (strikeIndex < 0) continue;
-      const rgb = cellRgb(column.values[strikeIndex] ?? null, data.scale, data.unsigned);
+      const rgb = cellRgb(column.values[strikeIndex] ?? null, data.scale, data.palette);
       if (rgb === null) continue;
       const offset = ((height - 1 - row) * width + columnIndex) * 4;
       pixels[offset] = rgb[0];
@@ -313,7 +347,7 @@ class GammaHeatmapRenderer implements IPrimitivePaneRenderer {
             : lastWidth || scope.horizontalPixelRatio * 8;
         lastWidth = width;
         for (const row of rows) {
-          const color = cellColor(column.values[row.index] ?? null, data.scale, data.unsigned);
+          const color = cellColor(column.values[row.index] ?? null, data.scale, data.palette);
           if (color === null) continue;
           scope.context.fillStyle = color;
           scope.context.fillRect(left, row.y - rowHeight / 2, Math.max(1, width), rowHeight);

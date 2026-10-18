@@ -37,6 +37,8 @@ const chartMocks = vi.hoisted(() => ({
   setVisibleRange: vi.fn(),
   getGammaHistory: vi.fn(),
   getGammaHeatmap: vi.fn(),
+  getOptionChain: vi.fn(),
+  getOptionChainExpirations: vi.fn(),
 }));
 
 vi.mock("@/lib/api", async () => {
@@ -47,6 +49,8 @@ vi.mock("@/lib/api", async () => {
     getGammaProfile: chartMocks.getGammaProfile,
     getAlerts: chartMocks.getAlerts,
     getGammaHeatmap: chartMocks.getGammaHeatmap,
+    getOptionChain: chartMocks.getOptionChain,
+    getOptionChainExpirations: chartMocks.getOptionChainExpirations,
   };
 });
 
@@ -108,6 +112,9 @@ beforeEach(() => {
   chartMocks.coordinateToPrice.mockImplementation(() => null);
   chartMocks.coordinateToTime.mockImplementation(() => null);
   chartMocks.getGammaProfile.mockResolvedValue({ schema_version: 1, symbol: "SPY", items: [{ strike: 550, net_gamma: 3, absolute_gamma: 3 }, { strike: 555, net_gamma: -6, absolute_gamma: 6 }] });
+  // No current expiration by default: the smile dots stay out of the way of the other tests (they have their own above).
+  chartMocks.getOptionChainExpirations.mockResolvedValue({ schema_version: 1, symbol: "SPY", expirations: [] });
+  chartMocks.getOptionChain.mockResolvedValue({ schema_version: 1, symbol: "SPY", as_of: "2026-08-06T14:31:40Z", spot_price: 505, contracts: [] });
   chartMocks.getGammaHistory.mockResolvedValue({
     schema_version: 1,
     symbol: "SPY",
@@ -556,19 +563,88 @@ describe("PriceChart", () => {
     expect(formatter(estEpochSeconds, TickMarkType.Time, "en-US")).toBe("15:59");
   });
 
-  it("attaches the GEX histogram by default, fed by the gamma profile, and detaches it when the box is unchecked", async () => {
+  it("attaches the live profile (AHORA line + one bar per strike) by default, fed by the gamma profile, and detaches it when the box is unchecked", async () => {
     const user = userEvent.setup();
     renderWithLanguage(<PriceChart symbol="SPY" candles={candlesWithRange} gamma={gamma} gammaView="tactical" />);
-    expect(screen.getByLabelText("Histograma GEX")).toBeChecked();
+    expect(screen.getByLabelText("Perfil GEX")).toBeChecked();
     expect(chartMocks.attachPrimitive).toHaveBeenCalledTimes(1);
     const primitive = chartMocks.attachPrimitive.mock.calls[0][0];
     await waitFor(() => expect(chartMocks.getGammaProfile).toHaveBeenCalledWith("SPY", "tactical", expect.any(AbortSignal)));
     await waitFor(() => expect(primitive.bars).toEqual([{ strike: 550, net: 3, absolute: 3 }, { strike: 555, net: -6, absolute: 6 }]));
+    expect(primitive.palette).toBe("gamma");
+    expect(primitive.label).toBe("PERFIL GEX EN VIVO");
 
-    await user.click(screen.getByLabelText("Histograma GEX"));
-    expect(screen.getByLabelText("Histograma GEX")).not.toBeChecked();
+    await user.click(screen.getByLabelText("Perfil GEX"));
+    expect(screen.getByLabelText("Perfil GEX")).not.toBeChecked();
 
     expect(chartMocks.detachPrimitive).toHaveBeenCalledWith(primitive);
+  });
+
+  it("keeps the strip at the right of the time scale free for the profile column only while the profile is on", async () => {
+    const user = userEvent.setup();
+    Object.defineProperty(HTMLElement.prototype, "clientWidth", { configurable: true, get: () => 1000 });
+    try {
+      renderWithLanguage(<PriceChart symbol="SPY" candles={candlesWithRange} gamma={gamma} gammaView="tactical" />);
+      // createChart got the strip in its options: a fifth of the 1000 px pane.
+      expect(chartMocks.createChart.mock.calls.at(-1)?.[1].timeScale.rightOffsetPixels).toBe(200);
+
+      await user.click(screen.getByLabelText("Perfil GEX"));
+      expect(chartMocks.applyOptions).toHaveBeenCalledWith({ timeScale: { rightOffsetPixels: 0 } });
+      await user.click(screen.getByLabelText("Perfil GEX"));
+      expect(chartMocks.applyOptions).toHaveBeenLastCalledWith({ timeScale: { rightOffsetPixels: 200 } });
+    } finally {
+      delete (HTMLElement.prototype as unknown as { clientWidth?: number }).clientWidth;
+    }
+  });
+
+  it("draws the Smile dots of the nearest current expiration on the AHORA line, and clears them when the Smile box is unchecked", async () => {
+    chartMocks.getOptionChainExpirations.mockResolvedValue({ schema_version: 1, symbol: "SPY", expirations: ["2099-01-01", "2099-01-02"] });
+    const contract = (strike: number, type: "call" | "put", iv: number) => ({
+      occ_symbol: `X${strike}${type}`, strike, expiration: "2099-01-01", type, bid: 1, ask: 1.1, iv, delta: 0.5, gamma: 0.01, theta: 0, vega: 0, charm: 0, vanna: 0, open_interest: 10, volume: 10,
+    });
+    chartMocks.getOptionChain.mockResolvedValue({
+      schema_version: 1, symbol: "SPY", as_of: "2026-08-06T14:31:40Z", spot_price: 505,
+      contracts: [contract(500, "put", 0.22), contract(510, "call", 0.18), contract(505, "call", 0), contract(900, "call", 0.4)], // IV 0 and far strikes are left out
+    });
+    const user = userEvent.setup();
+    renderWithLanguage(<PriceChart symbol="SPY" candles={candlesWithRange} gamma={gamma} gammaView="tactical" />);
+    const primitive = chartMocks.attachPrimitive.mock.calls[0][0];
+    expect(screen.getByLabelText("Smile")).toBeChecked();
+    await waitFor(() => expect(chartMocks.getOptionChain).toHaveBeenCalledWith("SPY", "2099-01-01", expect.any(AbortSignal)));
+    await waitFor(() =>
+      expect(primitive.smile).toEqual([
+        { strike: 500, iv: 0.22, type: "put" },
+        { strike: 510, iv: 0.18, type: "call" },
+      ]),
+    );
+
+    await user.click(screen.getByLabelText("Smile"));
+    expect(primitive.smile).toEqual([]);
+  });
+
+  it("feeds the profile from the latest heatmap values for vanna and charm, with their own colours and caption", async () => {
+    chartMocks.getGammaHeatmap.mockResolvedValue({
+      schema_version: 1,
+      symbol: "SPY",
+      view: "tactical",
+      metric: "vanna",
+      bucket_seconds: 60,
+      strikes: [550, 555],
+      columns: [{ as_of: "2026-08-06T14:31:40Z", values: [3, -8] }],
+      scale_p98: 8,
+    });
+    const user = userEvent.setup();
+    renderWithLanguage(<PriceChart symbol="SPY" candles={candlesWithRange} gamma={gamma} gammaView="tactical" />);
+    const profile = chartMocks.attachPrimitive.mock.calls[0][0];
+    await user.click(screen.getByLabelText("Heatmap"));
+    const metrics = screen.getByRole("group", { name: "Métrica del heatmap" });
+    expect(Array.from(metrics.querySelectorAll("button")).map((button) => button.textContent)).toEqual(["Gamma", "Abs.", "Delta", "Vanna", "Charm"]);
+    await user.click(screen.getByRole("button", { name: "Vanna" }));
+
+    await waitFor(() => expect(chartMocks.getGammaHeatmap).toHaveBeenLastCalledWith("SPY", expect.objectContaining({ metric: "vanna" }), expect.any(AbortSignal)));
+    await waitFor(() => expect(profile.palette).toBe("vanna"));
+    expect(profile.bars).toEqual([{ strike: 550, net: 3, absolute: 3 }, { strike: 555, net: -8, absolute: 8 }]);
+    expect(profile.label).toBe("PERFIL VANNA EN VIVO");
   });
 
   it("keeps the alert cubes off until the toggle is checked, then draws the alerts big enough to size, with a tooltip on hover", async () => {
@@ -653,7 +729,7 @@ describe("PriceChart", () => {
     });
     const user = userEvent.setup();
     renderWithLanguage(<PriceChart symbol="SPY" candles={candlesWithRange} gamma={gamma} gammaView="tactical" />);
-    expect(chartMocks.attachPrimitive).toHaveBeenCalledTimes(1); // only the GEX histogram, which is on by default
+    expect(chartMocks.attachPrimitive).toHaveBeenCalledTimes(1); // only the live profile, which is on by default
     expect(chartMocks.getGammaHeatmap).not.toHaveBeenCalled();
     expect(screen.queryByLabelText("Métrica del heatmap")).not.toBeInTheDocument();
 
@@ -673,12 +749,12 @@ describe("PriceChart", () => {
       expect(primitive.data).toEqual({
         strikes: [550, 555],
         scale: 6,
-        unsigned: false,
+        palette: "gamma",
         columns: [{ time: Date.parse("2026-08-06T14:31:00Z") / 1000, values: [3, null] }],
       }),
     );
 
-    await user.selectOptions(screen.getByLabelText("Métrica del heatmap"), "delta");
+    await user.click(screen.getByRole("button", { name: "Delta" }));
     await waitFor(() =>
       expect(chartMocks.getGammaHeatmap).toHaveBeenLastCalledWith(
         "SPY",
@@ -699,7 +775,7 @@ describe("PriceChart", () => {
     await user.click(screen.getByLabelText("Heatmap"));
 
     await waitFor(() => expect(chartMocks.getGammaHeatmap).toHaveBeenCalled());
-    expect(chartMocks.attachPrimitive.mock.calls[1][0].data).toBeNull(); // calls[0] is the GEX histogram (on by default)
+    expect(chartMocks.attachPrimitive.mock.calls[1][0].data).toBeNull(); // calls[0] is the live profile (on by default)
   });
 
   it("labels the chart title with the selected timeframe", () => {
