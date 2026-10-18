@@ -7,6 +7,7 @@ import {
   HEATMAP_MINIMUM_SHARE,
   HEATMAP_NEGATIVE_STOPS,
   HEATMAP_POSITIVE_STOPS,
+  heatmapFromResponse,
   heatmapImage,
   rampColor,
   uniformStrikeStep,
@@ -194,5 +195,26 @@ describe("smooth drawing helpers", () => {
     const context = fakeContext();
     drawWith(primitive, context);
     expect(context.fills).toHaveLength(5); // same cells as the sharp drawing
+  });
+});
+
+describe("unsigned metric (absolute gamma)", () => {
+  it("is drawn with the neutral blue ramp, whatever the sign of the stored number, and never the green or red one", () => {
+    const channels = (rgb: [number, number, number] | null) => rgb!;
+    const unsigned = channels(cellRgb(40, 100, true));
+    expect(unsigned[2]).toBeGreaterThan(unsigned[1]); // blue dominant
+    expect(unsigned[2]).toBeGreaterThan(unsigned[0]);
+    expect(cellRgb(-40, 100, true)).toEqual(cellRgb(40, 100, true)); // no sign
+    expect(cellRgb(100, 100, true)).toEqual([255, 255, 255]); // the strongest strike is still white
+    const signed = channels(cellRgb(40, 100));
+    expect(signed[1]).toBeGreaterThan(signed[2]); // the signed ramp is unchanged: positive stays green
+    expect(cellColor(40, 100, true)).toMatch(/^rgba\(\d+, \d+, \d+, 0\.62\)$/);
+  });
+
+  it("heatmapFromResponse marks only absolute gamma as unsigned", () => {
+    const response = { schema_version: 1, symbol: "SPY", view: "tactical" as const, bucket_seconds: 60, strikes: [100], columns: [], scale_p98: 1 };
+    expect(heatmapFromResponse({ ...response, metric: "absolute_gamma" }).unsigned).toBe(true);
+    expect(heatmapFromResponse({ ...response, metric: "gamma" }).unsigned).toBe(false);
+    expect(heatmapFromResponse({ ...response, metric: "delta" }).unsigned).toBe(false);
   });
 });

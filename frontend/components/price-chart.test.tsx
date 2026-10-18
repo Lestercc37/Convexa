@@ -596,6 +596,7 @@ describe("PriceChart", () => {
       expect(primitive.data).toEqual({
         strikes: [550, 555],
         scale: 6,
+        unsigned: false,
         columns: [{ time: Date.parse("2026-08-06T14:31:00Z") / 1000, values: [3, null] }],
       }),
     );

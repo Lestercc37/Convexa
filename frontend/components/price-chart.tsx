@@ -490,6 +490,8 @@ export function PriceChart({
       width: container.clientWidth,
       height: container.clientHeight || 420,
       layout: {
+        // The same face as the page (next/font's Inter), read from the body so the axis labels match the rest of the UI.
+        fontFamily: typeof document === "undefined" ? undefined : getComputedStyle(document.body).fontFamily || undefined,
         // Per user request (2026-09-23): a near-black chart body, distinct
         // from the lighter navy --tv-panel background the rest of the
         // dashboard's panels use -- solid rather than "transparent" so

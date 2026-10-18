@@ -29,6 +29,8 @@ export type HeatmapData = {
   strikes: number[];
   columns: HeatmapColumn[];
   scale: number | null;
+  /** True for a figure with no sign (absolute gamma): drawn with the neutral blue ramp, never the green one that means positive. */
+  unsigned?: boolean;
 };
 
 /** The API response as the primitive wants it: columns floored to the minute so they land on a candle. */
@@ -36,6 +38,7 @@ export function heatmapFromResponse(response: GammaHeatmapResponse): HeatmapData
   return {
     strikes: response.strikes,
     scale: response.scale_p98,
+    unsigned: response.metric === "absolute_gamma",
     columns: response.columns.map((column) => ({
       time: Math.floor(Date.parse(column.as_of) / 60_000) * 60,
       values: column.values,
@@ -48,6 +51,8 @@ type Stop = [number, number, number];
 // Same ramps as the approved prototype (docs/prototipos/heatmap-flujo-alertas-2026-10-16.html).
 export const HEATMAP_POSITIVE_STOPS: Stop[] = [[10, 61, 34], [8, 120, 60], [0, 168, 70], [0, 220, 90], [110, 255, 160], [255, 255, 255]];
 export const HEATMAP_NEGATIVE_STOPS: Stop[] = [[74, 10, 13], [130, 8, 14], [190, 6, 12], [250, 0, 10], [255, 120, 110], [255, 255, 255]];
+// A magnitude with no sign (absolute gamma): blue, so nobody reads it as 'bullish green' or 'bearish red'.
+export const HEATMAP_UNSIGNED_STOPS: Stop[] = [[22, 36, 84], [34, 62, 150], [52, 100, 214], [96, 156, 255], [170, 206, 255], [255, 255, 255]];
 
 // Below this share of the scale a cell is left empty: the background of a quiet strike is the chart, not a dark tile.
 export const HEATMAP_MINIMUM_SHARE = 0.04;
@@ -76,17 +81,17 @@ export function rampColor(stops: Stop[], fraction: number): [number, number, num
 }
 
 /** RGB of a cell, or null when it is too faint to draw. */
-export function cellRgb(value: number | null, scale: number | null): [number, number, number] | null {
+export function cellRgb(value: number | null, scale: number | null, unsigned = false): [number, number, number] | null {
   if (value === null || scale === null || !(scale > 0)) return null;
   const share = Math.abs(value) / scale;
   if (share < HEATMAP_MINIMUM_SHARE) return null;
-  const stops = value >= 0 ? HEATMAP_POSITIVE_STOPS : HEATMAP_NEGATIVE_STOPS;
+  const stops = unsigned ? HEATMAP_UNSIGNED_STOPS : value >= 0 ? HEATMAP_POSITIVE_STOPS : HEATMAP_NEGATIVE_STOPS;
   return rampColor(stops, share >= HEATMAP_TOP_SHARE ? 1 : Math.min(1, share) * 0.96);
 }
 
 /** CSS color of a cell, or null when it is too faint to draw. */
-export function cellColor(value: number | null, scale: number | null): string | null {
-  const rgb = cellRgb(value, scale);
+export function cellColor(value: number | null, scale: number | null, unsigned = false): string | null {
+  const rgb = cellRgb(value, scale, unsigned);
   if (rgb === null) return null;
   return `rgba(${rgb[0]}, ${rgb[1]}, ${rgb[2]}, ${HEATMAP_ALPHA})`;
 }
@@ -140,7 +145,7 @@ export function heatmapImage(data: HeatmapData): HeatmapImage | null {
   const pixels = new Uint8ClampedArray(new ArrayBuffer(width * height * 4));
   data.columns.forEach((column, columnIndex) => {
     data.strikes.forEach((strike, strikeIndex) => {
-      const rgb = cellRgb(column.values[strikeIndex] ?? null, data.scale);
+      const rgb = cellRgb(column.values[strikeIndex] ?? null, data.scale, data.unsigned);
       if (rgb === null) return;
       const row = height - 1 - Math.round((strike - lowStrike) / step);
       const offset = (row * width + columnIndex) * 4;
@@ -282,7 +287,7 @@ class GammaHeatmapRenderer implements IPrimitivePaneRenderer {
             : lastWidth || scope.horizontalPixelRatio * 8;
         lastWidth = width;
         for (const row of rows) {
-          const color = cellColor(column.values[row.index] ?? null, data.scale);
+          const color = cellColor(column.values[row.index] ?? null, data.scale, data.unsigned);
           if (color === null) continue;
           scope.context.fillStyle = color;
           scope.context.fillRect(left, row.y - rowHeight / 2, Math.max(1, width), rowHeight);

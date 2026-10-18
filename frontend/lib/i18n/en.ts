@@ -89,7 +89,7 @@ export const en: Translations = {
     heatmapLabel: "Heatmap",
     heatmapMetricAriaLabel: "Heatmap metric",
     heatmapMetricGamma: "Net gamma",
-    heatmapMetricAbsolute: "Absolute gamma",
+    heatmapMetricAbsolute: "Absolute gamma (magnitude, unsigned)",
     heatmapMetricDelta: "Delta",
     expectedMoveRangeLabel: "Expected Move",
     streamFallbackLabel: "Real-time connection lost — updating every 30s",
