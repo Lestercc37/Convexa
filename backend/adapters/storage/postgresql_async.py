@@ -34,7 +34,13 @@ from backend.domain.use_cases.market_hours import EASTERN_TIME
 from backend.domain.use_cases.trade_date import volume_rows_since
 
 # Heatmap metric name -> gamma_aggregate_items column. A whitelist: the column name is formatted into the SQL.
-_HEATMAP_METRIC_COLUMNS = {"gamma": "net_gamma", "absolute_gamma": "absolute_gamma", "delta": "delta_exposure"}
+_HEATMAP_METRIC_COLUMNS = {
+    "gamma": "net_gamma",
+    "absolute_gamma": "absolute_gamma",
+    "delta": "delta_exposure",
+    "vanna": "vanna_exposure",
+    "charm": "charm_exposure",
+}
 # Safety cap on the rows one request may read (5 sessions x ~400 snapshots x ~60 strikes is ~120k before bucketing).
 _HEATMAP_ROW_LIMIT = 200_000
 

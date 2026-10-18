@@ -373,7 +373,7 @@ class GammaHeatmapResponse(BaseModel):
     schema_version: int = Field(examples=[1])
     symbol: str = Field(examples=["SPX"])
     view: Literal["tactical", "structural"]
-    metric: Literal["gamma", "absolute_gamma", "delta"]
+    metric: Literal["gamma", "absolute_gamma", "delta", "vanna", "charm"]
     bucket_seconds: int = Field(examples=[120])
     strikes: list[Number]
     columns: list[GammaHeatmapColumnResponse]
