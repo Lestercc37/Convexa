@@ -50,6 +50,13 @@ export const en: Translations = {
   },
   derivedMetricsBar: {
     ariaLabel: "Derived metrics",
+    tabsAriaLabel: "Dealers summary",
+    tabDealer: "Dealer",
+    tabSignal: "Signal",
+    tabBias: "Bias",
+    tabVolatility: "Volatility",
+    showPanel: "Show dealers",
+    hidePanel: "Hide panel",
     volatilityWindowNote: "Window: 60 days",
     accumulating: (daysAccumulated) => `Accumulating data — ${daysAccumulated}d/20d`,
   },

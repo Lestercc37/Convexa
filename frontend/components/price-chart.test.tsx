@@ -548,20 +548,17 @@ describe("PriceChart", () => {
     expect(formatter(estEpochSeconds, TickMarkType.Time, "en-US")).toBe("15:59");
   });
 
-  it("keeps the GEX histogram off until the toggle is checked, then attaches a primitive fed by the gamma profile (draft)", async () => {
+  it("attaches the GEX histogram by default, fed by the gamma profile, and detaches it when the box is unchecked", async () => {
     const user = userEvent.setup();
     renderWithLanguage(<PriceChart symbol="SPY" candles={candlesWithRange} gamma={gamma} gammaView="tactical" />);
-    expect(chartMocks.attachPrimitive).not.toHaveBeenCalled();
-    expect(chartMocks.getGammaProfile).not.toHaveBeenCalled();
-
-    await user.click(screen.getByLabelText("Histograma GEX"));
-
+    expect(screen.getByLabelText("Histograma GEX")).toBeChecked();
     expect(chartMocks.attachPrimitive).toHaveBeenCalledTimes(1);
     const primitive = chartMocks.attachPrimitive.mock.calls[0][0];
     await waitFor(() => expect(chartMocks.getGammaProfile).toHaveBeenCalledWith("SPY", "tactical", expect.any(AbortSignal)));
     await waitFor(() => expect(primitive.bars).toEqual([{ strike: 550, net: 3, absolute: 3 }, { strike: 555, net: -6, absolute: 6 }]));
 
     await user.click(screen.getByLabelText("Histograma GEX"));
+    expect(screen.getByLabelText("Histograma GEX")).not.toBeChecked();
 
     expect(chartMocks.detachPrimitive).toHaveBeenCalledWith(primitive);
   });
@@ -579,14 +576,14 @@ describe("PriceChart", () => {
     });
     const user = userEvent.setup();
     renderWithLanguage(<PriceChart symbol="SPY" candles={candlesWithRange} gamma={gamma} gammaView="tactical" />);
-    expect(chartMocks.attachPrimitive).not.toHaveBeenCalled();
+    expect(chartMocks.attachPrimitive).toHaveBeenCalledTimes(1); // only the GEX histogram, which is on by default
     expect(chartMocks.getGammaHeatmap).not.toHaveBeenCalled();
     expect(screen.queryByLabelText("Métrica del heatmap")).not.toBeInTheDocument();
 
     await user.click(screen.getByLabelText("Heatmap"));
 
-    expect(chartMocks.attachPrimitive).toHaveBeenCalledTimes(1);
-    const primitive = chartMocks.attachPrimitive.mock.calls[0][0];
+    expect(chartMocks.attachPrimitive).toHaveBeenCalledTimes(2);
+    const primitive = chartMocks.attachPrimitive.mock.calls[1][0];
     await waitFor(() =>
       expect(chartMocks.getGammaHeatmap).toHaveBeenCalledWith(
         "SPY",
@@ -624,7 +621,7 @@ describe("PriceChart", () => {
     await user.click(screen.getByLabelText("Heatmap"));
 
     await waitFor(() => expect(chartMocks.getGammaHeatmap).toHaveBeenCalled());
-    expect(chartMocks.attachPrimitive.mock.calls[0][0].data).toBeNull();
+    expect(chartMocks.attachPrimitive.mock.calls[1][0].data).toBeNull(); // calls[0] is the GEX histogram (on by default)
   });
 
   it("labels the chart title with the selected timeframe", () => {

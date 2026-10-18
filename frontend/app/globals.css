@@ -547,6 +547,14 @@ button, select { font: inherit; }
 /* Derived metrics stay Structural-only regardless of the toggle above
    (see DerivedMetricsBar's own comment) -- a small badge makes that
    explicit instead of silently looking unchanged. */
+/* Dealers group folded by default (design 12.7): one row of tabs, each with its own number; a click opens the detail cards. */
+.dealers-panel { display: flex; flex-direction: column; gap: 8px; flex-shrink: 0; }
+.dealers-tabs { display: flex; flex-wrap: wrap; gap: 6px; align-items: stretch; }
+.dealers-tab { flex: 1 1 calc(50% - 6px); min-width: 0; display: flex; flex-direction: column; gap: 2px; padding: 6px 8px; text-align: left; border: 1px solid var(--tv-border); border-radius: 6px; background: var(--tv-panel); color: var(--tv-text); cursor: pointer; }
+.dealers-tab[aria-expanded="true"] { background: var(--tv-panel-raised); }
+.dealers-tab-name { color: var(--tv-text-dim); font-size: 0.66rem; letter-spacing: 0.04em; text-transform: uppercase; }
+.dealers-tab-value { font-size: 0.82rem; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.dealers-hide, .dealers-show { align-self: flex-start; padding: 3px 8px; border: 1px solid var(--tv-border); border-radius: 5px; background: transparent; color: var(--tv-text-dim); font-size: 0.68rem; cursor: pointer; }
 .metrics-bar-structural-badge { display: inline-block; margin-bottom: 6px; padding: 2px 7px; border-radius: 5px; background: var(--tv-panel-raised); color: var(--tv-text-dim); font-size: 0.65rem; font-weight: 700; letter-spacing: 0.02em; }
 
 /* Reintroduced (section 25) — removed in section 23 once both of its

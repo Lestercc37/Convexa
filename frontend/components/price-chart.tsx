@@ -441,7 +441,8 @@ export function PriceChart({
   const [showAtr, setShowAtr] = useState(true);
   const [showExpectedMove, setShowExpectedMove] = useState(true);
   // GEX histogram aligned with the price axis (draft, off by default so the current view is untouched).
-  const [showGexHistogram, setShowGexHistogram] = useState(false);
+  // On by default (design 9(b) / 12.7: the profile aligned with the price axis replaces the old bottom GEX-by-strike view); the checkbox switches it off.
+  const [showGexHistogram, setShowGexHistogram] = useState(true);
   // Gamma heatmap behind the candles (off by default): strike x time matrix read from /gamma/{symbol}/heatmap.
   const [showHeatmap, setShowHeatmap] = useState(false);
   const [heatmapMetric, setHeatmapMetric] = useState<GammaHeatmapMetric>("gamma");
