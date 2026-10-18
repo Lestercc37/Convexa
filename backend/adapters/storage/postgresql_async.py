@@ -65,6 +65,14 @@ def _optional_decimal(value: object) -> Decimal | None:
     return None if value is None else Decimal(str(value))
 
 
+def _json_decimals(value: object) -> dict[str, Decimal] | None:
+    """A nullable jsonb column holding {"key": number} as {key: Decimal}: psycopg gives a dict, asyncpg a JSON string; NULL stays None."""
+    if value is None:
+        return None
+    parsed = json.loads(value) if isinstance(value, (str, bytes)) else value
+    return {str(key): Decimal(str(number)) for key, number in parsed.items()}
+
+
 class AsyncPostgreSQLStorage:
     """Async counterpart to `PostgreSQLStorage`, covering the handful of
     reads `/gamma/{symbol}` and `/market/{symbol}` need, plus one write
@@ -606,7 +614,8 @@ class AsyncPostgreSQLStorage:
                     f"""
                     SELECT w.time, u.symbol, w.occ_symbol, w.alert_type, w.amount,
                            w.estimated_buy_volume, w.estimated_sell_volume, w.quote_unavailable,
-                           w.moneyness, w.near_gamma_level, w.repeat_count
+                           w.moneyness, w.near_gamma_level, w.repeat_count,
+                           w.condition_premium, w.simple_flow, w.delta, w.contracts
                     FROM whale_alerts AS w
                     JOIN underlyings AS u ON u.id = w.underlying_id
                     WHERE u.symbol = :symbol
@@ -634,6 +643,10 @@ class AsyncPostgreSQLStorage:
                 moneyness=Moneyness(str(row["moneyness"])) if row["moneyness"] is not None else Moneyness.ATM,
                 near_gamma_level=row["near_gamma_level"],
                 repeat_count=int(row["repeat_count"]) if row["repeat_count"] is not None else 1,
+                condition_premium=_json_decimals(row["condition_premium"]),
+                simple_flow=_json_decimals(row["simple_flow"]),
+                delta=_optional_decimal(row["delta"]),
+                contracts=int(row["contracts"]) if row["contracts"] is not None else None,
             )
             for row in rows
         ]

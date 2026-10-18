@@ -184,6 +184,13 @@ class WhaleAlertResponse(BaseModel):
     moneyness: Literal["ITM", "ATM", "OTM", "FAR"]
     near_gamma_level: Literal["Call Wall", "Put Wall", "Gamma Flip"] | None
     repeat_count: int
+    # What the heatmap's alert cubes need (migration 0046; all null for alerts written before it): the contract's |delta| and the contracts
+    # traded in the alert's window (cube size = contracts x delta), the premium split by trade-condition code ({"18": usd, "130": usd}, "-1" = no
+    # code) and the trial second label (premium of simple-condition trades only, {"buy": usd, "sell": usd}).
+    delta: Number | None = None
+    contracts: int | None = None
+    condition_premium: dict[str, Number] | None = None
+    simple_flow: dict[str, Number] | None = None
 
 
 class WhaleAlertsResponse(BaseModel):
