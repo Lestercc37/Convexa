@@ -24,6 +24,9 @@ const chartMocks = vi.hoisted(() => ({
   coordinateToPrice: vi.fn(),
   attachPrimitive: vi.fn(),
   detachPrimitive: vi.fn(),
+  seriesApplyOptions: vi.fn(),
+  subscribeCrosshairMove: vi.fn(),
+  unsubscribeCrosshairMove: vi.fn(),
   getGammaProfile: vi.fn(),
   coordinateToTime: vi.fn(),
   subscribeVisibleLogicalRangeChange: vi.fn(),
@@ -74,6 +77,7 @@ beforeAll(() => {
           coordinateToPrice: chartMocks.coordinateToPrice,
           attachPrimitive: chartMocks.attachPrimitive,
           detachPrimitive: chartMocks.detachPrimitive,
+          applyOptions: chartMocks.seriesApplyOptions,
         }
       : { setData: chartMocks.lineSetData },
   );
@@ -81,6 +85,8 @@ beforeAll(() => {
     addSeries: chartMocks.addSeries,
     removeSeries: chartMocks.removeSeries,
     applyOptions: chartMocks.applyOptions,
+    subscribeCrosshairMove: chartMocks.subscribeCrosshairMove,
+    unsubscribeCrosshairMove: chartMocks.unsubscribeCrosshairMove,
     timeScale: () => ({
       fitContent: chartMocks.fitContent,
       setVisibleRange: chartMocks.setVisibleRange,
@@ -1548,5 +1554,49 @@ describe("PriceChart trendline drawing", () => {
     expect(chartMocks.applyOptions).not.toHaveBeenCalledWith(
       expect.objectContaining({ handleScroll: false }),
     );
+  });
+});
+
+describe("PriceChart heatmap tooltip and candle contrast", () => {
+  it("lights up the candle borders and follows the pointer while the heatmap is on, and puts both back when it is switched off", async () => {
+    chartMocks.getGammaHeatmap.mockResolvedValue({
+      schema_version: 1,
+      symbol: "SPY",
+      view: "tactical",
+      metric: "gamma",
+      bucket_seconds: 120,
+      strikes: [550, 555],
+      columns: [{ as_of: "2026-08-06T14:31:40Z", values: [3, null] }],
+      scale_p98: 6,
+    });
+    const user = userEvent.setup();
+    renderWithLanguage(<PriceChart symbol="SPY" candles={candlesWithRange} gamma={gamma} gammaView="tactical" />);
+    expect(chartMocks.subscribeCrosshairMove).not.toHaveBeenCalled();
+
+    await user.click(screen.getByLabelText("Heatmap"));
+
+    expect(chartMocks.subscribeCrosshairMove).toHaveBeenCalledTimes(1);
+    expect(chartMocks.seriesApplyOptions).toHaveBeenCalledWith(expect.objectContaining({ borderVisible: true }));
+    const onMove = chartMocks.subscribeCrosshairMove.mock.calls[0][0];
+    const primitive = chartMocks.attachPrimitive.mock.calls[0][0];
+    const tip = document.querySelector(".heatmap-tip") as HTMLElement;
+    expect(tip.hidden).toBe(true);
+
+    // A cell under the pointer: the tooltip shows strike, time and value; no cell (or no stored value): hidden.
+    primitive.cellAt = vi.fn(() => ({ time: Date.parse("2026-08-06T14:31:00Z") / 1000, strike: 550, value: -1_234_000_000 }));
+    onMove({ point: { x: 120, y: 80 } });
+    expect(tip.hidden).toBe(false);
+    expect(tip.textContent).toContain("Strike 550");
+    expect(tip.textContent).toContain("Gamma neta: -1.23B");
+    primitive.cellAt = vi.fn(() => ({ time: 1, strike: 555, value: null }));
+    onMove({ point: { x: 130, y: 90 } });
+    expect(tip.hidden).toBe(true);
+    onMove({});
+    expect(tip.hidden).toBe(true);
+
+    await user.click(screen.getByLabelText("Heatmap"));
+
+    expect(chartMocks.unsubscribeCrosshairMove).toHaveBeenCalledWith(onMove);
+    expect(chartMocks.seriesApplyOptions).toHaveBeenLastCalledWith(expect.objectContaining({ borderVisible: false }));
   });
 });

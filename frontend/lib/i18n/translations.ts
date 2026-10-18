@@ -71,6 +71,7 @@ export type Translations = {
     heatmapMetricGamma: string;
     heatmapMetricAbsolute: string;
     heatmapMetricDelta: string;
+    heatmapTipStrike: string;
     expectedMoveRangeLabel: string;
     streamFallbackLabel: string;
     drawingToolsAriaLabel: string;

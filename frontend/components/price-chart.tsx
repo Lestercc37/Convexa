@@ -15,6 +15,8 @@ import {
   type IChartApi,
   type IPriceLine,
   type ISeriesApi,
+  type MouseEventParams,
+  type Time,
   type UTCTimestamp,
 } from "lightweight-charts";
 import { getGammaHeatmap, getGammaHistory, getGammaProfile } from "@/lib/api";
@@ -218,6 +220,26 @@ function tickMarkFormatter(timeSeconds: UTCTimestamp, tickMarkType: TickMarkType
 // One heatmap column per minute (the smallest bucket the endpoint accepts): the backend stores a profile about every minute.
 const HEATMAP_BUCKET_SECONDS = 60;
 
+const CANDLE_UP_COLOR = "#26A69A";
+const CANDLE_DOWN_COLOR = "#EF5350";
+// Light borders and wicks while the heatmap is on (see the heatmap effect).
+const HEATMAP_CANDLE_BORDER_UP = "#D9F7EF";
+const HEATMAP_CANDLE_BORDER_DOWN = "#FFDCD8";
+
+function formatHeatmapStrike(strike: number): string {
+  return strike.toLocaleString("en-US", { maximumFractionDigits: 2 });
+}
+
+function formatHeatmapTime(timeSeconds: number): string {
+  return new Intl.DateTimeFormat(undefined, { timeZone: EASTERN_TIME_ZONE, hour: "2-digit", minute: "2-digit", hour12: false }).format(new Date(timeSeconds * 1000));
+}
+
+/** Signed compact exposure, e.g. -1.23B / +450M (the stored figures are dollars per 1% move). */
+function formatHeatmapValue(value: number): string {
+  const sign = value < 0 ? "-" : value > 0 ? "+" : "";
+  return `${sign}${new Intl.NumberFormat("en-US", { notation: "compact", maximumFractionDigits: 2 }).format(Math.abs(value))}`;
+}
+
 function crosshairTimeFormatter(timeSeconds: UTCTimestamp): string {
   const date = new Date(timeSeconds * 1000);
   return new Intl.DateTimeFormat(undefined, {
@@ -395,6 +417,7 @@ export function PriceChart({
 }: PriceChartProps) {
   const { t } = useLanguage();
   const containerRef = useRef<HTMLDivElement>(null);
+  const heatmapTipRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const seriesRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
   const trendlineSeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
@@ -517,11 +540,11 @@ export function PriceChart({
     // TradingView-native candle colors — never the Convexa brand pair above,
     // which is reserved for what Convexa itself calculates (Gamma levels).
     const series = chart.addSeries(CandlestickSeries, {
-      upColor: "#26A69A",
-      downColor: "#EF5350",
+      upColor: CANDLE_UP_COLOR,
+      downColor: CANDLE_DOWN_COLOR,
       borderVisible: false,
-      wickUpColor: "#26A69A",
-      wickDownColor: "#EF5350",
+      wickUpColor: CANDLE_UP_COLOR,
+      wickDownColor: CANDLE_DOWN_COLOR,
       autoscaleInfoProvider: (original: () => AutoscaleInfo | null) =>
         mergePriceRange(original(), referenceLevelsRef.current),
     });
@@ -755,6 +778,40 @@ export function PriceChart({
     if (!showHeatmap || !series) return;
     const primitive = new GammaHeatmapPrimitive({ smooth: true });
     series.attachPrimitive(primitive);
+    // Over a heatmap the plain candles get lost (down candles are red on a red field on a short-gamma day): a light border keeps both
+    // bodies and wicks readable. Put back when the heatmap is switched off.
+    series.applyOptions({
+      borderVisible: true,
+      borderUpColor: HEATMAP_CANDLE_BORDER_UP,
+      borderDownColor: HEATMAP_CANDLE_BORDER_DOWN,
+      wickUpColor: HEATMAP_CANDLE_BORDER_UP,
+      wickDownColor: HEATMAP_CANDLE_BORDER_DOWN,
+    });
+    // Tooltip that follows the pointer: strike, time and value of the single cell under it.
+    const chart = chartRef.current;
+    const tip = heatmapTipRef.current;
+    const metricLabel =
+      heatmapMetric === "delta"
+        ? t.priceChart.heatmapMetricDelta
+        : heatmapMetric === "absolute_gamma"
+          ? t.priceChart.heatmapMetricAbsolute
+          : t.priceChart.heatmapMetricGamma;
+    const onCrosshairMove = (parameter: MouseEventParams<Time>) => {
+      if (!tip) return;
+      const point = parameter.point;
+      const cell = point ? primitive.cellAt(point.x, point.y) : null;
+      if (!point || !cell || cell.value === null) {
+        tip.hidden = true;
+        return;
+      }
+      tip.textContent = `${t.priceChart.heatmapTipStrike} ${formatHeatmapStrike(cell.strike)} · ${formatHeatmapTime(cell.time)}\n${metricLabel}: ${formatHeatmapValue(cell.value)}`;
+      tip.hidden = false;
+      const frameWidth = tip.parentElement?.clientWidth ?? 0;
+      const left = frameWidth && point.x + 14 + tip.offsetWidth > frameWidth ? point.x - 14 - tip.offsetWidth : point.x + 14;
+      tip.style.left = `${Math.max(0, left)}px`;
+      tip.style.top = `${Math.max(0, point.y + 14)}px`;
+    };
+    chart?.subscribeCrosshairMove(onCrosshairMove);
     const controller = new AbortController();
     const refresh = () => {
       const start = new Date((mostRecentSessionRange(Date.now()).openSeconds - 3600) * 1000);
@@ -769,9 +826,16 @@ export function PriceChart({
     return () => {
       controller.abort();
       window.clearInterval(interval);
+      chart?.unsubscribeCrosshairMove(onCrosshairMove);
+      if (tip) tip.hidden = true;
       series.detachPrimitive(primitive);
+      series.applyOptions({
+        borderVisible: false,
+        wickUpColor: CANDLE_UP_COLOR,
+        wickDownColor: CANDLE_DOWN_COLOR,
+      });
     };
-  }, [showHeatmap, symbol, gammaView, heatmapMetric]);
+  }, [showHeatmap, symbol, gammaView, heatmapMetric, t]);
 
   useEffect(() => {
     trendlineSeriesRef.current?.setData(
@@ -1189,6 +1253,7 @@ export function PriceChart({
           className={`price-chart${drawMode ? " price-chart-drawing" : ""}`}
           aria-label={t.priceChart.chartAriaLabel(symbol)}
         />
+        <div ref={heatmapTipRef} className="heatmap-tip" hidden aria-hidden="true" />
         {atrRects.upper && (
           <div
             className="atr-band"
