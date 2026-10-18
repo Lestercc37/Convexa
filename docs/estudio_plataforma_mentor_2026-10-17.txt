@@ -86,6 +86,15 @@ e) Etiquetas: su "SWEEP" en Actividad Inusual es solo Vol/OI mayor que 3x (no es
     Por regimen de gamma (largo / corto): A 83.0% / 86.8% y B 69.1% / 70.4%: el movimiento esperado propio NO es mas ancho en short gamma; la IV ya trae el efecto del regimen. El efecto de 6% a 25% de la seccion 4.3 se midio contra la volatilidad realizada desde la apertura, no contra este rango, asi que no hay que ensancharlo otra vez.
     Lectura: el movimiento esperado de Convexa no esta mal en promedio (B), pero la forma de escalar con la hora no es la correcta (ancho de mas por la manana, de menos desde las 14:00), y la banda anclada a la apertura contiene el cierre solo ~57-60%. Un ajuste por hora (por ejemplo un factor que baje de ~0.8 a ~0.55 sobre implied_1sd) lo mejoraria, pero fue ajustado en esta misma muestra: falta validarlo con dias nuevos antes de cambiar nada.
 
+4.7 CAPA RAPIDA DE GAMMA (prueba fuera de linea, 2026-10-17, docs/hm_fast_gamma_test.py; 2,640 muestras horarias, 60 sesiones, SPX/SPY/QQQ/NDX; cadena 0-2 DTE, +-1.5% del precio, calculadores de produccion)
+    Pregunta de Lester: "2 minutos en scalping es una eternidad". Idea: entre ciclos completos (~56 s el 10-16; 95-140 s otros dias) recalcular la gamma por strike con el precio en vivo y el reloj, manteniendo el OI y la IV del ultimo ciclo (el OI no cambia durante el dia).
+    Comparacion contra la cadena completa del instante siguiente (5 y 10 min despues; el hueco real entre ciclos es ~1 min, asi que es una cota conservadora). RAPIDA = recalculo con precio/reloj nuevos; VIEJA = dejar el ultimo snapshot sin tocar (lo que se ve hoy).
+    +5 min, todos los simbolos: error mediano del net GEX 3.4% (rapida) contra 7.5% (vieja); p90 19.7% contra 53.8%; error del perfil por strike 4.8% contra 10.2%; strike ABS acertado 98% contra 90%; flip: mediana 0.1 pts en ambas, p90 1.5 contra 11.7 pts.
+    +10 min: net GEX 4.0% contra 9.1%; perfil 5.4% contra 13.1%; ABS 98% contra 88%.
+    SPX solo (+5 min): net GEX 3.3% contra 7.6% (p90 18.4% contra 55.4%); perfil 5.1% contra 9.8%; ABS 99% contra 92%; flip mediana 0.2 contra 0.3 pts (p90 4.2 contra 8.0).
+    Lectura: la capa rapida reduce el error a menos de la mitad; el error que queda (3-5%) viene de la IV y las cotizaciones que cambian entre ciclos. No esta probado que mas velocidad mejore decisiones (el rebote a corto plazo no se detecto en el estudio del 2026-10-14): la velocidad da contexto mas fresco. Costo: calculo nuevo en el backend (hoy el heatmap solo lee), hay que decidir si se guarda o solo se muestra, y validar contra el ciclo completo en vivo.
+    Hecho el mismo dia (opcion 1, sin calculo nuevo): columnas de 1 minuto y consulta cada 15 s en #302 (commit c272e78).
+
 =====================================================================
 5. IDEAS APLICABLES A CONVEXA (como contexto para decidir, no como prediccion). Ordenadas por valor / facilidad
 =====================================================================
@@ -124,6 +133,6 @@ NO aplicable por evidencia: la parte de direccion de su pestana Predictions (Fue
 =====================================================================
 8. ARCHIVOS
 =====================================================================
-Scripts (docs/): hm_mentor_0723.py, hm_mentor_0723b.py, hm_wall_rules_0723.py, hm_oi_smile_0723.py, hm_side_stats_0723.py, hm_side_stats_window_0723.py, hm_gex_strike_0723.py, hm_gex_by_exp_0723.py, hm_unusual_oi_0723.py, hm_heat_strike_0723.py, hm_path_0723.py, hm_stage3_inventory.py, hm_cone_tests.py (opcion --zero-dte), hm_cone_analysis.py, hm_expected_move_test.py.
+Scripts (docs/): hm_mentor_0723.py, hm_mentor_0723b.py, hm_wall_rules_0723.py, hm_oi_smile_0723.py, hm_side_stats_0723.py, hm_side_stats_window_0723.py, hm_gex_strike_0723.py, hm_gex_by_exp_0723.py, hm_unusual_oi_0723.py, hm_heat_strike_0723.py, hm_path_0723.py, hm_stage3_inventory.py, hm_cone_tests.py (opcion --zero-dte), hm_cone_analysis.py, hm_expected_move_test.py, hm_fast_gamma_test.py.
 Datos en el servidor: V:\Convexa\bench\hm_stage2\cone_bars.csv, cone_gamma.csv, cone_gamma_0dte.csv.
 Memoria: mentor_predictions_tab_study_2026_10_17.md.
