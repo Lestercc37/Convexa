@@ -553,6 +553,7 @@ export function PriceChart({
       // the one-shot re-fit/recompute logic for a resize this component
       // caused itself rather than a real one.
       if (forcingRepaintRef.current) return;
+      recordChartEvent("chart-size", { width });
       recomputeBandRectsRef.current();
       // `autoSize`'s internal ResizeObserver (see the option's own comment
       // above) can report the container's real pixel width well after
@@ -641,6 +642,10 @@ export function PriceChart({
   useEffect(() => {
     const previousCandleCount = previousCandleCountRef.current;
     previousCandleCountRef.current = candles.length;
+    // Bulk changes only (a seed landing, a reset to zero): single live ticks would flood the 80-entry log.
+    if (previousCandleCount === 0 || Math.abs(candles.length - previousCandleCount) > 1) {
+      recordChartEvent("candles", { count: candles.length, previous: previousCandleCount });
+    }
     const latest = candles.at(-1);
     const series = seriesRef.current;
     if (!latest || !series) return;
