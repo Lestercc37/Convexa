@@ -17,7 +17,8 @@ type ChartSecondaryPanelProps = {
   symbol: string;
   spotPrice: number;
   gamma: GammaResponse;
-  gammaView?: GammaView;
+  gammaView?: GammaView;  /** Which view opens first; defaults to the flow view (the GEX profile lives inside the chart now). */
+  initialView?: SecondaryView;
 };
 type SecondaryView = "gex" | "flow";
 type NetGexColorClass = "positive" | "negative" | "zero";
@@ -113,9 +114,11 @@ export function ChartSecondaryPanel({
   spotPrice,
   gamma,
   gammaView = "structural",
+  initialView = "flow",
 }: ChartSecondaryPanelProps) {
   const { t } = useLanguage();
-  const [view, setView] = useState<SecondaryView>("gex");
+  // Starts on the flow view: the GEX-by-strike profile now lives aligned with the price axis inside the chart (design 9(b) / 12.7); the tab stays one click away.
+  const [view, setView] = useState<SecondaryView>(initialView);
   const [profile, setProfile] = useState<GammaAggregateResponse | null>(null);
   const [profileError, setProfileError] = useState<unknown>(null);
   // Keyed by alertKey (same dedup identity alerts-panel.tsx already uses)

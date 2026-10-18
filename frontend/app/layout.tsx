@@ -1,6 +1,11 @@
 import type { Metadata } from "next";
+import { Inter } from "next/font/google";
 import { LanguageProvider } from "@/lib/i18n/language-context";
 import "./globals.css";
+
+// Inter, the face the approved prototype was drawn with. next/font fetches it at build time and serves it from our own server (no request to Google from the
+// browser). Before this the stylesheet only NAMED Inter, so a PC without it installed fell back to Segoe UI.
+const inter = Inter({ subsets: ["latin"], display: "swap", variable: "--font-inter" });
 
 export const metadata: Metadata = {
   title: "Convexa | Gamma Dashboard",
@@ -14,7 +19,7 @@ export const metadata: Metadata = {
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   return (
     <html lang="es">
-      <body>
+      <body className={inter.variable}>
         <LanguageProvider>{children}</LanguageProvider>
       </body>
     </html>

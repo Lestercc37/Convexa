@@ -1,8 +1,9 @@
 import { screen, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
 import { renderWithLanguage } from "@/lib/i18n/test-utils";
 import type { DerivedMetrics } from "@/lib/types";
-import { DerivedMetricsBar } from "./derived-metrics-bar";
+import { DealersPanel, DerivedMetricsBar } from "./derived-metrics-bar";
 
 const confirmedMetrics: DerivedMetrics = {
   dealer_impact_score: { value: 78, provisional: false, days_accumulated: 60 },
@@ -64,5 +65,44 @@ describe("DerivedMetricsBar", () => {
     expect(within(bar).getAllByText("Acumulando datos — 8d/20d")).toHaveLength(4);
     expect(within(bar).getAllByText(proprietaryNote)).toHaveLength(3);
     expect(within(bar).getByText("Ventana: 60 días")).toBeInTheDocument();
+  });
+});
+
+describe("DealersPanel (design 12.7)", () => {
+  it("starts folded: one tab per metric with its own number, no detail cards", () => {
+    renderWithLanguage(<DealersPanel metrics={confirmedMetrics} />);
+
+    const tabs = screen.getByRole("group", { name: "Resumen de dealers" });
+    expect(within(tabs).getByText("78")).toBeInTheDocument(); // Dealer Impact Score
+    expect(within(tabs).getByText("62")).toBeInTheDocument(); // Signal Alignment Score
+    expect(within(tabs).getByText("Bullish · 71.2")).toBeInTheDocument(); // Market Bias
+    expect(within(tabs).getByText("Moderate · IV Rank 42.5")).toBeInTheDocument(); // Volatility Regime
+    expect(screen.queryByText("Dealer Impact Score")).not.toBeInTheDocument();
+    for (const tab of within(tabs).getAllByRole("button", { expanded: false })) {
+      expect(tab).toBeInTheDocument();
+    }
+  });
+
+  it("opens the detail cards with a click on any tab and folds them again with another", async () => {
+    const user = userEvent.setup();
+    renderWithLanguage(<DealersPanel metrics={confirmedMetrics} />);
+
+    await user.click(screen.getByRole("button", { name: /Sesgo/ }));
+    expect(screen.getByText("Dealer Impact Score")).toBeInTheDocument();
+    expect(screen.getByText("Volatility Regime")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: /Dealer/, expanded: true }));
+    expect(screen.queryByText("Dealer Impact Score")).not.toBeInTheDocument();
+  });
+
+  it("hides the whole group with 'Ocultar panel' and brings it back with a small button", async () => {
+    const user = userEvent.setup();
+    renderWithLanguage(<DealersPanel metrics={confirmedMetrics} />);
+
+    await user.click(screen.getByRole("button", { name: "Ocultar panel" }));
+    expect(screen.queryByRole("group", { name: "Resumen de dealers" })).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Mostrar dealers" }));
+    expect(screen.getByRole("group", { name: "Resumen de dealers" })).toBeInTheDocument();
   });
 });

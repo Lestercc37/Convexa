@@ -139,11 +139,14 @@ beforeAll(() => {
       createPriceLine: vi.fn(() => ({})),
       removePriceLine: vi.fn(),
       priceToCoordinate: vi.fn(() => 100),
+      attachPrimitive: vi.fn(),
+      detachPrimitive: vi.fn(),
     }),
     removeSeries: vi.fn(),
     applyOptions: vi.fn(),
     timeScale: () => ({
       fitContent: vi.fn(),
+      getVisibleLogicalRange: () => ({ from: 0, to: 100 }),
       setVisibleRange: vi.fn(),
       subscribeVisibleLogicalRangeChange: vi.fn(),
       unsubscribeVisibleLogicalRangeChange: vi.fn(),
@@ -387,6 +390,9 @@ describe("Dashboard", () => {
         expect.any(AbortSignal),
       ),
     );
+    // The panel opens on the flow view now (the GEX profile lives aligned with the price axis inside the chart); the GEX view is one click away.
+    expect(screen.getByRole("button", { name: "Flujo Whale Alerts" })).toHaveAttribute("aria-pressed", "true");
+    await userEvent.click(screen.getByRole("button", { name: "GEX por Strike" }));
     expect(await screen.findByLabelText("GEX por strike para SPY")).toBeInTheDocument();
   });
 

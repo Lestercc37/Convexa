@@ -58,6 +58,26 @@ export function navigationType(): string | null {
   }
 }
 
+/**
+ * Long tasks of the page (the main thread busy for 200 ms or more): a chart whose canvas was cleared by a resize stays blank until the main thread is free to repaint it,
+ * so a long task right before the chart comes back is the usual suspect for "the chart disappears for ~10 s after loading" (2026-10-18). Recorded as "long-task" with the
+ * duration and when it started (ms since the page began). Returns the cleanup; a browser without the Long Tasks API records nothing.
+ */
+export function observeLongTasks(record: typeof recordChartEvent = recordChartEvent): () => void {
+  if (typeof PerformanceObserver === "undefined") return () => undefined;
+  try {
+    const observer = new PerformanceObserver((list) => {
+      for (const entry of list.getEntries()) {
+        if (entry.duration >= 200) record("long-task", { ms: Math.round(entry.duration), startedAtMs: Math.round(entry.startTime) });
+      }
+    });
+    observer.observe({ type: "longtask", buffered: true });
+    return () => observer.disconnect();
+  } catch {
+    return () => undefined;
+  }
+}
+
 // Page-level signals that can explain a chart that empties and refills: the page itself (re)loading, the tab hidden/shown (browsers pause
 // and resume timers and sockets), and the network dropping. Returns the cleanup that removes the listeners.
 export function startChartLifecycleRecorder(): () => void {
@@ -72,7 +92,9 @@ export function startChartLifecycleRecorder(): () => void {
   window.addEventListener("online", onOnline);
   window.addEventListener("offline", onOffline);
   (window as unknown as { convexaChartLog?: () => ChartLifecycleEntry[] }).convexaChartLog = () => readChartEvents();
+  const stopLongTasks = observeLongTasks();
   return () => {
+    stopLongTasks();
     document.removeEventListener("visibilitychange", onVisibility);
     window.removeEventListener("pageshow", onPageShow);
     window.removeEventListener("online", onOnline);

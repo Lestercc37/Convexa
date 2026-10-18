@@ -43,6 +43,13 @@ export type Translations = {
   };
   derivedMetricsBar: {
     ariaLabel: string;
+    tabsAriaLabel: string;
+    tabDealer: string;
+    tabSignal: string;
+    tabBias: string;
+    tabVolatility: string;
+    showPanel: string;
+    hidePanel: string;
     volatilityWindowNote: string;
     accumulating: (daysAccumulated: number) => string;
   };

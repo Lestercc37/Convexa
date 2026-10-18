@@ -268,6 +268,24 @@ function withSessionOpenAnchor(
   return [anchor, ...candles.map(chartCandle)];
 }
 
+type CandleSeriesData = ReturnType<typeof withSessionOpenAnchor>;
+
+/**
+ * series.setData() plus a guard for a lightweight-charts 5.2.0 quirk, reproduced live on the dashboard 2026-10-18: the FIRST setData() after the chart
+ * mounted (the gamma/ATR effect, ~30 s after load when the first poll lands) leaves the time scale's visible logical range null. The series still holds its
+ * bars, but priceToCoordinate() returns null and the canvas paints nothing until another setData() runs (the next poll, ~30 s later): "the chart disappears for
+ * ~10 s after loading". Feeding the very same data a second time rebuilds the range (measured: single call -> null, second call -> {0..390}), so when the range
+ * came back null the data is set once more. Nothing to repair on an empty series (no range is expected then).
+ */
+export function setSeriesData(chart: IChartApi | null, series: ISeriesApi<"Candlestick">, data: CandleSeriesData): void {
+  series.setData(data);
+  if (!chart || data.length === 0) return;
+  if (chart.timeScale().getVisibleLogicalRange() === null) {
+    recordChartEvent("range-null-resync", { bars: data.length });
+    series.setData(data);
+  }
+}
+
 type TimePoint = { time: UTCTimestamp; value: number };
 
 // lightweight-charts requires setData() input strictly ascending by time.
@@ -445,7 +463,8 @@ export function PriceChart({
   const [showAtr, setShowAtr] = useState(true);
   const [showExpectedMove, setShowExpectedMove] = useState(true);
   // GEX histogram aligned with the price axis (draft, off by default so the current view is untouched).
-  const [showGexHistogram, setShowGexHistogram] = useState(false);
+  // On by default (design 9(b) / 12.7: the profile aligned with the price axis replaces the old bottom GEX-by-strike view); the checkbox switches it off.
+  const [showGexHistogram, setShowGexHistogram] = useState(true);
   // Whale alerts as small squares on the chart (design 12.8 to 12.14); off by default until it is checked against live alerts.
   const [showAlertCubes, setShowAlertCubes] = useState(false);
   const [cubeMinDeq, setCubeMinDeq] = useState<number>(DEFAULT_CUBE_FILTER.minDeq);
@@ -504,6 +523,8 @@ export function PriceChart({
       width: container.clientWidth,
       height: container.clientHeight || 420,
       layout: {
+        // The same face as the page (next/font's Inter), read from the body so the axis labels match the rest of the UI.
+        fontFamily: typeof document === "undefined" ? undefined : getComputedStyle(document.body).fontFamily || undefined,
         // Per user request (2026-09-23): a near-black chart body, distinct
         // from the lighter navy --tv-panel background the rest of the
         // dashboard's panels use -- solid rather than "transparent" so
@@ -565,6 +586,7 @@ export function PriceChart({
       // the one-shot re-fit/recompute logic for a resize this component
       // caused itself rather than a real one.
       if (forcingRepaintRef.current) return;
+      recordChartEvent("chart-size", { width });
       recomputeBandRectsRef.current();
       // `autoSize`'s internal ResizeObserver (see the option's own comment
       // above) can report the container's real pixel width well after
@@ -653,6 +675,10 @@ export function PriceChart({
   useEffect(() => {
     const previousCandleCount = previousCandleCountRef.current;
     previousCandleCountRef.current = candles.length;
+    // Bulk changes only (a seed landing, a reset to zero): single live ticks would flood the 80-entry log.
+    if (previousCandleCount === 0 || Math.abs(candles.length - previousCandleCount) > 1) {
+      recordChartEvent("candles", { count: candles.length, previous: previousCandleCount });
+    }
     const latest = candles.at(-1);
     const series = seriesRef.current;
     if (!latest || !series) return;
@@ -675,7 +701,7 @@ export function PriceChart({
       // thrown by this update() call itself. setData() fully re-establishes
       // internal state from scratch and has no such assumption, so every
       // zero-to-nonzero transition must go through it, not update().
-      series.setData(withSessionOpenAnchor(candles, sessionOpenSecondsRef.current));
+      setSeriesData(chartRef.current, series, withSessionOpenAnchor(candles, sessionOpenSecondsRef.current));
     } else {
       try {
         series.update(chartCandle(latest));
@@ -696,7 +722,7 @@ export function PriceChart({
         // Fast Refresh reload being the concrete case found, not ruled out
         // for good going forward.
         console.warn("PriceChart: series.update() rejected the latest candle, resyncing via setData()", error);
-        series.setData(withSessionOpenAnchor(candles, sessionOpenSecondsRef.current));
+        setSeriesData(chartRef.current, series, withSessionOpenAnchor(candles, sessionOpenSecondsRef.current));
       }
     }
     // The mount effect's fitContent() call above only ever saw whatever
@@ -978,7 +1004,7 @@ export function PriceChart({
     // library re-run `autoscaleInfoProvider` with the freshly updated ref
     // (verified the same way: staleness before, correct range after).
     const series = seriesRef.current;
-    if (series) series.setData(withSessionOpenAnchor(candles, sessionOpenSecondsRef.current));
+    if (series) setSeriesData(chartRef.current, series, withSessionOpenAnchor(candles, sessionOpenSecondsRef.current));
     // `candles` is deliberately omitted below: it's read here only for its
     // current value, to nudge autoscale when the reference levels change.
     // Candle *updates* are handled by the separate effect above via

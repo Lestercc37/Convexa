@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { useLanguage } from "@/lib/i18n/language-context";
 import type { DerivedMetrics } from "@/lib/types";
 
@@ -101,5 +102,57 @@ export function DerivedMetricsBar({ metrics, showStructuralOnlyBadge }: DerivedM
         accumulatingLabel={accumulatingLabel}
       />
     </section>
+  );
+}
+
+type DealersPanelState = "folded" | "open" | "hidden";
+
+/**
+ * The Dealers group (Dealer Impact / Signal Alignment / Market Bias / Volatility Regime) as the approved design 12.7 asks: folded by default,
+ * each tab shows its own number, one click opens the detail cards, "Ocultar panel" hides the whole group (a small button brings it back).
+ * The state lives in the page only (a reload starts folded again).
+ */
+export function DealersPanel({ metrics, showStructuralOnlyBadge }: DerivedMetricsBarProps) {
+  const { t } = useLanguage();
+  const [state, setState] = useState<DealersPanelState>("folded");
+  if (state === "hidden") {
+    return (
+      <button type="button" className="dealers-show" onClick={() => setState("folded")}>
+        {t.derivedMetricsBar.showPanel}
+      </button>
+    );
+  }
+  const open = state === "open";
+  const tabs = [
+    { key: "dealer", name: t.derivedMetricsBar.tabDealer, value: formatNumber(metrics.dealer_impact_score.value) },
+    { key: "signal", name: t.derivedMetricsBar.tabSignal, value: formatNumber(metrics.signal_alignment_score.value) },
+    { key: "bias", name: t.derivedMetricsBar.tabBias, value: labeledValue(metrics.market_bias.label, metrics.market_bias.score) },
+    {
+      key: "volatility",
+      name: t.derivedMetricsBar.tabVolatility,
+      value: labeledValue(metrics.volatility_regime.label, metrics.volatility_regime.iv_rank, "IV Rank "),
+    },
+  ];
+  return (
+    <div className="dealers-panel">
+      <div className="dealers-tabs" role="group" aria-label={t.derivedMetricsBar.tabsAriaLabel}>
+        {tabs.map((tab) => (
+          <button
+            key={tab.key}
+            type="button"
+            className="dealers-tab"
+            aria-expanded={open}
+            onClick={() => setState(open ? "folded" : "open")}
+          >
+            <span className="dealers-tab-name">{tab.name}</span>
+            <strong className="dealers-tab-value">{tab.value}</strong>
+          </button>
+        ))}
+        <button type="button" className="dealers-hide" onClick={() => setState("hidden")}>
+          {t.derivedMetricsBar.hidePanel}
+        </button>
+      </div>
+      {open && <DerivedMetricsBar metrics={metrics} showStructuralOnlyBadge={showStructuralOnlyBadge} />}
+    </div>
   );
 }

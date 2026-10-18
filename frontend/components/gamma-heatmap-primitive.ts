@@ -29,6 +29,8 @@ export type HeatmapData = {
   strikes: number[];
   columns: HeatmapColumn[];
   scale: number | null;
+  /** True for a figure with no sign (absolute gamma): drawn with the neutral blue ramp, never the green one that means positive. */
+  unsigned?: boolean;
 };
 
 /** The API response as the primitive wants it: columns floored to the minute so they land on a candle. */
@@ -36,6 +38,7 @@ export function heatmapFromResponse(response: GammaHeatmapResponse): HeatmapData
   return {
     strikes: response.strikes,
     scale: response.scale_p98,
+    unsigned: response.metric === "absolute_gamma",
     columns: response.columns.map((column) => ({
       time: Math.floor(Date.parse(column.as_of) / 60_000) * 60,
       values: column.values,
@@ -48,6 +51,8 @@ type Stop = [number, number, number];
 // Same ramps as the approved prototype (docs/prototipos/heatmap-flujo-alertas-2026-10-16.html).
 export const HEATMAP_POSITIVE_STOPS: Stop[] = [[10, 61, 34], [8, 120, 60], [0, 168, 70], [0, 220, 90], [110, 255, 160], [255, 255, 255]];
 export const HEATMAP_NEGATIVE_STOPS: Stop[] = [[74, 10, 13], [130, 8, 14], [190, 6, 12], [250, 0, 10], [255, 120, 110], [255, 255, 255]];
+// A magnitude with no sign (absolute gamma): blue, so nobody reads it as 'bullish green' or 'bearish red'.
+export const HEATMAP_UNSIGNED_STOPS: Stop[] = [[22, 36, 84], [34, 62, 150], [52, 100, 214], [96, 156, 255], [170, 206, 255], [255, 255, 255]];
 
 // Below this share of the scale a cell is left empty: the background of a quiet strike is the chart, not a dark tile.
 export const HEATMAP_MINIMUM_SHARE = 0.04;
@@ -76,17 +81,17 @@ export function rampColor(stops: Stop[], fraction: number): [number, number, num
 }
 
 /** RGB of a cell, or null when it is too faint to draw. */
-export function cellRgb(value: number | null, scale: number | null): [number, number, number] | null {
+export function cellRgb(value: number | null, scale: number | null, unsigned = false): [number, number, number] | null {
   if (value === null || scale === null || !(scale > 0)) return null;
   const share = Math.abs(value) / scale;
   if (share < HEATMAP_MINIMUM_SHARE) return null;
-  const stops = value >= 0 ? HEATMAP_POSITIVE_STOPS : HEATMAP_NEGATIVE_STOPS;
+  const stops = unsigned ? HEATMAP_UNSIGNED_STOPS : value >= 0 ? HEATMAP_POSITIVE_STOPS : HEATMAP_NEGATIVE_STOPS;
   return rampColor(stops, share >= HEATMAP_TOP_SHARE ? 1 : Math.min(1, share) * 0.96);
 }
 
 /** CSS color of a cell, or null when it is too faint to draw. */
-export function cellColor(value: number | null, scale: number | null): string | null {
-  const rgb = cellRgb(value, scale);
+export function cellColor(value: number | null, scale: number | null, unsigned = false): string | null {
+  const rgb = cellRgb(value, scale, unsigned);
   if (rgb === null) return null;
   return `rgba(${rgb[0]}, ${rgb[1]}, ${rgb[2]}, ${HEATMAP_ALPHA})`;
 }
@@ -104,51 +109,77 @@ function medianStep(values: number[]): number | null {
   return steps[Math.floor(steps.length / 2)];
 }
 
-/** Step between strikes when every strike sits on the grid of the median step (gaps allowed), else null: then the sharp per-cell drawing is used. */
-export function uniformStrikeStep(strikes: number[]): number | null {
-  if (strikes.length < 2) return null;
-  const sorted = [...strikes].sort((a, b) => a - b);
-  const step = medianStep(sorted);
-  if (step === null) return null;
-  for (const strike of sorted) {
-    const position = (strike - sorted[0]) / step;
-    if (Math.abs(position - Math.round(position)) > 0.02) return null;
+function gcd(a: number, b: number): number {
+  return b === 0 ? a : gcd(b, a % b);
+}
+
+/**
+ * Row step of the picture: the largest step every gap between neighbouring strikes is a whole multiple of (the greatest common divisor of the gaps, to
+ * the cent), so strikes of different spacing (NDX: 5 near the money, 10 further out, 25 in the wings) all land on a row. Coarsened when that would take
+ * more than MAX_IMAGE_ROWS rows. Null with fewer than two distinct strikes.
+ */
+export function strikeGridStep(strikes: number[]): number | null {
+  const sorted = [...new Set(strikes)].sort((a, b) => a - b);
+  if (sorted.length < 2) return null;
+  let divisor = 0;
+  for (let index = 1; index < sorted.length; index += 1) {
+    divisor = gcd(Math.round((sorted[index] - sorted[index - 1]) * 100), divisor);
   }
-  const rows = Math.round((sorted[sorted.length - 1] - sorted[0]) / step) + 1;
-  return rows <= MAX_IMAGE_ROWS ? step : null;
+  if (divisor <= 0) return null;
+  const range = sorted[sorted.length - 1] - sorted[0];
+  const step = divisor / 100;
+  return range / step + 1 <= MAX_IMAGE_ROWS ? step : range / (MAX_IMAGE_ROWS - 1);
 }
 
 export type HeatmapImage = {
   /** One pixel per column. */
   width: number;
-  /** One pixel per strike row of the regular grid, the highest strike first (row 0). */
+  /** One pixel per row of the regular price grid (strikes of any spacing), the highest price first (row 0). */
   height: number;
   pixels: Uint8ClampedArray<ArrayBuffer>;
   lowStrike: number;
   highStrike: number;
 };
 
-/** The matrix as a one-pixel-per-cell RGBA image (what the smooth drawing scales up and blurs), or null when the strikes are not on one regular grid. */
+/**
+ * The matrix as a one-pixel-per-row-and-column RGBA image (what the smooth drawing scales up and blurs). Every row of the regular price grid takes the
+ * value of its NEAREST strike, so strikes spaced 5, 10 or 25 apart paint a continuous map instead of blank rows between them; a row farther than
+ * 1.5 median gaps from every strike (a hole in the strikes) stays empty. Null without columns or with fewer than two strikes.
+ */
 export function heatmapImage(data: HeatmapData): HeatmapImage | null {
   if (!data.columns.length) return null;
-  const step = uniformStrikeStep(data.strikes);
+  const step = strikeGridStep(data.strikes);
   if (step === null) return null;
-  const lowStrike = Math.min(...data.strikes);
-  const highStrike = Math.max(...data.strikes);
+  const order = data.strikes.map((_, index) => index).sort((a, b) => data.strikes[a] - data.strikes[b]);
+  const sortedStrikes = order.map((index) => data.strikes[index]);
+  const lowStrike = sortedStrikes[0];
+  const highStrike = sortedStrikes[sortedStrikes.length - 1];
   const height = Math.round((highStrike - lowStrike) / step) + 1;
   const width = data.columns.length;
+  const medianGap = medianStep(sortedStrikes) ?? step;
+  const reach = 1.5 * medianGap;
+  // Nearest strike of every grid row (walking both sorted lists once).
+  const rowStrike: number[] = new Array(height).fill(-1);
+  let pointer = 0;
+  for (let row = 0; row < height; row += 1) {
+    const price = lowStrike + row * step;
+    while (pointer + 1 < sortedStrikes.length && Math.abs(sortedStrikes[pointer + 1] - price) <= Math.abs(sortedStrikes[pointer] - price)) pointer += 1;
+    if (Math.abs(sortedStrikes[pointer] - price) <= reach) rowStrike[row] = order[pointer];
+  }
   const pixels = new Uint8ClampedArray(new ArrayBuffer(width * height * 4));
+  const alpha = Math.round(HEATMAP_ALPHA * 255);
   data.columns.forEach((column, columnIndex) => {
-    data.strikes.forEach((strike, strikeIndex) => {
-      const rgb = cellRgb(column.values[strikeIndex] ?? null, data.scale);
-      if (rgb === null) return;
-      const row = height - 1 - Math.round((strike - lowStrike) / step);
-      const offset = (row * width + columnIndex) * 4;
+    for (let row = 0; row < height; row += 1) {
+      const strikeIndex = rowStrike[row];
+      if (strikeIndex < 0) continue;
+      const rgb = cellRgb(column.values[strikeIndex] ?? null, data.scale, data.unsigned);
+      if (rgb === null) continue;
+      const offset = ((height - 1 - row) * width + columnIndex) * 4;
       pixels[offset] = rgb[0];
       pixels[offset + 1] = rgb[1];
       pixels[offset + 2] = rgb[2];
-      pixels[offset + 3] = Math.round(HEATMAP_ALPHA * 255);
-    });
+      pixels[offset + 3] = alpha;
+    }
   });
   return { width, height, pixels, lowStrike, highStrike };
 }
@@ -282,7 +313,7 @@ class GammaHeatmapRenderer implements IPrimitivePaneRenderer {
             : lastWidth || scope.horizontalPixelRatio * 8;
         lastWidth = width;
         for (const row of rows) {
-          const color = cellColor(column.values[row.index] ?? null, data.scale);
+          const color = cellColor(column.values[row.index] ?? null, data.scale, data.unsigned);
           if (color === null) continue;
           scope.context.fillStyle = color;
           scope.context.fillRect(left, row.y - rowHeight / 2, Math.max(1, width), rowHeight);

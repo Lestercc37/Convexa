@@ -1,6 +1,6 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { CHART_LIFECYCLE_MAX_ENTRIES, CHART_LIFECYCLE_STORAGE_KEY, readChartEvents, recordChartEvent } from "./chart-lifecycle";
+import { CHART_LIFECYCLE_MAX_ENTRIES, CHART_LIFECYCLE_STORAGE_KEY, observeLongTasks, readChartEvents, recordChartEvent } from "./chart-lifecycle";
 
 function fakeStorage(initial?: string) {
   const data = new Map<string, string>();
@@ -41,5 +41,50 @@ describe("chart lifecycle recorder", () => {
     const refusing = { getItem: () => null, setItem: () => { throw new Error("quota"); } };
     expect(() => recordChartEvent("page-load", {}, refusing)).not.toThrow();
     expect(readChartEvents(null)).toEqual([]);
+  });
+});
+
+describe("observeLongTasks", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("records only the long tasks of 200 ms or more, with duration and start, and disconnects on cleanup", () => {
+    let callback: ((list: { getEntries: () => { duration: number; startTime: number }[] }) => void) | null = null;
+    const disconnect = vi.fn();
+    const observe = vi.fn();
+    vi.stubGlobal(
+      "PerformanceObserver",
+      class {
+        constructor(cb: typeof callback) {
+          callback = cb;
+        }
+        observe = observe;
+        disconnect = disconnect;
+      },
+    );
+    const record = vi.fn();
+
+    const stop = observeLongTasks(record);
+    expect(observe).toHaveBeenCalledWith({ type: "longtask", buffered: true });
+    callback!({ getEntries: () => [{ duration: 120, startTime: 1000 }, { duration: 8400.4, startTime: 2500.6 }] });
+
+    expect(record).toHaveBeenCalledTimes(1);
+    expect(record).toHaveBeenCalledWith("long-task", { ms: 8400, startedAtMs: 2501 });
+    stop();
+    expect(disconnect).toHaveBeenCalled();
+  });
+
+  it("does nothing where the Long Tasks API is missing or refuses to observe", () => {
+    vi.stubGlobal("PerformanceObserver", undefined);
+    expect(() => observeLongTasks(vi.fn())()).not.toThrow();
+    vi.stubGlobal(
+      "PerformanceObserver",
+      class {
+        observe() {
+          throw new TypeError("unsupported entry type");
+        }
+        disconnect() {}
+      },
+    );
+    expect(() => observeLongTasks(vi.fn())()).not.toThrow();
   });
 });

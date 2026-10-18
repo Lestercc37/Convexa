@@ -35,7 +35,7 @@ import type { GammaResponse, GammaView, MarketResponse, Underlying } from "@/lib
 import { AlertsPanel } from "./alerts-panel";
 import { ChartSecondaryPanel } from "./chart-secondary-panel";
 import { ClosingDynamicsPanel } from "./closing-dynamics-panel";
-import { DerivedMetricsBar } from "./derived-metrics-bar";
+import { DealersPanel } from "./derived-metrics-bar";
 import { EnginesGuidePanel } from "./engines-guide-panel";
 import { ExpectedMoveWidget } from "./expected-move-widget";
 import { FutureOpeningPriceControl } from "./future-opening-price-control";
@@ -698,7 +698,7 @@ export function Dashboard() {
           );
           const metricsContent = (
             <aside className="tv-sidebar">
-              <DerivedMetricsBar
+              <DealersPanel
                 metrics={gamma.derived_metrics}
                 showStructuralOnlyBadge={gammaView === "tactical"}
               />

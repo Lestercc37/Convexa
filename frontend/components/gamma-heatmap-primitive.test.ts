@@ -7,9 +7,10 @@ import {
   HEATMAP_MINIMUM_SHARE,
   HEATMAP_NEGATIVE_STOPS,
   HEATMAP_POSITIVE_STOPS,
+  heatmapFromResponse,
   heatmapImage,
   rampColor,
-  uniformStrikeStep,
+  strikeGridStep,
   type HeatmapData,
 } from "./gamma-heatmap-primitive";
 
@@ -151,12 +152,18 @@ describe("GammaHeatmapPrimitive", () => {
 });
 
 describe("smooth drawing helpers", () => {
-  it("uniformStrikeStep returns the grid step, tolerates gaps and refuses strikes that are not on one grid", () => {
-    expect(uniformStrikeStep([100, 105, 110, 115])).toBe(5);
-    expect(uniformStrikeStep([100, 105, 115, 120])).toBe(5); // a missing strike leaves a blank row
-    expect(uniformStrikeStep([100, 102.5, 105, 110, 120])).toBeNull(); // mixed 2.5 / 5 / 10 spacing: sharp cells instead
-    expect(uniformStrikeStep([100])).toBeNull();
-    expect(uniformStrikeStep([])).toBeNull();
+  it("strikeGridStep is the largest step every gap is a whole multiple of, so mixed spacing (NDX) still lands on rows", () => {
+    expect(strikeGridStep([100, 105, 110, 115])).toBe(5);
+    expect(strikeGridStep([100, 105, 115, 120])).toBe(5); // a missing strike is a multiple of the step
+    expect(strikeGridStep([28500, 28505, 28510, 28520, 28530, 28555, 28580])).toBe(5); // steps of 5, 10 and 25
+    expect(strikeGridStep([100, 102.5, 105, 110, 120])).toBe(2.5);
+    expect(strikeGridStep([100, 100])).toBeNull();
+    expect(strikeGridStep([100])).toBeNull();
+    expect(strikeGridStep([])).toBeNull();
+    // Too many rows: coarsened instead of refusing.
+    const coarse = strikeGridStep([0, 0.01, 1000])!;
+    expect(coarse).toBeGreaterThan(0.01);
+    expect(1000 / coarse + 1).toBeLessThanOrEqual(1500);
   });
 
   it("heatmapImage makes one pixel per column and strike row, highest strike first, faint and empty cells transparent", () => {
@@ -177,9 +184,32 @@ describe("smooth drawing helpers", () => {
     expect(negative[0]).toBeGreaterThan(negative[1]); // value -50 (half the scale): red side of the ramp
   });
 
-  it("heatmapImage is null without columns or on an irregular strike grid", () => {
+  it("heatmapImage paints mixed strike spacing as a continuous map: every grid row takes the value of its nearest strike", () => {
+    // Strikes 100, 110, 120 (10 apart), 125 and 150 (25 apart): grid step 5, rows 100, 105, ..., 150.
+    const data: HeatmapData = { strikes: [100, 110, 120, 125, 150], scale: 100, columns: [{ time: 1000, values: [100, -100, 100, -100, 100] }] };
+    const image = heatmapImage(data)!;
+    expect(image.height).toBe(11);
+    const rowOf = (price: number) => image.height - 1 - (price - 100) / 5;
+    const alphaAt = (price: number) => image.pixels[rowOf(price) * image.width * 4 + 3];
+    expect(alphaAt(100)).toBeGreaterThan(0);
+    expect(alphaAt(105)).toBeGreaterThan(0); // between two strikes: not a blank row
+    expect(alphaAt(115)).toBeGreaterThan(0);
+    expect(alphaAt(135)).toBeGreaterThan(0); // 10 from 125, 15 from 150: inside the reach (1.5 median gaps)
+    expect(alphaAt(150)).toBeGreaterThan(0);
+  });
+
+  it("heatmapImage leaves a hole in the strikes empty instead of stretching the last strike over it", () => {
+    const data: HeatmapData = { strikes: [100, 105, 110, 200], scale: 100, columns: [{ time: 1000, values: [100, 100, 100, 100] }] };
+    const image = heatmapImage(data)!;
+    const alphaAt = (price: number) => image.pixels[(image.height - 1 - (price - 100) / 5) * image.width * 4 + 3];
+    expect(alphaAt(110)).toBeGreaterThan(0);
+    expect(alphaAt(130)).toBe(0); // 20 from the nearest strike, reach is 7.5
+    expect(alphaAt(200)).toBeGreaterThan(0);
+  });
+
+  it("heatmapImage is null without columns or with fewer than two strikes", () => {
     expect(heatmapImage({ strikes: [100, 105], scale: 1, columns: [] })).toBeNull();
-    expect(heatmapImage({ strikes: [100, 102.5, 105, 110, 120], scale: 1, columns: [{ time: 1000, values: [1, 1, 1, 1, 1] }] })).toBeNull();
+    expect(heatmapImage({ strikes: [100], scale: 1, columns: [{ time: 1000, values: [1] }] })).toBeNull();
   });
 
   it("cellRgb and cellColor agree", () => {
@@ -194,5 +224,26 @@ describe("smooth drawing helpers", () => {
     const context = fakeContext();
     drawWith(primitive, context);
     expect(context.fills).toHaveLength(5); // same cells as the sharp drawing
+  });
+});
+
+describe("unsigned metric (absolute gamma)", () => {
+  it("is drawn with the neutral blue ramp, whatever the sign of the stored number, and never the green or red one", () => {
+    const channels = (rgb: [number, number, number] | null) => rgb!;
+    const unsigned = channels(cellRgb(40, 100, true));
+    expect(unsigned[2]).toBeGreaterThan(unsigned[1]); // blue dominant
+    expect(unsigned[2]).toBeGreaterThan(unsigned[0]);
+    expect(cellRgb(-40, 100, true)).toEqual(cellRgb(40, 100, true)); // no sign
+    expect(cellRgb(100, 100, true)).toEqual([255, 255, 255]); // the strongest strike is still white
+    const signed = channels(cellRgb(40, 100));
+    expect(signed[1]).toBeGreaterThan(signed[2]); // the signed ramp is unchanged: positive stays green
+    expect(cellColor(40, 100, true)).toMatch(/^rgba\(\d+, \d+, \d+, 0\.62\)$/);
+  });
+
+  it("heatmapFromResponse marks only absolute gamma as unsigned", () => {
+    const response = { schema_version: 1, symbol: "SPY", view: "tactical" as const, bucket_seconds: 60, strikes: [100], columns: [], scale_p98: 1 };
+    expect(heatmapFromResponse({ ...response, metric: "absolute_gamma" }).unsigned).toBe(true);
+    expect(heatmapFromResponse({ ...response, metric: "gamma" }).unsigned).toBe(false);
+    expect(heatmapFromResponse({ ...response, metric: "delta" }).unsigned).toBe(false);
   });
 });

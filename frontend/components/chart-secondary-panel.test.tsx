@@ -18,6 +18,7 @@ const apiMocks = vi.hoisted(() => ({ getGammaProfile: vi.fn(), getAlerts: vi.fn(
 // Between the two fixture strikes (545/550) — a realistic spot price
 // mid-chain, not coinciding with either strike.
 const SPOT_PRICE = 547.25;
+const profileFixtureForDefaultView = { schema_version: 1, symbol: "SPY", as_of: "2026-08-07T20:30:00Z", view: "tactical", has_data: false, items: [] };
 
 vi.mock("@/lib/api", async () => {
   const actual = await vi.importActual<typeof import("@/lib/api")>("@/lib/api");
@@ -135,7 +136,7 @@ beforeEach(() => {
 
 describe("ChartSecondaryPanel", () => {
   it("renders the GEX-by-strike view by default, with a bar per strike", async () => {
-    renderWithLanguage(<ChartSecondaryPanel symbol="SPY" spotPrice={SPOT_PRICE} gamma={gamma} />);
+    renderWithLanguage(<ChartSecondaryPanel initialView="gex" symbol="SPY" spotPrice={SPOT_PRICE} gamma={gamma} />);
 
     await waitFor(() =>
       expect(apiMocks.getGammaProfile).toHaveBeenCalledWith(
@@ -185,7 +186,7 @@ describe("ChartSecondaryPanel", () => {
         ],
       }),
     );
-    renderWithLanguage(<ChartSecondaryPanel symbol="SPY" spotPrice={SPOT_PRICE} gamma={gamma} />);
+    renderWithLanguage(<ChartSecondaryPanel initialView="gex" symbol="SPY" spotPrice={SPOT_PRICE} gamma={gamma} />);
     await screen.findByLabelText("GEX por strike para SPY");
 
     // Exactly one bar per strike now — no separate call/put rects.
@@ -250,7 +251,7 @@ describe("ChartSecondaryPanel", () => {
         ],
       }),
     );
-    renderWithLanguage(<ChartSecondaryPanel symbol="SPY" spotPrice={SPOT_PRICE} gamma={gamma} />);
+    renderWithLanguage(<ChartSecondaryPanel initialView="gex" symbol="SPY" spotPrice={SPOT_PRICE} gamma={gamma} />);
     await screen.findByLabelText("GEX por strike para SPY");
 
     const bar545 = screen.getByLabelText("Strike 545").querySelector(".secondary-gex-bar");
@@ -310,7 +311,7 @@ describe("ChartSecondaryPanel", () => {
         ],
       }),
     );
-    renderWithLanguage(<ChartSecondaryPanel symbol="SPY" spotPrice={SPOT_PRICE} gamma={gamma} />);
+    renderWithLanguage(<ChartSecondaryPanel initialView="gex" symbol="SPY" spotPrice={SPOT_PRICE} gamma={gamma} />);
     await screen.findByLabelText("GEX por strike para SPY");
 
     expect(document.querySelectorAll(".secondary-gex-bar")).toHaveLength(2);
@@ -352,7 +353,7 @@ describe("ChartSecondaryPanel", () => {
         ],
       }),
     );
-    renderWithLanguage(<ChartSecondaryPanel symbol="SPY" spotPrice={SPOT_PRICE} gamma={gamma} />);
+    renderWithLanguage(<ChartSecondaryPanel initialView="gex" symbol="SPY" spotPrice={SPOT_PRICE} gamma={gamma} />);
     await screen.findByLabelText("GEX por strike para SPY");
 
     expect(document.querySelectorAll(".secondary-gex-bar")).toHaveLength(2);
@@ -363,7 +364,7 @@ describe("ChartSecondaryPanel", () => {
     // (net 40) — on a shared scale the 545 bar must be taller. Independent
     // per-strike normalization would make every bar the same height
     // regardless of its real magnitude, which this disproves.
-    renderWithLanguage(<ChartSecondaryPanel symbol="SPY" spotPrice={SPOT_PRICE} gamma={gamma} />);
+    renderWithLanguage(<ChartSecondaryPanel initialView="gex" symbol="SPY" spotPrice={SPOT_PRICE} gamma={gamma} />);
     await screen.findByLabelText("GEX por strike para SPY");
 
     const height545 = Number(
@@ -377,7 +378,7 @@ describe("ChartSecondaryPanel", () => {
   });
 
   it("keeps Call GEX, Put GEX and Net GEX in the per-strike tooltip even though the bar itself is a single net value", async () => {
-    renderWithLanguage(<ChartSecondaryPanel symbol="SPY" spotPrice={SPOT_PRICE} gamma={gamma} />);
+    renderWithLanguage(<ChartSecondaryPanel initialView="gex" symbol="SPY" spotPrice={SPOT_PRICE} gamma={gamma} />);
     await screen.findByLabelText("GEX por strike para SPY");
 
     const tooltip = screen.getByLabelText("Strike 545").querySelector("title");
@@ -388,7 +389,7 @@ describe("ChartSecondaryPanel", () => {
   });
 
   it("renders Call Wall, Put Wall, Abs. Gamma/Magnet, Max Pain and Gamma Flip as vertical lines at their real backend values", async () => {
-    renderWithLanguage(<ChartSecondaryPanel symbol="SPY" spotPrice={SPOT_PRICE} gamma={gamma} />);
+    renderWithLanguage(<ChartSecondaryPanel initialView="gex" symbol="SPY" spotPrice={SPOT_PRICE} gamma={gamma} />);
     await screen.findByLabelText("GEX por strike para SPY");
 
     const callWall = screen.getByLabelText("Call Wall 555");
@@ -418,7 +419,7 @@ describe("ChartSecondaryPanel", () => {
   });
 
   it("does not render a separate Magnet Strike line — confirmed the same backend value as Abs. Gamma, so one line covers both labels", async () => {
-    renderWithLanguage(<ChartSecondaryPanel symbol="SPY" spotPrice={SPOT_PRICE} gamma={gamma} />);
+    renderWithLanguage(<ChartSecondaryPanel initialView="gex" symbol="SPY" spotPrice={SPOT_PRICE} gamma={gamma} />);
     await screen.findByLabelText("GEX por strike para SPY");
 
     expect(screen.queryByLabelText(/^Magnet Strike/)).not.toBeInTheDocument();
@@ -427,7 +428,7 @@ describe("ChartSecondaryPanel", () => {
 
   it("hides the Gamma Flip level line when gamma_flip is null, without hiding the others", async () => {
     renderWithLanguage(
-      <ChartSecondaryPanel symbol="SPY" spotPrice={SPOT_PRICE} gamma={{ ...gamma, gamma_flip: null }} />,
+      <ChartSecondaryPanel initialView="gex" symbol="SPY" spotPrice={SPOT_PRICE} gamma={{ ...gamma, gamma_flip: null }} />,
     );
     await screen.findByLabelText("GEX por strike para SPY");
 
@@ -438,7 +439,7 @@ describe("ChartSecondaryPanel", () => {
 
   it("renders a spot price reference line and label, updating when the price prop changes", async () => {
     const { rerender } = renderWithLanguage(
-      <ChartSecondaryPanel symbol="SPY" spotPrice={SPOT_PRICE} gamma={gamma} />,
+      <ChartSecondaryPanel initialView="gex" symbol="SPY" spotPrice={SPOT_PRICE} gamma={gamma} />,
     );
     await screen.findByLabelText("GEX por strike para SPY");
 
@@ -448,7 +449,7 @@ describe("ChartSecondaryPanel", () => {
     expect(initialX).toBeTruthy();
     expect(screen.getByText("547.25")).toBeInTheDocument();
 
-    rerender(<ChartSecondaryPanel symbol="SPY" spotPrice={549.8} gamma={gamma} />);
+    rerender(<ChartSecondaryPanel initialView="gex" symbol="SPY" spotPrice={549.8} gamma={gamma} />);
 
     expect(screen.getByLabelText("Precio spot: 549.8")).toBeInTheDocument();
     expect(screen.getByText("549.8")).toBeInTheDocument();
@@ -461,7 +462,7 @@ describe("ChartSecondaryPanel", () => {
     // strikes are 540-550, but the mock underlying's own spot price
     // (552.25) sits just outside that range — the line must stay inside
     // the visible plot instead of drifting past its right edge.
-    renderWithLanguage(<ChartSecondaryPanel symbol="SPY" spotPrice={999} gamma={gamma} />);
+    renderWithLanguage(<ChartSecondaryPanel initialView="gex" symbol="SPY" spotPrice={999} gamma={gamma} />);
     await screen.findByLabelText("GEX por strike para SPY");
 
     const spotLine = document.querySelector(".secondary-gex-spot");
@@ -472,7 +473,7 @@ describe("ChartSecondaryPanel", () => {
 
   it("toggles from the GEX view to the Whale Alerts flow view and back", async () => {
     const user = userEvent.setup();
-    renderWithLanguage(<ChartSecondaryPanel symbol="SPY" spotPrice={SPOT_PRICE} gamma={gamma} />);
+    renderWithLanguage(<ChartSecondaryPanel initialView="gex" symbol="SPY" spotPrice={SPOT_PRICE} gamma={gamma} />);
     await screen.findByLabelText("GEX por strike para SPY");
 
     await user.click(screen.getByRole("button", { name: "Flujo Whale Alerts" }));
@@ -491,7 +492,7 @@ describe("ChartSecondaryPanel", () => {
   it("shows a translated error when the GEX profile fetch fails", async () => {
     apiMocks.getGammaProfile.mockRejectedValue(new ApiError(404));
 
-    renderWithLanguage(<ChartSecondaryPanel symbol="SPY" spotPrice={SPOT_PRICE} gamma={gamma} />);
+    renderWithLanguage(<ChartSecondaryPanel initialView="gex" symbol="SPY" spotPrice={SPOT_PRICE} gamma={gamma} />);
 
     expect(await screen.findByRole("alert")).toHaveTextContent("No se encontró el recurso solicitado.");
   });
@@ -521,7 +522,7 @@ describe("ChartSecondaryPanel", () => {
     // local timezone renders, same as the component does.
     const sinceCaption = `Datos desde las ${new Date(firstAlert.timestamp).toLocaleTimeString()} — memoria del backend, sin persistencia`;
 
-    renderWithLanguage(<ChartSecondaryPanel symbol="SPY" spotPrice={SPOT_PRICE} gamma={gamma} />);
+    renderWithLanguage(<ChartSecondaryPanel initialView="gex" symbol="SPY" spotPrice={SPOT_PRICE} gamma={gamma} />);
     await user.click(screen.getByRole("button", { name: "Flujo Whale Alerts" }));
     await waitFor(() => expect(apiMocks.getAlerts).toHaveBeenCalledTimes(1));
     // First poll only: net flow so far is +1000 (1500 buy - 500 sell) from
@@ -563,7 +564,7 @@ describe("ChartSecondaryPanel", () => {
     apiMocks.getAlerts.mockResolvedValue(alertsResponse([whaleAlert, sustainedAlert]));
 
     const user = userEvent.setup();
-    renderWithLanguage(<ChartSecondaryPanel symbol="SPY" spotPrice={SPOT_PRICE} gamma={gamma} />);
+    renderWithLanguage(<ChartSecondaryPanel initialView="gex" symbol="SPY" spotPrice={SPOT_PRICE} gamma={gamma} />);
     await user.click(screen.getByRole("button", { name: "Flujo Whale Alerts" }));
 
     await waitFor(() => expect(apiMocks.getAlerts).toHaveBeenCalledTimes(1));
@@ -586,7 +587,7 @@ describe("ChartSecondaryPanel", () => {
     );
     const user = userEvent.setup();
 
-    renderWithLanguage(<ChartSecondaryPanel symbol="SPY" spotPrice={SPOT_PRICE} gamma={gamma} />);
+    renderWithLanguage(<ChartSecondaryPanel initialView="gex" symbol="SPY" spotPrice={SPOT_PRICE} gamma={gamma} />);
     await user.click(screen.getByRole("button", { name: "Flujo Whale Alerts" }));
 
     expect(screen.getByText("Cargando flujo de Whale Alerts…")).toBeInTheDocument();
@@ -603,7 +604,7 @@ describe("ChartSecondaryPanel", () => {
     // step (2, at these 32 strikes) already keeps on its own — isolates
     // this test to the thinning behavior itself, not the "always show
     // nearest" override (covered separately below).
-    renderWithLanguage(<ChartSecondaryPanel symbol="SPX" spotPrice={7557} gamma={gamma} />);
+    renderWithLanguage(<ChartSecondaryPanel initialView="gex" symbol="SPX" spotPrice={7557} gamma={gamma} />);
     await screen.findByLabelText("GEX por strike para SPX");
 
     expect(document.querySelectorAll(".secondary-gex-bar")).toHaveLength(32);
@@ -621,7 +622,7 @@ describe("ChartSecondaryPanel", () => {
     // Strike 7,560 is index 1 (odd) — the computed step (2) at these 32
     // strikes only labels even indices, so this strike would be skipped
     // by the pattern alone. 7561 is closest to it.
-    renderWithLanguage(<ChartSecondaryPanel symbol="SPX" spotPrice={7561} gamma={gamma} />);
+    renderWithLanguage(<ChartSecondaryPanel initialView="gex" symbol="SPX" spotPrice={7561} gamma={gamma} />);
     await screen.findByLabelText("GEX por strike para SPX");
 
     expect(screen.getByText("7,560")).toBeInTheDocument();
@@ -637,7 +638,7 @@ describe("ChartSecondaryPanel", () => {
     const items = manyStrikeItems(32, 7555, 5);
     apiMocks.getGammaProfile.mockResolvedValue(profile({ symbol: "SPX", items }));
 
-    renderWithLanguage(<ChartSecondaryPanel symbol="SPX" spotPrice={7561} gamma={gamma} />);
+    renderWithLanguage(<ChartSecondaryPanel initialView="gex" symbol="SPX" spotPrice={7561} gamma={gamma} />);
     await screen.findByLabelText("GEX por strike para SPX");
 
     expect(screen.getByText("7,560")).toBeInTheDocument();
@@ -646,5 +647,22 @@ describe("ChartSecondaryPanel", () => {
     // 16 from the pattern minus the two suppressed neighbors, plus the
     // one forced label: 16 - 2 + 1 = 15.
     expect(document.querySelectorAll(".secondary-gex-strike-label")).toHaveLength(15);
+  });
+});
+
+describe("ChartSecondaryPanel default view", () => {
+  it("opens on the flow view (the GEX profile now lives inside the chart) and keeps the GEX view one click away", async () => {
+    apiMocks.getGammaProfile.mockResolvedValue({ ...profileFixtureForDefaultView });
+    apiMocks.getAlerts.mockResolvedValue({ schema_version: 1, symbol: "SPY", alerts: [] });
+    const user = userEvent.setup();
+
+    renderWithLanguage(<ChartSecondaryPanel symbol="SPY" spotPrice={SPOT_PRICE} gamma={gamma} gammaView="tactical" />);
+
+    expect(screen.getByRole("button", { name: "Flujo Whale Alerts" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("button", { name: "GEX por Strike" })).toHaveAttribute("aria-pressed", "false");
+
+    await user.click(screen.getByRole("button", { name: "GEX por Strike" }));
+
+    expect(screen.getByRole("button", { name: "GEX por Strike" })).toHaveAttribute("aria-pressed", "true");
   });
 });
