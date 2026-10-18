@@ -267,3 +267,29 @@ def test_health_endpoints_remain_unversioned() -> None:
 
     assert health.status_code == 200
     assert versioned_health.status_code == 404
+
+
+def test_async_chain_expirations_read_matches_the_sync_one_and_404s_when_nothing_is_stored() -> None:
+    # The route reads the latest stored snapshot through the async storage (the sync read took 26-32 s for SPX/NDX with the market closed,
+    # 2026-10-18); the dates must be the same ones the sync twin gives, and "nothing stored" must still be the uniform not-found.
+    import asyncio
+
+    from backend.domain.use_cases.errors import NotFoundError
+    from backend.domain.use_cases import get_option_chain_expirations, get_option_chain_expirations_async
+
+    with TestClient(app) as client:
+        container = app.state.container
+        try:
+            asyncio.run(get_option_chain_expirations_async(container.async_market_storage, "SPY"))
+        except NotFoundError:
+            pass
+        else:  # pragma: no cover
+            raise AssertionError("expected NotFoundError before anything is stored")
+        container.storage.save_chain_snapshot(MockDataProvider().get_option_chain("SPY"))
+        sync_chain = get_option_chain_expirations(container.storage, "SPY")
+        async_chain = asyncio.run(get_option_chain_expirations_async(container.async_market_storage, "SPY"))
+        response = client.get("/api/v1/chain/spy/expirations")
+
+    assert {c.expiration for c in async_chain.contracts} == {c.expiration for c in sync_chain.contracts}
+    assert response.status_code == 200
+    assert response.json()["expirations"] == sorted({str(c.expiration) for c in sync_chain.contracts})

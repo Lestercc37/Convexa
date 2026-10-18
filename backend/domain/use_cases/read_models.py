@@ -315,6 +315,31 @@ def get_option_chain_expirations(storage: IStorage, underlying: str) -> OptionCh
     return chain
 
 
+async def get_option_chain_expirations_async(storage: IAsyncMarketReadStorage, underlying: str) -> OptionChain:
+    """Async twin of get_option_chain_expirations: the same storage-only read (never a provider fetch), served by the async storage.
+
+    Why: with the market closed (weekend, holiday, before the open) the sync storage's unscoped read of the latest snapshot falls back to a scan of
+    the whole snapshot history; measured 2026-10-18 (Sunday) it took 31.7 s for SPX, 27.5 s for NDX and 6.4 s for SPY, so the Volatility Smile's
+    expiration dropdown failed ("The request couldn't be completed") for anyone opening the dashboard off-hours. The async storage answers the
+    same read in about 0.1 s (SPX 0.1-0.3 s, NDX 0.1 s, SPY 0.1 s on the same day)."""
+    proxy_symbol = proxy_symbol_for(underlying)
+    if proxy_symbol is not None:
+        proxy_chain = await storage.get_latest_chain_snapshot(proxy_symbol)
+        if proxy_chain is None:
+            raise NotFoundError(f"No option chain found for {underlying.upper()}")
+        offset = await future_level_offset_async(storage, underlying.upper(), proxy_symbol)
+        if offset is None:
+            raise NotFoundError(
+                f"{underlying.upper()}'s option levels come from {proxy_symbol}: enter today's "
+                f"{underlying.upper()} opening price first"
+            )
+        return shift_option_chain(proxy_chain, underlying.upper(), offset)
+    chain = await storage.get_latest_chain_snapshot(underlying)
+    if chain is None:
+        raise NotFoundError(f"No option chain found for {underlying.upper()}")
+    return chain
+
+
 def get_flow(storage: IStorage, underlying: str, since: datetime | None = None, limit: int = 100):
     return storage.get_flow_events(underlying, since, limit)
 
