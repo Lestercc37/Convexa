@@ -34,7 +34,7 @@ import type {
 import { LEVEL_MERGE_THRESHOLD } from "./gravity-map";
 import { GammaHeatmapPrimitive, heatmapFromResponse } from "./gamma-heatmap-primitive";
 import { GexHistogramPrimitive } from "./gex-histogram-primitive";
-import { POLLING_INTERVAL_MS } from "@/lib/polling";
+import { LIVE_LEVELS_POLLING_INTERVAL_MS, POLLING_INTERVAL_MS } from "@/lib/polling";
 import { RegimeCompactBadge } from "./regime-badge";
 
 type PriceChartProps = {
@@ -215,6 +215,9 @@ function tickMarkFormatter(timeSeconds: UTCTimestamp, tickMarkType: TickMarkType
 // read UTC). Same EASTERN_TIME_ZONE conversion, just always full
 // date+time since the crosshair label doesn't get the axis's own
 // zoom-dependent granularity to fall back on.
+// One heatmap column per minute (the smallest bucket the endpoint accepts): the backend stores a profile about every minute.
+const HEATMAP_BUCKET_SECONDS = 60;
+
 function crosshairTimeFormatter(timeSeconds: UTCTimestamp): string {
   const date = new Date(timeSeconds * 1000);
   return new Intl.DateTimeFormat(undefined, {
@@ -727,7 +730,7 @@ export function PriceChart({
         });
     };
     refresh();
-    const interval = window.setInterval(refresh, POLLING_INTERVAL_MS);
+    const interval = window.setInterval(refresh, LIVE_LEVELS_POLLING_INTERVAL_MS);
     return () => {
       controller.abort();
       window.clearInterval(interval);
@@ -746,14 +749,14 @@ export function PriceChart({
     const controller = new AbortController();
     const refresh = () => {
       const start = new Date((mostRecentSessionRange(Date.now()).openSeconds - 3600) * 1000);
-      getGammaHeatmap(symbol, { view: gammaView, metric: heatmapMetric, start }, controller.signal)
+      getGammaHeatmap(symbol, { view: gammaView, metric: heatmapMetric, start, bucketSeconds: HEATMAP_BUCKET_SECONDS }, controller.signal)
         .then((response) => primitive.setData(heatmapFromResponse(response)))
         .catch(() => {
           // A failed poll keeps the cells already drawn; the next one retries.
         });
     };
     refresh();
-    const interval = window.setInterval(refresh, POLLING_INTERVAL_MS);
+    const interval = window.setInterval(refresh, LIVE_LEVELS_POLLING_INTERVAL_MS);
     return () => {
       controller.abort();
       window.clearInterval(interval);

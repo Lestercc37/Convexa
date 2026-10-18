@@ -136,13 +136,14 @@ export function getGammaHistory(symbol: string, view?: GammaView, signal?: Abort
 
 export function getGammaHeatmap(
   symbol: string,
-  options: { view?: GammaView; metric?: GammaHeatmapMetric; start?: Date },
+  options: { view?: GammaView; metric?: GammaHeatmapMetric; start?: Date; bucketSeconds?: number },
   signal?: AbortSignal,
 ) {
   const params = new URLSearchParams();
   if (options.view) params.set("view", options.view);
   if (options.metric) params.set("metric", options.metric);
   if (options.start) params.set("start", options.start.toISOString());
+  if (options.bucketSeconds) params.set("bucket_seconds", String(options.bucketSeconds));
   const query = params.toString() ? `?${params.toString()}` : "";
   return getJson<GammaHeatmapResponse>(`/gamma/${encodeURIComponent(symbol)}/heatmap${query}`, signal);
 }

@@ -546,7 +546,7 @@ describe("PriceChart", () => {
     await waitFor(() =>
       expect(chartMocks.getGammaHeatmap).toHaveBeenCalledWith(
         "SPY",
-        expect.objectContaining({ view: "tactical", metric: "gamma", start: expect.any(Date) }),
+        expect.objectContaining({ view: "tactical", metric: "gamma", start: expect.any(Date), bucketSeconds: 60 }),
         expect.any(AbortSignal),
       ),
     );
