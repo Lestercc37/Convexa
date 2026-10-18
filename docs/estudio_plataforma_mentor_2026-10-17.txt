@@ -95,6 +95,15 @@ e) Etiquetas: su "SWEEP" en Actividad Inusual es solo Vol/OI mayor que 3x (no es
     Lectura: la capa rapida reduce el error a menos de la mitad; el error que queda (3-5%) viene de la IV y las cotizaciones que cambian entre ciclos. No esta probado que mas velocidad mejore decisiones (el rebote a corto plazo no se detecto en el estudio del 2026-10-14): la velocidad da contexto mas fresco. Costo: calculo nuevo en el backend (hoy el heatmap solo lee), hay que decidir si se guarda o solo se muestra, y validar contra el ciclo completo en vivo.
     Hecho el mismo dia (opcion 1, sin calculo nuevo): columnas de 1 minuto y consulta cada 15 s en #302 (commit c272e78).
 
+4.8 FLUJO FIRMADO DE OPCIONES: SIGUE AL PRECIO O LO ADELANTA? (2026-10-18, docs/hm_flow_lead_test.py + hm_flow_lead_analysis.py; pregunta de Lester: "teniendo esa informacion en tiempo real hace alguna diferencia?")
+    Datos: trade_quote de SPXW y SPY 0DTE (76M + 62M operaciones), 60 sesiones 2026-07-13 .. 2026-10-05, 8,400 barras de 5 minutos, 120 simbolo-dia. Firma por operacion: precio >= ask comprador, <= bid vendedor, dentro del spread sin firmar; cancelaciones fuera. Comprar call / vender put = alcista (+1); vender call / comprar put = bajista (-1). Cuatro series: prima y delta (contratos x |delta|), todas las firmadas y solo condiciones simples (18, 95, 125, 126).
+    Celda principal fijada ANTES: flujo en delta, condiciones simples, ultimos 15 min, contra los PROXIMOS 15 min, correlacion de rangos (rangos dentro de cada dia), intervalo 95% por dias; 'senal' solo si >= 0.05 con intervalo sobre 0 en SPX y en SPY.
+    Misma barra (el flujo sigue al precio): SPX +0.40 (15 min) y +0.78 (la barra de 5 min); SPY +0.38 y +0.67.
+    Proximos 5 min: SPX -0.01 a -0.05, SPY -0.02 a -0.05 (la barra de 5 min: -0.05 en ambos con intervalo bajo 0: reversion minima, posible artefacto de la firma). Proximos 15 min: SPX +0.032 [-0.006, +0.068]; SPY +0.006 [-0.032, +0.047]. LA CELDA PRINCIPAL NO CUMPLE.
+    Parcial (quitando el retorno de los 5 min previos), proximos 15 min: SPX +0.024 [-0.013, +0.058]; SPY 0.000 [-0.040, +0.043].
+    Las barras con el 20% de flujo mas fuerte de cada dia: signo del flujo acierta 54.0% en SPX (n 900) y 51.1% en SPY (n 899); el control (signo del retorno previo de 5 min) 52.4% y 51.5%. No se replica entre simbolos.
+    Lectura: el flujo firmado describe lo que el precio YA hizo; no lo adelanta en estos datos. Sirve como contexto (quien empuja ahora), no como senal. Falta (no probado): operaciones muy grandes, sweeps, flujo solo cerca del precio, divergencias precio/flujo, horizontes menores de 5 minutos (los archivos de precio son de 5 minutos).
+
 =====================================================================
 5. IDEAS APLICABLES A CONVEXA (como contexto para decidir, no como prediccion). Ordenadas por valor / facilidad
 =====================================================================
@@ -133,6 +142,6 @@ NO aplicable por evidencia: la parte de direccion de su pestana Predictions (Fue
 =====================================================================
 8. ARCHIVOS
 =====================================================================
-Scripts (docs/): hm_mentor_0723.py, hm_mentor_0723b.py, hm_wall_rules_0723.py, hm_oi_smile_0723.py, hm_side_stats_0723.py, hm_side_stats_window_0723.py, hm_gex_strike_0723.py, hm_gex_by_exp_0723.py, hm_unusual_oi_0723.py, hm_heat_strike_0723.py, hm_path_0723.py, hm_stage3_inventory.py, hm_cone_tests.py (opcion --zero-dte), hm_cone_analysis.py, hm_expected_move_test.py, hm_fast_gamma_test.py.
+Scripts (docs/): hm_mentor_0723.py, hm_mentor_0723b.py, hm_wall_rules_0723.py, hm_oi_smile_0723.py, hm_side_stats_0723.py, hm_side_stats_window_0723.py, hm_gex_strike_0723.py, hm_gex_by_exp_0723.py, hm_unusual_oi_0723.py, hm_heat_strike_0723.py, hm_path_0723.py, hm_stage3_inventory.py, hm_cone_tests.py (opcion --zero-dte), hm_cone_analysis.py, hm_expected_move_test.py, hm_fast_gamma_test.py, hm_flow_lead_test.py, hm_flow_lead_analysis.py, hm_flow_inventory.py.
 Datos en el servidor: V:\Convexa\bench\hm_stage2\cone_bars.csv, cone_gamma.csv, cone_gamma_0dte.csv.
 Memoria: mentor_predictions_tab_study_2026_10_17.md.
