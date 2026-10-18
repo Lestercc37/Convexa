@@ -42,7 +42,7 @@ from backend.domain.use_cases import (
     get_gamma_heatmap_async,
     get_gamma_history,
     get_option_chain_async,
-    get_option_chain_expirations,
+    get_option_chain_expirations_async,
     get_symbol_flow_pressure_async,
 )
 
@@ -90,7 +90,7 @@ async def get_chain(
 
 
 @router.get("/chain/{symbol}/expirations", response_model=ChainExpirationsResponse)
-def get_chain_expirations(symbol: str, request: Request) -> ChainExpirationsResponse:
+async def get_chain_expirations(symbol: str, request: Request) -> ChainExpirationsResponse:
     # The option-chain-viewer/Volatility Smile UI's own expiration dropdown
     # only ever needs the distinct dates, not a single contract's worth of
     # greeks/OI/bid/ask -- confirmed live, 2026-09-22: fetching the full
@@ -105,7 +105,9 @@ def get_chain_expirations(symbol: str, request: Request) -> ChainExpirationsResp
     # concurrency semaphore the scheduler's cycle was saturating --
     # expiration dates don't need to be that fresh to be correct.
     container: Container = request.app.state.container
-    chain = get_option_chain_expirations(container.storage, symbol)
+    # async def + the async storage: the sync read of the latest snapshot takes 26-32 s for SPX/NDX when the market is closed (see
+    # get_option_chain_expirations_async), which made the Volatility Smile dropdown fail off-hours.
+    chain = await get_option_chain_expirations_async(container.async_market_storage, symbol)
     return ChainExpirationsResponse.model_validate(chain_expirations_response(chain))
 
 

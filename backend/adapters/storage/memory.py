@@ -183,6 +183,14 @@ class InMemoryStorage:
             if start <= item.as_of <= end and item.view == view
         ]
 
+    def get_latest_option_delta(self, occ_symbol: str) -> Decimal | None:
+        for chains in self._chains.values():
+            for chain in reversed(chains):
+                for contract in chain.contracts:
+                    if contract.occ_symbol == occ_symbol:
+                        return contract.greeks.delta
+        return None
+
     def save_market_price(self, price: MarketPrice) -> None:
         self._prices[price.symbol] = price
         self._price_history.setdefault(price.symbol, []).append(price)
