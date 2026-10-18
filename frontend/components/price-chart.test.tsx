@@ -83,6 +83,8 @@ beforeAll(() => {
     applyOptions: chartMocks.applyOptions,
     timeScale: () => ({
       fitContent: chartMocks.fitContent,
+      // A valid range: the null-range resync in setSeriesData() must stay out of the way of the other tests (it has its own test file).
+      getVisibleLogicalRange: () => ({ from: 0, to: 100 }),
       setVisibleRange: chartMocks.setVisibleRange,
       coordinateToTime: chartMocks.coordinateToTime,
       subscribeVisibleLogicalRangeChange: chartMocks.subscribeVisibleLogicalRangeChange,

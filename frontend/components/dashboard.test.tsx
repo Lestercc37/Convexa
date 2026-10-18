@@ -146,6 +146,7 @@ beforeAll(() => {
     applyOptions: vi.fn(),
     timeScale: () => ({
       fitContent: vi.fn(),
+      getVisibleLogicalRange: () => ({ from: 0, to: 100 }),
       setVisibleRange: vi.fn(),
       subscribeVisibleLogicalRangeChange: vi.fn(),
       unsubscribeVisibleLogicalRangeChange: vi.fn(),
