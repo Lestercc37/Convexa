@@ -210,6 +210,18 @@ class CalculateGammaExposureOrchestrator:
         self._storage.save_gamma_aggregate(tactical)
         return tactical
 
+    def build_tactical(
+        self, underlying: str, chain: OptionChain, daily_bars: list[DailyBar]
+    ) -> GammaAggregate:
+        """The Tactical view of a chain the CALLER holds, built exactly as execute_both() builds it but never persisted. The fast gamma layer
+        (use_cases/fast_gamma.py) hands it a chain whose gamma / vanna / charm were re-evaluated at the live spot and clock, and stores only the
+        per-strike rows itself; going through here keeps one definition of "which contracts, which strikes, which width" for both paths."""
+        anchor = chain.as_of.astimezone(EASTERN_TIME).date()
+        with self._compute_semaphore:
+            return self._build_view(
+                underlying, chain, daily_bars, TACTICAL_WINDOW_DAYS, anchor, "tactical"
+            )
+
     def _fetch_chain(self, underlying: str) -> OptionChain:
         chain = self._storage.get_latest_chain_snapshot(underlying)
         if chain is None:

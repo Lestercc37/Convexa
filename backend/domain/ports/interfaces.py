@@ -19,6 +19,7 @@ from backend.domain.entities import (
     DailyGammaReference,
     FlowEvent,
     GammaAggregate,
+    GammaAggregateItem,
     GammaExposure,
     GammaFlip,
     GammaHeatmap,
@@ -134,6 +135,9 @@ class IStorage(Protocol):
         self, underlying: str, expiration: date | None = None
     ) -> OptionChain | None: ...
     def save_gamma_aggregate(self, gamma: GammaAggregate) -> None: ...
+    def save_gamma_fast_items(
+        self, symbol: str, as_of: datetime, view: str, spot: Decimal, items: list[GammaAggregateItem]
+    ) -> None: ...
     def get_latest_gamma_aggregate(
         self, underlying: str, view: str = "structural"
     ) -> GammaAggregate | None: ...
@@ -206,7 +210,7 @@ class IAsyncMarketReadStorage(Protocol):
         self, underlying: str, start: datetime, end: datetime
     ) -> list[MarketPrice]: ...
     async def get_gamma_heatmap(
-        self, underlying: str, view: str, metric: str, start: datetime, end: datetime, bucket_seconds: int
+        self, underlying: str, view: str, metric: str, start: datetime, end: datetime, bucket_seconds: int, source: str = "cycle"
     ) -> GammaHeatmap: ...
     async def get_latest_chain_snapshot(
         self, underlying: str, expiration: date | None = None

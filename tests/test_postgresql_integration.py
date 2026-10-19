@@ -1256,6 +1256,38 @@ async def test_gamma_heatmap_bins_by_time_keeps_the_last_snapshot_per_strike_and
 
 
 @pytest.mark.asyncio
+async def test_fast_gamma_items_are_stored_apart_and_read_back_at_ten_second_buckets(
+    postgresql_storage: tuple[PostgreSQLStorage, Engine, str],
+) -> None:
+    """The fast layer (migration 0047) writes per-strike rows into gamma_fast_items with NO parent aggregate; the heatmap reads them with
+    source=fast at 10 s buckets, the cycle's table is untouched, and re-writing the same instant replaces the row (ON CONFLICT)."""
+    sync_storage, _, symbol = postgresql_storage
+    base = datetime(2026, 8, 3, 14, 0, tzinfo=timezone.utc)
+    spot = Decimal("551.25")
+
+    sync_storage.save_gamma_fast_items(symbol, base + timedelta(seconds=3), "tactical", spot, [_heatmap_item("550", "10", "100"), _heatmap_item("555", "-20", "-200")])
+    sync_storage.save_gamma_fast_items(symbol, base + timedelta(seconds=13), "tactical", spot, [_heatmap_item("550", "12", "120")])
+    sync_storage.save_gamma_fast_items(symbol, base + timedelta(seconds=13), "tactical", spot, [_heatmap_item("550", "13", "130")])  # same instant: replaced
+    sync_storage.save_gamma_fast_items(symbol, base, "tactical", spot, [])  # nothing to write is not an error
+
+    async_engine = create_engine(_require_test_database_url())
+    try:
+        storage = AsyncPostgreSQLStorage(create_session_factory(async_engine))
+        fast = await storage.get_gamma_heatmap(symbol, "tactical", "gamma", base, base + timedelta(minutes=5), 10, "fast")
+        cycle = await storage.get_gamma_heatmap(symbol, "tactical", "gamma", base, base + timedelta(minutes=5), 10)
+    finally:
+        await async_engine.dispose()
+
+    assert fast.bucket_seconds == 10
+    assert fast.strikes == (Decimal("550"), Decimal("555"))
+    assert [column.as_of for column in fast.columns] == [base + timedelta(seconds=3), base + timedelta(seconds=13)]
+    assert fast.columns[0].values == (Decimal("10"), Decimal("-20"))
+    assert fast.columns[1].values == (Decimal("13"), None)  # 550 is the replaced row; 555 has no row in that 10 s bucket (nothing is carried across buckets)
+    assert sync_storage.get_latest_gamma_aggregate(symbol, view="tactical") is None  # no parent row was created
+    assert cycle.strikes == () and cycle.columns == ()
+
+
+@pytest.mark.asyncio
 async def test_async_postgresql_storage_get_recent_whale_alerts_reads_what_the_sync_storage_wrote(
     postgresql_storage: tuple[PostgreSQLStorage, Engine, str],
 ) -> None:
@@ -1686,6 +1718,10 @@ def _delete_test_data(engine: Engine, symbol: str) -> None:
             return
         connection.execute(
             text("DELETE FROM whale_thresholds WHERE underlying_id = :id"),
+            {"id": underlying_id},
+        )
+        connection.execute(
+            text("DELETE FROM gamma_fast_items WHERE underlying_id = :id"),
             {"id": underlying_id},
         )
         connection.execute(

@@ -201,7 +201,8 @@ async def gamma_heatmap(
     metric: Literal["gamma", "absolute_gamma", "delta"] = Query(default="gamma"),
     start: datetime | None = None,
     end: datetime | None = None,
-    bucket_seconds: int = Query(default=120, ge=60, le=3600),
+    bucket_seconds: int = Query(default=120, ge=10, le=3600),
+    source: Literal["cycle", "fast"] = Query(default="cycle"),
 ) -> GammaHeatmapResponse:
     # async def, not def: a plain storage read, same reasoning as /gamma and /market.
     container: Container = request.app.state.container
@@ -219,7 +220,7 @@ async def gamma_heatmap(
         if start < today_start:
             raise HTTPException(status_code=422, detail=f"{symbol.upper()} heatmap covers the current ET date only")
     heatmap = await get_gamma_heatmap_async(
-        container.async_market_storage, symbol, view, metric, start, end, bucket_seconds
+        container.async_market_storage, symbol, view, metric, start, end, bucket_seconds, source
     )
     return GammaHeatmapResponse.model_validate(gamma_heatmap_response(heatmap))
 

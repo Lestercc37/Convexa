@@ -7,6 +7,7 @@ from backend.domain.entities import (
     DailyBar,
     FlowEvent,
     GammaAggregate,
+    GammaAggregateItem,
     MarketPrice,
     OptionChain,
     Underlying,
@@ -32,6 +33,11 @@ class TimescaleStorage:
         raise NotImplementedError
 
     def save_gamma_aggregate(self, gamma: GammaAggregate) -> None:
+        raise NotImplementedError
+
+    def save_gamma_fast_items(
+        self, symbol: str, as_of: datetime, view: str, spot: Decimal, items: list[GammaAggregateItem]
+    ) -> None:
         raise NotImplementedError
 
     def get_latest_gamma_aggregate(self, underlying: str) -> GammaAggregate | None:

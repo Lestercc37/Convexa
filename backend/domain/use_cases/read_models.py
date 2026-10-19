@@ -352,6 +352,7 @@ async def get_gamma_heatmap_async(
     start: datetime,
     end: datetime,
     bucket_seconds: int,
+    source: str = "cycle",
 ) -> GammaHeatmap:
     """`/gamma/{symbol}/heatmap`'s own read: a pure storage read of gamma_aggregate_items, binned by time (no new calculation).
     ES/NQ have no stored gamma of their own: they read the proxy index (SPX/NDX) and shift every strike by today's
@@ -359,13 +360,13 @@ async def get_gamma_heatmap_async(
     would shift old strikes by today's offset; the route limits futures to the current session)."""
     proxy_symbol = proxy_symbol_for(underlying)
     if proxy_symbol is None:
-        return await storage.get_gamma_heatmap(underlying, view, metric, start, end, bucket_seconds)
+        return await storage.get_gamma_heatmap(underlying, view, metric, start, end, bucket_seconds, source)
     offset = await future_level_offset_async(storage, underlying.upper(), proxy_symbol)
     if offset is None:
         raise NoOpeningPriceError(
             f"No data for {underlying.upper()}: today's {underlying.upper()} 9:30 ET opening price has not been entered"
         )
-    heatmap = await storage.get_gamma_heatmap(proxy_symbol, view, metric, start, end, bucket_seconds)
+    heatmap = await storage.get_gamma_heatmap(proxy_symbol, view, metric, start, end, bucket_seconds, source)
     return replace(
         heatmap, symbol=underlying.upper(), strikes=tuple(strike + offset for strike in heatmap.strikes)
     )

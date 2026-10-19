@@ -2665,6 +2665,10 @@ class ThetaDataProvider:
             )
         return response.json()
 
+    def risk_free_rate(self) -> Decimal:
+        """The risk-free rate the chain build uses (cached per ET day), public for the fast gamma layer so it re-prices with the same rate as the cycle."""
+        return self._risk_free_rate()
+
     def _risk_free_rate(self) -> Decimal:
         today = datetime.now(EASTERN_TIME).date()
         if self._rate_cache is not None and self._rate_cache[0] == today:

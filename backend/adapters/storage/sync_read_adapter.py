@@ -74,7 +74,7 @@ class SyncStorageAsyncReadAdapter:
         return self._storage.get_price_history(underlying, start, end)
 
     async def get_gamma_heatmap(
-        self, underlying: str, view: str, metric: str, start: datetime, end: datetime, bucket_seconds: int
+        self, underlying: str, view: str, metric: str, start: datetime, end: datetime, bucket_seconds: int, source: str = "cycle"
     ) -> GammaHeatmap:
         # The in-memory/sqlite storages keep no per-strike history, so there is nothing to bin: an empty matrix.
         return GammaHeatmap(

@@ -166,7 +166,7 @@ export function getPriceCandles(
 
 export function getGammaHeatmap(
   symbol: string,
-  options: { view?: GammaView; metric?: GammaHeatmapMetric; start?: Date; bucketSeconds?: number },
+  options: { view?: GammaView; metric?: GammaHeatmapMetric; start?: Date; bucketSeconds?: number; source?: "cycle" | "fast" },
   signal?: AbortSignal,
 ) {
   const params = new URLSearchParams();
@@ -174,6 +174,8 @@ export function getGammaHeatmap(
   if (options.metric) params.set("metric", options.metric);
   if (options.start) params.set("start", options.start.toISOString());
   if (options.bucketSeconds) params.set("bucket_seconds", String(options.bucketSeconds));
+  // "fast" = the 10-second layer (gamma_fast_items); the default is the REST cycle's own rows.
+  if (options.source) params.set("source", options.source);
   const query = params.toString() ? `?${params.toString()}` : "";
   return getJson<GammaHeatmapResponse>(`/gamma/${encodeURIComponent(symbol)}/heatmap${query}`, signal);
 }

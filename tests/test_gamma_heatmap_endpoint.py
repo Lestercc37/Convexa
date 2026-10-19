@@ -64,7 +64,7 @@ def test_endpoint_rejects_bad_ranges_and_parameters() -> None:
             "end before start": "?start=2026-10-16T15:00:00Z&end=2026-10-16T14:00:00Z",
             "more than 5 days": "?start=2026-10-01T00:00:00Z&end=2026-10-10T00:00:00Z",
             "no timezone": "?start=2026-10-16T14:00:00&end=2026-10-16T15:00:00",
-            "bucket too small": "?bucket_seconds=10",
+            "bucket too small": "?bucket_seconds=9",
             "unknown metric": "?metric=vanna",
             "unknown view": "?view=weekly",
         }
@@ -94,7 +94,7 @@ class _FakeStorage:
     def __init__(self) -> None:
         self.asked: list[str] = []
 
-    async def get_gamma_heatmap(self, underlying, view, metric, start, end, bucket_seconds):
+    async def get_gamma_heatmap(self, underlying, view, metric, start, end, bucket_seconds, source="cycle"):
         self.asked.append(underlying)
         return _heatmap()
 
