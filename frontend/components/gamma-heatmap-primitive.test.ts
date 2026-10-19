@@ -9,8 +9,9 @@ import {
   HEATMAP_POSITIVE_STOPS,
   heatmapFromResponse,
   columnScales,
-  bandHeightCssPx,
+  HEATMAP_SUBROWS_PER_STRIKE,
   heatmapImage,
+  interpolateColumn,
   mergeSides,
   rampColor,
   sidesRgb,
@@ -130,8 +131,8 @@ describe("GammaHeatmapPrimitive", () => {
     expect(first.color).toBe("rgba(255, 255, 255, 0.62)");
     expect(first.rect[0]).toBe(100); // x of the first column
     expect(first.rect[2]).toBe(40); // distance to the next column
-    // Row height: strikes 5 apart = 40 px on screen, wider than a full row (30 px): the cell is a 26 px band centred on its strike.
-    expect(first.rect[3]).toBeCloseTo(26);
+    // Row height: strikes 5 apart = 40 px on screen, -> 92% of it centred on its strike.
+    expect(first.rect[3]).toBeCloseTo(40 * 0.92);
     // The last column repeats the previous width.
     expect(context.fills.at(-1)!.rect[2]).toBe(40);
   });
@@ -170,13 +171,14 @@ describe("smooth drawing helpers", () => {
     expect(1000 / coarse + 1).toBeLessThanOrEqual(1500);
   });
 
-  it("heatmapImage makes one pixel per column and strike row, highest strike first, faint and empty cells transparent", () => {
+  it("heatmapImage makes one pixel per column and HEATMAP_SUBROWS_PER_STRIKE rows per strike step, highest price first, faint and empty cells transparent", () => {
     const image = heatmapImage(DATA)!;
+    const sub = HEATMAP_SUBROWS_PER_STRIKE;
     expect(image.width).toBe(3);
-    expect(image.height).toBe(3); // strikes 100, 105, 110
+    expect(image.height).toBe(2 * sub + 1); // strikes 100, 105, 110
     expect([image.lowStrike, image.highStrike]).toEqual([100, 110]);
     const pixel = (column: number, strike: number) => {
-      const row = image.height - 1 - (strike - 100) / 5;
+      const row = image.height - 1 - ((strike - 100) / 5) * sub;
       const offset = (row * image.width + column) * 4;
       return Array.from(image.pixels.slice(offset, offset + 4));
     };
@@ -188,12 +190,12 @@ describe("smooth drawing helpers", () => {
     expect(negative[0]).toBeGreaterThan(negative[1]); // value -50 (half the scale): red side of the ramp
   });
 
-  it("heatmapImage paints mixed strike spacing as a continuous map: every grid row takes the value of its nearest strike", () => {
-    // Strikes 100, 110, 120 (10 apart), 125 and 150 (25 apart): grid step 5, rows 100, 105, ..., 150.
-    const data: HeatmapData = { strikes: [100, 110, 120, 125, 150], scale: 100, columns: [{ time: 1000, values: [100, -100, 100, -100, 100] }] };
+  it("heatmapImage paints mixed strike spacing as a continuous map: every grid row takes the value interpolated between its two strikes", () => {
+    // Strikes 100, 110, 120 (10 apart), 125 and 150 (25 apart): grid step 5, subrows of 5 / HEATMAP_SUBROWS_PER_STRIKE.
+    const data: HeatmapData = { strikes: [100, 110, 120, 125, 150], scale: 100, columns: [{ time: 1000, values: [100, 60, 100, 60, 100] }] };
     const image = heatmapImage(data)!;
-    expect(image.height).toBe(11);
-    const rowOf = (price: number) => image.height - 1 - (price - 100) / 5;
+    expect(image.height).toBe(10 * HEATMAP_SUBROWS_PER_STRIKE + 1);
+    const rowOf = (price: number) => image.height - 1 - Math.round(((price - 100) / 5) * HEATMAP_SUBROWS_PER_STRIKE);
     const alphaAt = (price: number) => image.pixels[rowOf(price) * image.width * 4 + 3];
     expect(alphaAt(100)).toBeGreaterThan(0);
     expect(alphaAt(105)).toBeGreaterThan(0); // between two strikes: not a blank row
@@ -205,9 +207,9 @@ describe("smooth drawing helpers", () => {
   it("heatmapImage leaves a hole in the strikes empty instead of stretching the last strike over it", () => {
     const data: HeatmapData = { strikes: [100, 105, 110, 200], scale: 100, columns: [{ time: 1000, values: [100, 100, 100, 100] }] };
     const image = heatmapImage(data)!;
-    const alphaAt = (price: number) => image.pixels[(image.height - 1 - (price - 100) / 5) * image.width * 4 + 3];
+    const alphaAt = (price: number) => image.pixels[(image.height - 1 - Math.round(((price - 100) / 5) * HEATMAP_SUBROWS_PER_STRIKE)) * image.width * 4 + 3];
     expect(alphaAt(110)).toBeGreaterThan(0);
-    expect(alphaAt(130)).toBe(0); // 20 from the nearest strike, reach is 7.5
+    expect(alphaAt(130)).toBe(0); // 20 from the nearest strike, inside a 90-point hole
     expect(alphaAt(200)).toBeGreaterThan(0);
   });
 
@@ -343,7 +345,7 @@ describe("sides view (calls and puts, fading to white where both are strong)", (
     )!;
     const image = heatmapImage(merged)!;
     const pixelAt = (price: number) => {
-      const offset = ((image.height - 1 - (price - 100) / 5) * image.width) * 4;
+      const offset = ((image.height - 1 - Math.round(((price - 100) / 5) * HEATMAP_SUBROWS_PER_STRIKE)) * image.width) * 4;
       return [image.pixels[offset], image.pixels[offset + 1], image.pixels[offset + 2]];
     };
     expect(pixelAt(100)).toEqual([255, 255, 255]); // strong call and strong put
@@ -369,7 +371,7 @@ describe("column scale (every minute against itself, history stays as painted)",
     const column = heatmapImage({ strikes, scale: 4000, scaleMode: "column", columns: [quiet, busy] })!;
     const day = heatmapImage({ strikes, scale: 4000, scaleMode: "day", columns: [quiet, busy] })!;
     const pixel = (image: NonNullable<ReturnType<typeof heatmapImage>>, columnIndex: number, price: number) => {
-      const offset = ((image.height - 1 - (price - 100) / 5) * image.width + columnIndex) * 4;
+      const offset = ((image.height - 1 - Math.round(((price - 100) / 5) * HEATMAP_SUBROWS_PER_STRIKE)) * image.width + columnIndex) * 4;
       return [image.pixels[offset], image.pixels[offset + 1], image.pixels[offset + 2], image.pixels[offset + 3]];
     };
     expect(pixel(column, 0, 105).slice(0, 3)).toEqual([255, 255, 255]); // 40 is the top of its own minute
@@ -396,18 +398,52 @@ describe("column scale (every minute against itself, history stays as painted)",
   });
 });
 
-describe("band height for strikes far apart on screen", () => {
-  it("leaves spacing up to 30 px alone, shrinks the band smoothly (30 px at the edge, no jump) and holds 18 px for SPY/QQQ/IWM/NVDA-like spacing (60 px and more)", () => {
-    expect(bandHeightCssPx(null)).toBeNull();
-    expect(bandHeightCssPx(Number.NaN)).toBeNull();
-    expect(bandHeightCssPx(12)).toBeNull();
-    expect(bandHeightCssPx(30)).toBeNull();
-    expect(bandHeightCssPx(31)).toBeCloseTo(29.6);
-    expect(bandHeightCssPx(37)).toBeCloseTo(27.2); // SPX on a big monitor: nearly the full row, not a stripe
-    expect(bandHeightCssPx(40)).toBeCloseTo(26);
-    expect(bandHeightCssPx(50)).toBeCloseTo(22);
-    expect(bandHeightCssPx(60)).toBe(18);
-    expect(bandHeightCssPx(100)).toBe(18);
-    expect(bandHeightCssPx(220)).toBe(18);
+describe("interpolateColumn (the value between strikes, not the colour)", () => {
+  const strikes = [100, 101, 102, 103];
+
+  it("passes through the strikes' own values and stays between them in between", () => {
+    const out = interpolateColumn(strikes, [0, 10, 40, 40], [100, 100.5, 101, 101.5, 102, 102.5, 103], 6, 0.5);
+    expect(out[0]).toBeCloseTo(0);
+    expect(out[2]).toBeCloseTo(10);
+    expect(out[4]).toBeCloseTo(40);
+    expect(out[6]).toBeCloseTo(40);
+    for (const middle of [out[1], out[3], out[5]]) {
+      expect(middle).not.toBeNull();
+    }
+    expect(out[1]!).toBeGreaterThan(0);
+    expect(out[1]!).toBeLessThan(10);
+    expect(out[3]!).toBeGreaterThan(10);
+    expect(out[3]!).toBeLessThan(40);
+  });
+
+  it("never overshoots: a value between two strikes is never stronger than the stronger strike (shape-preserving)", () => {
+    const out = interpolateColumn([100, 101, 102], [5, 100, 5], Array.from({ length: 21 }, (_, i) => 100 + i / 10), 6, 0.5);
+    for (const value of out) expect(value!).toBeLessThanOrEqual(100 + 1e-9);
+    for (const value of out) expect(value!).toBeGreaterThanOrEqual(5 - 1e-9);
+  });
+
+  it("a sign change crosses zero between the strikes (faint, drawn dark) instead of blending a green into a red", () => {
+    const out = interpolateColumn([100, 101], [80, -80], [100, 100.25, 100.5, 100.75, 101], 6, 0.5);
+    expect(out[0]).toBeCloseTo(80);
+    expect(Math.abs(out[2]!)).toBeLessThan(5); // the middle is ~0
+    expect(out[4]).toBeCloseTo(-80);
+  });
+
+  it("an unstored strike keeps its own half of the gap empty and does not drag the neighbour's value into it", () => {
+    const out = interpolateColumn([100, 101, 102], [50, null, 50], [100, 100.4, 100.6, 101, 101.4, 101.6, 102], 6, 0.5);
+    expect(out[1]).toBe(50); // within half a gap of the stored strike 100
+    expect(out[2]).toBeNull(); // past it: nothing stored at 101
+    expect(out[3]).toBeNull();
+    expect(out[5]).toBe(50);
+  });
+
+  it("a hole in the strikes stays empty beyond half a gap from each side, and a price past the last strike only holds half a gap", () => {
+    const out = interpolateColumn([100, 101, 150], [10, 10, 10], [101, 102, 120, 149, 150, 151, 152], 6, 0.5);
+    expect(out[0]).toBeCloseTo(10);
+    expect(out[1]).toBeNull();
+    expect(out[2]).toBeNull();
+    expect(out[3]).toBeNull();
+    expect(out[4]).toBeCloseTo(10);
+    expect(out[5]).toBeNull(); // beyond the last strike: this price is 1 past 150, edge reach is 0.5
   });
 });
