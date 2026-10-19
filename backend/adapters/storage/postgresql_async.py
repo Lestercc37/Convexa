@@ -45,6 +45,8 @@ _HEATMAP_METRIC_COLUMNS = {
     "put_gamma": "put_gamma_exposure",
     "total_gamma": "total_gamma_exposure",
 }
+# Which table the heatmap reads: the REST cycle's per-strike rows (one snapshot per ~58 s) or the fast layer's (every ~10 s, migration 0047). A whitelist, never interpolated from the request.
+_HEATMAP_SOURCE_TABLES = {"cycle": "gamma_aggregate_items", "fast": "gamma_fast_items"}
 # Safety cap on the rows one request may read (5 sessions x ~400 snapshots x ~60 strikes is ~120k before bucketing).
 _HEATMAP_ROW_LIMIT = 200_000
 
@@ -336,12 +338,13 @@ class AsyncPostgreSQLStorage:
         ]
 
     async def get_gamma_heatmap(
-        self, underlying: str, view: str, metric: str, start: datetime, end: datetime, bucket_seconds: int
+        self, underlying: str, view: str, metric: str, start: datetime, end: datetime, bucket_seconds: int, source: str = "cycle"
     ) -> GammaHeatmap:
         """Strike x time matrix for the heatmap: per time bucket, the LAST stored snapshot of each strike (gamma_aggregate_items
         already holds one row per strike per scheduler cycle, so this only reads). `metric` is mapped through a fixed
         whitelist, never interpolated from the request. Buckets and strikes without a stored value come back as None."""
         column = _HEATMAP_METRIC_COLUMNS[metric]
+        table = _HEATMAP_SOURCE_TABLES[source]
         async with self.session_factory() as session:
             rows = (
                 await session.execute(
@@ -352,7 +355,7 @@ class AsyncPostgreSQLStorage:
                             SELECT date_bin(make_interval(secs => CAST(:bucket AS double precision)), time,
                                             TIMESTAMPTZ '2000-01-03 00:00+00') AS bucket,
                                    time, strike, {column} AS value
-                            FROM gamma_aggregate_items
+                            FROM {table}
                             WHERE underlying_id = (SELECT id FROM underlyings WHERE symbol = :symbol)
                               AND view = :view AND time >= :start AND time < :end
                         ) AS binned

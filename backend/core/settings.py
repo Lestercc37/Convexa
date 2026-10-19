@@ -26,6 +26,12 @@ class Settings(BaseSettings):
     )
     database_echo: bool = Field(default=False)
     enable_scheduler: bool = Field(default=True)
+    # The 10-second fast gamma layer (backend/fast_gamma_worker.py, docs/diseno-capa-rapida-gamma-2026-10-19.txt): re-evaluates the last stored chain's
+    # gamma / vanna / charm at the live spot and writes only gamma_fast_items. OFF by default; QLL_FAST_GAMMA_ENABLED=true and a start of the worker turns it on,
+    # and the reverse turns it off, without reverting any code. Needs migration 0047.
+    fast_gamma_enabled: bool = Field(default=False)
+    fast_gamma_symbols: str = Field(default="SPX,NDX,SPY,QQQ")
+    fast_gamma_interval_seconds: float = Field(default=10.0, ge=2.0)
     # "mock" (default, no external dependency) or "thetadata" (real Theta
     # Terminal v3, local REST + WebSocket) — switchable without a code
     # change specifically so a real-data incident can be diagnosed by

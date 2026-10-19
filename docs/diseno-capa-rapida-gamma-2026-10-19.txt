@@ -1,0 +1,100 @@
+DISENO - CAPA RAPIDA DE GAMMA (cada 10 s)            2026-10-19, borrador, NADA desplegado
+=====================================================================================
+
+1. QUE PEDISTE Y POR QUE
+------------------------
+"Dos minutos es una eternidad en scalping" y "se puede acelerar el pintado, por ejemplo cada 10 segundos".
+Hoy el ciclo REST guarda una foto de gamma por simbolo cada ~58 s (28 s de calculo + 30 s de espera). Eso no se
+puede acelerar: el open interest, la IV y las cotizaciones de ThetaData no llegan mas rapido.
+
+Pero entre dos ciclos solo se mueven DOS cosas: el precio y el reloj. Gamma, vanna y charm son formulas cerradas
+(Black-Scholes) de exactamente eso (mas la IV y el OI que el ultimo ciclo ya guardo). Asi que se puede VOLVER A
+EVALUAR la ultima cadena guardada con el precio de ahora, cada 10 s, sin pedirle nada nuevo a ThetaData.
+
+2. QUE HACE (y que NO hace)
+---------------------------
+Cada 10 s, para SPX, NDX, SPY y QQQ:
+  1. Toma la ultima cadena guardada (se relee de la base cada 30 s o cuando hay una foto nueva) y las barras diarias.
+  2. Toma el precio vivo (storage.get_latest_price). Si tiene mas de 30 s, o no hay, SALTA el pase (no pinta con un precio viejo).
+  3. Recalcula gamma / vanna / charm de cada contrato con calculate_bsm_greeks, con el precio de ahora y el tiempo
+     a vencimiento de ahora (misma funcion de tiempo y misma tasa que el ciclo: _time_to_expiration_years y
+     ThetaDataProvider.risk_free_rate()).
+  4. Delta: se corre a primer orden (delta + gamma x cambio de precio, acotado a [-1, 1]) para que la exposicion
+     delta siga al precio en vez de quedarse congelada. Vega y theta quedan los del ciclo.
+  5. Arma la vista Tactical con el MISMO codigo del ciclo: CalculateGammaExposureOrchestrator.build_tactical()
+     (nuevo, publico, no guarda nada). Una sola definicion de "que contratos, que strikes, que ancho".
+  6. Guarda SOLO las filas por strike en la tabla nueva gamma_fast_items.
+
+NO toca: gamma_aggregates (la fila "ultima" que leen niveles, metricas derivadas, screener, alertas), ni
+gamma_aggregate_items, ni el ciclo REST. Si la capa rapida se apaga o se rompe, todo lo demas sigue igual y el
+heatmap vuelve a leer las filas del ciclo (source=cycle, el valor por defecto).
+
+NO refresca entre ciclos (a proposito): IV, open interest, vega, theta. Un cambio de IV de un contrato aparece
+cuando llega el siguiente ciclo (~1 min), no antes.
+
+3. COSTO (medido hoy 12:06 ET, prioridad baja, solo lectura; docs/hm_fast_gamma_cost_2026-10-19.txt)
+-----------------------------------------------------------------------------------------------------
+  simbolo | contratos | strikes tactical | armado tactical | re-evaluar BSM de todos | leer cadena
+  SPX     |   2372    |  42              | 0.02 s          | 0.02 s                  | 0.59 s
+  NDX     |   3562    | 149              | 0.11 s          | 0.02 s                  | 0.61 s
+  SPY     |   1122    |  21              | 0.01 s          | 0.01 s                  | 0.20 s
+  QQQ     |   1502    |  30              | 0.01 s          | 0.01 s                  | 0.19 s
+Los cuatro juntos: ~0.2 s de CPU por pase = ~2% de UN nucleo si se hace cada 10 s. La lectura de la cadena (0.6 s)
+es lo caro, por eso se guarda en memoria y se relee solo cada 30 s.
+
+Filas escritas: 42+149+21+30 = 242 por pase. Un dia completo (2,340 pases por simbolo si el precio se mueve en cada
+uno) = ~566 mil filas/dia, ~4 millones por semana. Si el precio no se mueve (menos de 0.001%) el pase se salta
+hasta 30 s (y a los 30 s se fuerza uno, porque el reloj mueve el charm). Retencion propuesta: borrar filas de mas de
+7 dias (DELETE FROM gamma_fast_items WHERE time < now() - interval '7 days'), a mano o con una tarea programada;
+NO esta automatizado en este PR.
+
+4. PIEZAS DEL PR (borrador, rama fast-gamma-layer)
+--------------------------------------------------
+  backend/db/migrations/0047_gamma_fast_items.py      tabla nueva, aditiva, sin backfill (IF NOT EXISTS, lock_timeout 5 s)
+  backend/domain/use_cases/fast_gamma.py              FastGammaLayer (cache de cadena, re-evaluacion BSM, pase)
+  backend/domain/use_cases/gamma.py                   build_tactical() publico, sin persistir
+  backend/fast_gamma_worker.py                        proceso aparte (su propio GIL), apagado por defecto
+  backend/core/settings.py                            QLL_FAST_GAMMA_ENABLED (False), _SYMBOLS, _INTERVAL_SECONDS (10)
+  puertos y almacenes                                 save_gamma_fast_items (Postgres, memoria, stub timescale);
+                                                      get_gamma_heatmap(..., source="cycle"|"fast")
+  GET /gamma/{symbol}/heatmap                         bucket_seconds ahora acepta desde 10 (antes 60); ?source=fast
+  frontend/lib/api.ts                                 getGammaHeatmap acepta source
+  tests/test_fast_gamma.py (8), + integracion Postgres + ajustes a tests del endpoint
+
+NO esta en este PR (a proposito): el cableado del frontend (price-chart.tsx). Ese archivo lo esta cambiando #311
+(se despliega hoy 16:36 ET); tocarlo ahora generaria conflictos. Va en un segundo PR, apilado sobre #311 ya fusionado:
+  - el grafico pide source=fast con buckets de 10 s para SPX/SPY/QQQ y de 30 s para NDX, y si no hay filas rapidas
+    (capa apagada, dia sin datos, error) cae a source=cycle como hoy;
+  - heatmapFromResponse debe redondear el tiempo de la columna al tamano del bucket (hoy lo redondea al minuto);
+  - polling del heatmap cada 10 s en ese modo.
+
+Limite a vigilar: _HEATMAP_ROW_LIMIT = 200,000 filas leidas por peticion. SPX a 10 s = 2,340 x 42 = ~98 mil (cabe).
+QQQ ~70 mil (cabe). NDX a 10 s = 2,340 x 149 = ~349 mil (NO cabe) -> por eso NDX a 30 s (~117 mil).
+
+5. COMO SE PRENDE (cuando tu digas, despues de revisar)
+-------------------------------------------------------
+  a) Migracion 0047 en produccion  (necesita tu si explicito: migracion de produccion).
+  b) Servicio nuevo ConvexaFastGamma (NSSM, python -m backend.fast_gamma_worker) con QLL_FAST_GAMMA_ENABLED=true
+     (necesita tu si: servicio nuevo en el servidor).
+  c) Mirar logs/fast_gamma_worker.log: cada 5 min una linea "fast gamma: N passes, M rows written, E errors, slowest X s".
+  d) Segundo PR del frontend.
+Para apagarla: QLL_FAST_GAMMA_ENABLED=false y reiniciar el servicio (o detenerlo). No hay nada que revertir.
+
+6. COMO SE VERIFICA (antes de confiar en ella)
+----------------------------------------------
+  - Comparacion contra la realidad: la fila rapida mas cercana en el tiempo al siguiente ciclo REST de ese simbolo
+    debe dar casi lo mismo que ese ciclo (strike con mas gamma total, flip, net gamma). El script offline
+    docs/hm_fast_gamma_test.py ya mide eso con archivos del Stage 2; la version en vivo se corre la primera
+    sesion con la capa prendida y se reporta con numeros.
+  - Carga: CPU del proceso (~2% de un nucleo esperado), segundos del pase mas lento (log), crecimiento de la tabla.
+  - Que el ciclo REST y el Worker no cambien: duracion del ciclo (~28 s), 0 slots agotados nuevos, SLOW CONSUMER igual.
+
+7. LO QUE NO PUDE VERIFICAR TODAVIA
+-----------------------------------
+  - Que tan cerca queda la capa rapida del siguiente ciclo REST EN VIVO (solo hay prueba offline y tests con datos
+    sinteticos).
+  - Que el precio vivo de NDX/SPX (storage.get_latest_price) llegue con menos de 30 s de antiguedad todo el dia
+    (si no, la capa se salta pases; el log lo contaria pero hoy no hay dato).
+  - Pruebas de integracion Postgres corridas en Convexa_test (el esquema ya esta en 0047 SOLO ahi). Una prueba
+    ajena (test_option_quote_minutes_integration) falla en Convexa_test porque esa tabla no existe alli; no es de
+    este cambio.

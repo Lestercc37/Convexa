@@ -824,6 +824,68 @@ class PostgreSQLStorage:
                     },
                 )
 
+    def save_gamma_fast_items(
+        self, symbol: str, as_of: datetime, view: str, spot: Decimal, items: list[GammaAggregateItem]
+    ) -> None:
+        """The per-strike rows of one fast-layer pass (gamma_fast_items, migration 0047), one transaction. No parent aggregate row: nothing that reads the
+        latest aggregate may see these."""
+        if not items:
+            return
+        with self.session_factory.begin() as session:
+            underlying_id = self._ensure_underlying(session, symbol)
+            session.execute(
+                text(
+                    """
+                    INSERT INTO gamma_fast_items (
+                        underlying_id, time, view, strike, spot, total_gamma_exposure,
+                        call_gamma_exposure, put_gamma_exposure, net_gamma,
+                        contract_count, absolute_gamma, open_interest, volume,
+                        delta_exposure, vanna_exposure, charm_exposure
+                    )
+                    VALUES (
+                        :underlying_id, :time, :view, :strike, :spot, :total_gamma_exposure,
+                        :call_gamma_exposure, :put_gamma_exposure, :net_gamma,
+                        :contract_count, :absolute_gamma, :open_interest, :volume,
+                        :delta_exposure, :vanna_exposure, :charm_exposure
+                    )
+                    ON CONFLICT (underlying_id, view, time, strike) DO UPDATE SET
+                        spot = EXCLUDED.spot,
+                        total_gamma_exposure = EXCLUDED.total_gamma_exposure,
+                        call_gamma_exposure = EXCLUDED.call_gamma_exposure,
+                        put_gamma_exposure = EXCLUDED.put_gamma_exposure,
+                        net_gamma = EXCLUDED.net_gamma,
+                        contract_count = EXCLUDED.contract_count,
+                        absolute_gamma = EXCLUDED.absolute_gamma,
+                        open_interest = EXCLUDED.open_interest,
+                        volume = EXCLUDED.volume,
+                        delta_exposure = EXCLUDED.delta_exposure,
+                        vanna_exposure = EXCLUDED.vanna_exposure,
+                        charm_exposure = EXCLUDED.charm_exposure
+                    """
+                ),
+                [
+                    {
+                        "underlying_id": underlying_id,
+                        "time": as_of,
+                        "view": view,
+                        "strike": item.strike,
+                        "spot": spot,
+                        "total_gamma_exposure": item.total_gamma_exposure,
+                        "call_gamma_exposure": item.call_gamma_exposure,
+                        "put_gamma_exposure": item.put_gamma_exposure,
+                        "net_gamma": item.net_gamma,
+                        "contract_count": item.contract_count,
+                        "absolute_gamma": item.absolute_gamma,
+                        "open_interest": item.open_interest,
+                        "volume": item.volume,
+                        "delta_exposure": item.delta_exposure,
+                        "vanna_exposure": item.vanna_exposure,
+                        "charm_exposure": item.charm_exposure,
+                    }
+                    for item in items
+                ],
+            )
+
     def get_latest_gamma_aggregate(
         self, underlying: str, view: str = "structural"
     ) -> GammaAggregate | None:

@@ -10,6 +10,7 @@ from backend.domain.entities import (
     ExposureLeadersSettings,
     FlowEvent,
     GammaAggregate,
+    GammaAggregateItem,
     Invite,
     MarketPrice,
     NegativeGammaBoardSettings,
@@ -32,6 +33,7 @@ class InMemoryStorage:
         }
         self._chains: dict[str, list[OptionChain]] = {}
         self._gamma: dict[str, list[GammaAggregate]] = {}
+        self.gamma_fast_items: list[tuple[str, datetime, str, Decimal, tuple[GammaAggregateItem, ...]]] = []
         self._prices: dict[str, MarketPrice] = {}
         self._price_history: dict[str, list[MarketPrice]] = {}
         self._flow: dict[str, list[FlowEvent]] = {}
@@ -164,6 +166,13 @@ class InMemoryStorage:
 
     def save_gamma_aggregate(self, gamma: GammaAggregate) -> None:
         self._gamma.setdefault(gamma.symbol, []).append(gamma)
+
+    def save_gamma_fast_items(
+        self, symbol: str, as_of: datetime, view: str, spot: Decimal, items: list[GammaAggregateItem]
+    ) -> None:
+        # The fast layer's per-strike rows (gamma_fast_items in Postgres): kept apart from the aggregates, exactly like the table.
+        if items:
+            self.gamma_fast_items.append((symbol.upper(), as_of, view, spot, tuple(items)))
 
     def get_latest_gamma_aggregate(
         self, underlying: str, view: str = "structural"
