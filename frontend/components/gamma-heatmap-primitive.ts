@@ -129,19 +129,20 @@ export const HEATMAP_BLUR_CSS_PX = 3;
 // A grid with more rows than this is not drawn as one image (the sharp per-cell drawing is used instead).
 const MAX_IMAGE_ROWS = 1500;
 const ROW_FILL_FRACTION = 0.92;
-// Strikes spaced wide apart ON SCREEN (SPY, QQQ, IWM at $1 and NVDA at $2.5 on a chart a few dollars tall: 60 to 100 px between strikes) must not become one tall solid block each: a band is never
-// thicker than this, centred on its strike with soft edges, and the chart shows through between strikes. SPX and NDX (30 to 40 px between strikes) are below the limit and keep their approved look.
+// Strikes spaced wide apart ON SCREEN (SPY, QQQ, IWM at $1 and NVDA at $2.5 on a chart a few dollars tall: 60 to 200 px between strikes) must not become one tall solid block each: a band is never
+// thicker than the limit, centred on its strike with soft edges, and the chart shows through between strikes. The limit shrinks smoothly as the gap grows (no jump at any window size or zoom:
+// SPX/NDX sit at 25 to 45 px depending on the monitor and the day's range) from the approved row look (30 px) down to the 18 px Lester chose for the ETFs.
 export const MAX_BAND_CSS_PX = 18;
-// Bands start once adjacent strikes are more than this far apart on screen (SPX/NDX sit at 30 to 35 px, the ETFs at 60 to 100).
-const BAND_ENGAGES_ABOVE_CSS_PX = 35;
+const BAND_FULL_ROWS_UP_TO_CSS_PX = 30;
+const BAND_SHRINK_PER_GAP_PX = 0.4;
 
 /**
- * Thickness in CSS pixels of the band drawn for one strike given the on-screen distance between adjacent strikes: null while the strikes are close enough for the full-height rows (nothing
- * changes), `MAX_BAND_CSS_PX` once the gap is wider than BAND_ENGAGES_ABOVE_CSS_PX.
+ * Thickness in CSS pixels of the band drawn for one strike given the on-screen distance between adjacent strikes: null while the strikes are close enough for the full-height rows (30 px or
+ * less, nothing changes), then 30 px shrinking by 0.4 px per extra pixel of gap down to `MAX_BAND_CSS_PX` (18 px from a 60 px gap on).
  */
 export function bandHeightCssPx(strikeGapCssPx: number | null): number | null {
-  if (strikeGapCssPx === null || !Number.isFinite(strikeGapCssPx)) return null;
-  return strikeGapCssPx > BAND_ENGAGES_ABOVE_CSS_PX ? MAX_BAND_CSS_PX : null;
+  if (strikeGapCssPx === null || !Number.isFinite(strikeGapCssPx) || strikeGapCssPx <= BAND_FULL_ROWS_UP_TO_CSS_PX) return null;
+  return Math.max(MAX_BAND_CSS_PX, BAND_FULL_ROWS_UP_TO_CSS_PX - BAND_SHRINK_PER_GAP_PX * (strikeGapCssPx - BAND_FULL_ROWS_UP_TO_CSS_PX));
 }
 const MINIMUM_ROW_HEIGHT_BITMAP_PX = 1;
 
