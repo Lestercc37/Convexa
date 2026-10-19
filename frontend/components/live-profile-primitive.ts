@@ -28,7 +28,15 @@ export type ProfileBar = {
   put?: number;
 };
 
-export type SmilePoint = { strike: number; iv: number; type: "call" | "put" };
+/** `reliable: false` = an in-the-money quote whose time value is below its spread: its IV is noise-prone, so it is drawn hollow and does not set the IV scale. Absent = reliable. */
+export type SmilePoint = { strike: number; iv: number; type: "call" | "put"; reliable?: boolean };
+
+/** The IV range the dots are spread over: that of the reliable points (the noise of an in-the-money quote cannot stretch the scale); every point when none is reliable. */
+export function smileIvRange(points: SmilePoint[]): { low: number; high: number } {
+  const reliable = points.filter((point) => point.reliable !== false);
+  const ivs = (reliable.length ? reliable : points).map((point) => point.iv);
+  return { low: Math.min(...ivs), high: Math.max(...ivs) };
+}
 
 /**
  * Horizontal centre, in CSS pixels from the left of the pane, of the dot of an IV: the lowest IV of the smile sits at the left end of the dot range (just past the gutter after the
@@ -38,7 +46,7 @@ export function smileDotX(iv: number, low: number, high: number, paneWidthCssPx:
   const lineX = paneWidthCssPx - columnWidthCssPx;
   const left = lineX + PROFILE_GUTTER_CSS_PX + SMILE_DOT_CSS_PX;
   const right = paneWidthCssPx - BAR_INSET_CSS_PX - SMILE_DOT_CSS_PX;
-  const share = high > low ? (iv - low) / (high - low) : 0.5;
+  const share = high > low ? Math.min(1, Math.max(0, (iv - low) / (high - low))) : 0.5;
   return left + share * Math.max(0, right - left);
 }
 
@@ -60,6 +68,8 @@ export const AHORA_LINE_COLOR = "rgba(209, 212, 220, 0.78)";
 const CALL_DOT_COLOR = "rgba(0, 220, 90, 0.92)";
 const PUT_DOT_COLOR = "rgba(255, 92, 96, 0.92)";
 const DOT_RING_COLOR = "rgba(8, 10, 16, 0.85)";
+const CALL_DOT_FAINT_COLOR = "rgba(0, 220, 90, 0.6)";
+const PUT_DOT_FAINT_COLOR = "rgba(255, 92, 96, 0.6)";
 const LABEL_COLOR = "rgba(209, 212, 220, 0.9)";
 const DIM_LABEL_COLOR = "rgba(150, 156, 170, 0.9)";
 const FONT_FAMILY = 'Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif';
@@ -235,14 +245,20 @@ class ProfileOverlayRenderer implements IPrimitivePaneRenderer {
       // The smile inside the column, over the bars (the line and its tag stay on top): a dot per strike and right, with a dark ring so it reads over any bar colour.
       const points = this.source.smile;
       if (points.length) {
-        const ivs = points.map((point) => point.iv);
-        const low = Math.min(...ivs);
-        const high = Math.max(...ivs);
+        const { low, high } = smileIvRange(points);
         for (const { y, item } of place(this.source, points, vr, bitmapSize.height)) {
           const x = smileDotX(item.iv, low, high, paneWidthCss, columnWidth / hr) * hr;
+          const color = item.type === "call" ? CALL_DOT_COLOR : PUT_DOT_COLOR;
           context.beginPath();
           context.arc(x, y, SMILE_DOT_CSS_PX * hr, 0, Math.PI * 2);
-          context.fillStyle = item.type === "call" ? CALL_DOT_COLOR : PUT_DOT_COLOR;
+          if (item.reliable === false) {
+            // a noise-prone in-the-money quote: a hollow ring in the side's colour
+            context.lineWidth = Math.max(1, hr * 1.1);
+            context.strokeStyle = item.type === "call" ? CALL_DOT_FAINT_COLOR : PUT_DOT_FAINT_COLOR;
+            context.stroke();
+            continue;
+          }
+          context.fillStyle = color;
           context.fill();
           context.lineWidth = Math.max(1, hr * 0.9);
           context.strokeStyle = DOT_RING_COLOR;
@@ -359,9 +375,7 @@ export class LiveProfilePrimitive implements ISeriesPrimitive<Time> {
     if (!series || !this.smile.length || !(this.paneWidthCss > 0)) return null;
     const column = profileWidthCssPx(this.paneWidthCss);
     if (!column) return null;
-    const ivs = this.smile.map((point) => point.iv);
-    const low = Math.min(...ivs);
-    const high = Math.max(...ivs);
+    const { low, high } = smileIvRange(this.smile);
     let best: SmilePoint | null = null;
     let bestDistance = radius;
     for (const point of this.smile) {

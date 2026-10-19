@@ -1588,6 +1588,7 @@ export function PriceChart({
               `${(hoveredSmile.point.iv * 100).toFixed(1)} %`,
               smileExpiration || smileExpirations[0] || "",
             )}
+            {hoveredSmile.point.reliable === false && <div className="alert-cube-tooltip-dim">{t.priceChart.smileUnreliableNote}</div>}
           </div>
         )}
         {showAlertCubes && hoveredCube && (() => {
