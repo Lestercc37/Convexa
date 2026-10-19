@@ -7,6 +7,7 @@ import { renderWithLanguage } from "@/lib/i18n/test-utils";
 import { mostRecentSessionRange, regularSessionRange } from "@/lib/market-session";
 import type { AtrRange, ExpectedMove, GammaResponse } from "@/lib/types";
 import { derivedMetricsFixture } from "@/test/fixtures";
+import { LiveProfilePrimitive } from "./live-profile-primitive";
 import { PriceChart } from "./price-chart";
 
 const chartMocks = vi.hoisted(() => ({
@@ -626,6 +627,35 @@ describe("PriceChart", () => {
     expect(primitive.smile).toEqual([]);
   });
 
+  it("lets the Smile expiration be chosen, and says the strike, IV and expiration of the dot under the mouse", async () => {
+    chartMocks.getOptionChainExpirations.mockResolvedValue({ schema_version: 1, symbol: "SPY", expirations: ["2099-01-01", "2099-01-02"] });
+    const contract = (strike: number, type: "call" | "put", iv: number) => ({
+      occ_symbol: `X${strike}${type}`, strike, expiration: "2099-01-01", type, bid: 1, ask: 1.1, iv, delta: 0.5, gamma: 0.01, theta: 0, vega: 0, charm: 0, vanna: 0, open_interest: 10, volume: 10,
+    });
+    chartMocks.getOptionChain.mockResolvedValue({
+      schema_version: 1, symbol: "SPY", as_of: "2026-08-06T14:31:40Z", spot_price: 505,
+      contracts: [contract(500, "put", 0.22), contract(510, "call", 0.184)],
+    });
+    const user = userEvent.setup();
+    renderWithLanguage(<PriceChart symbol="SPY" candles={candlesWithRange} gamma={gamma} gammaView="tactical" />);
+    const select = await screen.findByLabelText("Vencimiento del Smile");
+    expect(Array.from(select.querySelectorAll("option")).map((option) => option.value)).toEqual(["", "2099-01-01", "2099-01-02"]);
+
+    await user.selectOptions(select, "2099-01-02");
+    await waitFor(() => expect(chartMocks.getOptionChain).toHaveBeenCalledWith("SPY", "2099-01-02", expect.any(AbortSignal)));
+
+    // The chart reports the pointer through the crosshair event; the primitive says which dot is under it.
+    const hit = vi.spyOn(LiveProfilePrimitive.prototype, "hitSmile").mockReturnValue({ strike: 510, iv: 0.184, type: "call" });
+    const onCrosshairMove = chartMocks.subscribeCrosshairMove.mock.calls.at(-1)![0];
+    act(() => onCrosshairMove({ point: { x: 900, y: 120 } }));
+    const tooltip = await screen.findByRole("tooltip");
+    expect(tooltip).toHaveTextContent("Call · Strike 510 · IV 18.4 % · vence 2099-01-02");
+    hit.mockReturnValue(null);
+    act(() => onCrosshairMove({ point: { x: 300, y: 120 } }));
+    expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
+    hit.mockRestore();
+  });
+
   it("feeds the profile from the latest heatmap values for vanna and charm, with their own colours and caption", async () => {
     chartMocks.getGammaHeatmap.mockResolvedValue({
       schema_version: 1,
@@ -684,7 +714,7 @@ describe("PriceChart", () => {
     const user = userEvent.setup();
     renderWithLanguage(<PriceChart symbol="SPY" candles={candlesWithRange} gamma={gamma} gammaView="tactical" />);
     expect(chartMocks.getAlerts).not.toHaveBeenCalled();
-    expect(chartMocks.subscribeCrosshairMove).not.toHaveBeenCalled();
+    expect(chartMocks.subscribeCrosshairMove).toHaveBeenCalledTimes(1); // the smile's own hover (the profile and its smile are on by default); the cubes are not
     expect(screen.queryByLabelText("Tamaño mínimo de las alertas (contratos-delta)")).not.toBeInTheDocument();
 
     await user.click(screen.getByLabelText("Alertas"));
@@ -693,10 +723,10 @@ describe("PriceChart", () => {
     const primitive = chartMocks.attachPrimitive.mock.calls.map((call) => call[0]).find((candidate) => "cubes" in candidate);
     await waitFor(() => expect(chartMocks.getAlerts).toHaveBeenCalledWith("SPY", expect.any(AbortSignal), 500));
     await waitFor(() => expect(primitive.cubes.map((cube: { strike: number }) => cube.strike)).toEqual([540]));
-    expect(chartMocks.subscribeCrosshairMove).toHaveBeenCalledTimes(1);
+    expect(chartMocks.subscribeCrosshairMove).toHaveBeenCalledTimes(2);
 
     // Hovering the cube (the chart reports it through the crosshair event) shows its tooltip.
-    const onCrosshairMove = chartMocks.subscribeCrosshairMove.mock.calls[0][0];
+    const onCrosshairMove = chartMocks.subscribeCrosshairMove.mock.calls[1][0];
     const hoveredId = primitive.cubes[0].id;
     act(() => onCrosshairMove({ hoveredObjectId: hoveredId, point: { x: 120, y: 80 } }));
     const tooltip = await screen.findByRole("tooltip");

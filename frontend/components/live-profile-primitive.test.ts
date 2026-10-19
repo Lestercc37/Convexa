@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   barThickness,
+  smileDotX,
+  PROFILE_GUTTER_CSS_PX,
   AHORA_LINE_COLOR,
   LiveProfilePrimitive,
   profileBarsFromHeatmap,
@@ -92,7 +94,7 @@ describe("profileScale", () => {
 });
 
 describe("LiveProfilePrimitive bars", () => {
-  it("draws one bar per strike starting just right of the AHORA line, longest = the largest |value| (square-root scale), never past the pane", () => {
+  it("draws one bar per strike growing from the price axis toward the candles, longest = the largest |value| (square-root scale), never past the pane", () => {
     const { primitive } = attached();
     primitive.setBars(BARS);
     const { context, ops } = fakeContext();
@@ -101,13 +103,13 @@ describe("LiveProfilePrimitive bars", () => {
     const rects = ops.filter((entry) => entry.op === "fillRect").map((entry) => entry.args as number[]);
     expect(rects).toHaveLength(3);
     for (const [x, , width] of rects) {
-      expect(x).toBe(806); // line at 800 + 6 px inset
-      expect(x + width).toBeLessThanOrEqual(WIDTH);
+      expect(x + width).toBe(WIDTH - 4); // the flat side is stuck to the price axis (right edge, 4 px inset)
+      expect(x).toBeGreaterThanOrEqual(800 + 14); // the peaks never come closer to the AHORA line than the 14 px gutter
     }
     const widths = rects.map((rect) => rect[2]);
-    expect(widths[1]).toBeCloseTo(188); // 200 - 2 * 6
-    expect(widths[0]).toBeCloseTo(188 * Math.sqrt(0.5)); // square-root scale: half the value is ~71% of the length
-    expect(widths[2]).toBeCloseTo(94);
+    expect(widths[1]).toBeCloseTo(182); // 200 - 14 gutter - 4 inset
+    expect(widths[0]).toBeCloseTo(182 * Math.sqrt(0.5)); // square-root scale: half the value is ~71% of the length
+    expect(widths[2]).toBeCloseTo(91);
   });
 
   it("colours the strongest strike white and keeps even a tiny bar visible", () => {
@@ -173,7 +175,7 @@ describe("LiveProfilePrimitive overlay (line of time and smile)", () => {
     expect(ops.some((entry) => entry.op === "fillText" && entry.args[0] === "AHORA")).toBe(true);
   });
 
-  it("draws one dot per smile point to the LEFT of the line, calls green and puts red, IV growing toward the line", () => {
+  it("draws one dot per smile point INSIDE the column (right of the line and its gutter), calls green and puts red, IV growing to the right", () => {
     const { primitive } = attached();
     primitive.setSmile([
       { strike: 100, iv: 0.2, type: "call" },
@@ -186,8 +188,11 @@ describe("LiveProfilePrimitive overlay (line of time and smile)", () => {
     const dots = ops.filter((entry) => entry.op === "arc");
     expect(dots).toHaveLength(3);
     const xs = dots.map((dot) => dot.args[0] as number);
-    for (const x of xs) expect(x).toBeLessThan(800);
-    expect(xs[1]).toBeGreaterThan(xs[2]); // 30% sits closer to the line than 25% (IV grows to the right, like the rest of Convexa's smile)
+    for (const x of xs) {
+      expect(x).toBeGreaterThanOrEqual(800 + 14);
+      expect(x).toBeLessThanOrEqual(WIDTH - 4);
+    }
+    expect(xs[1]).toBeGreaterThan(xs[2]); // 30% sits further right than 25% (IV grows to the right, like the rest of Convexa's smile)
     expect(xs[2]).toBeGreaterThan(xs[0]); // and 25% closer than 20%
     const fillOps = ops.filter((entry) => entry.op === "fill");
     expect(fillOps.map((entry) => entry.fillStyle)).toEqual(
@@ -265,5 +270,42 @@ describe("profile bar thickness", () => {
     expect(barThickness(100, 1)).toBe(18);
     expect(barThickness(120, 2)).toBeCloseTo(36); // bitmap pixels at a pixel ratio of 2: 18 CSS px
     expect(barThickness(0.5, 1)).toBe(1);
+  });
+});
+
+describe("smile inside the column", () => {
+  it("smileDotX puts the lowest IV just past the gutter after the AHORA line and the highest at the right edge, a flat smile in the middle", () => {
+    // pane 1000, column 200: line at 800
+    const low = smileDotX(0.2, 0.2, 0.3, 1000, 200);
+    const high = smileDotX(0.3, 0.2, 0.3, 1000, 200);
+    expect(low).toBeGreaterThan(800 + PROFILE_GUTTER_CSS_PX);
+    expect(low).toBeLessThan(820);
+    expect(high).toBeLessThanOrEqual(1000 - 4);
+    expect(high).toBeGreaterThan(990);
+    expect(smileDotX(0.25, 0.2, 0.3, 1000, 200)).toBeCloseTo((low + high) / 2);
+    expect(smileDotX(0.25, 0.25, 0.25, 1000, 200)).toBeCloseTo((low + high) / 2);
+  });
+
+  it("hitSmile finds the dot under the pointer (same placement as the drawing), the nearest one, and none away from every dot", () => {
+    const { primitive } = attached();
+    primitive.setSmile([
+      { strike: 100, iv: 0.2, type: "call" },
+      { strike: 105, iv: 0.3, type: "put" },
+    ]);
+    const { context } = fakeContext();
+    drawView(primitive, 1, context, WIDTH); // records the pane width the hit test needs
+    const dotX = (iv: number) => smileDotX(iv, 0.2, 0.3, WIDTH, 200);
+    // series.priceToCoordinate in these tests is 1500 - price * 8
+    expect(primitive.hitSmile(dotX(0.2), 1500 - 100 * 8)).toEqual({ strike: 100, iv: 0.2, type: "call" });
+    expect(primitive.hitSmile(dotX(0.3) + 3, 1500 - 105 * 8 - 2)).toEqual({ strike: 105, iv: 0.3, type: "put" });
+    expect(primitive.hitSmile(dotX(0.25), 1500 - 102 * 8)).toBeNull();
+    expect(primitive.hitSmile(100, 1500 - 100 * 8)).toBeNull(); // over the candles, far from any dot
+  });
+
+  it("hitSmile is null before the first draw and with no smile", () => {
+    const { primitive } = attached();
+    expect(primitive.hitSmile(900, 700)).toBeNull();
+    primitive.setSmile([{ strike: 100, iv: 0.2, type: "call" }]);
+    expect(primitive.hitSmile(900, 700)).toBeNull(); // pane width unknown until it is drawn
   });
 });

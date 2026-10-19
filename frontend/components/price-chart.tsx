@@ -44,6 +44,7 @@ import {
   profileWidthCssPx,
   sideBarsFromHeatmaps,
   type ProfileBar,
+  type SmilePoint,
 } from "./live-profile-primitive";
 import { LIVE_LEVELS_POLLING_INTERVAL_MS, POLLING_INTERVAL_MS } from "@/lib/polling";
 import { RegimeCompactBadge } from "./regime-badge";
@@ -482,6 +483,10 @@ export function PriceChart({
   // aligned with the price axis. On by default; it replaces the old bottom GEX-by-strike view. The Smile dots ride on the same line.
   const [showProfile, setShowProfile] = useState(true);
   const [showSmile, setShowSmile] = useState(true);
+  // The Smile's expiration: "" = the nearest current one; the list of the symbol's current expirations; and the dot under the mouse (strike, IV and where it is on screen).
+  const [smileExpiration, setSmileExpiration] = useState("");
+  const [smileExpirations, setSmileExpirations] = useState<string[]>([]);
+  const [hoveredSmile, setHoveredSmile] = useState<{ point: SmilePoint; x: number; y: number } | null>(null);
   const profilePrimitiveRef = useRef<LiveProfilePrimitive | null>(null);
   // Figures the profile endpoint does not serve (delta, vanna, charm) come from the latest heatmap values.
   const [heatmapProfile, setHeatmapProfile] = useState<ProfileBar[] | null>(null);
@@ -875,11 +880,13 @@ export function PriceChart({
     const primitive = profilePrimitiveRef.current;
     if (!showProfile || !showSmile || !primitive) return;
     const controller = new AbortController();
-    let expiration: string | null = null;
+    let expiration: string | null = smileExpiration || null;
     const load = async () => {
       if (expiration === null || expiration < currentEasternDate()) {
         const response = await getOptionChainExpirations(symbol, controller.signal);
-        expiration = currentExpirations(response.expirations)[0] ?? null;
+        const current = currentExpirations(response.expirations);
+        setSmileExpirations(current);
+        expiration = smileExpiration && current.includes(smileExpiration) ? smileExpiration : (current[0] ?? null);
       }
       if (expiration === null) {
         primitive.setSmile([]);
@@ -900,6 +907,28 @@ export function PriceChart({
       controller.abort();
       window.clearInterval(interval);
       primitive.setSmile([]);
+    };
+  }, [showProfile, showSmile, symbol, smileExpiration]);
+
+  // The expiration chosen for one symbol means nothing for the next one.
+  useEffect(() => {
+    setSmileExpiration("");
+    setSmileExpirations([]);
+  }, [symbol]);
+
+  // Hovering a smile dot: its strike, IV and expiration. The chart reports the pointer through the crosshair event; the primitive finds the dot under it.
+  useEffect(() => {
+    const chart = chartRef.current;
+    const primitive = profilePrimitiveRef.current;
+    if (!chart || !primitive || !showProfile || !showSmile) return;
+    const onCrosshairMove: Parameters<typeof chart.subscribeCrosshairMove>[0] = (param) => {
+      const hit = param.point ? primitive.hitSmile(param.point.x, param.point.y) : null;
+      setHoveredSmile(hit && param.point ? { point: hit, x: param.point.x, y: param.point.y } : null);
+    };
+    chart.subscribeCrosshairMove(onCrosshairMove);
+    return () => {
+      chart.unsubscribeCrosshairMove(onCrosshairMove);
+      setHoveredSmile(null);
     };
   }, [showProfile, showSmile, symbol]);
 
@@ -1397,6 +1426,20 @@ export function PriceChart({
                 {t.priceChart.smileLabel}
               </label>
             )}
+            {showProfile && showSmile && smileExpirations.length > 1 && (
+              <select
+                aria-label={t.priceChart.smileExpirationAriaLabel}
+                value={smileExpiration}
+                onChange={(event) => setSmileExpiration(event.target.value)}
+              >
+                <option value="">{t.priceChart.smileExpirationNearest}</option>
+                {smileExpirations.map((date) => (
+                  <option key={date} value={date}>
+                    {date}
+                  </option>
+                ))}
+              </select>
+            )}
             <label className="chart-toggle">
               <input
                 type="checkbox"
@@ -1539,6 +1582,16 @@ export function PriceChart({
             style={{ top: atrRects.lower.top, height: atrRects.lower.height }}
             aria-hidden="true"
           />
+        )}
+        {showProfile && showSmile && hoveredSmile && (
+          <div className="alert-cube-tooltip" role="tooltip" style={{ left: hoveredSmile.x - 14, top: hoveredSmile.y + 14, transform: "translateX(-100%)" }}>
+            {t.priceChart.smileTooltip(
+              hoveredSmile.point.strike,
+              hoveredSmile.point.type,
+              `${(hoveredSmile.point.iv * 100).toFixed(1)} %`,
+              smileExpiration || smileExpirations[0] || "",
+            )}
+          </div>
         )}
         {showAlertCubes && hoveredCube && (() => {
           const hovered = cubes.find((cube) => cube.id === hoveredCube.id);

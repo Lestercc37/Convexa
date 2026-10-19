@@ -13,8 +13,9 @@ import { rampRgb, type HeatmapData, type HeatmapPalette } from "./gamma-heatmap-
 // history (heatmap and candles) on its left and, on its right, ONE live profile with a bar per strike. The chart reserves the column's width at the right of the time
 // scale (price-chart.tsx sets timeScale.rightOffsetPixels from profileWidthCssPx), so the candles stop at the line and nothing is drawn over the bars.
 // Everything is placed with series.priceToCoordinate, the same conversion the candles use, so it follows zoom and vertical scrolling.
-// The Volatility Smile rides on the same line: one dot per strike, IV of calls (green) and puts (red) running left from the line (the higher the IV, the closer to
-// the line, so IV grows to the right as in the rest of Convexa's smile), aligned with the price axis.
+// The bars grow from the price axis (their flat side is stuck to the strikes, at the right edge) towards the candles, never closer to the AHORA line than a gutter.
+// The Volatility Smile lives inside the same column (a toggle): one dot per strike for the IV of calls (green) and puts (red), IV growing to the right as in the rest of
+// Convexa's smile, aligned with the price axis; hitSmile finds the dot under the mouse so the chart can say its strike, IV and expiration.
 
 export type ProfileBar = {
   strike: number;
@@ -29,22 +30,36 @@ export type ProfileBar = {
 
 export type SmilePoint = { strike: number; iv: number; type: "call" | "put" };
 
+/**
+ * Horizontal centre, in CSS pixels from the left of the pane, of the dot of an IV: the lowest IV of the smile sits at the left end of the dot range (just past the gutter after the
+ * AHORA line) and the highest at the right end, so IV grows to the right. A flat smile (one IV) is centred.
+ */
+export function smileDotX(iv: number, low: number, high: number, paneWidthCssPx: number, columnWidthCssPx: number): number {
+  const lineX = paneWidthCssPx - columnWidthCssPx;
+  const left = lineX + PROFILE_GUTTER_CSS_PX + SMILE_DOT_CSS_PX;
+  const right = paneWidthCssPx - BAR_INSET_CSS_PX - SMILE_DOT_CSS_PX;
+  const share = high > low ? (iv - low) / (high - low) : 0.5;
+  return left + share * Math.max(0, right - left);
+}
+
 const COLUMN_MIN_PANE_WIDTH_CSS_PX = 520;
 const COLUMN_WIDTH_FRACTION = 0.2;
 const COLUMN_MIN_CSS_PX = 150;
 const COLUMN_MAX_CSS_PX = 320;
-const BAR_INSET_CSS_PX = 6;
+const BAR_INSET_CSS_PX = 4;
+// Free space between the AHORA line and the longest bar or the leftmost dot: the line and its tag never touch the histogram.
+export const PROFILE_GUTTER_CSS_PX = 14;
 const ROW_FILL_FRACTION = 0.78;
 // A bar is never thicker than this: with strikes 60 to 100 px apart on screen (SPY, QQQ, IWM, NVDA) a full-row bar was a 45 px slab; SPX/NDX rows (about 24 px) stay as they were.
 export const MAX_BAR_CSS_PX = 18;
 const MINIMUM_ROW_HEIGHT_BITMAP_PX = 1;
-const SMILE_GAP_CSS_PX = 14;
-const SMILE_BAND_CSS_PX = 92;
-const SMILE_DOT_CSS_PX = 2.4;
+const SMILE_DOT_CSS_PX = 2.6;
+const SMILE_HIT_RADIUS_CSS_PX = 9;
 export const LIVE_PROFILE_TOP_SHARE = 0.98;
 export const AHORA_LINE_COLOR = "rgba(209, 212, 220, 0.78)";
 const CALL_DOT_COLOR = "rgba(0, 220, 90, 0.92)";
 const PUT_DOT_COLOR = "rgba(255, 92, 96, 0.92)";
+const DOT_RING_COLOR = "rgba(8, 10, 16, 0.85)";
 const LABEL_COLOR = "rgba(209, 212, 220, 0.9)";
 const DIM_LABEL_COLOR = "rgba(150, 156, 170, 0.9)";
 const FONT_FAMILY = 'Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif';
@@ -158,15 +173,16 @@ class ProfileBarsRenderer implements IPrimitivePaneRenderer {
       if (!placed.length) return;
       const step = medianRowStep(placed.map((entry) => entry.y));
       const rowHeight = barThickness(step, scope.verticalPixelRatio);
-      const lineX = width - columnWidth;
       const inset = BAR_INSET_CSS_PX * scope.horizontalPixelRatio;
-      const maxBar = columnWidth - inset * 2;
+      const maxBar = columnWidth - (PROFILE_GUTTER_CSS_PX * scope.horizontalPixelRatio + inset);
+      const rightEdge = width - inset;
       for (const { y, item } of placed) {
         const barWidth = Math.sqrt(Math.min(1, Math.abs(item.absolute) / largest)) * maxBar;
         if (barWidth < 1) continue;
         const rgb = rampRgb(Math.sign(item.net) * Math.sqrt(Math.min(1, Math.abs(item.net) / scale)) * scale, scale, this.source.palette);
         scope.context.fillStyle = `rgb(${rgb[0]}, ${rgb[1]}, ${rgb[2]})`;
-        scope.context.fillRect(lineX + inset, y - rowHeight / 2, barWidth, rowHeight);
+        // flat side at the price axis, peak towards the candles
+        scope.context.fillRect(rightEdge - barWidth, y - rowHeight / 2, barWidth, rowHeight);
       }
     });
   }
@@ -185,9 +201,9 @@ class ProfileBarsRenderer implements IPrimitivePaneRenderer {
     const rowHeight = barThickness(step, scope.verticalPixelRatio);
     const both = bars.some((bar) => bar.call !== undefined) && bars.some((bar) => bar.put !== undefined);
     const half = Math.max(MINIMUM_ROW_HEIGHT_BITMAP_PX, rowHeight / 2 - 0.5 * scope.verticalPixelRatio);
-    const lineX = width - columnWidth;
     const inset = BAR_INSET_CSS_PX * scope.horizontalPixelRatio;
-    const maxBar = columnWidth - inset * 2;
+    const maxBar = columnWidth - (PROFILE_GUTTER_CSS_PX * scope.horizontalPixelRatio + inset);
+    const rightEdge = width - inset;
     for (const { y, item } of placed) {
       for (const [value, upper] of [[item.call, true], [item.put, false]] as const) {
         if (value === undefined) continue;
@@ -197,7 +213,7 @@ class ProfileBarsRenderer implements IPrimitivePaneRenderer {
         scope.context.fillStyle = `rgb(${rgb[0]}, ${rgb[1]}, ${rgb[2]})`;
         const height = both ? half : rowHeight;
         const offset = both ? (upper ? -half - 0.25 * scope.verticalPixelRatio : 0.25 * scope.verticalPixelRatio) : -rowHeight / 2;
-        scope.context.fillRect(lineX + inset, y + offset, barWidth, height);
+        scope.context.fillRect(rightEdge - barWidth, y + offset, barWidth, height);
       }
     }
   }
@@ -212,28 +228,31 @@ class ProfileOverlayRenderer implements IPrimitivePaneRenderer {
       const columnWidth = profileWidthCssPx(bitmapSize.width / hr) * hr;
       if (!columnWidth) return;
       const lineX = bitmapSize.width - columnWidth;
+      const paneWidthCss = bitmapSize.width / hr;
+      this.source.paneWidthCss = paneWidthCss;
+      const gutter = PROFILE_GUTTER_CSS_PX * hr;
 
-      // The smile first, so the line and its label stay on top of the dots.
+      // The smile inside the column, over the bars (the line and its tag stay on top): a dot per strike and right, with a dark ring so it reads over any bar colour.
       const points = this.source.smile;
       if (points.length) {
         const ivs = points.map((point) => point.iv);
         const low = Math.min(...ivs);
         const high = Math.max(...ivs);
-        const band = SMILE_BAND_CSS_PX * hr;
-        const gap = SMILE_GAP_CSS_PX * hr;
         for (const { y, item } of place(this.source, points, vr, bitmapSize.height)) {
-          const share = high > low ? (item.iv - low) / (high - low) : 0;
-          const x = lineX - gap - (1 - share) * band;
-          context.fillStyle = item.type === "call" ? CALL_DOT_COLOR : PUT_DOT_COLOR;
+          const x = smileDotX(item.iv, low, high, paneWidthCss, columnWidth / hr) * hr;
           context.beginPath();
           context.arc(x, y, SMILE_DOT_CSS_PX * hr, 0, Math.PI * 2);
+          context.fillStyle = item.type === "call" ? CALL_DOT_COLOR : PUT_DOT_COLOR;
           context.fill();
+          context.lineWidth = Math.max(1, hr * 0.9);
+          context.strokeStyle = DOT_RING_COLOR;
+          context.stroke();
         }
         context.font = `${10.5 * hr}px ${FONT_FAMILY}`;
-        context.textAlign = "right";
+        context.textAlign = "left";
         context.textBaseline = "top";
         context.fillStyle = DIM_LABEL_COLOR;
-        context.fillText("Smile · IV", lineX - 34 * hr, 8 * vr);
+        context.fillText("Smile · IV", lineX + gutter, 26 * vr);
       }
 
       // The line of time.
@@ -247,21 +266,21 @@ class ProfileOverlayRenderer implements IPrimitivePaneRenderer {
       context.stroke();
       context.restore();
 
-      // AHORA, in a small rounded tag centred on the line at the top; the profile's own name at the foot of the column.
+      // AHORA, in a small rounded tag on the history side of the line at the top (never over the histogram); the profile's own name at the foot of the column.
       context.font = `600 ${10.5 * hr}px ${FONT_FAMILY}`;
       context.textAlign = "center";
       context.textBaseline = "middle";
       const tagWidth = 50 * hr;
       const tagHeight = 16 * vr;
       context.fillStyle = "rgba(14, 17, 26, 0.92)";
-      fillRounded(context, lineX - tagWidth / 2, 3 * vr, tagWidth, tagHeight, 5 * hr);
+      fillRounded(context, lineX - 6 * hr - tagWidth, 3 * vr, tagWidth, tagHeight, 5 * hr);
       context.fillStyle = LABEL_COLOR;
-      context.fillText("AHORA", lineX, 3 * vr + tagHeight / 2 + 0.5 * vr);
+      context.fillText("AHORA", lineX - 6 * hr - tagWidth / 2, 3 * vr + tagHeight / 2 + 0.5 * vr);
       context.font = `500 ${10 * hr}px ${FONT_FAMILY}`;
       context.textAlign = "left";
       context.textBaseline = "bottom";
       context.fillStyle = DIM_LABEL_COLOR;
-      context.fillText(this.source.label, lineX + BAR_INSET_CSS_PX * hr, bitmapSize.height - 5 * vr);
+      context.fillText(this.source.label, lineX + gutter, bitmapSize.height - 5 * vr);
     });
   }
 }
@@ -288,6 +307,8 @@ export class LiveProfilePrimitive implements ISeriesPrimitive<Time> {
   series: ISeriesApi<"Candlestick"> | null = null;
   bars: ProfileBar[] = [];
   smile: SmilePoint[] = [];
+  /** Width of the pane in CSS pixels as of the last draw (the hit test places the dots with it). */
+  paneWidthCss = 0;
   palette: HeatmapPalette = "gamma";
   /** The caption at the foot of the column (the figure being shown). */
   label = "PERFIL EN VIVO";
@@ -327,5 +348,31 @@ export class LiveProfilePrimitive implements ISeriesPrimitive<Time> {
   setSmile(points: SmilePoint[]): void {
     this.smile = points;
     this.requestUpdate?.();
+  }
+
+  /**
+   * The smile dot under a point of the pane (CSS pixels from its top left): the nearest one within a few pixels, or null. Same placement as the drawing (smileDotX and the
+   * price coordinate of the strike), so what the mouse touches is what is drawn.
+   */
+  hitSmile(x: number, y: number, radius: number = SMILE_HIT_RADIUS_CSS_PX): SmilePoint | null {
+    const series = this.series;
+    if (!series || !this.smile.length || !(this.paneWidthCss > 0)) return null;
+    const column = profileWidthCssPx(this.paneWidthCss);
+    if (!column) return null;
+    const ivs = this.smile.map((point) => point.iv);
+    const low = Math.min(...ivs);
+    const high = Math.max(...ivs);
+    let best: SmilePoint | null = null;
+    let bestDistance = radius;
+    for (const point of this.smile) {
+      const py = series.priceToCoordinate(point.strike);
+      if (py === null || !Number.isFinite(py)) continue;
+      const distance = Math.hypot(smileDotX(point.iv, low, high, this.paneWidthCss, column) - x, py - y);
+      if (distance <= bestDistance) {
+        best = point;
+        bestDistance = distance;
+      }
+    }
+    return best;
   }
 }

@@ -144,6 +144,8 @@ beforeAll(() => {
     }),
     removeSeries: vi.fn(),
     applyOptions: vi.fn(),
+    subscribeCrosshairMove: vi.fn(),
+    unsubscribeCrosshairMove: vi.fn(),
     timeScale: () => ({
       fitContent: vi.fn(),
       getVisibleLogicalRange: () => ({ from: 0, to: 100 }),
