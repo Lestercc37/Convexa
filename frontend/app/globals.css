@@ -359,6 +359,8 @@ button, select { font: inherit; }
 
 .overlay-toggles { display: flex; align-items: center; gap: 8px; margin: 0; padding: 0; border: 0; }
 .overlay-toggles legend { float: left; margin: 0 5px 0 0; padding: 0; color: var(--tv-text-dim); font-size: 0.68rem; }
+.chart-controls select { padding: 3px 8px; border: 1px solid var(--tv-border); border-radius: 999px; background: var(--tv-panel-raised); color: var(--tv-text); font: inherit; font-size: 0.7rem; cursor: pointer; }
+.chart-controls select:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .chart-toggle { display: inline-flex; align-items: center; gap: 5px; padding: 3px 10px 3px 7px; border: 1px solid var(--tv-border); border-radius: 999px; background: var(--tv-panel-raised); color: var(--tv-text-dim); font-size: 0.7rem; cursor: pointer; user-select: none; }
 .chart-toggle:has(input:checked) { color: var(--tv-text); border-color: var(--accent); }
 .chart-toggle:has(input:focus-visible) { outline: 2px solid var(--accent); outline-offset: 1px; }
