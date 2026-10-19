@@ -2,7 +2,6 @@ import { describe, expect, it, vi } from "vitest";
 import {
   barThickness,
   smileDotX,
-  smileIvRange,
   PROFILE_GUTTER_CSS_PX,
   AHORA_LINE_COLOR,
   LiveProfilePrimitive,
@@ -308,38 +307,5 @@ describe("smile inside the column", () => {
     expect(primitive.hitSmile(900, 700)).toBeNull();
     primitive.setSmile([{ strike: 100, iv: 0.2, type: "call" }]);
     expect(primitive.hitSmile(900, 700)).toBeNull(); // pane width unknown until it is drawn
-  });
-});
-
-describe("unreliable smile points (in-the-money quotes with no readable time value)", () => {
-  it("smileIvRange spreads the dots over the reliable points only, and over all of them when none is reliable", () => {
-    expect(smileIvRange([
-      { strike: 100, iv: 0.2, type: "call" },
-      { strike: 101, iv: 0.3, type: "put", reliable: true },
-      { strike: 102, iv: 0.9, type: "put", reliable: false },
-    ])).toEqual({ low: 0.2, high: 0.3 });
-    expect(smileIvRange([{ strike: 102, iv: 0.9, type: "put", reliable: false }, { strike: 103, iv: 0.5, type: "call", reliable: false }])).toEqual({ low: 0.5, high: 0.9 });
-  });
-
-  it("smileDotX clamps a dot beyond the range to the column edge", () => {
-    const right = smileDotX(0.9, 0.2, 0.3, 1000, 200);
-    expect(right).toBeLessThanOrEqual(1000 - 4);
-    expect(right).toBeCloseTo(smileDotX(0.3, 0.2, 0.3, 1000, 200));
-    expect(smileDotX(0.05, 0.2, 0.3, 1000, 200)).toBeCloseTo(smileDotX(0.2, 0.2, 0.3, 1000, 200));
-  });
-
-  it("draws an unreliable point as a hollow ring (stroke, no fill) and a reliable one filled", () => {
-    const { primitive } = attached();
-    primitive.setSmile([
-      { strike: 100, iv: 0.2, type: "call" },
-      { strike: 105, iv: 0.9, type: "put", reliable: false },
-    ]);
-    const { context, ops } = fakeContext();
-    drawView(primitive, 1, context, WIDTH);
-    expect(ops.filter((entry) => entry.op === "arc")).toHaveLength(2);
-    const dotFills = ops.filter((entry) => entry.op === "fill" && (entry.fillStyle?.includes("0, 220, 90") || entry.fillStyle?.includes("255, 92, 96")));
-    expect(dotFills).toHaveLength(1); // only the reliable dot is filled
-    const faint = ops.filter((entry) => entry.op === "stroke" && entry.strokeStyle === "rgba(255, 92, 96, 0.6)");
-    expect(faint).toHaveLength(1);
   });
 });

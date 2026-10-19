@@ -24,14 +24,11 @@ describe("smilePointsFromChain", () => {
     expect(points).toHaveLength(4);
     expect(points.filter((point) => point.type === "call").map((point) => point.strike).sort(byStrike)).toEqual([990, 1010]);
     expect(points.filter((point) => point.type === "put").map((point) => point.strike).sort(byStrike)).toEqual([990, 1010]);
-    expect(points.every((point) => point.reliable === undefined)).toBe(true);
   });
 
-  it("an in-the-money quote whose time value is below its spread still gets its dot, flagged unreliable", () => {
-    // put 1010 with spot 1000: intrinsic 10, mid 10.2, time value 0.2 < half spread 0.5
-    expect(smilePointsFromChain([contract(1010, "put", 0.12, 9.7, 10.7)], SPOT)).toEqual([{ strike: 1010, iv: 0.12, type: "put", reliable: false }]);
-    // the same contract with a tight spread is reliable (no flag)
-    expect(smilePointsFromChain([contract(1010, "put", 0.12, 10.1, 10.3)], SPOT)).toEqual([{ strike: 1010, iv: 0.12, type: "put" }]);
+  it("an in-the-money quote with no time value is drawn like any other: its IV is what the provider gave", () => {
+    // put 1010 with spot 1000: intrinsic 10, mid 10.2, time value 0.2 below half the spread
+    expect(smilePointsFromChain([contract(1010, "put", 0.12, 9.7, 10.7)], SPOT)).toEqual([{ strike: 1010, iv: 0.12, type: "put" }]);
   });
 
   it("IV = 0 (no solution) and strikes outside the +-1.5% window stay out", () => {

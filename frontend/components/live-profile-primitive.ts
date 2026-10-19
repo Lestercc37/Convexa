@@ -28,13 +28,11 @@ export type ProfileBar = {
   put?: number;
 };
 
-/** `reliable: false` = an in-the-money quote whose time value is below its spread: its IV is noise-prone, so it is drawn hollow and does not set the IV scale. Absent = reliable. */
-export type SmilePoint = { strike: number; iv: number; type: "call" | "put"; reliable?: boolean };
+export type SmilePoint = { strike: number; iv: number; type: "call" | "put" };
 
-/** The IV range the dots are spread over: that of the reliable points (the noise of an in-the-money quote cannot stretch the scale); every point when none is reliable. */
+/** The IV range the dots are spread over: every point's. */
 export function smileIvRange(points: SmilePoint[]): { low: number; high: number } {
-  const reliable = points.filter((point) => point.reliable !== false);
-  const ivs = (reliable.length ? reliable : points).map((point) => point.iv);
+  const ivs = points.map((point) => point.iv);
   return { low: Math.min(...ivs), high: Math.max(...ivs) };
 }
 
@@ -68,8 +66,6 @@ export const AHORA_LINE_COLOR = "rgba(209, 212, 220, 0.78)";
 const CALL_DOT_COLOR = "rgba(0, 220, 90, 0.92)";
 const PUT_DOT_COLOR = "rgba(255, 92, 96, 0.92)";
 const DOT_RING_COLOR = "rgba(8, 10, 16, 0.85)";
-const CALL_DOT_FAINT_COLOR = "rgba(0, 220, 90, 0.6)";
-const PUT_DOT_FAINT_COLOR = "rgba(255, 92, 96, 0.6)";
 const LABEL_COLOR = "rgba(209, 212, 220, 0.9)";
 const DIM_LABEL_COLOR = "rgba(150, 156, 170, 0.9)";
 const FONT_FAMILY = 'Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif';
@@ -251,13 +247,6 @@ class ProfileOverlayRenderer implements IPrimitivePaneRenderer {
           const color = item.type === "call" ? CALL_DOT_COLOR : PUT_DOT_COLOR;
           context.beginPath();
           context.arc(x, y, SMILE_DOT_CSS_PX * hr, 0, Math.PI * 2);
-          if (item.reliable === false) {
-            // a noise-prone in-the-money quote: a hollow ring in the side's colour
-            context.lineWidth = Math.max(1, hr * 1.1);
-            context.strokeStyle = item.type === "call" ? CALL_DOT_FAINT_COLOR : PUT_DOT_FAINT_COLOR;
-            context.stroke();
-            continue;
-          }
           context.fillStyle = color;
           context.fill();
           context.lineWidth = Math.max(1, hr * 0.9);
