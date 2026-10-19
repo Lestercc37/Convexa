@@ -17,7 +17,6 @@ export type Translations = {
     liveButton: string;
     preSessionButton: string;
     scannerButton: string;
-    structuralOnlyBadge: string;
     noTacticalDataLabel: string;
     loadingRegime: string;
     settingsButtonAriaLabel: string;

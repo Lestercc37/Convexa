@@ -19,7 +19,6 @@ export const en: Translations = {
     liveButton: "Live",
     preSessionButton: "Pre-Session",
     scannerButton: "Quick Scanner",
-    structuralOnlyBadge: "(Structural)",
     noTacticalDataLabel: "No option data available yet for this symbol",
     loadingRegime: "Loading regime and levels…",
     settingsButtonAriaLabel: "Whale Alerts threshold settings",

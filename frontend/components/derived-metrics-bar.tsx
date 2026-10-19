@@ -55,7 +55,7 @@ function MetricCard({
   );
 }
 
-export function DerivedMetricsBar({ metrics, showStructuralOnlyBadge }: DerivedMetricsBarProps) {
+export function DerivedMetricsBar({ metrics }: DerivedMetricsBarProps) {
   const { t } = useLanguage();
   const dealerImpact = metrics.dealer_impact_score;
   const signalAlignment = metrics.signal_alignment_score;
@@ -66,9 +66,6 @@ export function DerivedMetricsBar({ metrics, showStructuralOnlyBadge }: DerivedM
 
   return (
     <section className="panel metrics-bar" aria-label={t.derivedMetricsBar.ariaLabel}>
-      {showStructuralOnlyBadge && (
-        <span className="metrics-bar-structural-badge">{t.dashboard.structuralOnlyBadge}</span>
-      )}
       <MetricCard
         name="Dealer Impact Score"
         value={formatNumber(dealerImpact.value)}
@@ -112,7 +109,7 @@ type DealersPanelState = "folded" | "open" | "hidden";
  * each tab shows its own number, one click opens the detail cards, "Ocultar panel" hides the whole group (a small button brings it back).
  * The state lives in the page only (a reload starts folded again).
  */
-export function DealersPanel({ metrics, showStructuralOnlyBadge }: DerivedMetricsBarProps) {
+export function DealersPanel({ metrics }: DerivedMetricsBarProps) {
   const { t } = useLanguage();
   const [state, setState] = useState<DealersPanelState>("folded");
   if (state === "hidden") {
@@ -154,7 +151,7 @@ export function DealersPanel({ metrics, showStructuralOnlyBadge }: DerivedMetric
       </div>
       {open && (
         <div className="dealers-detail">
-          <DerivedMetricsBar metrics={metrics} showStructuralOnlyBadge={showStructuralOnlyBadge} />
+          <DerivedMetricsBar metrics={metrics} />
         </div>
       )}
     </div>

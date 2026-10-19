@@ -455,7 +455,6 @@ button, select { font: inherit; }
 .dealers-detail .metrics-bar { flex-direction: row; flex-wrap: wrap; }
 .dealers-detail .metric-card { flex: 1 1 200px; border-bottom: 0; border-right: 1px solid var(--tv-border); }
 .dealers-detail .metric-card:last-child { border-right: 0; }
-.metrics-bar-structural-badge { display: inline-block; margin-bottom: 6px; padding: 2px 7px; border-radius: 5px; background: var(--tv-panel-raised); color: var(--tv-text-dim); font-size: 0.65rem; font-weight: 700; letter-spacing: 0.02em; }
 
 /* Reintroduced (section 25) — removed in section 23 once both of its
    former occupants (the Whale Alerts gear, the Regime Badge) moved out

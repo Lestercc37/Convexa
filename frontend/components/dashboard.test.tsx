@@ -371,6 +371,8 @@ describe("Dashboard", () => {
     expect(screen.getByText("Signal Alignment Score")).toBeInTheDocument();
     expect(screen.getByText("Market Bias")).toBeInTheDocument();
     expect(screen.getByText("Volatility Regime")).toBeInTheDocument();
+    // No "(Estructural)" tag on the cards (Lester, 2026-10-18).
+    expect(screen.queryByText("(Estructural)")).not.toBeInTheDocument();
 
     // Removed on purpose (2026-10-18): aggregated greeks, closing window, expected-move text, the Volatility Smile panel, the old bottom panel.
     expect(screen.queryByText("Delta Exposure")).not.toBeInTheDocument();

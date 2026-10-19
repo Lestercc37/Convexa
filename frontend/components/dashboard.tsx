@@ -649,10 +649,7 @@ export function Dashboard() {
           // Volatility Smile panel are gone on purpose (Lester, 2026-10-18): the heatmap tabs (delta, vanna, charm), the Smile dots on the AHORA line and the
           // expected-move lines of the chart already carry them. The per-minute flow bars panel will go between the chart and this group once it exists.
           const dealersDock = (
-            <DealersPanel
-              metrics={gamma.derived_metrics}
-              showStructuralOnlyBadge={gammaView === "tactical"}
-            />
+            <DealersPanel metrics={gamma.derived_metrics} />
           );
           const centerContent = (
             <div className="tv-center">
