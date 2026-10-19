@@ -190,6 +190,7 @@ def build_container() -> Container:
             settings.thetadata_ws_url,
             theta_request_slots,
             reconcile_enabled=settings.thetadata_reconcile_enabled,
+            itm_iv_from_twin=settings.thetadata_itm_iv_from_twin,
         )
         if settings.data_provider == "thetadata"
         else MockDataProvider()
