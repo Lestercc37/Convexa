@@ -4,7 +4,7 @@ import { TickMarkType } from "lightweight-charts";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { MinuteCandle } from "@/lib/candles";
 import { renderWithLanguage } from "@/lib/i18n/test-utils";
-import { mostRecentSessionRange } from "@/lib/market-session";
+import { mostRecentSessionRange, regularSessionRange } from "@/lib/market-session";
 import type { AtrRange, ExpectedMove, GammaResponse } from "@/lib/types";
 import { derivedMetricsFixture } from "@/test/fixtures";
 import { PriceChart } from "./price-chart";
@@ -765,6 +765,18 @@ describe("PriceChart", () => {
 
     await user.click(screen.getByLabelText("Heatmap"));
     expect(chartMocks.detachPrimitive).toHaveBeenCalled();
+  });
+
+  it("asks for the heatmap of the session the candles on screen belong to, not simply today's (Monday before the open still shows Friday)", async () => {
+    chartMocks.getGammaHeatmap.mockResolvedValue({ schema_version: 1, symbol: "SPY", view: "tactical", metric: "gamma", bucket_seconds: 60, strikes: [], columns: [], scale_p98: null });
+    const user = userEvent.setup();
+    renderWithLanguage(<PriceChart symbol="SPY" candles={candlesWithRange} gamma={gamma} gammaView="tactical" />);
+    await user.click(screen.getByLabelText("Heatmap"));
+
+    const lastCandleSeconds = candlesWithRange.at(-1)!.time;
+    const expectedStart = new Date((regularSessionRange(lastCandleSeconds * 1000).openSeconds - 3600) * 1000);
+    await waitFor(() => expect(chartMocks.getGammaHeatmap).toHaveBeenCalled());
+    expect(chartMocks.getGammaHeatmap.mock.calls[0][1].start).toEqual(expectedStart);
   });
 
   it("keeps drawing what it has when a heatmap poll fails", async () => {

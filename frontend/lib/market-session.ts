@@ -106,6 +106,14 @@ export function mostRecentSessionRange(referenceMs: number): SessionRange {
   return regularSessionRange(referenceMs - rollBackDays * oneDayMs);
 }
 
+// Where the heatmap's matrix starts: an hour before the open of the session the CANDLES on screen belong to (the session of the last candle), so the map and the
+// candles always show the same day. Before the open of a trading day (Monday 08:54 ET) the candles are still Friday's but the old rule asked for "today" and got an
+// empty map; with no candle at all it falls back to the most recent session as before.
+export function heatmapStartSeconds(lastCandleSeconds: number | null, nowMs: number = Date.now()): number {
+  const session = lastCandleSeconds === null ? mostRecentSessionRange(nowMs) : regularSessionRange(lastCandleSeconds * 1000);
+  return session.openSeconds - 3600;
+}
+
 // Today's calendar date in New York as YYYY-MM-DD (en-CA formats dates that way). An option
 // expiration strictly before this date is over: nothing is left to ask the provider about.
 export function currentEasternDate(nowMs: number = Date.now()): string {

@@ -23,7 +23,7 @@ import { aggregateVwapPoints, type MinuteCandle, type Timeframe, type VwapPoint 
 import { recordChartEvent } from "@/lib/chart-lifecycle";
 import { useLanguage } from "@/lib/i18n/language-context";
 import type { MarketPriceStreamStatus } from "@/lib/market-price-stream";
-import { currentEasternDate, EASTERN_TIME_ZONE, mostRecentSessionRange } from "@/lib/market-session";
+import { currentEasternDate, EASTERN_TIME_ZONE, heatmapStartSeconds, mostRecentSessionRange } from "@/lib/market-session";
 import type {
   AtrRange,
   ExpectedMove,
@@ -488,6 +488,7 @@ export function PriceChart({
   const reservedRightPxRef = useRef(0);
   const profileColumnOnRef = useRef(true);
   const lastCloseRef = useRef<number | null>(candles.at(-1)?.close ?? null);
+  const lastCandleTimeRef = useRef<number | null>(candles.at(-1)?.time ?? null);
   // Whale alerts as small squares on the chart (design 12.8 to 12.14); off by default until it is checked against live alerts.
   const [showAlertCubes, setShowAlertCubes] = useState(false);
   const [cubeMinDeq, setCubeMinDeq] = useState<number>(DEFAULT_CUBE_FILTER.minDeq);
@@ -711,6 +712,7 @@ export function PriceChart({
     const previousCandleCount = previousCandleCountRef.current;
     previousCandleCountRef.current = candles.length;
     lastCloseRef.current = candles.at(-1)?.close ?? null;
+    lastCandleTimeRef.current = candles.at(-1)?.time ?? null;
     // Bulk changes only (a seed landing, a reset to zero): single live ticks would flood the 80-entry log.
     if (previousCandleCount === 0 || Math.abs(candles.length - previousCandleCount) > 1) {
       recordChartEvent("candles", { count: candles.length, previous: previousCandleCount });
@@ -936,7 +938,8 @@ export function PriceChart({
     series.attachPrimitive(primitive);
     const controller = new AbortController();
     const refresh = () => {
-      const start = new Date((mostRecentSessionRange(Date.now()).openSeconds - 3600) * 1000);
+      // The session of the candles on screen (Friday's before Monday's open), not simply "today".
+      const start = new Date(heatmapStartSeconds(lastCandleTimeRef.current) * 1000);
       getGammaHeatmap(symbol, { view: gammaView, metric: heatmapMetric, start, bucketSeconds: HEATMAP_BUCKET_SECONDS }, controller.signal)
         .then((response) => {
           const data = heatmapFromResponse(response);

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isWithinTheMostRecentSession, mostRecentSessionRange, regularSessionRange } from "./market-session";
+import { heatmapStartSeconds, isWithinTheMostRecentSession, mostRecentSessionRange, regularSessionRange } from "./market-session";
 
 describe("regularSessionRange", () => {
   it("resolves 09:30-16:00 ET during EDT (summer)", () => {
@@ -115,5 +115,24 @@ describe("isWithinTheMostRecentSession", () => {
     // the same result as passing the real current time explicitly.
     const now = Date.now();
     expect(isWithinTheMostRecentSession(now)).toBe(isWithinTheMostRecentSession(now, now));
+  });
+});
+
+describe("heatmapStartSeconds", () => {
+  const fridayCandle = Date.UTC(2026, 9, 16, 19, 59) / 1000; // Fri 2026-10-16 15:59 ET
+  const mondayBeforeOpen = Date.UTC(2026, 9, 19, 12, 54); // Mon 2026-10-19 08:54 ET
+
+  it("starts an hour before the open of the session of the last candle, so Monday before the open still shows Friday's map", () => {
+    expect(heatmapStartSeconds(fridayCandle, mondayBeforeOpen)).toBe(regularSessionRange(Date.UTC(2026, 9, 16, 16)).openSeconds - 3600);
+  });
+
+  it("follows the candles to today once today's first candle exists", () => {
+    const mondayCandle = Date.UTC(2026, 9, 19, 13, 31) / 1000; // 09:31 ET
+    expect(heatmapStartSeconds(mondayCandle, Date.UTC(2026, 9, 19, 13, 40))).toBe(regularSessionRange(Date.UTC(2026, 9, 19, 16)).openSeconds - 3600);
+  });
+
+  it("falls back to the most recent session when there is no candle yet", () => {
+    expect(heatmapStartSeconds(null, mondayBeforeOpen)).toBe(mostRecentSessionRange(mondayBeforeOpen).openSeconds - 3600);
+    expect(heatmapStartSeconds(null, Date.UTC(2026, 9, 18, 15))).toBe(regularSessionRange(Date.UTC(2026, 9, 16, 16)).openSeconds - 3600); // a Sunday: Friday's
   });
 });
