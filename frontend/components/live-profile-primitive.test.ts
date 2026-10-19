@@ -4,6 +4,7 @@ import {
   LiveProfilePrimitive,
   profileBarsFromHeatmap,
   profileScale,
+  sideBarsFromHeatmaps,
   profileWidthCssPx,
   type ProfileBar,
 } from "./live-profile-primitive";
@@ -207,5 +208,50 @@ describe("LiveProfilePrimitive overlay (line of time and smile)", () => {
     delete context.roundRect;
     drawView(primitive, 1, context, WIDTH);
     expect(ops.some((entry) => entry.op === "fillRect")).toBe(true);
+  });
+});
+
+describe("sides view (calls and puts apart)", () => {
+  const calls = { strikes: [100, 105], scale: 1, columns: [{ time: 1, values: [6, 2] }] };
+  const puts = { strikes: [100, 105, 110], scale: 1, columns: [{ time: 1, values: [-1, -9, -4] }] };
+
+  it("merges the latest call and put values per strike, and leaves an off side undefined", () => {
+    expect(sideBarsFromHeatmaps(calls, puts)).toEqual([
+      { strike: 100, net: 5, absolute: 7, call: 6, put: -1 },
+      { strike: 105, net: -7, absolute: 11, call: 2, put: -9 },
+      { strike: 110, net: -4, absolute: 4, call: undefined, put: -4 },
+    ]);
+    expect(sideBarsFromHeatmaps(calls, null).every((bar) => bar.put === undefined)).toBe(true);
+    expect(sideBarsFromHeatmaps(null, null)).toEqual([]);
+  });
+
+  it("draws a green bar over a red bar in each strike's row when both sides are on, longest = the largest |value| of either side", () => {
+    const { primitive } = attached();
+    primitive.setBars(sideBarsFromHeatmaps(calls, puts));
+    const { context, ops } = fakeContext();
+    drawView(primitive, 0, context, WIDTH);
+    const fills = ops.filter((entry) => entry.op === "fillRect");
+    expect(fills).toHaveLength(5); // strikes 100 and 105 have a call and a put, 110 only a put
+    const colours = fills.map((entry) => (entry.fillStyle as string).match(/\d+/g)!.map(Number));
+    const greens = colours.filter(([r, g]) => g > r);
+    const reds = colours.filter(([r, g]) => r > g);
+    const whites = colours.filter(([r, g, b]) => r === 255 && g === 255 && b === 255);
+    expect(greens.length).toBe(2);
+    expect(reds.length).toBe(2);
+    expect(whites.length).toBe(1); // the strongest value of either side (the 105 put) reads white
+  });
+
+  it("uses the whole row when only one side is on", () => {
+    const both = attached();
+    both.primitive.setBars(sideBarsFromHeatmaps(calls, puts));
+    const only = attached();
+    only.primitive.setBars(sideBarsFromHeatmaps(calls, null));
+    const a = fakeContext();
+    const b = fakeContext();
+    drawView(both.primitive, 0, a.context, WIDTH);
+    drawView(only.primitive, 0, b.context, WIDTH);
+    const heightBoth = (a.ops.find((entry) => entry.op === "fillRect")!.args as number[])[3];
+    const heightOnly = (b.ops.find((entry) => entry.op === "fillRect")!.args as number[])[3];
+    expect(heightOnly).toBeGreaterThan(heightBoth);
   });
 });

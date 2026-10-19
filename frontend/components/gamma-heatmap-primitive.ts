@@ -36,9 +36,12 @@ export type HeatmapData = {
 
 export type HeatmapPalette = "gamma" | "unsigned" | "vanna" | "charm";
 
-/** The ramp of each stored figure: absolute gamma has no sign (blue, never the green that means positive), vanna is purple, charm muted orange. */
+/**
+ * The ramp of each stored figure: absolute gamma and the two-sided total have no sign (blue, never the green that means positive), vanna is purple, charm muted orange; call gamma
+ * (stored positive) and put gamma (stored negative) use the gamma ramp, so calls draw green and puts red.
+ */
 export function paletteForMetric(metric: GammaHeatmapResponse["metric"]): HeatmapPalette {
-  if (metric === "absolute_gamma") return "unsigned";
+  if (metric === "absolute_gamma" || metric === "total_gamma") return "unsigned";
   if (metric === "vanna") return "vanna";
   if (metric === "charm") return "charm";
   return "gamma";
@@ -311,6 +314,8 @@ class GammaHeatmapRenderer implements IPrimitivePaneRenderer {
     context.clip();
     context.imageSmoothingEnabled = true;
     context.imageSmoothingQuality = "high";
+    // Sides view: the calls layer and the puts layer ADD their light, so a strike strong on both sides reads amber (green + red) instead of the second layer hiding the first.
+    if (this.source.additive) context.globalCompositeOperation = "lighter";
     context.filter = `blur(${HEATMAP_BLUR_CSS_PX * hpr}px)`;
     context.drawImage(scratch, left, visibleTop);
     context.filter = "none";
@@ -365,9 +370,12 @@ export class GammaHeatmapPrimitive implements ISeriesPrimitive<Time> {
   private readonly view: IPrimitivePaneView;
   /** Smooth drawing (scaled and blurred, like the prototype) instead of one sharp rectangle per cell. The chart turns it on; it falls back to the sharp cells when it cannot run. */
   readonly smooth: boolean;
+  /** Blend by adding light (the sides view draws two of these over each other). */
+  readonly additive: boolean;
 
-  constructor(options: { smooth?: boolean } = {}) {
+  constructor(options: { smooth?: boolean; additive?: boolean } = {}) {
     this.smooth = options.smooth ?? false;
+    this.additive = options.additive ?? false;
     const renderer = new GammaHeatmapRenderer(this);
     this.view = { zOrder: () => "bottom", renderer: () => renderer };
   }

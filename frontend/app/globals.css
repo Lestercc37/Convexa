@@ -363,6 +363,7 @@ button, select { font: inherit; }
 .chart-toggle:has(input:checked) { color: var(--tv-text); border-color: var(--accent); }
 .chart-toggle:has(input:focus-visible) { outline: 2px solid var(--accent); outline-offset: 1px; }
 .chart-toggle input { accent-color: var(--accent); margin: 0; }
+.chart-layers { display: inline-flex; align-items: center; gap: 6px; }
 /* Segmented control (heatmap figure: Gamma | Abs. | Delta | Vanna | Charm), same look as the level selector. */
 .chart-seg { display: inline-flex; gap: 2px; padding: 2px; border: 1px solid var(--tv-border); border-radius: 8px; background: var(--tv-panel-raised); }
 .chart-seg button { border: 0; border-radius: 6px; background: transparent; color: var(--tv-text-dim); cursor: pointer; font: inherit; font-size: 0.7rem; font-weight: 500; padding: 4px 9px; }

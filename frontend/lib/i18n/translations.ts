@@ -88,7 +88,15 @@ export type Translations = {
     heatmapMetricVanna: string;
     heatmapMetricCharm: string;
     /** The caption at the foot of the live profile column, per figure. */
-    profileCaptions: Record<"gamma" | "absolute_gamma" | "delta" | "vanna" | "charm", string>;
+    profileCaptions: Record<"gamma" | "absolute_gamma" | "delta" | "vanna" | "charm" | "call_gamma" | "put_gamma" | "total_gamma", string>;
+    /** Caption of the sides view (calls and puts apart): both on, only calls, only puts. */
+    profileCaptionSides: { both: string; calls: string; puts: string };
+    heatmapMetricTotal: string;
+    heatmapMetricTotalTitle: string;
+    heatmapSidesAriaLabel: string;
+    heatmapSideCalls: string;
+    heatmapSidePuts: string;
+    heatmapSidesTitle: string;
     expectedMoveRangeLabel: string;
     streamFallbackLabel: string;
     drawingToolsAriaLabel: string;

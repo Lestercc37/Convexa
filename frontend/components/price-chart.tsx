@@ -36,11 +36,12 @@ import type {
 import { LEVEL_MERGE_THRESHOLD } from "./gravity-map";
 import { AlertCubesPrimitive } from "./alert-cubes-primitive";
 import { AlertCubeTooltip } from "./alert-cube-tooltip";
-import { GammaHeatmapPrimitive, heatmapFromResponse, paletteForMetric } from "./gamma-heatmap-primitive";
+import { GammaHeatmapPrimitive, heatmapFromResponse, paletteForMetric, type HeatmapData } from "./gamma-heatmap-primitive";
 import {
   LiveProfilePrimitive,
   profileBarsFromHeatmap,
   profileWidthCssPx,
+  sideBarsFromHeatmaps,
   type ProfileBar,
 } from "./live-profile-primitive";
 import { LIVE_LEVELS_POLLING_INTERVAL_MS, POLLING_INTERVAL_MS } from "@/lib/polling";
@@ -412,6 +413,7 @@ function mergePriceRange(base: AutoscaleInfo | null, extraPrices: number[]): Aut
 const HEATMAP_METRIC_TABS = [
   { metric: "gamma", labelKey: "heatmapMetricGamma" },
   { metric: "absolute_gamma", labelKey: "heatmapMetricAbsolute" },
+  { metric: "total_gamma", labelKey: "heatmapMetricTotal" },
   { metric: "delta", labelKey: "heatmapMetricDelta" },
   { metric: "vanna", labelKey: "heatmapMetricVanna" },
   { metric: "charm", labelKey: "heatmapMetricCharm" },
@@ -503,6 +505,9 @@ export function PriceChart({
   // Gamma heatmap behind the candles (off by default): strike x time matrix read from /gamma/{symbol}/heatmap.
   const [showHeatmap, setShowHeatmap] = useState(false);
   const [heatmapMetric, setHeatmapMetric] = useState<GammaHeatmapMetric>("gamma");
+  // The sides view: call gamma and put gamma drawn apart (green / red, one scale), each switchable. Any side on replaces the single figure above until both are off again.
+  const [sideLayers, setSideLayers] = useState({ calls: false, puts: false });
+  const sidesOn = sideLayers.calls || sideLayers.puts;
   const [drawMode, setDrawMode] = useState(false);
   const [trendline, setTrendline] = useState<Trendline | null>(null);
   const referenceLevelsRef = useRef(
@@ -821,8 +826,15 @@ export function PriceChart({
   }, [showProfile]);
 
   // What the profile shows follows the heatmap's figure while the heatmap is on (net gamma otherwise).
-  const profileMetric: GammaHeatmapMetric = showHeatmap ? heatmapMetric : "gamma";
-  const profileFromEndpoint = profileMetric === "gamma" || profileMetric === "absolute_gamma";
+  const profileMetric: GammaHeatmapMetric = showHeatmap && !sidesOn ? heatmapMetric : "gamma";
+  const profileFromEndpoint = !(showHeatmap && sidesOn) && (profileMetric === "gamma" || profileMetric === "absolute_gamma");
+  const profileCaption = showHeatmap && sidesOn
+    ? sideLayers.calls && sideLayers.puts
+      ? t.priceChart.profileCaptionSides.both
+      : sideLayers.calls
+        ? t.priceChart.profileCaptionSides.calls
+        : t.priceChart.profileCaptionSides.puts
+    : t.priceChart.profileCaptions[profileMetric];
   useEffect(() => {
     if (!showProfile || !profileFromEndpoint) return;
     const controller = new AbortController();
@@ -854,8 +866,8 @@ export function PriceChart({
 
   useEffect(() => {
     if (!showProfile || profileFromEndpoint || !heatmapProfile) return;
-    profilePrimitiveRef.current?.setBars(heatmapProfile, paletteForMetric(profileMetric), t.priceChart.profileCaptions[profileMetric]);
-  }, [showProfile, profileFromEndpoint, heatmapProfile, profileMetric, t]);
+    profilePrimitiveRef.current?.setBars(heatmapProfile, showHeatmap && sidesOn ? "gamma" : paletteForMetric(profileMetric), profileCaption);
+  }, [showProfile, profileFromEndpoint, heatmapProfile, profileMetric, profileCaption, showHeatmap, sidesOn]);
 
   // Smile dots on the AHORA line: the nearest current expiration, polled like the other live panels; a failed poll keeps the dots already drawn.
   useEffect(() => {
@@ -933,7 +945,7 @@ export function PriceChart({
   // is entered, a weekend) simply stays empty.
   useEffect(() => {
     const series = seriesRef.current;
-    if (!showHeatmap || !series) return;
+    if (!showHeatmap || sidesOn || !series) return;
     const primitive = new GammaHeatmapPrimitive({ smooth: true });
     series.attachPrimitive(primitive);
     const controller = new AbortController();
@@ -958,7 +970,52 @@ export function PriceChart({
       series.detachPrimitive(primitive);
       setHeatmapProfile(null);
     };
-  }, [showHeatmap, symbol, gammaView, heatmapMetric]);
+  }, [showHeatmap, sidesOn, symbol, gammaView, heatmapMetric]);
+
+  // The sides view: one heatmap primitive per side that is on (calls green, puts red), drawn with the SAME scale (the larger of the two p98) so the call and the put of a strike compare
+  // directly, and the live profile shows both as a green and a red bar per strike. A failed poll keeps what is drawn.
+  useEffect(() => {
+    const series = seriesRef.current;
+    if (!showHeatmap || !sidesOn || !series) return;
+    const controller = new AbortController();
+    type SideLayer = { key: "calls" | "puts"; metric: "call_gamma" | "put_gamma" };
+    const layers: SideLayer[] = [];
+    if (sideLayers.calls) layers.push({ key: "calls", metric: "call_gamma" });
+    if (sideLayers.puts) layers.push({ key: "puts", metric: "put_gamma" });
+    const primitives = new Map(layers.map((layer) => [layer.key, new GammaHeatmapPrimitive({ smooth: true, additive: true })]));
+    primitives.forEach((primitive) => series.attachPrimitive(primitive));
+    const latest: { calls: HeatmapData | null; puts: HeatmapData | null } = { calls: null, puts: null };
+    const render = () => {
+      const scales = [latest.calls?.scale, latest.puts?.scale].filter((value): value is number => typeof value === "number");
+      const common = scales.length ? Math.max(...scales) : null;
+      primitives.forEach((primitive, key) => {
+        const data = latest[key];
+        if (data) primitive.setData({ ...data, scale: common });
+      });
+      setHeatmapProfile(sideBarsFromHeatmaps(latest.calls, latest.puts));
+    };
+    const refresh = () => {
+      const start = new Date(heatmapStartSeconds(lastCandleTimeRef.current) * 1000);
+      for (const layer of layers) {
+        getGammaHeatmap(symbol, { view: gammaView, metric: layer.metric, start, bucketSeconds: HEATMAP_BUCKET_SECONDS }, controller.signal)
+          .then((response) => {
+            latest[layer.key] = heatmapFromResponse(response);
+            render();
+          })
+          .catch(() => {
+            // A failed poll keeps the cells already drawn; the next one retries.
+          });
+      }
+    };
+    refresh();
+    const interval = window.setInterval(refresh, LIVE_LEVELS_POLLING_INTERVAL_MS);
+    return () => {
+      controller.abort();
+      window.clearInterval(interval);
+      primitives.forEach((primitive) => series.detachPrimitive(primitive));
+      setHeatmapProfile(null);
+    };
+  }, [showHeatmap, sidesOn, sideLayers.calls, sideLayers.puts, symbol, gammaView]);
 
   useEffect(() => {
     trendlineSeriesRef.current?.setData(
@@ -1342,13 +1399,42 @@ export function PriceChart({
                   <button
                     key={tab.metric}
                     type="button"
-                    aria-pressed={heatmapMetric === tab.metric}
-                    title={tab.metric === "absolute_gamma" ? t.priceChart.heatmapMetricAbsoluteTitle : undefined}
-                    onClick={() => setHeatmapMetric(tab.metric)}
+                    aria-pressed={!sidesOn && heatmapMetric === tab.metric}
+                    title={
+                      tab.metric === "absolute_gamma"
+                        ? t.priceChart.heatmapMetricAbsoluteTitle
+                        : tab.metric === "total_gamma"
+                          ? t.priceChart.heatmapMetricTotalTitle
+                          : undefined
+                    }
+                    onClick={() => {
+                      setHeatmapMetric(tab.metric);
+                      setSideLayers({ calls: false, puts: false });
+                    }}
                   >
                     {t.priceChart[tab.labelKey]}
                   </button>
                 ))}
+              </div>
+            )}
+            {showHeatmap && (
+              <div className="chart-layers" role="group" aria-label={t.priceChart.heatmapSidesAriaLabel} title={t.priceChart.heatmapSidesTitle}>
+                <label className="chart-toggle">
+                  <input
+                    type="checkbox"
+                    checked={sideLayers.calls}
+                    onChange={(event) => setSideLayers((current) => ({ ...current, calls: event.target.checked }))}
+                  />
+                  {t.priceChart.heatmapSideCalls}
+                </label>
+                <label className="chart-toggle">
+                  <input
+                    type="checkbox"
+                    checked={sideLayers.puts}
+                    onChange={(event) => setSideLayers((current) => ({ ...current, puts: event.target.checked }))}
+                  />
+                  {t.priceChart.heatmapSidePuts}
+                </label>
               </div>
             )}
             <label className="chart-toggle">

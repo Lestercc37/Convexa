@@ -1,4 +1,4 @@
-import { act, screen, waitFor } from "@testing-library/react";
+import { act, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { TickMarkType } from "lightweight-charts";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
@@ -638,7 +638,7 @@ describe("PriceChart", () => {
     const profile = chartMocks.attachPrimitive.mock.calls[0][0];
     await user.click(screen.getByLabelText("Heatmap"));
     const metrics = screen.getByRole("group", { name: "Métrica del heatmap" });
-    expect(Array.from(metrics.querySelectorAll("button")).map((button) => button.textContent)).toEqual(["Gamma", "Abs.", "Delta", "Vanna", "Charm"]);
+    expect(Array.from(metrics.querySelectorAll("button")).map((button) => button.textContent)).toEqual(["Gamma", "Abs.", "Total", "Delta", "Vanna", "Charm"]);
     await user.click(screen.getByRole("button", { name: "Vanna" }));
 
     await waitFor(() => expect(chartMocks.getGammaHeatmap).toHaveBeenLastCalledWith("SPY", expect.objectContaining({ metric: "vanna" }), expect.any(AbortSignal)));
@@ -777,6 +777,49 @@ describe("PriceChart", () => {
     const expectedStart = new Date((regularSessionRange(lastCandleSeconds * 1000).openSeconds - 3600) * 1000);
     await waitFor(() => expect(chartMocks.getGammaHeatmap).toHaveBeenCalled());
     expect(chartMocks.getGammaHeatmap.mock.calls[0][1].start).toEqual(expectedStart);
+  });
+
+  it("draws calls and puts apart when their toggles are on: one primitive per side, one shared scale, a green and a red bar per strike in the profile", async () => {
+    const response = (metric: "call_gamma" | "put_gamma", values: (number | null)[], scale: number) => ({
+      schema_version: 1, symbol: "SPY", view: "tactical" as const, metric, bucket_seconds: 60, strikes: [550, 555], columns: [{ as_of: "2026-08-06T14:31:40Z", values }], scale_p98: scale,
+    });
+    chartMocks.getGammaHeatmap.mockImplementation((_symbol: string, options: { metric: string }) =>
+      Promise.resolve(options.metric === "call_gamma" ? response("call_gamma", [6, 2], 6) : response("put_gamma", [-1, -9], 9)),
+    );
+    const user = userEvent.setup();
+    renderWithLanguage(<PriceChart symbol="SPY" candles={candlesWithRange} gamma={gamma} gammaView="tactical" />);
+    const profile = chartMocks.attachPrimitive.mock.calls[0][0];
+    await user.click(screen.getByLabelText("Heatmap"));
+    const sides = screen.getByRole("group", { name: "Capas del heatmap: calls y puts por separado" });
+    expect(within(sides).getByLabelText("Calls")).not.toBeChecked();
+    expect(within(sides).getByLabelText("Puts")).not.toBeChecked();
+
+    // Calls only: just the call figure is requested and the metric tabs show nothing pressed.
+    await user.click(within(sides).getByLabelText("Calls"));
+    await waitFor(() => expect(chartMocks.getGammaHeatmap).toHaveBeenLastCalledWith("SPY", expect.objectContaining({ metric: "call_gamma" }), expect.any(AbortSignal)));
+    expect(chartMocks.getGammaHeatmap.mock.calls.some((call) => call[1].metric === "put_gamma")).toBe(false);
+    for (const button of screen.getByRole("group", { name: "Métrica del heatmap" }).querySelectorAll("button")) expect(button).toHaveAttribute("aria-pressed", "false");
+    await waitFor(() => expect(profile.label).toBe("PERFIL CALLS EN VIVO"));
+
+    // Both sides: two primitives (the heatmap's own is detached), one shared scale (the larger p98), a call and a put value per strike.
+    await user.click(within(sides).getByLabelText("Puts"));
+    await waitFor(() => expect(chartMocks.getGammaHeatmap.mock.calls.some((call) => call[1].metric === "put_gamma")).toBe(true));
+    await waitFor(() => expect(profile.label).toBe("PERFIL CALLS / PUTS EN VIVO"));
+    await waitFor(() =>
+      expect(profile.bars).toEqual([
+        { strike: 550, net: 5, absolute: 7, call: 6, put: -1 },
+        { strike: 555, net: -7, absolute: 11, call: 2, put: -9 },
+      ]),
+    );
+    const sidePrimitives = chartMocks.attachPrimitive.mock.calls.map((call) => call[0]).filter((primitive) => "data" in primitive && primitive.data !== null);
+    await waitFor(() => expect(chartMocks.attachPrimitive.mock.calls.map((call) => call[0]).filter((p) => "data" in p && p.data?.scale === 9).length).toBeGreaterThanOrEqual(2));
+    void sidePrimitives;
+
+    // A metric tab switches the sides off again.
+    await user.click(screen.getByRole("button", { name: "Total" }));
+    expect(within(sides).getByLabelText("Calls")).not.toBeChecked();
+    expect(within(sides).getByLabelText("Puts")).not.toBeChecked();
+    await waitFor(() => expect(chartMocks.getGammaHeatmap).toHaveBeenLastCalledWith("SPY", expect.objectContaining({ metric: "total_gamma" }), expect.any(AbortSignal)));
   });
 
   it("keeps drawing what it has when a heatmap poll fails", async () => {

@@ -82,6 +82,9 @@ def test_every_stored_exposure_is_a_valid_heatmap_metric() -> None:
         "delta": "delta_exposure",
         "vanna": "vanna_exposure",
         "charm": "charm_exposure",
+        "call_gamma": "call_gamma_exposure",
+        "put_gamma": "put_gamma_exposure",
+        "total_gamma": "total_gamma_exposure",
     }
     with TestClient(app) as client:
         for metric in _HEATMAP_METRIC_COLUMNS:

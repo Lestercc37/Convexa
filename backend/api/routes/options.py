@@ -198,7 +198,7 @@ async def gamma_heatmap(
     symbol: str,
     request: Request,
     view: Literal["tactical", "structural"] = Query(default="tactical"),
-    metric: Literal["gamma", "absolute_gamma", "delta", "vanna", "charm"] = Query(default="gamma"),
+    metric: Literal["gamma", "absolute_gamma", "delta", "vanna", "charm", "call_gamma", "put_gamma", "total_gamma"] = Query(default="gamma"),
     start: datetime | None = None,
     end: datetime | None = None,
     bucket_seconds: int = Query(default=120, ge=60, le=3600),

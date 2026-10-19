@@ -22,6 +22,9 @@ export type ProfileBar = {
   net: number;
   /** |net| (absolute gamma is its own figure and is passed as is). */
   absolute: number;
+  /** Sides view: call gamma (positive) and put gamma (negative) of the strike, each drawn as its own bar; undefined = that side is off. */
+  call?: number;
+  put?: number;
 };
 
 export type SmilePoint = { strike: number; iv: number; type: "call" | "put" };
@@ -48,6 +51,18 @@ type DrawTarget = Parameters<IPrimitivePaneRenderer["draw"]>[0];
 
 // The profile of a figure the profile endpoint does not serve (delta, vanna, charm) is the latest value the heatmap holds for each strike.
 const RECENT_COLUMNS = 12;
+
+/** Both sides at once: per strike the latest call and put values, so the profile can draw a green and a red bar (an undefined side is not drawn). */
+export function sideBarsFromHeatmaps(calls: HeatmapData | null, puts: HeatmapData | null): ProfileBar[] {
+  const callByStrike = new Map((calls ? profileBarsFromHeatmap(calls) : []).map((bar) => [bar.strike, bar.net]));
+  const putByStrike = new Map((puts ? profileBarsFromHeatmap(puts) : []).map((bar) => [bar.strike, bar.net]));
+  const strikes = [...new Set([...callByStrike.keys(), ...putByStrike.keys()])].sort((a, b) => a - b);
+  return strikes.map((strike) => {
+    const call = callByStrike.get(strike);
+    const put = putByStrike.get(strike);
+    return { strike, net: (call ?? 0) + (put ?? 0), absolute: Math.abs(call ?? 0) + Math.abs(put ?? 0), call, put };
+  });
+}
 
 /** One bar per strike: its latest stored value within the last few columns of the heatmap (a strike with none is left out). */
 export function profileBarsFromHeatmap(data: HeatmapData): ProfileBar[] {
@@ -122,6 +137,10 @@ class ProfileBarsRenderer implements IPrimitivePaneRenderer {
       const width = scope.bitmapSize.width;
       const columnWidth = profileWidthCssPx(width / scope.horizontalPixelRatio) * scope.horizontalPixelRatio;
       if (!columnWidth || !bars.length) return;
+      if (bars.some((bar) => bar.call !== undefined || bar.put !== undefined)) {
+        this.drawSides(scope, bars, width, columnWidth);
+        return;
+      }
       // Length and colour share the same top (the p98) and a square-root scale: the strongest strikes fill the column and read white, and one dominant strike (SPX 2026-10-16:
       // 6.8B at the ABS strike against ~0.1B around it) no longer shrinks every other bar to a sliver. The order and the sign of every strike are unchanged.
       const largest = p98(bars.map((bar) => bar.absolute));
@@ -142,6 +161,37 @@ class ProfileBarsRenderer implements IPrimitivePaneRenderer {
         scope.context.fillRect(lineX + inset, y - rowHeight / 2, barWidth, rowHeight);
       }
     });
+  }
+
+  /**
+   * The sides view: per strike a green bar (call gamma) and a red bar (put gamma), the two halves of the row when both sides are on and the whole row when only one is. Length and colour share the
+   * same top (the p98 of every |call| and |put| shown) and the same square-root scale as the single figure, so the call and the put of one strike compare directly.
+   */
+  drawSides(scope: Parameters<Parameters<DrawTarget["useBitmapCoordinateSpace"]>[0]>[0], bars: ProfileBar[], width: number, columnWidth: number): void {
+    const magnitudes = bars.flatMap((bar) => [bar.call, bar.put]).filter((value): value is number => value !== undefined);
+    const top = p98(magnitudes);
+    if (top === null) return;
+    const placed = place(this.source, bars, scope.verticalPixelRatio, scope.bitmapSize.height);
+    if (!placed.length) return;
+    const step = medianRowStep(placed.map((entry) => entry.y));
+    const rowHeight = Math.max(MINIMUM_ROW_HEIGHT_BITMAP_PX, (step ?? scope.verticalPixelRatio * 6) * ROW_FILL_FRACTION);
+    const both = bars.some((bar) => bar.call !== undefined) && bars.some((bar) => bar.put !== undefined);
+    const half = Math.max(MINIMUM_ROW_HEIGHT_BITMAP_PX, rowHeight / 2 - 0.5 * scope.verticalPixelRatio);
+    const lineX = width - columnWidth;
+    const inset = BAR_INSET_CSS_PX * scope.horizontalPixelRatio;
+    const maxBar = columnWidth - inset * 2;
+    for (const { y, item } of placed) {
+      for (const [value, upper] of [[item.call, true], [item.put, false]] as const) {
+        if (value === undefined) continue;
+        const barWidth = Math.sqrt(Math.min(1, Math.abs(value) / top)) * maxBar;
+        if (barWidth < 1) continue;
+        const rgb = rampRgb(Math.sign(value) * Math.sqrt(Math.min(1, Math.abs(value) / top)) * top, top, "gamma");
+        scope.context.fillStyle = `rgb(${rgb[0]}, ${rgb[1]}, ${rgb[2]})`;
+        const height = both ? half : rowHeight;
+        const offset = both ? (upper ? -half - 0.25 * scope.verticalPixelRatio : 0.25 * scope.verticalPixelRatio) : -rowHeight / 2;
+        scope.context.fillRect(lineX + inset, y + offset, barWidth, height);
+      }
+    }
   }
 }
 
