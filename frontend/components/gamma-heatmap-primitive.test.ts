@@ -130,8 +130,8 @@ describe("GammaHeatmapPrimitive", () => {
     expect(first.color).toBe("rgba(255, 255, 255, 0.62)");
     expect(first.rect[0]).toBe(100); // x of the first column
     expect(first.rect[2]).toBe(40); // distance to the next column
-    // Row height: strikes 5 apart = 40 px on screen, wider than a band may be (18 px): the cell is an 18 px band centred on its strike.
-    expect(first.rect[3]).toBe(18);
+    // Row height: strikes 5 apart = 40 px on screen, wider than a full row (30 px): the cell is a 26 px band centred on its strike.
+    expect(first.rect[3]).toBeCloseTo(26);
     // The last column repeats the previous width.
     expect(context.fills.at(-1)!.rect[2]).toBe(40);
   });
@@ -397,14 +397,17 @@ describe("column scale (every minute against itself, history stays as painted)",
 });
 
 describe("band height for strikes far apart on screen", () => {
-  it("leaves SPX/NDX-like spacing (30 to 35 px between strikes) alone and caps SPY/QQQ/IWM/NVDA-like spacing (60 to 100 px)", () => {
+  it("leaves spacing up to 30 px alone, shrinks the band smoothly (30 px at the edge, no jump) and holds 18 px for SPY/QQQ/IWM/NVDA-like spacing (60 px and more)", () => {
     expect(bandHeightCssPx(null)).toBeNull();
     expect(bandHeightCssPx(Number.NaN)).toBeNull();
     expect(bandHeightCssPx(12)).toBeNull();
     expect(bandHeightCssPx(30)).toBeNull();
-    expect(bandHeightCssPx(35)).toBeNull();
-    expect(bandHeightCssPx(40)).toBe(18);
+    expect(bandHeightCssPx(31)).toBeCloseTo(29.6);
+    expect(bandHeightCssPx(37)).toBeCloseTo(27.2); // SPX on a big monitor: nearly the full row, not a stripe
+    expect(bandHeightCssPx(40)).toBeCloseTo(26);
+    expect(bandHeightCssPx(50)).toBeCloseTo(22);
     expect(bandHeightCssPx(60)).toBe(18);
     expect(bandHeightCssPx(100)).toBe(18);
+    expect(bandHeightCssPx(220)).toBe(18);
   });
 });
