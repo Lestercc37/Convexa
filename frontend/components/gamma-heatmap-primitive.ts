@@ -34,6 +34,11 @@ export type HeatmapData = {
   scale: number | null;
   /** Which ramp draws the figure; gamma (green/red) when left out. */
   palette?: HeatmapPalette;
+  /**
+   * "column": every minute is coloured against ITS OWN distribution (its p98), so a column keeps the colours it was painted with for the rest of the session and the strongest strike of
+   * each moment reads white, quiet or busy. "day": one scale for the whole matrix (`scale`, the API's p98 of the session; the old behaviour, and what a missing value means).
+   */
+  scaleMode?: "day" | "column";
 };
 
 export type HeatmapPalette = "gamma" | "unsigned" | "vanna" | "charm";
@@ -128,6 +133,26 @@ export function rampRgb(value: number, scale: number, palette: HeatmapPalette = 
   return rampColor(rampStops(palette, value >= 0), share >= HEATMAP_TOP_SHARE ? 1 : Math.min(1, share) * 0.96);
 }
 
+// The scale of every column: its own p98 (over calls and puts together in the sides view) in "column" mode, the whole matrix's scale otherwise. Cached per matrix.
+const COLUMN_SCALES = new WeakMap<HeatmapData, (number | null)[]>();
+
+export function columnScales(data: HeatmapData): (number | null)[] {
+  const cached = COLUMN_SCALES.get(data);
+  if (cached) return cached;
+  const scales = data.columns.map((column) => {
+    if (data.scaleMode !== "column") return data.scale;
+    const magnitudes = [...column.values, ...(column.puts ?? [])]
+      .filter((value): value is number => value !== null && value !== undefined && Number.isFinite(value))
+      .map(Math.abs)
+      .sort((a, b) => a - b);
+    if (!magnitudes.length) return null;
+    const p98 = magnitudes[Math.min(magnitudes.length - 1, Math.floor(0.98 * magnitudes.length))];
+    return p98 > 0 ? p98 : null;
+  });
+  COLUMN_SCALES.set(data, scales);
+  return scales;
+}
+
 // The weaker side of a cell reaches this share of the scale and the cell is fully white.
 export const SIDES_WHITE_AT = 0.6;
 
@@ -152,9 +177,10 @@ export function sidesRgb(call: number | null, put: number | null, scale: number 
 }
 
 /** RGB of one cell of a column: the sides colour when the column carries puts, the single-figure ramp otherwise. */
-function columnCellRgb(data: HeatmapData, column: HeatmapColumn, index: number): [number, number, number] | null {
-  if (column.puts !== undefined) return sidesRgb(column.values[index] ?? null, column.puts[index] ?? null, data.scale);
-  return cellRgb(column.values[index] ?? null, data.scale, data.palette);
+function columnCellRgb(data: HeatmapData, column: HeatmapColumn, columnIndex: number, index: number): [number, number, number] | null {
+  const scale = columnScales(data)[columnIndex] ?? null;
+  if (column.puts !== undefined) return sidesRgb(column.values[index] ?? null, column.puts[index] ?? null, scale);
+  return cellRgb(column.values[index] ?? null, scale, data.palette);
 }
 
 /**
@@ -181,6 +207,7 @@ export function mergeSides(calls: HeatmapData | null, puts: HeatmapData | null):
   const scales = [calls.scale, puts.scale].filter((value): value is number => value !== null);
   return {
     strikes,
+    scaleMode: calls.scaleMode ?? puts.scaleMode,
     scale: scales.length ? Math.max(...scales) : null,
     columns: times.map((time) => ({ time, values: callsAt(time), puts: putsAt(time) })),
   };
@@ -269,7 +296,7 @@ export function heatmapImage(data: HeatmapData): HeatmapImage | null {
     for (let row = 0; row < height; row += 1) {
       const strikeIndex = rowStrike[row];
       if (strikeIndex < 0) continue;
-      const rgb = columnCellRgb(data, column, strikeIndex);
+      const rgb = columnCellRgb(data, column, columnIndex, strikeIndex);
       if (rgb === null) continue;
       const offset = ((height - 1 - row) * width + columnIndex) * 4;
       pixels[offset] = rgb[0];
@@ -410,7 +437,7 @@ class GammaHeatmapRenderer implements IPrimitivePaneRenderer {
             : lastWidth || scope.horizontalPixelRatio * 8;
         lastWidth = width;
         for (const row of rows) {
-          const rgb = columnCellRgb(data, column, row.index);
+          const rgb = columnCellRgb(data, column, position, row.index);
           if (rgb === null) continue;
           scope.context.fillStyle = `rgba(${rgb[0]}, ${rgb[1]}, ${rgb[2]}, ${HEATMAP_ALPHA})`;
           scope.context.fillRect(left, row.y - rowHeight / 2, Math.max(1, width), rowHeight);

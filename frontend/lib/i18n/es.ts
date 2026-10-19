@@ -125,6 +125,8 @@ export const es: Translations = {
     heatmapSidesAriaLabel: "Capas del heatmap: calls y puts por separado",
     heatmapSideCalls: "Calls",
     heatmapSidePuts: "Puts",
+    heatmapDayScaleLabel: "Escala del día",
+    heatmapDayScaleTitle: "Apagada: cada minuto se colorea contra sí mismo, el strike más fuerte de ese momento sale blanco y el historial se queda como se pintó. Encendida: una sola escala para toda la sesión.",
     heatmapSidesTitle: "Enciende o apaga cada lado: calls en verde, puts en rojo, con la misma escala",
     expectedMoveRangeLabel: "Movimiento Esperado",
     streamFallbackLabel: "Conexión en tiempo real perdida — actualizando cada 30s",

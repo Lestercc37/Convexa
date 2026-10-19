@@ -504,6 +504,8 @@ export function PriceChart({
   );
   // Gamma heatmap behind the candles (off by default): strike x time matrix read from /gamma/{symbol}/heatmap.
   const [showHeatmap, setShowHeatmap] = useState(false);
+  // Each minute coloured against its own distribution (history stays as painted), or one scale for the whole session (the chip "Escala del día").
+  const [dayScale, setDayScale] = useState(false);
   const [heatmapMetric, setHeatmapMetric] = useState<GammaHeatmapMetric>("gamma");
   // The sides view: call gamma and put gamma drawn apart (green / red, one scale), each switchable. Any side on replaces the single figure above until both are off again.
   const [sideLayers, setSideLayers] = useState({ calls: false, puts: false });
@@ -954,7 +956,7 @@ export function PriceChart({
       const start = new Date(heatmapStartSeconds(lastCandleTimeRef.current) * 1000);
       getGammaHeatmap(symbol, { view: gammaView, metric: heatmapMetric, start, bucketSeconds: HEATMAP_BUCKET_SECONDS }, controller.signal)
         .then((response) => {
-          const data = heatmapFromResponse(response);
+          const data = { ...heatmapFromResponse(response), scaleMode: dayScale ? ("day" as const) : ("column" as const) };
           primitive.setData(data);
           setHeatmapProfile(profileBarsFromHeatmap(data));
         })
@@ -970,7 +972,7 @@ export function PriceChart({
       series.detachPrimitive(primitive);
       setHeatmapProfile(null);
     };
-  }, [showHeatmap, sidesOn, symbol, gammaView, heatmapMetric]);
+  }, [showHeatmap, sidesOn, symbol, gammaView, heatmapMetric, dayScale]);
 
   // The sides view: ONE heatmap primitive that draws call gamma (green) and put gamma (red) from two requests with the same shared scale (the larger p98); a cell strong on both sides fades to
   // white (sidesRgb), never amber. The live profile shows both as a green and a red bar per strike. A failed poll keeps what is drawn.
@@ -994,7 +996,7 @@ export function PriceChart({
       for (const layer of layers) {
         getGammaHeatmap(symbol, { view: gammaView, metric: layer.metric, start, bucketSeconds: HEATMAP_BUCKET_SECONDS }, controller.signal)
           .then((response) => {
-            latest[layer.key] = heatmapFromResponse(response);
+            latest[layer.key] = { ...heatmapFromResponse(response), scaleMode: dayScale ? ("day" as const) : ("column" as const) };
             render();
           })
           .catch(() => {
@@ -1010,7 +1012,7 @@ export function PriceChart({
       series.detachPrimitive(primitive);
       setHeatmapProfile(null);
     };
-  }, [showHeatmap, sidesOn, sideLayers.calls, sideLayers.puts, symbol, gammaView]);
+  }, [showHeatmap, sidesOn, sideLayers.calls, sideLayers.puts, symbol, gammaView, dayScale]);
 
   useEffect(() => {
     trendlineSeriesRef.current?.setData(
@@ -1411,6 +1413,12 @@ export function PriceChart({
                   </button>
                 ))}
               </div>
+            )}
+            {showHeatmap && (
+              <label className="chart-toggle" title={t.priceChart.heatmapDayScaleTitle}>
+                <input type="checkbox" checked={dayScale} onChange={(event) => setDayScale(event.target.checked)} />
+                {t.priceChart.heatmapDayScaleLabel}
+              </label>
             )}
             {showHeatmap && (
               <div className="chart-layers" role="group" aria-label={t.priceChart.heatmapSidesAriaLabel} title={t.priceChart.heatmapSidesTitle}>

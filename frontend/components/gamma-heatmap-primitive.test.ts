@@ -8,6 +8,7 @@ import {
   HEATMAP_NEGATIVE_STOPS,
   HEATMAP_POSITIVE_STOPS,
   heatmapFromResponse,
+  columnScales,
   heatmapImage,
   mergeSides,
   rampColor,
@@ -347,5 +348,49 @@ describe("sides view (calls and puts, fading to white where both are strong)", (
     expect(pixelAt(100)).toEqual([255, 255, 255]); // strong call and strong put
     const onlyPut = pixelAt(105);
     expect(onlyPut[0]).toBeGreaterThan(onlyPut[1]); // put alone: red
+  });
+});
+
+describe("column scale (every minute against itself, history stays as painted)", () => {
+  const strikes = [100, 105, 110];
+  const quiet = { time: 1000, values: [10, 40, 20] };
+  const busy = { time: 1060, values: [500, 4000, 2000] };
+
+  it("a column's scale is its own p98; day mode uses the matrix scale", () => {
+    const data = { strikes, scale: 4000, scaleMode: "column" as const, columns: [quiet, busy] };
+    expect(columnScales(data)).toEqual([40, 4000]);
+    expect(columnScales({ ...data, scaleMode: "day" })).toEqual([4000, 4000]);
+    expect(columnScales({ strikes, scale: 4000, columns: [quiet] })).toEqual([4000]); // no mode = the old whole-matrix behaviour
+    expect(columnScales({ strikes, scale: 1, scaleMode: "column", columns: [{ time: 1, values: [null, null, null] }] })).toEqual([null]);
+  });
+
+  it("in column mode the strongest strike of a QUIET minute still reads white, which the day scale leaves dim", () => {
+    const column = heatmapImage({ strikes, scale: 4000, scaleMode: "column", columns: [quiet, busy] })!;
+    const day = heatmapImage({ strikes, scale: 4000, scaleMode: "day", columns: [quiet, busy] })!;
+    const pixel = (image: NonNullable<ReturnType<typeof heatmapImage>>, columnIndex: number, price: number) => {
+      const offset = ((image.height - 1 - (price - 100) / 5) * image.width + columnIndex) * 4;
+      return [image.pixels[offset], image.pixels[offset + 1], image.pixels[offset + 2], image.pixels[offset + 3]];
+    };
+    expect(pixel(column, 0, 105).slice(0, 3)).toEqual([255, 255, 255]); // 40 is the top of its own minute
+    expect(pixel(day, 0, 105)[3]).toBe(0); // 40 / 4000 = 1%: under the 4% floor, not drawn at all
+  });
+
+  it("a column keeps its colours when a later, much bigger column arrives (the history does not move)", () => {
+    const before = heatmapImage({ strikes, scale: 40, scaleMode: "column", columns: [quiet] })!;
+    const after = heatmapImage({ strikes, scale: 4000, scaleMode: "column", columns: [quiet, busy] })!;
+    for (let row = 0; row < before.height; row += 1) {
+      const a = (row * before.width) * 4;
+      const b = (row * after.width) * 4;
+      expect([...after.pixels.slice(b, b + 4)]).toEqual([...before.pixels.slice(a, a + 4)]);
+    }
+  });
+
+  it("the sides view takes one scale per minute over calls and puts together", () => {
+    const merged = mergeSides(
+      { strikes, scale: 9000, scaleMode: "column", columns: [{ time: 1000, values: [10, 40, 20] }] },
+      { strikes, scale: 9000, scaleMode: "column", columns: [{ time: 1000, values: [-5, -80, -2] }] },
+    )!;
+    expect(merged.scaleMode).toBe("column");
+    expect(columnScales(merged)).toEqual([80]);
   });
 });

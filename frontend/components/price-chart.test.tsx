@@ -750,6 +750,7 @@ describe("PriceChart", () => {
         strikes: [550, 555],
         scale: 6,
         palette: "gamma",
+        scaleMode: "column", // every minute against its own distribution unless "Escala del día" is on
         columns: [{ time: Date.parse("2026-08-06T14:31:00Z") / 1000, values: [3, null] }],
       }),
     );
@@ -824,6 +825,19 @@ describe("PriceChart", () => {
     expect(within(sides).getByLabelText("Calls")).not.toBeChecked();
     expect(within(sides).getByLabelText("Puts")).not.toBeChecked();
     await waitFor(() => expect(chartMocks.getGammaHeatmap).toHaveBeenLastCalledWith("SPY", expect.objectContaining({ metric: "total_gamma" }), expect.any(AbortSignal)));
+  });
+
+  it("colours each minute against itself by default and against the whole session with the day-scale chip", async () => {
+    chartMocks.getGammaHeatmap.mockResolvedValue({ schema_version: 1, symbol: "SPY", view: "tactical", metric: "gamma", bucket_seconds: 60, strikes: [550], columns: [{ as_of: "2026-08-06T14:31:40Z", values: [3] }], scale_p98: 6 });
+    const user = userEvent.setup();
+    renderWithLanguage(<PriceChart symbol="SPY" candles={candlesWithRange} gamma={gamma} gammaView="tactical" />);
+    await user.click(screen.getByLabelText("Heatmap"));
+    const primitive = chartMocks.attachPrimitive.mock.calls[1][0];
+    await waitFor(() => expect(primitive.data?.scaleMode).toBe("column"));
+    expect(screen.getByLabelText("Escala del día")).not.toBeChecked();
+
+    await user.click(screen.getByLabelText("Escala del día"));
+    await waitFor(() => expect(chartMocks.attachPrimitive.mock.calls.some((call) => "data" in call[0] && call[0].data?.scaleMode === "day")).toBe(true));
   });
 
   it("keeps drawing what it has when a heatmap poll fails", async () => {

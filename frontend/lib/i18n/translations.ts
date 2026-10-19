@@ -97,6 +97,8 @@ export type Translations = {
     heatmapSideCalls: string;
     heatmapSidePuts: string;
     heatmapSidesTitle: string;
+    heatmapDayScaleLabel: string;
+    heatmapDayScaleTitle: string;
     expectedMoveRangeLabel: string;
     streamFallbackLabel: string;
     drawingToolsAriaLabel: string;

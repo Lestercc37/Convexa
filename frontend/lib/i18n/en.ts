@@ -125,6 +125,8 @@ export const en: Translations = {
     heatmapSidesAriaLabel: "Heatmap layers: calls and puts apart",
     heatmapSideCalls: "Calls",
     heatmapSidePuts: "Puts",
+    heatmapDayScaleLabel: "Day scale",
+    heatmapDayScaleTitle: "Off: every minute is coloured against itself, the strongest strike of that moment reads white and the history stays as painted. On: one scale for the whole session.",
     heatmapSidesTitle: "Turn each side on or off: calls green, puts red, same scale",
     expectedMoveRangeLabel: "Expected Move",
     streamFallbackLabel: "Real-time connection lost — updating every 30s",
