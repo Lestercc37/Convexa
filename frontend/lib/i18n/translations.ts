@@ -69,7 +69,6 @@ export type Translations = {
     smileExpirationAriaLabel: string;
     smileExpirationNearest: string;
     smileTooltip: (strike: number, right: "call" | "put", ivPercent: string, expiration: string) => string;
-    smileUnreliableNote: string;
     alertCubesLabel: string;
     alertCubesMinAriaLabel: string;
     alertCubesFarLabel: string;
