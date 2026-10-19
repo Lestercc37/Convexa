@@ -36,7 +36,7 @@ import type {
 import { LEVEL_MERGE_THRESHOLD } from "./gravity-map";
 import { AlertCubesPrimitive } from "./alert-cubes-primitive";
 import { AlertCubeTooltip } from "./alert-cube-tooltip";
-import { GammaHeatmapPrimitive, heatmapFromResponse, paletteForMetric, type HeatmapData } from "./gamma-heatmap-primitive";
+import { GammaHeatmapPrimitive, heatmapFromResponse, mergeSides, paletteForMetric, type HeatmapData } from "./gamma-heatmap-primitive";
 import {
   LiveProfilePrimitive,
   profileBarsFromHeatmap,
@@ -972,8 +972,8 @@ export function PriceChart({
     };
   }, [showHeatmap, sidesOn, symbol, gammaView, heatmapMetric]);
 
-  // The sides view: one heatmap primitive per side that is on (calls green, puts red), drawn with the SAME scale (the larger of the two p98) so the call and the put of a strike compare
-  // directly, and the live profile shows both as a green and a red bar per strike. A failed poll keeps what is drawn.
+  // The sides view: ONE heatmap primitive that draws call gamma (green) and put gamma (red) from two requests with the same shared scale (the larger p98); a cell strong on both sides fades to
+  // white (sidesRgb), never amber. The live profile shows both as a green and a red bar per strike. A failed poll keeps what is drawn.
   useEffect(() => {
     const series = seriesRef.current;
     if (!showHeatmap || !sidesOn || !series) return;
@@ -982,16 +982,11 @@ export function PriceChart({
     const layers: SideLayer[] = [];
     if (sideLayers.calls) layers.push({ key: "calls", metric: "call_gamma" });
     if (sideLayers.puts) layers.push({ key: "puts", metric: "put_gamma" });
-    const primitives = new Map(layers.map((layer) => [layer.key, new GammaHeatmapPrimitive({ smooth: true, additive: true })]));
-    primitives.forEach((primitive) => series.attachPrimitive(primitive));
+    const primitive = new GammaHeatmapPrimitive({ smooth: true });
+    series.attachPrimitive(primitive);
     const latest: { calls: HeatmapData | null; puts: HeatmapData | null } = { calls: null, puts: null };
     const render = () => {
-      const scales = [latest.calls?.scale, latest.puts?.scale].filter((value): value is number => typeof value === "number");
-      const common = scales.length ? Math.max(...scales) : null;
-      primitives.forEach((primitive, key) => {
-        const data = latest[key];
-        if (data) primitive.setData({ ...data, scale: common });
-      });
+      primitive.setData(mergeSides(latest.calls, latest.puts));
       setHeatmapProfile(sideBarsFromHeatmaps(latest.calls, latest.puts));
     };
     const refresh = () => {
@@ -1012,7 +1007,7 @@ export function PriceChart({
     return () => {
       controller.abort();
       window.clearInterval(interval);
-      primitives.forEach((primitive) => series.detachPrimitive(primitive));
+      series.detachPrimitive(primitive);
       setHeatmapProfile(null);
     };
   }, [showHeatmap, sidesOn, sideLayers.calls, sideLayers.puts, symbol, gammaView]);

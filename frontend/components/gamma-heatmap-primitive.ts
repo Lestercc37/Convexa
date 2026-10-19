@@ -22,8 +22,10 @@ import type { GammaHeatmapResponse } from "@/lib/types";
 export type HeatmapColumn = {
   /** Unix seconds of the column (floored to the minute so it lands on a candle). */
   time: number;
-  /** One value per entry of `strikes`, same order; null = no stored value. */
+  /** One value per entry of `strikes`, same order; null = no stored value. In the sides view this is the CALL gamma of the cells. */
   values: (number | null)[];
+  /** Sides view only: the PUT gamma (negative) of the same cells. A cell with both sides strong fades to white (sidesRgb). */
+  puts?: (number | null)[];
 };
 
 export type HeatmapData = {
@@ -126,6 +128,64 @@ export function rampRgb(value: number, scale: number, palette: HeatmapPalette = 
   return rampColor(rampStops(palette, value >= 0), share >= HEATMAP_TOP_SHARE ? 1 : Math.min(1, share) * 0.96);
 }
 
+// The weaker side of a cell reaches this share of the scale and the cell is fully white.
+export const SIDES_WHITE_AT = 0.6;
+
+/**
+ * Colour of a cell in the sides view. One side alone: its own ramp (calls green, puts red, each fading to white with its intensity). Both sides: the STRONGER side's colour
+ * whitened by how strong the weaker one is, white once the weaker side reaches SIDES_WHITE_AT of the scale, so a strike strong on both sides reads white (never amber, which
+ * would pass for the ABS level) and a strike where one side dominates keeps its colour. Null when both are too faint to draw.
+ */
+export function sidesRgb(call: number | null, put: number | null, scale: number | null): [number, number, number] | null {
+  const callRgb = cellRgb(call, scale, "gamma");
+  const putRgb = cellRgb(put, scale, "gamma");
+  if (callRgb === null || putRgb === null || call === null || put === null || scale === null) return callRgb ?? putRgb;
+  const callShare = Math.min(1, Math.abs(call) / scale);
+  const putShare = Math.min(1, Math.abs(put) / scale);
+  const base = callShare >= putShare ? callRgb : putRgb;
+  const white = Math.min(1, Math.min(callShare, putShare) / SIDES_WHITE_AT);
+  return [
+    Math.round(base[0] + (255 - base[0]) * white),
+    Math.round(base[1] + (255 - base[1]) * white),
+    Math.round(base[2] + (255 - base[2]) * white),
+  ];
+}
+
+/** RGB of one cell of a column: the sides colour when the column carries puts, the single-figure ramp otherwise. */
+function columnCellRgb(data: HeatmapData, column: HeatmapColumn, index: number): [number, number, number] | null {
+  if (column.puts !== undefined) return sidesRgb(column.values[index] ?? null, column.puts[index] ?? null, data.scale);
+  return cellRgb(column.values[index] ?? null, data.scale, data.palette);
+}
+
+/**
+ * Calls and puts of two heatmap responses as ONE matrix for the sides view: the union of their strikes and times, one shared scale (the larger p98) so the call and the put of a
+ * cell compare directly. With only one side given that side is returned as is (its own ramp).
+ */
+export function mergeSides(calls: HeatmapData | null, puts: HeatmapData | null): HeatmapData | null {
+  if (calls === null || puts === null) return calls ?? puts;
+  const strikes = [...new Set([...calls.strikes, ...puts.strikes])].sort((a, b) => a - b);
+  const times = [...new Set([...calls.columns.map((column) => column.time), ...puts.columns.map((column) => column.time)])].sort((a, b) => a - b);
+  const align = (data: HeatmapData) => {
+    const byTime = new Map(data.columns.map((column) => [column.time, column.values]));
+    const strikeIndex = new Map(data.strikes.map((strike, index) => [strike, index]));
+    return (time: number): (number | null)[] => {
+      const values = byTime.get(time);
+      return strikes.map((strike) => {
+        const index = strikeIndex.get(strike);
+        return values === undefined || index === undefined ? null : (values[index] ?? null);
+      });
+    };
+  };
+  const callsAt = align(calls);
+  const putsAt = align(puts);
+  const scales = [calls.scale, puts.scale].filter((value): value is number => value !== null);
+  return {
+    strikes,
+    scale: scales.length ? Math.max(...scales) : null,
+    columns: times.map((time) => ({ time, values: callsAt(time), puts: putsAt(time) })),
+  };
+}
+
 /** CSS color of a cell, or null when it is too faint to draw. */
 export function cellColor(value: number | null, scale: number | null, palette: HeatmapPalette = "gamma"): string | null {
   const rgb = cellRgb(value, scale, palette);
@@ -209,7 +269,7 @@ export function heatmapImage(data: HeatmapData): HeatmapImage | null {
     for (let row = 0; row < height; row += 1) {
       const strikeIndex = rowStrike[row];
       if (strikeIndex < 0) continue;
-      const rgb = cellRgb(column.values[strikeIndex] ?? null, data.scale, data.palette);
+      const rgb = columnCellRgb(data, column, strikeIndex);
       if (rgb === null) continue;
       const offset = ((height - 1 - row) * width + columnIndex) * 4;
       pixels[offset] = rgb[0];
@@ -314,8 +374,6 @@ class GammaHeatmapRenderer implements IPrimitivePaneRenderer {
     context.clip();
     context.imageSmoothingEnabled = true;
     context.imageSmoothingQuality = "high";
-    // Sides view: the calls layer and the puts layer ADD their light, so a strike strong on both sides reads amber (green + red) instead of the second layer hiding the first.
-    if (this.source.additive) context.globalCompositeOperation = "lighter";
     context.filter = `blur(${HEATMAP_BLUR_CSS_PX * hpr}px)`;
     context.drawImage(scratch, left, visibleTop);
     context.filter = "none";
@@ -352,9 +410,9 @@ class GammaHeatmapRenderer implements IPrimitivePaneRenderer {
             : lastWidth || scope.horizontalPixelRatio * 8;
         lastWidth = width;
         for (const row of rows) {
-          const color = cellColor(column.values[row.index] ?? null, data.scale, data.palette);
-          if (color === null) continue;
-          scope.context.fillStyle = color;
+          const rgb = columnCellRgb(data, column, row.index);
+          if (rgb === null) continue;
+          scope.context.fillStyle = `rgba(${rgb[0]}, ${rgb[1]}, ${rgb[2]}, ${HEATMAP_ALPHA})`;
           scope.context.fillRect(left, row.y - rowHeight / 2, Math.max(1, width), rowHeight);
         }
       });
@@ -370,12 +428,9 @@ export class GammaHeatmapPrimitive implements ISeriesPrimitive<Time> {
   private readonly view: IPrimitivePaneView;
   /** Smooth drawing (scaled and blurred, like the prototype) instead of one sharp rectangle per cell. The chart turns it on; it falls back to the sharp cells when it cannot run. */
   readonly smooth: boolean;
-  /** Blend by adding light (the sides view draws two of these over each other). */
-  readonly additive: boolean;
 
-  constructor(options: { smooth?: boolean; additive?: boolean } = {}) {
+  constructor(options: { smooth?: boolean } = {}) {
     this.smooth = options.smooth ?? false;
-    this.additive = options.additive ?? false;
     const renderer = new GammaHeatmapRenderer(this);
     this.view = { zOrder: () => "bottom", renderer: () => renderer };
   }

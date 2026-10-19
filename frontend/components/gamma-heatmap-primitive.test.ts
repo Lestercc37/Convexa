@@ -9,7 +9,9 @@ import {
   HEATMAP_POSITIVE_STOPS,
   heatmapFromResponse,
   heatmapImage,
+  mergeSides,
   rampColor,
+  sidesRgb,
   strikeGridStep,
   type HeatmapData,
 } from "./gamma-heatmap-primitive";
@@ -283,5 +285,67 @@ describe("vanna (purple) and charm (muted orange) palettes", () => {
     expect(cellRgb(3, 100, "vanna")).toBeNull();
     expect(cellRgb(3, 100, "charm")).toBeNull();
     expect(cellRgb(null, 100, "vanna")).toBeNull();
+  });
+});
+
+describe("sides view (calls and puts, fading to white where both are strong)", () => {
+  it("one side alone keeps its own ramp: calls green, puts red", () => {
+    const call = sidesRgb(40, null, 100)!;
+    expect(call[1]).toBeGreaterThan(call[0]);
+    const put = sidesRgb(null, -40, 100)!;
+    expect(put[0]).toBeGreaterThan(put[1]);
+    expect(sidesRgb(null, null, 100)).toBeNull();
+    expect(sidesRgb(3, -2, 100)).toBeNull(); // both too faint to draw
+  });
+
+  it("both sides: the stronger side's colour, whitened by the weaker one, white once the weaker reaches 60% of the scale", () => {
+    const callOnly = sidesRgb(80, null, 100)!;
+    const weakPut = sidesRgb(80, -10, 100)!; // a little put: still green, slightly lighter
+    expect(weakPut[1]).toBeGreaterThan(weakPut[0]);
+    expect(weakPut[0]).toBeGreaterThanOrEqual(callOnly[0]);
+    expect(sidesRgb(80, -60, 100)).toEqual([255, 255, 255]);
+    expect(sidesRgb(-70, 70, 100)).toEqual([255, 255, 255]);
+    const dimBoth = sidesRgb(15, -15, 100)!; // both weak: stays a dim colour, not white
+    expect(Math.min(...dimBoth)).toBeLessThan(200);
+  });
+
+  it("never produces amber: no cell of two strong sides has red and green high with blue low", () => {
+    for (const call of [20, 40, 60, 80]) {
+      for (const put of [-20, -40, -60, -80]) {
+        const [r, g, b] = sidesRgb(call, put, 100)!;
+        expect(r > 200 && g > 200 && b < 120).toBe(false);
+      }
+    }
+  });
+
+  it("mergeSides gives one matrix with the union of strikes and times, one shared scale and calls in values / puts in puts", () => {
+    const calls = { strikes: [100, 105], scale: 6, columns: [{ time: 1, values: [6, 2] }, { time: 2, values: [5, 1] }] };
+    const puts = { strikes: [100, 105, 110], scale: 9, columns: [{ time: 1, values: [-1, -9, -4] }, { time: 3, values: [-2, -2, -2] }] };
+    const merged = mergeSides(calls, puts)!;
+    expect(merged.strikes).toEqual([100, 105, 110]);
+    expect(merged.scale).toBe(9);
+    expect(merged.columns.map((column) => column.time)).toEqual([1, 2, 3]);
+    expect(merged.columns[0].values).toEqual([6, 2, null]);
+    expect(merged.columns[0].puts).toEqual([-1, -9, -4]);
+    expect(merged.columns[1].puts).toEqual([null, null, null]); // no puts column at that time
+    expect(merged.columns[2].values).toEqual([null, null, null]);
+    expect(mergeSides(calls, null)).toBe(calls);
+    expect(mergeSides(null, puts)).toBe(puts);
+    expect(mergeSides(null, null)).toBeNull();
+  });
+
+  it("the image of a merged matrix paints a both-strong cell white", () => {
+    const merged = mergeSides(
+      { strikes: [100, 105], scale: 100, columns: [{ time: 1000, values: [90, 0] }] },
+      { strikes: [100, 105], scale: 100, columns: [{ time: 1000, values: [-80, -90] }] },
+    )!;
+    const image = heatmapImage(merged)!;
+    const pixelAt = (price: number) => {
+      const offset = ((image.height - 1 - (price - 100) / 5) * image.width) * 4;
+      return [image.pixels[offset], image.pixels[offset + 1], image.pixels[offset + 2]];
+    };
+    expect(pixelAt(100)).toEqual([255, 255, 255]); // strong call and strong put
+    const onlyPut = pixelAt(105);
+    expect(onlyPut[0]).toBeGreaterThan(onlyPut[1]); // put alone: red
   });
 });

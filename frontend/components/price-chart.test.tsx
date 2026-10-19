@@ -801,7 +801,7 @@ describe("PriceChart", () => {
     for (const button of screen.getByRole("group", { name: "Métrica del heatmap" }).querySelectorAll("button")) expect(button).toHaveAttribute("aria-pressed", "false");
     await waitFor(() => expect(profile.label).toBe("PERFIL CALLS EN VIVO"));
 
-    // Both sides: two primitives (the heatmap's own is detached), one shared scale (the larger p98), a call and a put value per strike.
+    // Both sides: ONE heatmap primitive carries calls and puts, with one shared scale (the larger p98) and a call and a put value per strike.
     await user.click(within(sides).getByLabelText("Puts"));
     await waitFor(() => expect(chartMocks.getGammaHeatmap.mock.calls.some((call) => call[1].metric === "put_gamma")).toBe(true));
     await waitFor(() => expect(profile.label).toBe("PERFIL CALLS / PUTS EN VIVO"));
@@ -811,9 +811,13 @@ describe("PriceChart", () => {
         { strike: 555, net: -7, absolute: 11, call: 2, put: -9 },
       ]),
     );
-    const sidePrimitives = chartMocks.attachPrimitive.mock.calls.map((call) => call[0]).filter((primitive) => "data" in primitive && primitive.data !== null);
-    await waitFor(() => expect(chartMocks.attachPrimitive.mock.calls.map((call) => call[0]).filter((p) => "data" in p && p.data?.scale === 9).length).toBeGreaterThanOrEqual(2));
-    void sidePrimitives;
+    await waitFor(() =>
+      expect(
+        chartMocks.attachPrimitive.mock.calls
+          .map((call) => call[0])
+          .some((p) => "data" in p && p.data?.scale === 9 && p.data.columns[0].values.join() === "6,2" && p.data.columns[0].puts?.join() === "-1,-9"),
+      ).toBe(true),
+    );
 
     // A metric tab switches the sides off again.
     await user.click(screen.getByRole("button", { name: "Total" }));
