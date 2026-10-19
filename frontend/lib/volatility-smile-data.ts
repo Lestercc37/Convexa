@@ -59,9 +59,17 @@ export function withinWindow(contracts: OptionContract[], marketPrice: number): 
   return contracts.filter((contract) => Math.abs(contract.strike - marketPrice) <= limit);
 }
 
-/** One dot per readable contract of the window: IV = 0 means the provider found no solution (deep in the money), not a 0% volatility, so it is left off. */
+/**
+ * One dot per contract of the window with an IV, calls and puts at every strike, in and out of the money (as the old smile panel showed them): IV = 0 means the provider found no
+ * solution (deep in the money), not a 0% volatility, so it is left off. An in-the-money contract whose time value is below its spread (hasReadableIv false) still gets its dot but is
+ * flagged `reliable: false` (drawn hollow and fainter, left out of the IV scale) so the noise of those quotes cannot pass for a real part of the smile.
+ */
 export function smilePointsFromChain(contracts: OptionContract[], marketPrice: number): SmilePoint[] {
   return withinWindow(onePerStrikeAndRight(contracts), marketPrice)
-    .filter((contract) => contract.iv > 0 && hasReadableIv(contract, marketPrice))
-    .map((contract) => ({ strike: contract.strike, iv: contract.iv, type: contract.type }));
+    .filter((contract) => contract.iv > 0)
+    .map((contract) => {
+      const point: SmilePoint = { strike: contract.strike, iv: contract.iv, type: contract.type };
+      if (!hasReadableIv(contract, marketPrice)) point.reliable = false;
+      return point;
+    });
 }

@@ -80,6 +80,7 @@ export const en: Translations = {
     smileLabel: "Smile",
     smileExpirationAriaLabel: "Smile expiration",
     smileExpirationNearest: "Nearest",
+    smileUnreliableNote: "IV not reliable: in the money, time value below the spread",
     smileTooltip: (strike, right, ivPercent, expiration) => `${right === "call" ? "Call" : "Put"} · Strike ${strike} · IV ${ivPercent} · expires ${expiration}`,
     alertCubesLabel: "Alerts",
     alertCubesMinAriaLabel: "Minimum alert size (delta contracts)",
