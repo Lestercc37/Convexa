@@ -65,11 +65,32 @@ def test_endpoint_rejects_bad_ranges_and_parameters() -> None:
             "more than 5 days": "?start=2026-10-01T00:00:00Z&end=2026-10-10T00:00:00Z",
             "no timezone": "?start=2026-10-16T14:00:00&end=2026-10-16T15:00:00",
             "bucket too small": "?bucket_seconds=9",
-            "unknown metric": "?metric=vanna",
+            "unknown metric": "?metric=theta",
             "unknown view": "?view=weekly",
         }
         for name, query in cases.items():
             assert client.get(f"/api/v1/gamma/SPX/heatmap{query}").status_code == 422, name
+
+
+def test_every_stored_exposure_is_a_valid_heatmap_metric() -> None:
+    """gamma_aggregate_items stores net gamma, |gamma|, delta (0041) and vanna/charm (0042) per strike: all five can be drawn."""
+    from backend.adapters.storage.postgresql_async import _HEATMAP_METRIC_COLUMNS
+
+    assert _HEATMAP_METRIC_COLUMNS == {
+        "gamma": "net_gamma",
+        "absolute_gamma": "absolute_gamma",
+        "delta": "delta_exposure",
+        "vanna": "vanna_exposure",
+        "charm": "charm_exposure",
+        "call_gamma": "call_gamma_exposure",
+        "put_gamma": "put_gamma_exposure",
+        "total_gamma": "total_gamma_exposure",
+    }
+    with TestClient(app) as client:
+        for metric in _HEATMAP_METRIC_COLUMNS:
+            response = client.get(f"/api/v1/gamma/SPX/heatmap?metric={metric}")
+            assert response.status_code == 200, metric
+            assert response.json()["metric"] == metric
 
 
 def test_futures_heatmap_needs_todays_opening_price() -> None:

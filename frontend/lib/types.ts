@@ -222,7 +222,7 @@ export type PriceCandlesResponse = {
   candles: { time: number; open: number; high: number; low: number; close: number }[];
 };
 
-export type GammaHeatmapMetric = "gamma" | "absolute_gamma" | "delta";
+export type GammaHeatmapMetric = "gamma" | "absolute_gamma" | "delta" | "vanna" | "charm" | "call_gamma" | "put_gamma" | "total_gamma";
 
 // GET /gamma/{symbol}/heatmap: a strike x time matrix of one stored per-strike figure. `values` of each column are aligned to
 // `strikes`; null = no stored value (delta is null for rows written before it was stored, never 0).

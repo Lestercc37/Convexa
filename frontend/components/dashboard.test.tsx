@@ -1,4 +1,4 @@
-import { screen, waitFor } from "@testing-library/react";
+import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ReactNode } from "react";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
@@ -355,45 +355,31 @@ describe("Dashboard", () => {
     consoleError.mockRestore();
   });
 
-  it("renders Delta, Vega, Theta, Charm and Vanna Exposure cards in the exposure panel", async () => {
-    // Delta Exposure is new (2026-09-16); Vega/Theta were already
-    // computed on the backend but never had a visible card before this
-    // -- this closes that gap alongside the new metric. Values come
-    // straight from gammaFor("SPY") above: vega=2, theta=3, charm=12500,
-    // vanna=-8300, delta=45000.
+  it("shows the Dealers group folded under the chart with only its numbers, opens the four cards together on a click, and has none of the old right-hand panels", async () => {
     renderWithLanguage(<Dashboard />);
 
     await screen.findByLabelText("Chart de velas para SPY");
 
-    expect(screen.getByText("Delta Exposure")).toBeInTheDocument();
-    expect(screen.getByText("45K")).toBeInTheDocument();
-    expect(screen.getByText("Vega Exposure")).toBeInTheDocument();
-    expect(screen.getByText("Theta Exposure")).toBeInTheDocument();
-    expect(screen.getByText("Charm Exposure")).toBeInTheDocument();
-    expect(screen.getByText("12.5K")).toBeInTheDocument();
-    expect(screen.getByText("Vanna Exposure")).toBeInTheDocument();
-    expect(screen.getByText("-8.3K")).toBeInTheDocument();
-  });
+    // Folded: the four tabs carry their number, no cards yet.
+    const tabs = screen.getByRole("group", { name: "Resumen de dealers" });
+    expect(within(tabs).getAllByRole("button", { expanded: false })).toHaveLength(4);
+    expect(screen.queryByText("Dealer Impact Score")).not.toBeInTheDocument();
 
-  it("renders the GEX/Whale Alerts flow panel below the price chart, in the live view", async () => {
-    renderWithLanguage(<Dashboard />);
+    // One click: the four cards of those parameters, together, and nothing else.
+    await userEvent.click(screen.getByRole("button", { name: /Dealer impact/ }));
+    expect(screen.getByText("Dealer Impact Score")).toBeInTheDocument();
+    expect(screen.getByText("Signal Alignment Score")).toBeInTheDocument();
+    expect(screen.getByText("Market Bias")).toBeInTheDocument();
+    expect(screen.getByText("Volatility Regime")).toBeInTheDocument();
+    // No "(Estructural)" tag on the cards (Lester, 2026-10-18).
+    expect(screen.queryByText("(Estructural)")).not.toBeInTheDocument();
 
-    await screen.findByLabelText("Chart de velas para SPY");
-
-    expect(
-      await screen.findByLabelText("GEX por strike y flujo acumulado de Whale Alerts"),
-    ).toBeInTheDocument();
-    await waitFor(() =>
-      expect(apiMocks.getGammaProfile).toHaveBeenCalledWith(
-        "SPY",
-        "tactical",
-        expect.any(AbortSignal),
-      ),
-    );
-    // The panel opens on the flow view now (the GEX profile lives aligned with the price axis inside the chart); the GEX view is one click away.
-    expect(screen.getByRole("button", { name: "Flujo Whale Alerts" })).toHaveAttribute("aria-pressed", "true");
-    await userEvent.click(screen.getByRole("button", { name: "GEX por Strike" }));
-    expect(await screen.findByLabelText("GEX por strike para SPY")).toBeInTheDocument();
+    // Removed on purpose (2026-10-18): aggregated greeks, closing window, expected-move text, the Volatility Smile panel, the old bottom panel.
+    expect(screen.queryByText("Delta Exposure")).not.toBeInTheDocument();
+    expect(screen.queryByText("Griegas agregadas")).not.toBeInTheDocument();
+    expect(screen.queryByText("Volatility Smile")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("GEX por strike y flujo acumulado de Whale Alerts")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Flujo Whale Alerts" })).not.toBeInTheDocument();
   });
 
   it("survives repeated symbol switches without crashing (regression for #54/#55)", async () => {
@@ -717,19 +703,19 @@ describe("Dashboard", () => {
     // Spanish by default, spot-checked across dashboard.tsx itself and
     // PriceChart — two independent components in the live view (RegimeBadge
     // only renders in Pre-Sesión now, section 23 — covered separately below).
-    expect(screen.getByText("Griegas agregadas")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Ocultar panel" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Estático" })).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "EN" }));
 
-    expect(await screen.findByText("Aggregated Greeks")).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "Hide panel" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Static" })).toBeInTheDocument();
     expect(await screen.findByLabelText("Candlestick chart for SPY")).toBeInTheDocument();
     // No stale Spanish text left behind by the switch.
-    expect(screen.queryByText("Griegas agregadas")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Ocultar panel" })).not.toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "ES" }));
-    expect(await screen.findByText("Griegas agregadas")).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "Ocultar panel" })).toBeInTheDocument();
   });
 
   it("translates the Regime Badge's aria-label in the Pre-Sesión view via the language switcher", async () => {
@@ -921,12 +907,11 @@ describe("Dashboard", () => {
   describe("resizable main panels", () => {
     // Real drag/constraint behavior can't be meaningfully asserted in
     // jsdom (see the react-resizable-panels mock above) — these tests
-    // instead prove Dashboard wires the three columns to the exact same
-    // pixel values the layout previously hardcoded as fixed CSS
-    // (256px/400px), which is what react-resizable-panels needs in
-    // order to enforce those limits once real layout is available.
+    // instead prove Dashboard wires the two columns (alerts | centre; the right-hand metrics column is gone since the approved mockup) to the
+    // pixel values the layout hardcoded as fixed CSS (256px), which is what react-resizable-panels needs in order to enforce those limits once
+    // real layout is available.
 
-    it("wires the three columns to the same default/min/max pixel sizes the layout previously hardcoded", async () => {
+    it("wires the two columns to the same default/min/max pixel sizes the layout previously hardcoded", async () => {
       renderWithLanguage(<Dashboard />);
       await screen.findByLabelText("Chart de velas para SPY");
 
@@ -939,10 +924,8 @@ describe("Dashboard", () => {
       expect(center).not.toHaveAttribute("data-default-size");
       expect(center).toHaveAttribute("data-min-size", "420");
 
-      const metrics = screen.getByTestId("panel-metrics");
-      expect(metrics).toHaveAttribute("data-default-size", "400");
-      expect(metrics).toHaveAttribute("data-min-size", "300");
-      expect(metrics).toHaveAttribute("data-max-size", "640");
+      // No right-hand metrics column any more: the Dealers group sits under the chart.
+      expect(screen.queryByTestId("panel-metrics")).not.toBeInTheDocument();
     });
 
     it("renders a draggable separator between each pair of adjacent columns", async () => {
@@ -950,7 +933,7 @@ describe("Dashboard", () => {
       await screen.findByLabelText("Chart de velas para SPY");
 
       const separators = screen.getAllByRole("separator", { name: "Redimensionar paneles" });
-      expect(separators).toHaveLength(2);
+      expect(separators).toHaveLength(1);
     });
 
     it("keeps each column's real content inside its resizable Panel", async () => {
@@ -961,7 +944,9 @@ describe("Dashboard", () => {
         screen.getByTestId("panel-alerts").querySelector(".tv-alerts-sidebar"),
       ).toBeInTheDocument();
       expect(screen.getByTestId("panel-center").querySelector(".tv-center")).toBeInTheDocument();
-      expect(screen.getByTestId("panel-metrics").querySelector(".tv-sidebar")).toBeInTheDocument();
+      // The Dealers group lives inside the centre column, under the chart.
+      expect(screen.getByTestId("panel-center").querySelector(".dealers-panel")).toBeInTheDocument();
+      expect(document.querySelector(".tv-sidebar")).not.toBeInTheDocument();
     });
 
     it("persists the layout via useDefaultLayout, keyed by a stable id and backed by localStorage", async () => {
@@ -969,10 +954,10 @@ describe("Dashboard", () => {
       await screen.findByLabelText("Chart de velas para SPY");
 
       expect(panelsMocks.useDefaultLayout).toHaveBeenCalledWith(
-        expect.objectContaining({ id: "convexa-dashboard-panels", storage: window.localStorage }),
+        expect.objectContaining({ id: "convexa-dashboard-panels-v2", storage: window.localStorage }),
       );
 
-      const group = screen.getByTestId("group-convexa-dashboard-panels");
+      const group = screen.getByTestId("group-convexa-dashboard-panels-v2");
       expect(group).toHaveAttribute("data-has-on-layout-changed", "true");
     });
 
@@ -992,14 +977,14 @@ describe("Dashboard", () => {
       renderWithLanguage(<Dashboard />);
       await screen.findByLabelText("Chart de velas para SPY");
 
-      expect(screen.queryByTestId("group-convexa-dashboard-panels")).not.toBeInTheDocument();
+      expect(screen.queryByTestId("group-convexa-dashboard-panels-v2")).not.toBeInTheDocument();
       expect(screen.queryByTestId("panel-alerts")).not.toBeInTheDocument();
       expect(screen.queryByRole("separator", { name: "Redimensionar paneles" })).not.toBeInTheDocument();
 
       const body = document.querySelector(".tv-body");
       expect(body?.querySelector(".tv-alerts-sidebar")).toBeInTheDocument();
       expect(body?.querySelector(".tv-center")).toBeInTheDocument();
-      expect(body?.querySelector(".tv-sidebar")).toBeInTheDocument();
+      expect(body?.querySelector(".tv-sidebar")).not.toBeInTheDocument();
     });
   });
 
