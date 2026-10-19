@@ -129,21 +129,6 @@ export const HEATMAP_BLUR_CSS_PX = 3;
 // A grid with more rows than this is not drawn as one image (the sharp per-cell drawing is used instead).
 const MAX_IMAGE_ROWS = 1500;
 const ROW_FILL_FRACTION = 0.92;
-// Strikes spaced wide apart ON SCREEN (SPY, QQQ, IWM at $1 and NVDA at $2.5 on a chart a few dollars tall: 60 to 200 px between strikes) must not become one tall solid block each: a band is never
-// thicker than the limit, centred on its strike with soft edges, and the chart shows through between strikes. The limit shrinks smoothly as the gap grows (no jump at any window size or zoom:
-// SPX/NDX sit at 25 to 45 px depending on the monitor and the day's range) from the approved row look (30 px) down to the 18 px Lester chose for the ETFs.
-export const MAX_BAND_CSS_PX = 18;
-const BAND_FULL_ROWS_UP_TO_CSS_PX = 30;
-const BAND_SHRINK_PER_GAP_PX = 0.4;
-
-/**
- * Thickness in CSS pixels of the band drawn for one strike given the on-screen distance between adjacent strikes: null while the strikes are close enough for the full-height rows (30 px or
- * less, nothing changes), then 30 px shrinking by 0.4 px per extra pixel of gap down to `MAX_BAND_CSS_PX` (18 px from a 60 px gap on).
- */
-export function bandHeightCssPx(strikeGapCssPx: number | null): number | null {
-  if (strikeGapCssPx === null || !Number.isFinite(strikeGapCssPx) || strikeGapCssPx <= BAND_FULL_ROWS_UP_TO_CSS_PX) return null;
-  return Math.max(MAX_BAND_CSS_PX, BAND_FULL_ROWS_UP_TO_CSS_PX - BAND_SHRINK_PER_GAP_PX * (strikeGapCssPx - BAND_FULL_ROWS_UP_TO_CSS_PX));
-}
 const MINIMUM_ROW_HEIGHT_BITMAP_PX = 1;
 
 type DrawTarget = Parameters<IPrimitivePaneRenderer["draw"]>[0];
@@ -306,38 +291,117 @@ export type HeatmapImage = {
   highStrike: number;
 };
 
+// Sub-rows the image puts between two adjacent strikes. The value between strikes is interpolated (see interpolateColumn), so a map of widely spaced strikes (SPY, QQQ, IWM at $1,
+// NVDA at $2.5) is as continuous and as fine-grained on screen as SPX's 5-point strikes. Fewer when that would pass MAX_IMAGE_ROWS.
+export const HEATMAP_SUBROWS_PER_STRIKE = 6;
+
 /**
- * The matrix as a one-pixel-per-row-and-column RGBA image (what the smooth drawing scales up and blurs). Every row of the regular price grid takes the
- * value of its NEAREST strike, so strikes spaced 5, 10 or 25 apart paint a continuous map instead of blank rows between them; a row farther than
- * 1.5 median gaps from every strike (a hole in the strikes) stays empty. Null without columns or with fewer than two strikes.
+ * The figure of one column at every price of `prices` (ascending), interpolated between the strikes with a shape-preserving cubic (PCHIP: no overshoot, so it never invents a stronger
+ * level than the strikes carry, and a sign change crosses zero where the figure is faint, drawn dark). `strikes` ascending, `values` aligned (null = nothing stored). Between two strikes more than
+ * `holeLimit` apart (a hole in the strikes) only the stretch within `edgeReach` of each strike is painted; so is a price beyond the first or last strike. The values are interpolated, not the colours: blending a green with a red passes
+ * through muddy tones, a value passing through zero fades out.
+ */
+export function interpolateColumn(strikes: number[], values: (number | null)[], prices: number[], holeLimit: number, edgeReach: number): (number | null)[] {
+  const n = strikes.length;
+  const out: (number | null)[] = new Array(prices.length).fill(null);
+  if (n === 0) return out;
+  // PCHIP slopes (Fritsch-Carlson); a null neighbour or a local extremum gives a flat slope, which keeps each plateau honest.
+  const slope: number[] = new Array(n).fill(0);
+  for (let i = 0; i < n; i += 1) {
+    const y = values[i];
+    if (y === null || y === undefined) continue;
+    const prev = i > 0 ? values[i - 1] : null;
+    const next = i < n - 1 ? values[i + 1] : null;
+    const d0 = prev !== null && prev !== undefined ? (y - prev) / (strikes[i] - strikes[i - 1]) : null;
+    const d1 = next !== null && next !== undefined ? (next - y) / (strikes[i + 1] - strikes[i]) : null;
+    if (d0 !== null && d1 !== null) {
+      if (d0 * d1 <= 0) slope[i] = 0;
+      else {
+        const h0 = strikes[i] - strikes[i - 1];
+        const h1 = strikes[i + 1] - strikes[i];
+        const w1 = 2 * h1 + h0;
+        const w2 = h1 + 2 * h0;
+        slope[i] = (w1 + w2) / (w1 / d0 + w2 / d1);
+      }
+    } else slope[i] = d0 ?? d1 ?? 0;
+  }
+  let i = 0;
+  for (let k = 0; k < prices.length; k += 1) {
+    const price = prices[k];
+    while (i + 1 < n - 1 && strikes[i + 1] <= price) i += 1;
+    if (n === 1) {
+      const only = values[0];
+      out[k] = only !== null && only !== undefined && Math.abs(price - strikes[0]) <= edgeReach ? only : null;
+      continue;
+    }
+    const x0 = strikes[i];
+    const x1 = strikes[i + 1];
+    if (price < x0 - 1e-9 || price > x1 + 1e-9) {
+      // outside the strikes' range: hold the end value for half a gap
+      const edge = price < x0 ? 0 : n - 1;
+      const edgeValue = values[edge];
+      out[k] = edgeValue !== null && edgeValue !== undefined && Math.abs(price - strikes[edge]) <= edgeReach ? edgeValue : null;
+      continue;
+    }
+    const h = x1 - x0;
+    const y0 = values[i];
+    const y1 = values[i + 1];
+    const has0 = y0 !== null && y0 !== undefined;
+    const has1 = y1 !== null && y1 !== undefined;
+    if (h > holeLimit) {
+      // a hole in the strikes: each side keeps only its own stretch
+      const nearer = price - x0 <= x1 - price ? 0 : 1;
+      const value = nearer === 0 ? y0 : y1;
+      const distance = nearer === 0 ? price - x0 : x1 - price;
+      out[k] = value !== null && value !== undefined && distance <= edgeReach ? value : null;
+      continue;
+    }
+    if (has0 && has1) {
+      const t = (price - x0) / h;
+      const t2 = t * t;
+      const t3 = t2 * t;
+      out[k] = (2 * t3 - 3 * t2 + 1) * y0 + (t3 - 2 * t2 + t) * h * slope[i] + (-2 * t3 + 3 * t2) * y1 + (t3 - t2) * h * slope[i + 1];
+    } else if (has0 || has1) {
+      // one side has nothing stored: that strike's value holds over its half of the gap only
+      const from = has0 ? x0 : x1;
+      const value = has0 ? y0 : y1;
+      out[k] = Math.abs(price - from) <= h / 2 ? (value as number) : null;
+    }
+  }
+  return out;
+}
+
+/**
+ * The matrix as a one-pixel-per-row-and-column RGBA image (what the smooth drawing scales up and blurs). The rows are a regular price grid, HEATMAP_SUBROWS_PER_STRIKE of them per
+ * strike step, each taking the value interpolated between its two strikes (interpolateColumn), so strikes spaced 1, 2.5, 5, 10 or 25 apart paint a continuous map with no blank
+ * rows between them; a hole in the strikes (a gap of more than 6 median gaps) stays empty beyond half a gap from each strike. Null without columns or with fewer than two strikes.
  */
 export function heatmapImage(data: HeatmapData): HeatmapImage | null {
   if (!data.columns.length) return null;
-  const step = strikeGridStep(data.strikes);
-  if (step === null) return null;
+  const baseStep = strikeGridStep(data.strikes);
+  if (baseStep === null) return null;
   const order = data.strikes.map((_, index) => index).sort((a, b) => data.strikes[a] - data.strikes[b]);
   const sortedStrikes = order.map((index) => data.strikes[index]);
   const lowStrike = sortedStrikes[0];
   const highStrike = sortedStrikes[sortedStrikes.length - 1];
+  const baseRows = Math.round((highStrike - lowStrike) / baseStep) + 1;
+  const subRows = Math.max(1, Math.min(HEATMAP_SUBROWS_PER_STRIKE, Math.floor((MAX_IMAGE_ROWS - 1) / Math.max(1, baseRows - 1))));
+  const step = baseStep / subRows;
   const height = Math.round((highStrike - lowStrike) / step) + 1;
   const width = data.columns.length;
-  const medianGap = medianStep(sortedStrikes) ?? step;
-  const reach = 1.5 * medianGap;
-  // Nearest strike of every grid row (walking both sorted lists once).
-  const rowStrike: number[] = new Array(height).fill(-1);
-  let pointer = 0;
-  for (let row = 0; row < height; row += 1) {
-    const price = lowStrike + row * step;
-    while (pointer + 1 < sortedStrikes.length && Math.abs(sortedStrikes[pointer + 1] - price) <= Math.abs(sortedStrikes[pointer] - price)) pointer += 1;
-    if (Math.abs(sortedStrikes[pointer] - price) <= reach) rowStrike[row] = order[pointer];
-  }
+  const medianGap = medianStep(sortedStrikes) ?? baseStep;
+  const holeLimit = 6 * Math.max(medianGap, baseStep);
+  const edgeReach = 0.5 * Math.max(medianGap, baseStep);
+  const prices = Array.from({ length: height }, (_, row) => lowStrike + row * step);
   const pixels = new Uint8ClampedArray(new ArrayBuffer(width * height * 4));
   const alpha = Math.round(HEATMAP_ALPHA * 255);
+  const scales = columnScales(data);
   data.columns.forEach((column, columnIndex) => {
+    const calls = interpolateColumn(sortedStrikes, order.map((index) => column.values[index] ?? null), prices, holeLimit, edgeReach);
+    const puts = column.puts !== undefined ? interpolateColumn(sortedStrikes, order.map((index) => column.puts![index] ?? null), prices, holeLimit, edgeReach) : null;
+    const scale = scales[columnIndex] ?? null;
     for (let row = 0; row < height; row += 1) {
-      const strikeIndex = rowStrike[row];
-      if (strikeIndex < 0) continue;
-      const rgb = columnCellRgb(data, column, columnIndex, strikeIndex);
+      const rgb = puts !== null ? sidesRgb(calls[row], puts[row], scale) : cellRgb(calls[row], scale, data.palette);
       if (rgb === null) continue;
       const offset = ((height - 1 - row) * width + columnIndex) * 4;
       pixels[offset] = rgb[0];
@@ -419,11 +483,6 @@ class GammaHeatmapRenderer implements IPrimitivePaneRenderer {
     const width = Math.ceil(right - left);
     const height = Math.ceil(visibleBottom - visibleTop);
 
-    const strikeYs = data.strikes
-      .map((strike) => series.priceToCoordinate(strike))
-      .filter((y): y is NonNullable<typeof y> => y !== null && Number.isFinite(y));
-    const bandCss = bandHeightCssPx(medianStep(strikeYs));
-
     const scratch = this.scratch ?? document.createElement("canvas");
     this.scratch = scratch;
     if (scratch.width !== width || scratch.height !== height) {
@@ -440,9 +499,6 @@ class GammaHeatmapRenderer implements IPrimitivePaneRenderer {
       scratchContext.drawImage(canvas, column.index, 0, 1, image.height, column.left - left, top - visibleTop, column.width + 0.75, bottom - top);
     }
 
-    // Far-apart strikes: keep only each strike's own band (the stretched image between them was interpolation, not data).
-    if (bandCss !== null) this.maskBands(scratch, strikeYs.map((y) => y * vpr - visibleTop), bandCss * vpr, width, height);
-
     const context = scope.context;
     context.save();
     context.beginPath();
@@ -454,40 +510,6 @@ class GammaHeatmapRenderer implements IPrimitivePaneRenderer {
     context.drawImage(scratch, left, visibleTop);
     context.filter = "none";
     context.restore();
-    return true;
-  }
-
-  private mask: HTMLCanvasElement | null = null;
-
-  /**
-   * Keeps only a band of `bandHeight` bitmap pixels around each strike (soft top and bottom edges) and clears the rest of the composed image. Used when the strikes are far apart on screen, so each
-   * strike reads as its own band of gamma instead of the whole span washing into one smear. `ys` are the strikes' vertical centres in the scratch canvas' coordinates.
-   */
-  private maskBands(scratch: HTMLCanvasElement, ys: number[], bandHeight: number, width: number, height: number): boolean {
-    const mask = this.mask ?? document.createElement("canvas");
-    this.mask = mask;
-    if (mask.width !== width || mask.height !== height) {
-      mask.width = width;
-      mask.height = height;
-    }
-    const maskContext = mask.getContext("2d");
-    const scratchContext = scratch.getContext("2d");
-    if (!maskContext || !scratchContext) return false;
-    maskContext.clearRect(0, 0, width, height);
-    for (const y of ys) {
-      const top = y - bandHeight / 2;
-      if (top > height || top + bandHeight < 0) continue;
-      const gradient = maskContext.createLinearGradient(0, top, 0, top + bandHeight);
-      gradient.addColorStop(0, "rgba(0, 0, 0, 0)");
-      gradient.addColorStop(0.22, "rgba(0, 0, 0, 1)");
-      gradient.addColorStop(0.78, "rgba(0, 0, 0, 1)");
-      gradient.addColorStop(1, "rgba(0, 0, 0, 0)");
-      maskContext.fillStyle = gradient;
-      maskContext.fillRect(0, top, width, bandHeight);
-    }
-    scratchContext.globalCompositeOperation = "destination-in";
-    scratchContext.drawImage(mask, 0, 0);
-    scratchContext.globalCompositeOperation = "source-over";
     return true;
   }
 
@@ -505,11 +527,7 @@ class GammaHeatmapRenderer implements IPrimitivePaneRenderer {
       });
       if (!rows.length) return;
       const step = medianStep(rows.map((row) => row.y));
-      const sharpBand = bandHeightCssPx(step === null ? null : step / scope.verticalPixelRatio);
-      const rowHeight = Math.max(
-        MINIMUM_ROW_HEIGHT_BITMAP_PX,
-        sharpBand !== null ? sharpBand * scope.verticalPixelRatio : (step ?? scope.verticalPixelRatio * 6) * ROW_FILL_FRACTION,
-      );
+      const rowHeight = Math.max(MINIMUM_ROW_HEIGHT_BITMAP_PX, (step ?? scope.verticalPixelRatio * 6) * ROW_FILL_FRACTION);
 
       const xs = data.columns.map((column) => timeToX(timeScale, series, column.time));
       let lastWidth = 0;
