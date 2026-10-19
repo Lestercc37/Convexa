@@ -484,8 +484,11 @@ export function PriceChart({
   const [showProfile, setShowProfile] = useState(true);
   const [showSmile, setShowSmile] = useState(true);
   // The Smile's expiration: "" = the nearest current one; the list of the symbol's current expirations; and the dot under the mouse (strike, IV and where it is on screen).
-  const [smileExpiration, setSmileExpiration] = useState("");
-  const [smileExpirations, setSmileExpirations] = useState<string[]>([]);
+  // Both are remembered together with the symbol they belong to, so a symbol switch needs no reset: what was chosen for another symbol reads as "nothing chosen".
+  const [smileChoice, setSmileChoice] = useState<{ symbol: string; date: string }>({ symbol, date: "" });
+  const [smileList, setSmileList] = useState<{ symbol: string; dates: string[] }>({ symbol, dates: [] });
+  const smileExpiration = smileChoice.symbol === symbol ? smileChoice.date : "";
+  const smileExpirations = smileList.symbol === symbol ? smileList.dates : [];
   const [hoveredSmile, setHoveredSmile] = useState<{ point: SmilePoint; x: number; y: number } | null>(null);
   const profilePrimitiveRef = useRef<LiveProfilePrimitive | null>(null);
   // Figures the profile endpoint does not serve (delta, vanna, charm) come from the latest heatmap values.
@@ -885,7 +888,7 @@ export function PriceChart({
       if (expiration === null || expiration < currentEasternDate()) {
         const response = await getOptionChainExpirations(symbol, controller.signal);
         const current = currentExpirations(response.expirations);
-        setSmileExpirations(current);
+        setSmileList({ symbol, dates: current });
         expiration = smileExpiration && current.includes(smileExpiration) ? smileExpiration : (current[0] ?? null);
       }
       if (expiration === null) {
@@ -909,12 +912,6 @@ export function PriceChart({
       primitive.setSmile([]);
     };
   }, [showProfile, showSmile, symbol, smileExpiration]);
-
-  // The expiration chosen for one symbol means nothing for the next one.
-  useEffect(() => {
-    setSmileExpiration("");
-    setSmileExpirations([]);
-  }, [symbol]);
 
   // Hovering a smile dot: its strike, IV and expiration. The chart reports the pointer through the crosshair event; the primitive finds the dot under it.
   useEffect(() => {
@@ -1430,7 +1427,7 @@ export function PriceChart({
               <select
                 aria-label={t.priceChart.smileExpirationAriaLabel}
                 value={smileExpiration}
-                onChange={(event) => setSmileExpiration(event.target.value)}
+                onChange={(event) => setSmileChoice({ symbol, date: event.target.value })}
               >
                 <option value="">{t.priceChart.smileExpirationNearest}</option>
                 {smileExpirations.map((date) => (
