@@ -35,6 +35,8 @@ const COLUMN_MIN_CSS_PX = 150;
 const COLUMN_MAX_CSS_PX = 320;
 const BAR_INSET_CSS_PX = 6;
 const ROW_FILL_FRACTION = 0.78;
+// A bar is never thicker than this: with strikes 60 to 100 px apart on screen (SPY, QQQ, IWM, NVDA) a full-row bar was a 45 px slab; SPX/NDX rows (about 24 px) stay as they were.
+export const MAX_BAR_CSS_PX = 18;
 const MINIMUM_ROW_HEIGHT_BITMAP_PX = 1;
 const SMILE_GAP_CSS_PX = 14;
 const SMILE_BAND_CSS_PX = 92;
@@ -112,6 +114,12 @@ function medianRowStep(ys: number[]): number | null {
   return steps[Math.floor(steps.length / 2)];
 }
 
+/** Thickness in bitmap pixels of one profile bar: the strike spacing times the fill fraction, capped at MAX_BAR_CSS_PX. */
+export function barThickness(strikeStepBitmapPx: number | null, verticalPixelRatio: number): number {
+  const natural = (strikeStepBitmapPx ?? verticalPixelRatio * 6) * ROW_FILL_FRACTION;
+  return Math.max(MINIMUM_ROW_HEIGHT_BITMAP_PX, Math.min(natural, MAX_BAR_CSS_PX * verticalPixelRatio));
+}
+
 type Placed<T> = { y: number; item: T };
 
 function place<T extends { strike: number }>(source: LiveProfilePrimitive, items: T[], ratio: number, height: number): Placed<T>[] {
@@ -149,7 +157,7 @@ class ProfileBarsRenderer implements IPrimitivePaneRenderer {
       const placed = place(this.source, bars, scope.verticalPixelRatio, scope.bitmapSize.height);
       if (!placed.length) return;
       const step = medianRowStep(placed.map((entry) => entry.y));
-      const rowHeight = Math.max(MINIMUM_ROW_HEIGHT_BITMAP_PX, (step ?? scope.verticalPixelRatio * 6) * ROW_FILL_FRACTION);
+      const rowHeight = barThickness(step, scope.verticalPixelRatio);
       const lineX = width - columnWidth;
       const inset = BAR_INSET_CSS_PX * scope.horizontalPixelRatio;
       const maxBar = columnWidth - inset * 2;
@@ -174,7 +182,7 @@ class ProfileBarsRenderer implements IPrimitivePaneRenderer {
     const placed = place(this.source, bars, scope.verticalPixelRatio, scope.bitmapSize.height);
     if (!placed.length) return;
     const step = medianRowStep(placed.map((entry) => entry.y));
-    const rowHeight = Math.max(MINIMUM_ROW_HEIGHT_BITMAP_PX, (step ?? scope.verticalPixelRatio * 6) * ROW_FILL_FRACTION);
+    const rowHeight = barThickness(step, scope.verticalPixelRatio);
     const both = bars.some((bar) => bar.call !== undefined) && bars.some((bar) => bar.put !== undefined);
     const half = Math.max(MINIMUM_ROW_HEIGHT_BITMAP_PX, rowHeight / 2 - 0.5 * scope.verticalPixelRatio);
     const lineX = width - columnWidth;

@@ -103,6 +103,19 @@ export const HEATMAP_BLUR_CSS_PX = 3;
 // A grid with more rows than this is not drawn as one image (the sharp per-cell drawing is used instead).
 const MAX_IMAGE_ROWS = 1500;
 const ROW_FILL_FRACTION = 0.92;
+// Strikes spaced wide apart ON SCREEN (SPY, QQQ, IWM at $1 and NVDA at $2.5 on a chart a few dollars tall: 60 to 100 px between strikes) must not become one tall solid block each: a band is never
+// thicker than this, centred on its strike with soft edges, and the chart shows through between strikes. SPX and NDX (30 to 40 px between strikes) are below the limit and keep their approved look.
+export const MAX_BAND_CSS_PX = 26;
+const BAND_ENGAGES_ABOVE = 1.35;
+
+/**
+ * Thickness in CSS pixels of the band drawn for one strike given the on-screen distance between adjacent strikes: null while the strikes are close enough for the full-height rows (nothing
+ * changes), `MAX_BAND_CSS_PX` once the gap is wider than that by 35 %.
+ */
+export function bandHeightCssPx(strikeGapCssPx: number | null): number | null {
+  if (strikeGapCssPx === null || !Number.isFinite(strikeGapCssPx)) return null;
+  return strikeGapCssPx > MAX_BAND_CSS_PX * BAND_ENGAGES_ABOVE ? MAX_BAND_CSS_PX : null;
+}
 const MINIMUM_ROW_HEIGHT_BITMAP_PX = 1;
 
 type DrawTarget = Parameters<IPrimitivePaneRenderer["draw"]>[0];
@@ -378,6 +391,11 @@ class GammaHeatmapRenderer implements IPrimitivePaneRenderer {
     const width = Math.ceil(right - left);
     const height = Math.ceil(visibleBottom - visibleTop);
 
+    const strikeYs = data.strikes
+      .map((strike) => series.priceToCoordinate(strike))
+      .filter((y): y is NonNullable<typeof y> => y !== null && Number.isFinite(y));
+    const bandCss = bandHeightCssPx(medianStep(strikeYs));
+
     const scratch = this.scratch ?? document.createElement("canvas");
     this.scratch = scratch;
     if (scratch.width !== width || scratch.height !== height) {
@@ -394,6 +412,9 @@ class GammaHeatmapRenderer implements IPrimitivePaneRenderer {
       scratchContext.drawImage(canvas, column.index, 0, 1, image.height, column.left - left, top - visibleTop, column.width + 0.75, bottom - top);
     }
 
+    // Far-apart strikes: keep only each strike's own band (the stretched image between them was interpolation, not data).
+    if (bandCss !== null) this.maskBands(scratch, strikeYs.map((y) => y * vpr - visibleTop), bandCss * vpr, width, height);
+
     const context = scope.context;
     context.save();
     context.beginPath();
@@ -405,6 +426,40 @@ class GammaHeatmapRenderer implements IPrimitivePaneRenderer {
     context.drawImage(scratch, left, visibleTop);
     context.filter = "none";
     context.restore();
+    return true;
+  }
+
+  private mask: HTMLCanvasElement | null = null;
+
+  /**
+   * Keeps only a band of `bandHeight` bitmap pixels around each strike (soft top and bottom edges) and clears the rest of the composed image. Used when the strikes are far apart on screen, so each
+   * strike reads as its own band of gamma instead of the whole span washing into one smear. `ys` are the strikes' vertical centres in the scratch canvas' coordinates.
+   */
+  private maskBands(scratch: HTMLCanvasElement, ys: number[], bandHeight: number, width: number, height: number): boolean {
+    const mask = this.mask ?? document.createElement("canvas");
+    this.mask = mask;
+    if (mask.width !== width || mask.height !== height) {
+      mask.width = width;
+      mask.height = height;
+    }
+    const maskContext = mask.getContext("2d");
+    const scratchContext = scratch.getContext("2d");
+    if (!maskContext || !scratchContext) return false;
+    maskContext.clearRect(0, 0, width, height);
+    for (const y of ys) {
+      const top = y - bandHeight / 2;
+      if (top > height || top + bandHeight < 0) continue;
+      const gradient = maskContext.createLinearGradient(0, top, 0, top + bandHeight);
+      gradient.addColorStop(0, "rgba(0, 0, 0, 0)");
+      gradient.addColorStop(0.22, "rgba(0, 0, 0, 1)");
+      gradient.addColorStop(0.78, "rgba(0, 0, 0, 1)");
+      gradient.addColorStop(1, "rgba(0, 0, 0, 0)");
+      maskContext.fillStyle = gradient;
+      maskContext.fillRect(0, top, width, bandHeight);
+    }
+    scratchContext.globalCompositeOperation = "destination-in";
+    scratchContext.drawImage(mask, 0, 0);
+    scratchContext.globalCompositeOperation = "source-over";
     return true;
   }
 
@@ -422,7 +477,11 @@ class GammaHeatmapRenderer implements IPrimitivePaneRenderer {
       });
       if (!rows.length) return;
       const step = medianStep(rows.map((row) => row.y));
-      const rowHeight = Math.max(MINIMUM_ROW_HEIGHT_BITMAP_PX, (step ?? scope.verticalPixelRatio * 6) * ROW_FILL_FRACTION);
+      const sharpBand = bandHeightCssPx(step === null ? null : step / scope.verticalPixelRatio);
+      const rowHeight = Math.max(
+        MINIMUM_ROW_HEIGHT_BITMAP_PX,
+        sharpBand !== null ? sharpBand * scope.verticalPixelRatio : (step ?? scope.verticalPixelRatio * 6) * ROW_FILL_FRACTION,
+      );
 
       const xs = data.columns.map((column) => timeToX(timeScale, series, column.time));
       let lastWidth = 0;

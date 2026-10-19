@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import {
+  barThickness,
   AHORA_LINE_COLOR,
   LiveProfilePrimitive,
   profileBarsFromHeatmap,
@@ -253,5 +254,16 @@ describe("sides view (calls and puts apart)", () => {
     const heightBoth = (a.ops.find((entry) => entry.op === "fillRect")!.args as number[])[3];
     const heightOnly = (b.ops.find((entry) => entry.op === "fillRect")!.args as number[])[3];
     expect(heightOnly).toBeGreaterThan(heightBoth);
+  });
+});
+
+describe("profile bar thickness", () => {
+  it("is the strike spacing times 0.78, never above 18 CSS px, and at least one pixel", () => {
+    expect(barThickness(null, 1)).toBeCloseTo(6 * 0.78);
+    expect(barThickness(20, 1)).toBeCloseTo(15.6);
+    expect(barThickness(60, 1)).toBe(18); // SPY: strikes 60 px apart used to give a 47 px slab
+    expect(barThickness(100, 1)).toBe(18);
+    expect(barThickness(120, 2)).toBeCloseTo(36); // bitmap pixels at a pixel ratio of 2: 18 CSS px
+    expect(barThickness(0.5, 1)).toBe(1);
   });
 });
