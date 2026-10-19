@@ -105,16 +105,17 @@ const MAX_IMAGE_ROWS = 1500;
 const ROW_FILL_FRACTION = 0.92;
 // Strikes spaced wide apart ON SCREEN (SPY, QQQ, IWM at $1 and NVDA at $2.5 on a chart a few dollars tall: 60 to 100 px between strikes) must not become one tall solid block each: a band is never
 // thicker than this, centred on its strike with soft edges, and the chart shows through between strikes. SPX and NDX (30 to 40 px between strikes) are below the limit and keep their approved look.
-export const MAX_BAND_CSS_PX = 26;
-const BAND_ENGAGES_ABOVE = 1.35;
+export const MAX_BAND_CSS_PX = 18;
+// Bands start once adjacent strikes are more than this far apart on screen (SPX/NDX sit at 30 to 35 px, the ETFs at 60 to 100).
+const BAND_ENGAGES_ABOVE_CSS_PX = 35;
 
 /**
  * Thickness in CSS pixels of the band drawn for one strike given the on-screen distance between adjacent strikes: null while the strikes are close enough for the full-height rows (nothing
- * changes), `MAX_BAND_CSS_PX` once the gap is wider than that by 35 %.
+ * changes), `MAX_BAND_CSS_PX` once the gap is wider than BAND_ENGAGES_ABOVE_CSS_PX.
  */
 export function bandHeightCssPx(strikeGapCssPx: number | null): number | null {
   if (strikeGapCssPx === null || !Number.isFinite(strikeGapCssPx)) return null;
-  return strikeGapCssPx > MAX_BAND_CSS_PX * BAND_ENGAGES_ABOVE ? MAX_BAND_CSS_PX : null;
+  return strikeGapCssPx > BAND_ENGAGES_ABOVE_CSS_PX ? MAX_BAND_CSS_PX : null;
 }
 const MINIMUM_ROW_HEIGHT_BITMAP_PX = 1;
 

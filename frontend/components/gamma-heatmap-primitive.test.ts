@@ -130,8 +130,8 @@ describe("GammaHeatmapPrimitive", () => {
     expect(first.color).toBe("rgba(255, 255, 255, 0.62)");
     expect(first.rect[0]).toBe(100); // x of the first column
     expect(first.rect[2]).toBe(40); // distance to the next column
-    // Row height: strikes 5 apart = 40 px on screen, wider than a band may be (26 px): the cell is a 26 px band centred on its strike.
-    expect(first.rect[3]).toBe(26);
+    // Row height: strikes 5 apart = 40 px on screen, wider than a band may be (18 px): the cell is an 18 px band centred on its strike.
+    expect(first.rect[3]).toBe(18);
     // The last column repeats the previous width.
     expect(context.fills.at(-1)!.rect[2]).toBe(40);
   });
@@ -403,8 +403,8 @@ describe("band height for strikes far apart on screen", () => {
     expect(bandHeightCssPx(12)).toBeNull();
     expect(bandHeightCssPx(30)).toBeNull();
     expect(bandHeightCssPx(35)).toBeNull();
-    expect(bandHeightCssPx(40)).toBe(26);
-    expect(bandHeightCssPx(60)).toBe(26);
-    expect(bandHeightCssPx(100)).toBe(26);
+    expect(bandHeightCssPx(40)).toBe(18);
+    expect(bandHeightCssPx(60)).toBe(18);
+    expect(bandHeightCssPx(100)).toBe(18);
   });
 });
