@@ -17,13 +17,13 @@ import {
   type ISeriesApi,
   type UTCTimestamp,
 } from "lightweight-charts";
-import { getAlerts, getGammaHeatmap, getGammaHistory, getGammaProfile } from "@/lib/api";
+import { getAlerts, getGammaHeatmap, getGammaHistory, getGammaProfile, getOptionChain, getOptionChainExpirations } from "@/lib/api";
 import { buildCubes, CUBE_MIN_OPTIONS, DEFAULT_CUBE_FILTER } from "@/lib/alert-cubes";
 import { aggregateVwapPoints, type MinuteCandle, type Timeframe, type VwapPoint } from "@/lib/candles";
 import { recordChartEvent } from "@/lib/chart-lifecycle";
 import { useLanguage } from "@/lib/i18n/language-context";
 import type { MarketPriceStreamStatus } from "@/lib/market-price-stream";
-import { EASTERN_TIME_ZONE, mostRecentSessionRange } from "@/lib/market-session";
+import { currentEasternDate, EASTERN_TIME_ZONE, heatmapStartSeconds, mostRecentSessionRange } from "@/lib/market-session";
 import type {
   AtrRange,
   ExpectedMove,
@@ -36,10 +36,17 @@ import type {
 import { LEVEL_MERGE_THRESHOLD } from "./gravity-map";
 import { AlertCubesPrimitive } from "./alert-cubes-primitive";
 import { AlertCubeTooltip } from "./alert-cube-tooltip";
-import { GammaHeatmapPrimitive, heatmapFromResponse } from "./gamma-heatmap-primitive";
-import { GexHistogramPrimitive } from "./gex-histogram-primitive";
+import { GammaHeatmapPrimitive, heatmapFromResponse, mergeSides, paletteForMetric, type HeatmapData } from "./gamma-heatmap-primitive";
+import {
+  LiveProfilePrimitive,
+  profileBarsFromHeatmap,
+  profileWidthCssPx,
+  sideBarsFromHeatmaps,
+  type ProfileBar,
+} from "./live-profile-primitive";
 import { LIVE_LEVELS_POLLING_INTERVAL_MS, POLLING_INTERVAL_MS } from "@/lib/polling";
 import { RegimeCompactBadge } from "./regime-badge";
+import { currentExpirations, smilePointsFromChain } from "@/lib/volatility-smile-data";
 
 type PriceChartProps = {
   symbol: string;
@@ -402,6 +409,16 @@ function mergePriceRange(base: AutoscaleInfo | null, extraPrices: number[]): Aut
   };
 }
 
+// The metric tabs of the heatmap, in the order of the approved mockup (Gamma | Delta) plus absolute gamma, vanna and charm.
+const HEATMAP_METRIC_TABS = [
+  { metric: "gamma", labelKey: "heatmapMetricGamma" },
+  { metric: "absolute_gamma", labelKey: "heatmapMetricAbsolute" },
+  { metric: "total_gamma", labelKey: "heatmapMetricTotal" },
+  { metric: "delta", labelKey: "heatmapMetricDelta" },
+  { metric: "vanna", labelKey: "heatmapMetricVanna" },
+  { metric: "charm", labelKey: "heatmapMetricCharm" },
+] as const satisfies readonly { metric: GammaHeatmapMetric; labelKey: string }[];
+
 export function PriceChart({
   symbol,
   candles,
@@ -462,9 +479,18 @@ export function PriceChart({
   const [showVwap, setShowVwap] = useState(true);
   const [showAtr, setShowAtr] = useState(true);
   const [showExpectedMove, setShowExpectedMove] = useState(true);
-  // GEX histogram aligned with the price axis (draft, off by default so the current view is untouched).
-  // On by default (design 9(b) / 12.7: the profile aligned with the price axis replaces the old bottom GEX-by-strike view); the checkbox switches it off.
-  const [showGexHistogram, setShowGexHistogram] = useState(true);
+  // The line of time and the live profile of the approved mockup (design 9 and 10): history on the left of AHORA, one live profile (a bar per strike) on its right,
+  // aligned with the price axis. On by default; it replaces the old bottom GEX-by-strike view. The Smile dots ride on the same line.
+  const [showProfile, setShowProfile] = useState(true);
+  const [showSmile, setShowSmile] = useState(true);
+  const profilePrimitiveRef = useRef<LiveProfilePrimitive | null>(null);
+  // Figures the profile endpoint does not serve (delta, vanna, charm) come from the latest heatmap values.
+  const [heatmapProfile, setHeatmapProfile] = useState<ProfileBar[] | null>(null);
+  // The width the chart currently keeps free at the right of the time scale for the profile column (0 = none), and whether the column is on.
+  const reservedRightPxRef = useRef(0);
+  const profileColumnOnRef = useRef(true);
+  const lastCloseRef = useRef<number | null>(candles.at(-1)?.close ?? null);
+  const lastCandleTimeRef = useRef<number | null>(candles.at(-1)?.time ?? null);
   // Whale alerts as small squares on the chart (design 12.8 to 12.14); off by default until it is checked against live alerts.
   const [showAlertCubes, setShowAlertCubes] = useState(false);
   const [cubeMinDeq, setCubeMinDeq] = useState<number>(DEFAULT_CUBE_FILTER.minDeq);
@@ -478,7 +504,12 @@ export function PriceChart({
   );
   // Gamma heatmap behind the candles (off by default): strike x time matrix read from /gamma/{symbol}/heatmap.
   const [showHeatmap, setShowHeatmap] = useState(false);
+  // Each minute coloured against its own distribution (history stays as painted), or one scale for the whole session (the chip "Escala del día").
+  const [dayScale, setDayScale] = useState(false);
   const [heatmapMetric, setHeatmapMetric] = useState<GammaHeatmapMetric>("gamma");
+  // The sides view: call gamma and put gamma drawn apart (green / red, one scale), each switchable. Any side on replaces the single figure above until both are off again.
+  const [sideLayers, setSideLayers] = useState({ calls: false, puts: false });
+  const sidesOn = sideLayers.calls || sideLayers.puts;
   const [drawMode, setDrawMode] = useState(false);
   const [trendline, setTrendline] = useState<Trendline | null>(null);
   const referenceLevelsRef = useRef(
@@ -538,7 +569,13 @@ export function PriceChart({
         vertLines: { color: "rgba(42, 46, 57, 0.6)" },
         horzLines: { color: "rgba(42, 46, 57, 0.6)" },
       },
-      timeScale: { timeVisible: true, secondsVisible: false, tickMarkFormatter },
+      timeScale: {
+        timeVisible: true,
+        secondsVisible: false,
+        tickMarkFormatter,
+        // The candles stop at the AHORA line: the live profile column owns the strip to its right (live-profile-primitive.ts).
+        rightOffsetPixels: reservedRightPxRef.current = profileColumnOnRef.current ? profileWidthCssPx(container.clientWidth) : 0,
+      },
       rightPriceScale: { borderColor: "#2A2E39" },
       localization: { timeFormatter: crosshairTimeFormatter },
       // Per user request (2026-09-26): the default (Magnet) snaps the
@@ -587,6 +624,12 @@ export function PriceChart({
       // caused itself rather than a real one.
       if (forcingRepaintRef.current) return;
       recordChartEvent("chart-size", { width });
+      // The profile column is a fifth of the pane: its reserved strip follows the pane's width. Before the one-shot fit below, so that fit already counts it.
+      const reserved = profileColumnOnRef.current ? profileWidthCssPx(width) : 0;
+      if (reserved !== reservedRightPxRef.current) {
+        reservedRightPxRef.current = reserved;
+        chart.applyOptions({ timeScale: { rightOffsetPixels: reserved } });
+      }
       recomputeBandRectsRef.current();
       // `autoSize`'s internal ResizeObserver (see the option's own comment
       // above) can report the container's real pixel width well after
@@ -675,6 +718,8 @@ export function PriceChart({
   useEffect(() => {
     const previousCandleCount = previousCandleCountRef.current;
     previousCandleCountRef.current = candles.length;
+    lastCloseRef.current = candles.at(-1)?.close ?? null;
+    lastCandleTimeRef.current = candles.at(-1)?.time ?? null;
     // Bulk changes only (a seed landing, a reset to zero): single live ticks would flood the 80-entry log.
     if (previousCandleCount === 0 || Math.abs(candles.length - previousCandleCount) > 1) {
       recordChartEvent("candles", { count: candles.length, previous: previousCandleCount });
@@ -755,24 +800,58 @@ export function PriceChart({
     }
   }, [candles]);
 
-  // GEX histogram: a series primitive drawn against the right edge of the pane at the candles' own price
-  // coordinates. Attached only while the toggle is on; the profile (one row per strike of the selected
-  // gamma view) is polled like every other live panel and handed over with setBars().
+  // Live profile: a series primitive with the AHORA line and one bar per strike in the strip the chart keeps free at the right of the time scale. Attached only while the
+  // toggle is on; the strip itself is reserved below (rightOffsetPixels) and follows the toggle.
   useEffect(() => {
     const series = seriesRef.current;
-    if (!showGexHistogram || !series) return;
-    const primitive = new GexHistogramPrimitive();
+    if (!showProfile || !series) return;
+    const primitive = new LiveProfilePrimitive();
+    profilePrimitiveRef.current = primitive;
     series.attachPrimitive(primitive);
+    return () => {
+      if (profilePrimitiveRef.current === primitive) profilePrimitiveRef.current = null;
+      series.detachPrimitive(primitive);
+    };
+  }, [showProfile]);
+
+  // The strip: reserved while the profile is on, released when it is off (the chart then keeps its old full-width look).
+  useEffect(() => {
+    profileColumnOnRef.current = showProfile;
+    const chart = chartRef.current;
+    const container = containerRef.current;
+    if (!chart || !container) return;
+    const reserved = showProfile ? profileWidthCssPx(container.clientWidth) : 0;
+    if (reserved === reservedRightPxRef.current) return;
+    reservedRightPxRef.current = reserved;
+    chart.applyOptions({ timeScale: { rightOffsetPixels: reserved } });
+    chart.timeScale().fitContent();
+  }, [showProfile]);
+
+  // What the profile shows follows the heatmap's figure while the heatmap is on (net gamma otherwise).
+  const profileMetric: GammaHeatmapMetric = showHeatmap && !sidesOn ? heatmapMetric : "gamma";
+  const profileFromEndpoint = !(showHeatmap && sidesOn) && (profileMetric === "gamma" || profileMetric === "absolute_gamma");
+  const profileCaption = showHeatmap && sidesOn
+    ? sideLayers.calls && sideLayers.puts
+      ? t.priceChart.profileCaptionSides.both
+      : sideLayers.calls
+        ? t.priceChart.profileCaptionSides.calls
+        : t.priceChart.profileCaptionSides.puts
+    : t.priceChart.profileCaptions[profileMetric];
+  useEffect(() => {
+    if (!showProfile || !profileFromEndpoint) return;
     const controller = new AbortController();
     const refresh = () => {
       getGammaProfile(symbol, gammaView, controller.signal)
         .then((profile) => {
-          primitive.setBars(
+          const absolute = profileMetric === "absolute_gamma";
+          profilePrimitiveRef.current?.setBars(
             profile.items.map((item) => ({
               strike: item.strike,
-              net: item.net_gamma,
+              net: absolute ? item.absolute_gamma : item.net_gamma,
               absolute: item.absolute_gamma,
             })),
+            paletteForMetric(profileMetric),
+            t.priceChart.profileCaptions[profileMetric],
           );
         })
         .catch(() => {
@@ -784,9 +863,46 @@ export function PriceChart({
     return () => {
       controller.abort();
       window.clearInterval(interval);
-      series.detachPrimitive(primitive);
     };
-  }, [showGexHistogram, symbol, gammaView]);
+  }, [showProfile, symbol, gammaView, profileMetric, profileFromEndpoint, t]);
+
+  useEffect(() => {
+    if (!showProfile || profileFromEndpoint || !heatmapProfile) return;
+    profilePrimitiveRef.current?.setBars(heatmapProfile, showHeatmap && sidesOn ? "gamma" : paletteForMetric(profileMetric), profileCaption);
+  }, [showProfile, profileFromEndpoint, heatmapProfile, profileMetric, profileCaption, showHeatmap, sidesOn]);
+
+  // Smile dots on the AHORA line: the nearest current expiration, polled like the other live panels; a failed poll keeps the dots already drawn.
+  useEffect(() => {
+    const primitive = profilePrimitiveRef.current;
+    if (!showProfile || !showSmile || !primitive) return;
+    const controller = new AbortController();
+    let expiration: string | null = null;
+    const load = async () => {
+      if (expiration === null || expiration < currentEasternDate()) {
+        const response = await getOptionChainExpirations(symbol, controller.signal);
+        expiration = currentExpirations(response.expirations)[0] ?? null;
+      }
+      if (expiration === null) {
+        primitive.setSmile([]);
+        return;
+      }
+      const chain = await getOptionChain(symbol, expiration, controller.signal);
+      const spot = lastCloseRef.current;
+      primitive.setSmile(spot !== null && spot > 0 ? smilePointsFromChain(chain.contracts, spot) : []);
+    };
+    const refresh = () => {
+      load().catch(() => {
+        // A failed poll keeps the dots already drawn; the next one retries.
+      });
+    };
+    refresh();
+    const interval = window.setInterval(refresh, POLLING_INTERVAL_MS);
+    return () => {
+      controller.abort();
+      window.clearInterval(interval);
+      primitive.setSmile([]);
+    };
+  }, [showProfile, showSmile, symbol]);
 
   // Alert cubes: a series primitive drawn on top of the candles. Attached only while the toggle is on; the alerts of the symbol are polled like
   // the other live panels and a failed poll keeps what is drawn. The chart reports the hovered cube (hitTest) through its crosshair event.
@@ -831,14 +947,19 @@ export function PriceChart({
   // is entered, a weekend) simply stays empty.
   useEffect(() => {
     const series = seriesRef.current;
-    if (!showHeatmap || !series) return;
+    if (!showHeatmap || sidesOn || !series) return;
     const primitive = new GammaHeatmapPrimitive({ smooth: true });
     series.attachPrimitive(primitive);
     const controller = new AbortController();
     const refresh = () => {
-      const start = new Date((mostRecentSessionRange(Date.now()).openSeconds - 3600) * 1000);
+      // The session of the candles on screen (Friday's before Monday's open), not simply "today".
+      const start = new Date(heatmapStartSeconds(lastCandleTimeRef.current) * 1000);
       getGammaHeatmap(symbol, { view: gammaView, metric: heatmapMetric, start, bucketSeconds: HEATMAP_BUCKET_SECONDS }, controller.signal)
-        .then((response) => primitive.setData(heatmapFromResponse(response)))
+        .then((response) => {
+          const data = { ...heatmapFromResponse(response), scaleMode: dayScale ? ("day" as const) : ("column" as const) };
+          primitive.setData(data);
+          setHeatmapProfile(profileBarsFromHeatmap(data));
+        })
         .catch(() => {
           // A failed poll keeps the cells already drawn; the next one retries.
         });
@@ -849,8 +970,49 @@ export function PriceChart({
       controller.abort();
       window.clearInterval(interval);
       series.detachPrimitive(primitive);
+      setHeatmapProfile(null);
     };
-  }, [showHeatmap, symbol, gammaView, heatmapMetric]);
+  }, [showHeatmap, sidesOn, symbol, gammaView, heatmapMetric, dayScale]);
+
+  // The sides view: ONE heatmap primitive that draws call gamma (green) and put gamma (red) from two requests with the same shared scale (the larger p98); a cell strong on both sides fades to
+  // white (sidesRgb), never amber. The live profile shows both as a green and a red bar per strike. A failed poll keeps what is drawn.
+  useEffect(() => {
+    const series = seriesRef.current;
+    if (!showHeatmap || !sidesOn || !series) return;
+    const controller = new AbortController();
+    type SideLayer = { key: "calls" | "puts"; metric: "call_gamma" | "put_gamma" };
+    const layers: SideLayer[] = [];
+    if (sideLayers.calls) layers.push({ key: "calls", metric: "call_gamma" });
+    if (sideLayers.puts) layers.push({ key: "puts", metric: "put_gamma" });
+    const primitive = new GammaHeatmapPrimitive({ smooth: true });
+    series.attachPrimitive(primitive);
+    const latest: { calls: HeatmapData | null; puts: HeatmapData | null } = { calls: null, puts: null };
+    const render = () => {
+      primitive.setData(mergeSides(latest.calls, latest.puts));
+      setHeatmapProfile(sideBarsFromHeatmaps(latest.calls, latest.puts));
+    };
+    const refresh = () => {
+      const start = new Date(heatmapStartSeconds(lastCandleTimeRef.current) * 1000);
+      for (const layer of layers) {
+        getGammaHeatmap(symbol, { view: gammaView, metric: layer.metric, start, bucketSeconds: HEATMAP_BUCKET_SECONDS }, controller.signal)
+          .then((response) => {
+            latest[layer.key] = { ...heatmapFromResponse(response), scaleMode: dayScale ? ("day" as const) : ("column" as const) };
+            render();
+          })
+          .catch(() => {
+            // A failed poll keeps the cells already drawn; the next one retries.
+          });
+      }
+    };
+    refresh();
+    const interval = window.setInterval(refresh, LIVE_LEVELS_POLLING_INTERVAL_MS);
+    return () => {
+      controller.abort();
+      window.clearInterval(interval);
+      series.detachPrimitive(primitive);
+      setHeatmapProfile(null);
+    };
+  }, [showHeatmap, sidesOn, sideLayers.calls, sideLayers.puts, symbol, gammaView, dayScale]);
 
   useEffect(() => {
     trendlineSeriesRef.current?.setData(
@@ -1205,11 +1367,21 @@ export function PriceChart({
             <label className="chart-toggle">
               <input
                 type="checkbox"
-                checked={showGexHistogram}
-                onChange={(event) => setShowGexHistogram(event.target.checked)}
+                checked={showProfile}
+                onChange={(event) => setShowProfile(event.target.checked)}
               />
               {t.priceChart.gexHistogramLabel}
             </label>
+            {showProfile && (
+              <label className="chart-toggle">
+                <input
+                  type="checkbox"
+                  checked={showSmile}
+                  onChange={(event) => setShowSmile(event.target.checked)}
+                />
+                {t.priceChart.smileLabel}
+              </label>
+            )}
             <label className="chart-toggle">
               <input
                 type="checkbox"
@@ -1219,15 +1391,54 @@ export function PriceChart({
               {t.priceChart.heatmapLabel}
             </label>
             {showHeatmap && (
-              <select
-                aria-label={t.priceChart.heatmapMetricAriaLabel}
-                value={heatmapMetric}
-                onChange={(event) => setHeatmapMetric(event.target.value as GammaHeatmapMetric)}
-              >
-                <option value="gamma">{t.priceChart.heatmapMetricGamma}</option>
-                <option value="absolute_gamma">{t.priceChart.heatmapMetricAbsolute}</option>
-                <option value="delta">{t.priceChart.heatmapMetricDelta}</option>
-              </select>
+              <div className="chart-seg" role="group" aria-label={t.priceChart.heatmapMetricAriaLabel}>
+                {HEATMAP_METRIC_TABS.map((tab) => (
+                  <button
+                    key={tab.metric}
+                    type="button"
+                    aria-pressed={!sidesOn && heatmapMetric === tab.metric}
+                    title={
+                      tab.metric === "absolute_gamma"
+                        ? t.priceChart.heatmapMetricAbsoluteTitle
+                        : tab.metric === "total_gamma"
+                          ? t.priceChart.heatmapMetricTotalTitle
+                          : undefined
+                    }
+                    onClick={() => {
+                      setHeatmapMetric(tab.metric);
+                      setSideLayers({ calls: false, puts: false });
+                    }}
+                  >
+                    {t.priceChart[tab.labelKey]}
+                  </button>
+                ))}
+              </div>
+            )}
+            {showHeatmap && (
+              <label className="chart-toggle" title={t.priceChart.heatmapDayScaleTitle}>
+                <input type="checkbox" checked={dayScale} onChange={(event) => setDayScale(event.target.checked)} />
+                {t.priceChart.heatmapDayScaleLabel}
+              </label>
+            )}
+            {showHeatmap && (
+              <div className="chart-layers" role="group" aria-label={t.priceChart.heatmapSidesAriaLabel} title={t.priceChart.heatmapSidesTitle}>
+                <label className="chart-toggle">
+                  <input
+                    type="checkbox"
+                    checked={sideLayers.calls}
+                    onChange={(event) => setSideLayers((current) => ({ ...current, calls: event.target.checked }))}
+                  />
+                  {t.priceChart.heatmapSideCalls}
+                </label>
+                <label className="chart-toggle">
+                  <input
+                    type="checkbox"
+                    checked={sideLayers.puts}
+                    onChange={(event) => setSideLayers((current) => ({ ...current, puts: event.target.checked }))}
+                  />
+                  {t.priceChart.heatmapSidePuts}
+                </label>
+              </div>
             )}
             <label className="chart-toggle">
               <input

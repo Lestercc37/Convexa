@@ -17,10 +17,7 @@ export type Translations = {
     liveButton: string;
     preSessionButton: string;
     scannerButton: string;
-    structuralOnlyBadge: string;
     noTacticalDataLabel: string;
-    exposureGroupAriaLabel: string;
-    aggregatedGreeksEyebrow: string;
     loadingRegime: string;
     settingsButtonAriaLabel: string;
     resizeSeparatorAriaLabel: string;
@@ -53,11 +50,6 @@ export type Translations = {
     volatilityWindowNote: string;
     accumulating: (daysAccumulated: number) => string;
   };
-  expectedMoveWidget: {
-    ariaLabel: string;
-    primary: (dollars: string, pct: string, lower: string, upper: string) => string;
-    remaining: (dollars: string, pct: string) => string;
-  };
   priceChart: {
     eyebrow: string;
     title: (symbol: string, timeframeLabel: string) => string;
@@ -73,6 +65,7 @@ export type Translations = {
     vwapProxyLabel: (proxySymbol: string) => string;
     atrRangeLabel: string;
     gexHistogramLabel: string;
+    smileLabel: string;
     alertCubesLabel: string;
     alertCubesMinAriaLabel: string;
     alertCubesFarLabel: string;
@@ -90,7 +83,22 @@ export type Translations = {
     heatmapMetricAriaLabel: string;
     heatmapMetricGamma: string;
     heatmapMetricAbsolute: string;
+    heatmapMetricAbsoluteTitle: string;
     heatmapMetricDelta: string;
+    heatmapMetricVanna: string;
+    heatmapMetricCharm: string;
+    /** The caption at the foot of the live profile column, per figure. */
+    profileCaptions: Record<"gamma" | "absolute_gamma" | "delta" | "vanna" | "charm" | "call_gamma" | "put_gamma" | "total_gamma", string>;
+    /** Caption of the sides view (calls and puts apart): both on, only calls, only puts. */
+    profileCaptionSides: { both: string; calls: string; puts: string };
+    heatmapMetricTotal: string;
+    heatmapMetricTotalTitle: string;
+    heatmapSidesAriaLabel: string;
+    heatmapSideCalls: string;
+    heatmapSidePuts: string;
+    heatmapSidesTitle: string;
+    heatmapDayScaleLabel: string;
+    heatmapDayScaleTitle: string;
     expectedMoveRangeLabel: string;
     streamFallbackLabel: string;
     drawingToolsAriaLabel: string;
@@ -100,22 +108,6 @@ export type Translations = {
     chartAriaLabel: (symbol: string) => string;
     emptyState: string;
   };
-  chartSecondaryPanel: {
-    ariaLabel: string;
-    eyebrow: string;
-    toggleGroupAriaLabel: string;
-    gexToggleButton: string;
-    flowToggleButton: string;
-    gexChartAriaLabel: (symbol: string) => string;
-    gexSpotPriceAriaLabel: (price: string) => string;
-    gexLoading: string;
-    gexNoBreakdown: string;
-    gexLevelsLegendAriaLabel: string;
-    flowChartAriaLabel: (symbol: string) => string;
-    flowLoading: string;
-    flowEmpty: string;
-    flowSinceLabel: (time: string) => string;
-  };
   preSessionPanel: {
     eyebrow: string;
     title: (symbol: string) => string;
@@ -124,32 +116,6 @@ export type Translations = {
     noBreakdown: string;
     loading: string;
     legendAriaLabel: string;
-  };
-  closingDynamicsPanel: {
-    ariaLabel: string;
-    eyebrow: string;
-    pinRiskScoreLabel: string;
-    magnetStrikeLabel: string;
-    magnetStrikeTooltip: string;
-    magnetStrikeDistance: (distancePoints: number) => string;
-    charmTimeDecayBuy: string;
-    charmTimeDecaySell: string;
-    charmNeutral: string;
-    vannaIvIncreaseBuy: string;
-    vannaIvIncreaseSell: string;
-    vannaNeutral: string;
-  };
-  volatilitySmile: {
-    noCurrentExpiration: string;
-    eyebrow: string;
-    roleSubtitle: string;
-    expirationLabel: string;
-    chartAriaLabel: (symbol: string, expiration: string) => string;
-    atmAriaLabel: (strike: number) => string;
-    pointAriaLabel: (type: string, strike: number, ivPct: string) => string;
-    legendAriaLabel: string;
-    missingIvNote: (count: number) => string;
-    loading: string;
   };
   alertsPanel: {
     eyebrow: string;

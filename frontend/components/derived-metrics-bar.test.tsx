@@ -87,11 +87,11 @@ describe("DealersPanel (design 12.7)", () => {
     const user = userEvent.setup();
     renderWithLanguage(<DealersPanel metrics={confirmedMetrics} />);
 
-    await user.click(screen.getByRole("button", { name: /Sesgo/ }));
+    await user.click(screen.getByRole("button", { name: /Market bias/ }));
     expect(screen.getByText("Dealer Impact Score")).toBeInTheDocument();
     expect(screen.getByText("Volatility Regime")).toBeInTheDocument();
 
-    await user.click(screen.getByRole("button", { name: /Dealer/, expanded: true }));
+    await user.click(screen.getByRole("button", { name: /Dealer impact/, expanded: true }));
     expect(screen.queryByText("Dealer Impact Score")).not.toBeInTheDocument();
   });
 
@@ -102,7 +102,7 @@ describe("DealersPanel (design 12.7)", () => {
     await user.click(screen.getByRole("button", { name: "Ocultar panel" }));
     expect(screen.queryByRole("group", { name: "Resumen de dealers" })).not.toBeInTheDocument();
 
-    await user.click(screen.getByRole("button", { name: "Mostrar dealers" }));
+    await user.click(screen.getByRole("button", { name: "Mostrar panel" }));
     expect(screen.getByRole("group", { name: "Resumen de dealers" })).toBeInTheDocument();
   });
 });

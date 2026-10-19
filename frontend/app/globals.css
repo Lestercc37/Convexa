@@ -96,6 +96,10 @@ body {
   color: var(--tv-text);
   font-family: var(--font-inter), Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   font-variant-numeric: tabular-nums; /* digits of equal width: columns of numbers stay aligned and do not jitter when they update */
+  /* Smooth letter edges, as in the approved mockup: greyscale antialiasing instead of the heavier default on dark backgrounds. */
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
 }
 
 button, select { font: inherit; }
@@ -271,18 +275,7 @@ button, select { font: inherit; }
    Panel (section 28) — min-width: 0 stays here, still needed so the
    chart's own content doesn't force this column wider than its
    allotted Panel size. */
-.tv-center { height: 100%; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
-
-.tv-sidebar {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  height: 100%;
-  min-height: 0;
-  padding: 10px;
-  border-left: 1px solid var(--tv-border);
-  overflow-y: auto;
-}
+.tv-center { height: 100%; min-width: 0; min-height: 0; display: flex; flex-direction: column; overflow-y: auto; }
 
 /* ---------- Regime badge (full form) ---------- */
 
@@ -320,72 +313,9 @@ button, select { font: inherit; }
    .chart-secondary-panel's flex: 1/~17%) — was flex: 1 1 auto (100%).
    Ratio, not a fixed px height, so it holds proportionally at any
    viewport height rather than only at the two resolutions checked. */
-.price-chart-panel { position: relative; flex: 5 1 0; display: flex; flex-direction: column; min-height: 0; border-radius: 0; border-width: 0; overflow: hidden; }
-/* Section 25 (GEX by Strike / Whale Alerts flow toggle) fills the space
-   section 22 reserved — same ~17% share every time (flex: 1, see
-   .price-chart-panel above), border-top as the seam between the two
-   stacked sections — same divider pattern .tv-sidebar/.tv-alerts-sidebar
-   use for their column borders, just rotated to a horizontal split. */
-.chart-secondary-panel {
-  flex: 1 1 0;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  padding: 6px 10px;
-  border-top: 1px solid var(--tv-border);
-  border-radius: 0;
-  color: var(--tv-text-dim);
-}
-.chart-secondary-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
-.chart-secondary-heading .eyebrow { margin: 0; }
-.chart-secondary-toggle { display: flex; align-items: center; gap: 3px; padding: 3px; border: 1px solid var(--tv-border); border-radius: 8px; }
-.chart-secondary-toggle button { border: 0; border-radius: 6px; background: transparent; color: var(--tv-text-dim); cursor: pointer; font: inherit; font-size: 0.68rem; padding: 3px 7px; }
-.chart-secondary-toggle button[aria-pressed="true"] { background: var(--tv-panel-raised); color: var(--tv-text); }
-.chart-secondary-status { flex: 1 1 auto; display: flex; align-items: center; justify-content: center; margin: 0; font-size: 0.78rem; text-align: center; }
-.chart-secondary-status.error { color: var(--risk); }
-.chart-secondary-caption { margin: 2px 0 0; font-size: 0.66rem; color: var(--tv-text-dim); text-align: center; }
+/* The approved mockup (design 12.7): the candles take the height that is left, between 420 and 760 px, and the Dealers dock sits right under the chart. */
+.price-chart-panel { position: relative; flex: 1 0 clamp(420px, 66vh, 760px); display: flex; flex-direction: column; min-height: 420px; border-radius: 0; border-width: 0; overflow: hidden; }
 
-.secondary-gex-chart { flex: 1 1 auto; width: 100%; min-height: 0; }
-.secondary-gex-zero { stroke: var(--tv-border); stroke-width: 1.5; }
-/* Net GEX bar: one per strike, colored by the sign of net_gamma itself
-   (not a call/put pair anymore) -- same calm/risk color pair the rest
-   of the dashboard already uses for bullish/bearish. `.zero` only ever
-   paints a zero-height bar (see gexBarRect in chart-secondary-panel.tsx)
-   but still gets a deliberate, testable class rather than falling
-   through unstyled. */
-.secondary-gex-bar.positive { fill: var(--calm); }
-.secondary-gex-bar.negative { fill: var(--risk); }
-.secondary-gex-bar.zero { fill: var(--tv-text-dim); }
-.secondary-gex-strike-label { fill: var(--tv-text-dim); font-size: 11px; text-anchor: middle; }
-/* Same accent used for the live spot-price reference marker elsewhere
-   on the dashboard (price-chart.tsx, pre-session-panel.tsx) — distinct
-   from the structural (backend-calculated) levels below. */
-.secondary-gex-spot { stroke: var(--accent); stroke-width: 1.5; stroke-dasharray: 3 3; }
-.secondary-gex-spot-label { fill: var(--accent); font-size: 11px; font-weight: 700; text-anchor: middle; }
-/* Structural levels (Call Wall/Put Wall/Abs. Gamma/Max Pain/Gamma Flip)
-   -- dashed like pre-session-panel.tsx's own reference lines, colored
-   distinctly from the spot marker's --accent and from each other so
-   none collide visually. */
-.secondary-gex-level { stroke-width: 1.5; stroke-dasharray: 4 4; }
-.secondary-gex-level.call-wall { stroke: var(--calm); }
-.secondary-gex-level.put-wall { stroke: var(--risk); }
-.secondary-gex-level.gamma-flip { stroke: var(--warning); }
-.secondary-gex-level.abs-gamma { stroke: var(--atr); }
-.secondary-gex-level.max-pain { stroke: var(--tv-text); }
-.secondary-gex-levels-legend { display: flex; flex-wrap: wrap; justify-content: center; gap: 6px 14px; margin-top: 6px; color: var(--tv-text-dim); font-size: 0.68rem; }
-.secondary-gex-levels-legend span { display: inline-flex; align-items: center; gap: 5px; }
-.legend-dot.call-wall { background: var(--calm); }
-.legend-dot.put-wall { background: var(--risk); }
-.legend-dot.gamma-flip { background: var(--warning); }
-.legend-dot.abs-gamma { background: var(--atr); }
-.legend-dot.max-pain { background: var(--tv-text); }
-
-.secondary-flow-chart { flex: 1 1 auto; width: 100%; min-height: 0; }
-.secondary-flow-zero { stroke: var(--tv-border); stroke-width: 1; stroke-dasharray: 4 4; }
-.secondary-flow-line { fill: none; stroke-width: 2; }
-.secondary-flow-line.buy { stroke: var(--calm); }
-.secondary-flow-line.sell { stroke: var(--risk); }
 .price-chart-panel .panel-heading { padding: 10px 14px; border-bottom: 1px solid var(--tv-border); }
 .price-chart-panel .panel-heading h2 { margin: 0; font-size: 0.86rem; }
 .price-chart-frame { position: relative; flex: 1 1 auto; min-height: 0; }
@@ -429,9 +359,17 @@ button, select { font: inherit; }
 
 .overlay-toggles { display: flex; align-items: center; gap: 8px; margin: 0; padding: 0; border: 0; }
 .overlay-toggles legend { float: left; margin: 0 5px 0 0; padding: 0; color: var(--tv-text-dim); font-size: 0.68rem; }
-.chart-toggle { display: inline-flex; align-items: center; gap: 5px; color: var(--tv-text-dim); font-size: 0.7rem; cursor: pointer; user-select: none; }
-.chart-toggle input { accent-color: var(--warning); }
-.alert-cube-tooltip { position: absolute; z-index: 5; pointer-events: none; max-width: 340px; padding: 6px 8px; font-size: 0.72rem; line-height: 1.35; color: var(--tv-text); background: var(--tv-panel-raised); border: 1px solid var(--tv-border); border-radius: 6px; box-shadow: 0 4px 14px rgba(0, 0, 0, 0.4); font-variant-numeric: tabular-nums; }
+.chart-toggle { display: inline-flex; align-items: center; gap: 5px; padding: 3px 10px 3px 7px; border: 1px solid var(--tv-border); border-radius: 999px; background: var(--tv-panel-raised); color: var(--tv-text-dim); font-size: 0.7rem; cursor: pointer; user-select: none; }
+.chart-toggle:has(input:checked) { color: var(--tv-text); border-color: var(--accent); }
+.chart-toggle:has(input:focus-visible) { outline: 2px solid var(--accent); outline-offset: 1px; }
+.chart-toggle input { accent-color: var(--accent); margin: 0; }
+.chart-layers { display: inline-flex; align-items: center; gap: 6px; }
+/* Segmented control (heatmap figure: Gamma | Abs. | Delta | Vanna | Charm), same look as the level selector. */
+.chart-seg { display: inline-flex; gap: 2px; padding: 2px; border: 1px solid var(--tv-border); border-radius: 8px; background: var(--tv-panel-raised); }
+.chart-seg button { border: 0; border-radius: 6px; background: transparent; color: var(--tv-text-dim); cursor: pointer; font: inherit; font-size: 0.7rem; font-weight: 500; padding: 4px 9px; }
+.chart-seg button[aria-pressed="true"] { background: var(--tv-bg); color: var(--tv-text); }
+.chart-seg button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.alert-cube-tooltip { position: absolute; z-index: 5; pointer-events: none; max-width: 340px; padding: 8px 10px; font-size: 0.72rem; line-height: 1.4; color: var(--tv-text); background: var(--tv-panel-raised); border: 1px solid var(--tv-border); border-radius: 8px; box-shadow: 0 4px 14px rgba(0, 0, 0, 0.4); font-variant-numeric: tabular-nums; }
 .alert-cube-tooltip-dim { color: var(--tv-text-dim); }
 
 .drawing-tools button:disabled { cursor: default; opacity: 0.4; }
@@ -440,8 +378,6 @@ button, select { font: inherit; }
 .price-chart-drawing { cursor: crosshair; }
 
 /* ---------- Right sidebar: stacked, compact ---------- */
-
-.tv-sidebar .panel { padding: 0; }
 
 /* flex-shrink: 0, not a fix to overflow -- overflow: hidden dates back to
    this panel's original 4-column CSS Grid layout (2026-08-09) and still
@@ -465,52 +401,6 @@ button, select { font: inherit; }
 .metric-note { display: block; margin-top: 6px; color: var(--tv-text-dim); font-size: 0.64rem; line-height: 1.3; }
 .metric-progress { display: block; margin-top: 5px; color: var(--tv-text-dim); font-size: 0.68rem; }
 .metric-card.provisional .metric-value { color: #5a6472; }
-
-.exposure-panel { padding: 12px 14px; }
-.exposure-row { display: flex; gap: 16px; }
-.exposure-row + .exposure-row { margin-top: 10px; }
-.exposure-label { display: block; color: var(--tv-text-dim); font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.05em; }
-.exposure-value { display: block; margin-top: 6px; color: var(--tv-text); font-size: 1.05rem; }
-
-.closing-dynamics-panel { padding: 12px 14px; display: flex; flex-direction: column; gap: 8px; }
-.closing-dynamics-panel.urgent { border-color: var(--warning); background: linear-gradient(145deg, rgba(243, 201, 105, 0.08), var(--tv-panel)); }
-.closing-dynamics-row { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
-.closing-dynamics-label { color: var(--tv-text-dim); font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.05em; }
-.closing-dynamics-value { color: var(--tv-text); font-size: 1.05rem; }
-.pin-score-meter { height: 6px; border-radius: 999px; background: var(--tv-panel-raised); overflow: hidden; }
-.pin-score-meter-fill { height: 100%; background: var(--warning); border-radius: 999px; }
-.closing-dynamics-note { margin: 0; color: var(--tv-text-dim); font-size: 0.64rem; line-height: 1.3; }
-.closing-dynamics-regime { margin: 0; font-size: 0.74rem; line-height: 1.4; }
-.closing-dynamics-regime.buy { color: var(--calm); }
-.closing-dynamics-regime.sell { color: var(--risk); }
-.closing-dynamics-regime.neutral { color: var(--tv-text-dim); }
-
-.expected-move { display: flex; flex-direction: column; gap: 6px; padding: 12px 14px; }
-.expected-move p { margin: 0; }
-.expected-move-primary { color: var(--tv-text); font-size: 0.8rem; font-weight: 700; line-height: 1.4; }
-.expected-move-remaining { color: var(--tv-text-dim); font-size: 0.74rem; }
-
-.smile-panel { padding: 12px 14px; }
-.smile-heading { align-items: start; flex-direction: column; gap: 8px; }
-.smile-role { margin: 4px 0 0; color: var(--tv-text-dim); font-size: 0.68rem; }
-.expiration-control { display: flex; flex-direction: column; gap: 4px; width: 100%; color: var(--tv-text-dim); font-size: 0.68rem; }
-.expiration-control select { border: 1px solid var(--tv-border); border-radius: 6px; background: var(--tv-panel-raised); color: var(--tv-text); padding: 6px 8px; }
-.smile-chart-wrap { margin-top: 12px; }
-.smile-chart { display: block; width: 100%; height: auto; max-height: 300px; }
-.smile-tick { fill: var(--tv-text-dim); font-size: 10px; text-anchor: middle; }
-.smile-note { margin: 4px 0 0; color: var(--tv-text-dim); font-size: 0.66rem; text-align: center; }
-.smile-axis { stroke: var(--tv-border); stroke-width: 1.5; }
-.smile-axis-label, .smile-atm-label { fill: var(--tv-text-dim); font-size: 12px; text-anchor: middle; }
-.smile-atm { stroke: var(--warning); stroke-width: 1.5; stroke-dasharray: 5 5; }
-.smile-atm-label { fill: var(--warning); font-size: 11px; }
-.smile-point { stroke: rgba(19, 23, 34, 0.8); stroke-width: 2; }
-.smile-point.call, .legend-dot.call { fill: var(--calm); background: var(--calm); }
-.smile-point.put, .legend-dot.put { fill: var(--risk); background: var(--risk); }
-.smile-legend { display: flex; justify-content: center; gap: 14px; color: var(--tv-text-dim); font-size: 0.7rem; }
-.smile-legend span { display: inline-flex; align-items: center; gap: 5px; }
-.legend-dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; }
-.smile-status { min-height: 140px; display: flex; align-items: center; justify-content: center; margin: 0; color: var(--tv-text-dim); }
-.smile-status.error { color: #ff9c84; }
 
 .status { min-height: 320px; display: flex; align-items: center; justify-content: center; color: var(--tv-text-dim); text-align: center; }
 .status.error { color: #ff9c84; }
@@ -550,15 +440,22 @@ button, select { font: inherit; }
 /* Derived metrics stay Structural-only regardless of the toggle above
    (see DerivedMetricsBar's own comment) -- a small badge makes that
    explicit instead of silently looking unchanged. */
-/* Dealers group folded by default (design 12.7): one row of tabs, each with its own number; a click opens the detail cards. */
-.dealers-panel { display: flex; flex-direction: column; gap: 8px; flex-shrink: 0; }
-.dealers-tabs { display: flex; flex-wrap: wrap; gap: 6px; align-items: stretch; }
-.dealers-tab { flex: 1 1 calc(50% - 6px); min-width: 0; display: flex; flex-direction: column; gap: 2px; padding: 6px 8px; text-align: left; border: 1px solid var(--tv-border); border-radius: 6px; background: var(--tv-panel); color: var(--tv-text); cursor: pointer; }
-.dealers-tab[aria-expanded="true"] { background: var(--tv-panel-raised); }
-.dealers-tab-name { color: var(--tv-text-dim); font-size: 0.66rem; letter-spacing: 0.04em; text-transform: uppercase; }
-.dealers-tab-value { font-size: 0.82rem; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
-.dealers-hide, .dealers-show { align-self: flex-start; padding: 3px 8px; border: 1px solid var(--tv-border); border-radius: 5px; background: transparent; color: var(--tv-text-dim); font-size: 0.68rem; cursor: pointer; }
-.metrics-bar-structural-badge { display: inline-block; margin-bottom: 6px; padding: 2px 7px; border-radius: 5px; background: var(--tv-panel-raised); color: var(--tv-text-dim); font-size: 0.65rem; font-weight: 700; letter-spacing: 0.02em; }
+/* Dealers dock under the chart (approved mockup, design 12.7): one row of tabs, each with its own number; a click opens the detail cards and the sections that
+   moved here from the old right-hand column. */
+.dealers-panel { display: flex; flex-direction: column; flex-shrink: 0; border-top: 1px solid var(--tv-border); background: var(--tv-panel); }
+.dealers-tabs { display: flex; flex-wrap: wrap; align-items: center; gap: 2px; padding: 6px 12px 0; border-bottom: 1px solid var(--tv-border); }
+.dealers-tab { flex: none; display: inline-flex; align-items: baseline; gap: 8px; padding: 8px 12px; border: 0; border-bottom: 2px solid transparent; background: transparent; color: var(--tv-text-dim); font-size: 0.75rem; font-weight: 500; cursor: pointer; }
+.dealers-tab:hover { color: var(--tv-text); }
+.dealers-tab[aria-expanded="true"] { color: var(--tv-text); border-bottom-color: var(--calm); }
+.dealers-tab:focus-visible, .dealers-hide:focus-visible, .dealers-show:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.dealers-tab-name { font-size: inherit; color: inherit; }
+.dealers-tab-value { color: var(--tv-text); font-size: 0.78rem; font-weight: 600; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.dealers-hide, .dealers-show { margin-left: auto; align-self: center; padding: 3px 10px; border: 1px solid var(--tv-border); border-radius: 999px; background: var(--tv-panel-raised); color: var(--tv-text-dim); font-size: 0.68rem; cursor: pointer; }
+.dealers-show { margin: 6px 12px; align-self: flex-start; }
+.dealers-detail { display: flex; flex-direction: column; gap: 12px; padding: 12px 16px 16px; }
+.dealers-detail .metrics-bar { flex-direction: row; flex-wrap: wrap; }
+.dealers-detail .metric-card { flex: 1 1 200px; border-bottom: 0; border-right: 1px solid var(--tv-border); }
+.dealers-detail .metric-card:last-child { border-right: 0; }
 
 /* Reintroduced (section 25) — removed in section 23 once both of its
    former occupants (the Whale Alerts gear, the Regime Badge) moved out
@@ -826,30 +723,6 @@ button, select { font: inherit; }
 .engines-guide-card-description { margin: 6px 0 0; color: var(--tv-text-dim); font-size: 0.78rem; line-height: 1.5; }
 .engines-guide-card-citation { margin: 6px 0 0; color: var(--tv-text-dim); font-size: 0.68rem; font-style: italic; }
 
-/* Only above the narrow breakpoint below: .tv-sidebar there is a
-   genuine fixed-height (height: 100%) flex column with overflow-y: auto
-   (see its own comment) -- the only context "grow into leftover space"
-   means anything. Below the breakpoint .tv-sidebar switches to
-   height: auto / flex: 0 0 auto (see that block), where there's no
-   fixed-height column to have leftover space in the first place, so
-   this stays scoped out rather than asking a flex-grow item to behave
-   inside a container whose own size depends on that same item. */
-@media (min-width: 961px) {
-  /* QuickScreener moving out of .tv-sidebar into its own view
-     (dashboard.tsx) left this as the last panel in the column with
-     nothing behind it to fill the space that vacated, a blank gap below
-     it whenever the rest of the sidebar's content was shorter than the
-     column's own fixed height. Grows to fill it; shrink stays disabled
-     (flex: 1 0, not 1 1) so a data-heavy day where the sidebar's other
-     panels already overflow the column doesn't instead squeeze this one
-     down to a sliver -- .tv-sidebar's own overflow-y: auto already
-     handles that case by scrolling, exactly as it did before this
-     existed. Deliberately not display: flex internally -- the chart
-     stays in normal block flow rather than being stretched to fill the
-     grown panel, which needlessly turns the SVG itself into a flex item. */
-  .smile-panel { flex: 1 0 auto; min-height: 0; }
-}
-
 @media (max-width: 960px) {
   /* Natural page scroll on narrow viewports — .tv-body reflows to a
      stacked column below, so there's no fixed-height row layout left to
@@ -869,15 +742,7 @@ button, select { font: inherit; }
     border-right: 0;
     border-bottom: 1px solid var(--tv-border);
   }
-  .tv-center { height: auto; }
-  .tv-sidebar {
-    width: 100%;
-    height: auto;
-    flex: 0 0 auto;
-    min-height: auto;
-    border-left: 0;
-    border-top: 1px solid var(--tv-border);
-  }
+  .tv-center { height: auto; overflow-y: visible; }
   .tv-topbar { flex-wrap: wrap; height: auto; }
   .tv-price-readout { order: 3; width: 100%; }
 }
