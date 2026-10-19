@@ -48,7 +48,11 @@ vi.mock("@/lib/api", async () => {
     getGammaHistory: chartMocks.getGammaHistory,
     getGammaProfile: chartMocks.getGammaProfile,
     getAlerts: chartMocks.getAlerts,
-    getGammaHeatmap: chartMocks.getGammaHeatmap,
+    // No fast layer in these tests: the 10-second source answers empty, so the chart falls back to the cycle's columns (what chartMocks.getGammaHeatmap serves). heatmap-source.test.ts covers the fast path.
+    getGammaHeatmap: (symbol: string, options: { source?: string }, signal?: AbortSignal) =>
+      options.source === "fast"
+        ? Promise.resolve({ schema_version: 1, symbol, view: "tactical", metric: "gamma", bucket_seconds: 10, strikes: [], columns: [], scale_p98: null })
+        : chartMocks.getGammaHeatmap(symbol, options, signal),
     getOptionChain: chartMocks.getOptionChain,
     getOptionChainExpirations: chartMocks.getOptionChainExpirations,
   };
@@ -722,7 +726,7 @@ describe("PriceChart", () => {
       symbol: "SPY",
       view: "tactical",
       metric: "gamma",
-      bucket_seconds: 120,
+      bucket_seconds: 60,
       strikes: [550, 555],
       columns: [{ as_of: "2026-08-06T14:31:40Z", values: [3, null] }],
       scale_p98: 6,

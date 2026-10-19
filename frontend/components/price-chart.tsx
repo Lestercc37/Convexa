@@ -17,7 +17,7 @@ import {
   type ISeriesApi,
   type UTCTimestamp,
 } from "lightweight-charts";
-import { getAlerts, getGammaHeatmap, getGammaHistory, getGammaProfile, getOptionChain, getOptionChainExpirations } from "@/lib/api";
+import { getAlerts, getGammaHistory, getGammaProfile, getOptionChain, getOptionChainExpirations } from "@/lib/api";
 import { buildCubes, CUBE_MIN_OPTIONS, DEFAULT_CUBE_FILTER } from "@/lib/alert-cubes";
 import { aggregateVwapPoints, type MinuteCandle, type Timeframe, type VwapPoint } from "@/lib/candles";
 import { recordChartEvent } from "@/lib/chart-lifecycle";
@@ -36,7 +36,8 @@ import type {
 import { LEVEL_MERGE_THRESHOLD } from "./gravity-map";
 import { AlertCubesPrimitive } from "./alert-cubes-primitive";
 import { AlertCubeTooltip } from "./alert-cube-tooltip";
-import { GammaHeatmapPrimitive, heatmapFromResponse, mergeSides, paletteForMetric, type HeatmapData } from "./gamma-heatmap-primitive";
+import { HEATMAP_FAST_POLLING_INTERVAL_MS, loadHeatmap } from "./heatmap-source";
+import { GammaHeatmapPrimitive, mergeSides, paletteForMetric, type HeatmapData } from "./gamma-heatmap-primitive";
 import {
   LiveProfilePrimitive,
   profileBarsFromHeatmap,
@@ -226,8 +227,6 @@ function tickMarkFormatter(timeSeconds: UTCTimestamp, tickMarkType: TickMarkType
 // read UTC). Same EASTERN_TIME_ZONE conversion, just always full
 // date+time since the crosshair label doesn't get the axis's own
 // zoom-dependent granularity to fall back on.
-// One heatmap column per minute (the smallest bucket the endpoint accepts): the backend stores a profile about every minute.
-const HEATMAP_BUCKET_SECONDS = 60;
 
 function crosshairTimeFormatter(timeSeconds: UTCTimestamp): string {
   const date = new Date(timeSeconds * 1000);
@@ -951,24 +950,32 @@ export function PriceChart({
     const primitive = new GammaHeatmapPrimitive({ smooth: true });
     series.attachPrimitive(primitive);
     const controller = new AbortController();
+    let timer: number | undefined;
+    // Self-rescheduling poll: every 10 s while the fast layer feeds the map, every 15 s on the cycle's own one-minute columns.
     const refresh = () => {
       // The session of the candles on screen (Friday's before Monday's open), not simply "today".
       const start = new Date(heatmapStartSeconds(lastCandleTimeRef.current) * 1000);
-      getGammaHeatmap(symbol, { view: gammaView, metric: heatmapMetric, start, bucketSeconds: HEATMAP_BUCKET_SECONDS }, controller.signal)
-        .then((response) => {
-          const data = { ...heatmapFromResponse(response), scaleMode: dayScale ? ("day" as const) : ("column" as const) };
+      let fast = false;
+      loadHeatmap(symbol, { view: gammaView, metric: heatmapMetric, start }, controller.signal)
+        .then((loaded) => {
+          fast = loaded.fast;
+          const data = { ...loaded.data, scaleMode: dayScale ? ("day" as const) : ("column" as const) };
           primitive.setData(data);
           setHeatmapProfile(profileBarsFromHeatmap(data));
         })
         .catch(() => {
           // A failed poll keeps the cells already drawn; the next one retries.
+        })
+        .finally(() => {
+          if (!controller.signal.aborted) {
+            timer = window.setTimeout(refresh, fast ? HEATMAP_FAST_POLLING_INTERVAL_MS : LIVE_LEVELS_POLLING_INTERVAL_MS);
+          }
         });
     };
     refresh();
-    const interval = window.setInterval(refresh, LIVE_LEVELS_POLLING_INTERVAL_MS);
     return () => {
       controller.abort();
-      window.clearInterval(interval);
+      window.clearTimeout(timer);
       series.detachPrimitive(primitive);
       setHeatmapProfile(null);
     };
@@ -991,24 +998,32 @@ export function PriceChart({
       primitive.setData(mergeSides(latest.calls, latest.puts));
       setHeatmapProfile(sideBarsFromHeatmaps(latest.calls, latest.puts));
     };
+    let timer: number | undefined;
     const refresh = () => {
       const start = new Date(heatmapStartSeconds(lastCandleTimeRef.current) * 1000);
-      for (const layer of layers) {
-        getGammaHeatmap(symbol, { view: gammaView, metric: layer.metric, start, bucketSeconds: HEATMAP_BUCKET_SECONDS }, controller.signal)
-          .then((response) => {
-            latest[layer.key] = { ...heatmapFromResponse(response), scaleMode: dayScale ? ("day" as const) : ("column" as const) };
-            render();
-          })
-          .catch(() => {
-            // A failed poll keeps the cells already drawn; the next one retries.
-          });
-      }
+      let fast = false;
+      Promise.all(
+        layers.map((layer) =>
+          loadHeatmap(symbol, { view: gammaView, metric: layer.metric, start }, controller.signal)
+            .then((loaded) => {
+              fast = fast || loaded.fast;
+              latest[layer.key] = { ...loaded.data, scaleMode: dayScale ? ("day" as const) : ("column" as const) };
+              render();
+            })
+            .catch(() => {
+              // A failed poll keeps the cells already drawn; the next one retries.
+            }),
+        ),
+      ).finally(() => {
+        if (!controller.signal.aborted) {
+          timer = window.setTimeout(refresh, fast ? HEATMAP_FAST_POLLING_INTERVAL_MS : LIVE_LEVELS_POLLING_INTERVAL_MS);
+        }
+      });
     };
     refresh();
-    const interval = window.setInterval(refresh, LIVE_LEVELS_POLLING_INTERVAL_MS);
     return () => {
       controller.abort();
-      window.clearInterval(interval);
+      window.clearTimeout(timer);
       series.detachPrimitive(primitive);
       setHeatmapProfile(null);
     };

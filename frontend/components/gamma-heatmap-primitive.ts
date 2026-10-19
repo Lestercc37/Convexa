@@ -54,17 +54,43 @@ export function paletteForMetric(metric: GammaHeatmapResponse["metric"]): Heatma
   return "gamma";
 }
 
-/** The API response as the primitive wants it: columns floored to the minute so they land on a candle. */
+/** The API response as the primitive wants it: columns floored to the response's own bucket (a minute for the cycle's rows, 10 or 30 s for the fast layer's) so they land where the candle's time axis puts them. */
 export function heatmapFromResponse(response: GammaHeatmapResponse): HeatmapData {
+  const bucketMs = Math.max(10, response.bucket_seconds || 60) * 1000;
   return {
     strikes: response.strikes,
     scale: response.scale_p98,
     palette: paletteForMetric(response.metric),
     columns: response.columns.map((column) => ({
-      time: Math.floor(Date.parse(column.as_of) / 60_000) * 60,
+      time: Math.floor(Date.parse(column.as_of) / bucketMs) * (bucketMs / 1000),
       values: column.values,
     })),
   };
+}
+
+/**
+ * The session's earlier columns (the REST cycle's, one per minute) followed by the fast layer's: when the 10-second layer starts mid-session (or its worker restarts) the morning must not vanish.
+ * `history` keeps only the columns BEFORE the first live column; strikes are the union of both, each column re-aligned to it. Without live columns the history is returned as is.
+ */
+export function prependHistory(history: HeatmapData | null, live: HeatmapData): HeatmapData {
+  const firstLive = live.columns[0]?.time;
+  if (history === null || firstLive === undefined) return live;
+  const earlier = history.columns.filter((column) => column.time < firstLive);
+  if (!earlier.length) return live;
+  const strikes = [...new Set([...history.strikes, ...live.strikes])].sort((a, b) => a - b);
+  const align = (source: HeatmapData) => {
+    const index = new Map(source.strikes.map((strike, position) => [strike, position]));
+    return (values: (number | null)[] | undefined): (number | null)[] | undefined =>
+      values === undefined ? undefined : strikes.map((strike) => values[index.get(strike) ?? -1] ?? null);
+  };
+  const alignHistory = align(history);
+  const alignLive = align(live);
+  const columns: HeatmapColumn[] = [
+    ...earlier.map((column) => ({ time: column.time, values: alignHistory(column.values)!, puts: alignHistory(column.puts) })),
+    ...live.columns.map((column) => ({ time: column.time, values: alignLive(column.values)!, puts: alignLive(column.puts) })),
+  ].map((column) => (column.puts === undefined ? { time: column.time, values: column.values } : column));
+  const scales = [history.scale, live.scale].filter((value): value is number => value !== null);
+  return { ...live, strikes, columns, scale: scales.length ? Math.max(...scales) : null };
 }
 
 type Stop = [number, number, number];
