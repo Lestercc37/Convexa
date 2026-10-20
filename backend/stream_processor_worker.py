@@ -100,10 +100,12 @@ from __future__ import annotations
 
 import asyncio
 import collections
+import json
 import logging
 import time
 from datetime import date, datetime, timedelta
 from decimal import Decimal
+from pathlib import Path
 
 from backend.adapters.providers.thetadata.stream_parsing import (
     parse_option_trade_message,
@@ -118,8 +120,8 @@ from backend.core.whale_alerts_relay import WhaleAlertsRelayServer
 from backend.domain.entities import OptionQuoteMinute, QuoteEvent, UnderlyingTradeEvent
 from backend.domain.underlyings import ACTIVE_UNDERLYINGS
 from backend.domain.use_cases.large_prints import LargePrintRecorder
-from backend.domain.use_cases.minute_flow import MINUTE_FLOW_SYMBOLS, MinuteFlowRecorder
 from backend.domain.use_cases.market_hours import EASTERN_TIME, is_market_open
+from backend.domain.use_cases.minute_flow import MINUTE_FLOW_SYMBOLS, MinuteFlowRecorder
 from backend.domain.use_cases.stream_underlying_price import (
     StreamUnderlyingPriceUseCase,
     sets_last_price,
@@ -443,6 +445,16 @@ async def _refresh_minute_flow_deltas_periodically(container, state: _ProcessorS
         await asyncio.sleep(MINUTE_FLOW_DELTA_REFRESH_SECONDS)
 
 
+def _append_minute_flow_audit(rows: list[dict]) -> None:
+    """One ndjson line per audited trade, appended to logs/minute_flow_audit_<ET date>.ndjson (a small file: a few minutes of a few underlyings)."""
+    day = datetime.now(EASTERN_TIME).strftime("%Y-%m-%d")
+    path = Path("logs") / f"minute_flow_audit_{day}.ndjson"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as handle:
+        for row in rows:
+            handle.write(json.dumps(row) + "\n")
+
+
 async def _flush_minute_flow_periodically(container, state: _ProcessorState) -> None:
     """At every minute boundary (+ a few seconds) writes the signed delta flow of the minutes that ended to minute_option_flow. Never raises: a failed write puts its minutes back for the
     next flush (bounded, see MinuteFlowRecorder), it must not take the stream processor down."""
@@ -453,6 +465,12 @@ async def _flush_minute_flow_periodically(container, state: _ProcessorState) -> 
         next_minute = now.replace(second=0, microsecond=0) + timedelta(minutes=1)
         await asyncio.sleep(max(0.5, (next_minute - now).total_seconds() + MINUTE_FLOW_FLUSH_DELAY_SECONDS))
         rows = state.minute_flow.take_before(time.time() - MINUTE_FLOW_FLUSH_DELAY_SECONDS + 1.0)
+        audit_rows = state.minute_flow.take_audit()
+        if audit_rows:
+            try:
+                await asyncio.to_thread(_append_minute_flow_audit, audit_rows)
+            except Exception:
+                logger.exception("Stream processor worker: writing %d minute-flow audit rows failed, dropped", len(audit_rows))
         if rows:
             try:
                 await container.async_market_storage.save_minute_option_flow(rows)
@@ -603,6 +621,9 @@ async def run() -> None:
     if state.minute_flow_enabled:
         configured = frozenset(s.strip().upper() for s in container.settings.minute_option_flow_symbols.split(",") if s.strip())
         state.minute_flow = MinuteFlowRecorder(configured or MINUTE_FLOW_SYMBOLS)
+        audited = frozenset(s.strip().upper() for s in container.settings.minute_flow_audit_symbols.split(",") if s.strip())
+        if audited and container.settings.minute_flow_audit_window:
+            state.minute_flow.set_audit(audited, container.settings.minute_flow_audit_window)
     minute_flow_tasks = (
         [
             asyncio.create_task(_refresh_minute_flow_deltas_periodically(container, state)),

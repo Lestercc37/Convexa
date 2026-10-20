@@ -60,6 +60,10 @@ class Settings(BaseSettings):
     # latest chain snapshot. QLL_MINUTE_OPTION_FLOW_ENABLED=false and a restart of ConvexaStreamProcessor switches it off without reverting any code.
     minute_option_flow_enabled: bool = Field(default=True)
     minute_option_flow_symbols: str = Field(default="SPX,NDX,SPY,QQQ,IWM,NVDA")
+    # Audit sample of the minute flow, OFF by default: QLL_MINUTE_FLOW_AUDIT_SYMBOLS=SPY,SPX and QLL_MINUTE_FLOW_AUDIT_WINDOW=10:15-10:18 (ET, end exclusive) keep every option trade of those
+    # underlyings inside the window, with the bid/ask used and the outcome, in logs/minute_flow_audit_YYYY-MM-DD.ndjson, to check the panel trade by trade.
+    minute_flow_audit_symbols: str = Field(default="")
+    minute_flow_audit_window: str = Field(default="")
     # Local-only TCP link (see backend/core/whale_alerts_relay.py): worker.py
     # forwards every trade/quote event to backend/whale_alerts_worker.py's
     # own process over this, so whale-alerts' own CPU-bound classification
