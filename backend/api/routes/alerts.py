@@ -47,6 +47,8 @@ async def get_alerts(
                     "contracts": alert.contracts,
                     "condition_premium": alert.condition_premium,
                     "simple_flow": alert.simple_flow,
+                    "trade_start": alert.trade_start.isoformat() if alert.trade_start else None,
+                    "trade_minutes": alert.trade_minutes,
                 }
                 for alert in alerts
             ],

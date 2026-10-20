@@ -1176,6 +1176,8 @@ async def test_whale_alert_cube_data_round_trips_through_both_storages(
         simple_flow={"buy": Decimal("30000"), "sell": Decimal("0")},
         delta=Decimal("0.4231"),
         contracts=212,
+        trade_start=datetime(2026, 8, 3, 13, 59, tzinfo=timezone.utc),  # migration 0049: when the trades happened
+        trade_minutes=1,
     )
     legacy = WhaleAlert(  # an alert written before the cube data: every new field None
         symbol=symbol,

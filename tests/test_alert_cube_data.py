@@ -55,6 +55,10 @@ def test_a_minute_alert_carries_the_contracts_of_its_bucket_and_the_absolute_del
     assert alert.alert_type in (WhaleAlertType.UNUSUAL, WhaleAlertType.WHALE)
     assert alert.contracts == 25
     assert alert.delta == Decimal("0.42")
+    # The trades happened in minute 6; the alert was issued by the trade of minute 7 that closed the bucket.
+    assert alert.trade_start == BASE_TIME + timedelta(minutes=6)
+    assert alert.trade_minutes == 1
+    assert alert.as_of == BASE_TIME + timedelta(minutes=7)
 
 
 def test_a_sustained_alert_sums_the_contracts_of_its_fifteen_minutes() -> None:
@@ -70,6 +74,8 @@ def test_a_sustained_alert_sums_the_contracts_of_its_fifteen_minutes() -> None:
     assert len(sustained) == 1
     assert sustained[0].contracts == 15 * 15
     assert sustained[0].delta == Decimal("0.5")
+    assert sustained[0].trade_start == BASE_TIME  # the first of its 15 minutes
+    assert sustained[0].trade_minutes == 15
 
 
 def test_a_missing_or_zero_delta_is_none_not_zero() -> None:
@@ -111,6 +117,8 @@ def test_the_alerts_endpoint_sends_the_cube_fields_and_null_for_old_alerts() -> 
                 simple_flow={"buy": Decimal("0"), "sell": Decimal("2600")},
                 delta=Decimal("0.84"),
                 contracts=444,
+                trade_start=datetime(2026, 10, 16, 14, 51, tzinfo=UTC),
+                trade_minutes=1,
                 **base,
             )
         )
@@ -126,5 +134,9 @@ def test_the_alerts_endpoint_sends_the_cube_fields_and_null_for_old_alerts() -> 
     assert (full["delta"], full["contracts"]) == (0.84, 444)
     assert full["condition_premium"] == {"130": 62400, "18": 2600}
     assert full["simple_flow"] == {"buy": 0, "sell": 2600}
+    assert full["timestamp"].startswith("2026-10-16T14:52:05")  # issued
+    assert full["trade_start"].startswith("2026-10-16T14:51:00")  # traded
+    assert full["trade_minutes"] == 1
     old = alerts["SPXW261016P07725000"]
     assert (old["delta"], old["contracts"], old["condition_premium"], old["simple_flow"]) == (None, None, None, None)
+    assert (old["trade_start"], old["trade_minutes"]) == (None, None)

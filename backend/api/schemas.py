@@ -191,6 +191,10 @@ class WhaleAlertResponse(BaseModel):
     contracts: int | None = None
     condition_premium: dict[str, Number] | None = None
     simple_flow: dict[str, Number] | None = None
+    # When the trades happened (migration 0049; null for older alerts): start of the ET minute (or of the 15-minute window of a SUSTAINED_FLOW alert) and how many minutes it spans.
+    # `timestamp` stays the time the alert was ISSUED.
+    trade_start: str | None = None
+    trade_minutes: int | None = None
 
 
 class WhaleAlertsResponse(BaseModel):

@@ -209,6 +209,10 @@ class WhaleAlert:
     # strike (repeat_count climbing) versus an isolated one-off print,
     # which a bare list of dollar amounts doesn't distinguish at a glance.
     repeat_count: int = 1
+    # When the trades behind the alert happened (migration 0049): the start of the ET minute of the bucket that closed (WHALE / UNUSUAL) or of the first minute of the 15-minute window
+    # (SUSTAINED_FLOW), and how many minutes that window spans. `as_of` is when the alert was ISSUED, which is later (the bucket closes on the next trade or the flush timer).
+    trade_start: datetime | None = None
+    trade_minutes: int | None = None
     # Premium (USD, price x size x 100) of the trades behind this alert, split
     # by OPRA trade-condition code as str(code) (e.g. {"18": 812000.0, "130":
     # 640000.0}); "-1" = the message carried no condition. For WHALE/UNUSUAL
@@ -863,6 +867,7 @@ class WhaleAlertsEngine:
         finalized_condition_premium = state.bucket_condition_premium
         finalized_simple_flow = (state.bucket_simple_flow[0], state.bucket_simple_flow[1])
         finalized_contracts = state.bucket_contracts
+        finalized_bucket_start = state.bucket_start
 
         if len(state.previous_amounts) == self._WINDOW_SIZE:
             average_amount = sum(state.previous_amounts, Decimal()) / self._WINDOW_SIZE
@@ -882,6 +887,8 @@ class WhaleAlertsEngine:
                         finalized_condition_premium,
                         finalized_simple_flow,
                         finalized_contracts,
+                        finalized_bucket_start,
+                        1,
                     )
                 )
 
@@ -911,6 +918,8 @@ class WhaleAlertsEngine:
                             _merge_condition_premium(state.sustained_condition_premium),
                             _merge_simple_flow(state.sustained_simple_flow),
                             sum(state.sustained_contracts),
+                            finalized_bucket_start - timedelta(minutes=self._SUSTAINED_WINDOW_SIZE - 1),
+                            self._SUSTAINED_WINDOW_SIZE,
                         )
                     )
             else:
@@ -948,6 +957,8 @@ class WhaleAlertsEngine:
         condition_premium: dict[int, Decimal] | None = None,
         simple_flow: tuple[Decimal, Decimal] | None = None,
         contracts: int | None = None,
+        trade_start: datetime | None = None,
+        trade_minutes: int | None = None,
     ) -> WhaleAlert:
         spot, gamma = self._cached_market_context(symbol)
         strike = _parse_strike(occ_symbol)
@@ -975,6 +986,8 @@ class WhaleAlertsEngine:
             # Only the Lee-Ready path (process_trade) sees trade sizes; BVC-derived alerts tally none (0 here), which reads as unknown.
             contracts=contracts or None,
             repeat_count=state.alert_count,
+            trade_start=trade_start,
+            trade_minutes=trade_minutes,
             condition_premium=(
                 {str(code): value for code, value in condition_premium.items()} if condition_premium else None
             ),

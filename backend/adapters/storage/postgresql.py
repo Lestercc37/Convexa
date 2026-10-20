@@ -1263,14 +1263,14 @@ class PostgreSQLStorage:
                         time, underlying_id, occ_symbol, alert_type, amount,
                         estimated_buy_volume, estimated_sell_volume, quote_unavailable,
                         moneyness, near_gamma_level, repeat_count, condition_premium, simple_flow,
-                        delta, contracts
+                        delta, contracts, trade_start, trade_minutes
                     )
                     VALUES (
                         :time, :underlying_id, :occ_symbol, :alert_type, :amount,
                         :estimated_buy_volume, :estimated_sell_volume, :quote_unavailable,
                         :moneyness, :near_gamma_level, :repeat_count,
                         CAST(:condition_premium AS jsonb), CAST(:simple_flow AS jsonb),
-                        :delta, :contracts
+                        :delta, :contracts, :trade_start, :trade_minutes
                     )
                     """
                 ),
@@ -1294,6 +1294,8 @@ class PostgreSQLStorage:
                     ),
                     "delta": alert.delta,
                     "contracts": alert.contracts,
+                    "trade_start": alert.trade_start,
+                    "trade_minutes": alert.trade_minutes,
                     # Trial second label (WhaleAlert.simple_flow).
                     "simple_flow": (
                         json.dumps({side: float(value) for side, value in alert.simple_flow.items()})
@@ -1312,7 +1314,7 @@ class PostgreSQLStorage:
                     SELECT w.time, u.symbol, w.occ_symbol, w.alert_type, w.amount,
                            w.estimated_buy_volume, w.estimated_sell_volume, w.quote_unavailable,
                            w.moneyness, w.near_gamma_level, w.repeat_count,
-                           w.condition_premium, w.simple_flow, w.delta, w.contracts
+                           w.condition_premium, w.simple_flow, w.delta, w.contracts, w.trade_start, w.trade_minutes
                     FROM whale_alerts AS w
                     JOIN underlyings AS u ON u.id = w.underlying_id
                     WHERE u.symbol = :symbol
@@ -1346,6 +1348,8 @@ class PostgreSQLStorage:
                     simple_flow=_json_decimals(row["simple_flow"]),
                     delta=_optional_decimal(row["delta"]),
                     contracts=int(row["contracts"]) if row["contracts"] is not None else None,
+                    trade_start=row["trade_start"],
+                    trade_minutes=int(row["trade_minutes"]) if row["trade_minutes"] is not None else None,
                 )
                 for row in rows
             ]
