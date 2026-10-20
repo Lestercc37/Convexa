@@ -6,6 +6,10 @@ that carries a side is always stored next to the flow. The size of a trade is co
 the processor, never per trade): the same "delta-equivalent contracts" unit as the alert cubes. Convention: buying a call +, selling a call -, buying a put -, selling a put + (positive = bullish
 pressure on both sides). It is an ESTIMATE of customer flow from the aggressor side: not inventory, not the market maker's position, not the hedge in futures.
 
+Audit sample (off by default): with an audit window set, every option trade of the audited underlyings inside that ET window is also kept as ONE row (time, contract, size, price, the bid/ask used,
+condition, outcome, |delta|, signed contribution) and written to a small ndjson file, so the panel's numbers can be checked trade by trade. Outside the window or with no window the cost is one
+truthiness test per trade.
+
 Cost on the processor's hot path: a QUOTE that survived the repeat filter is one dict assignment (only for the configured underlyings); an option TRADE is a handful of dict lookups, one Decimal division
 and one addition. The rows are built only at the minute flush, in a separate task.
 """
@@ -25,6 +29,8 @@ SIMPLE_TRADE_CONDITION = 18
 MINUTE_FLOW_SYMBOLS: frozenset[str] = frozenset({"SPX", "NDX", "SPY", "QQQ", "IWM", "NVDA"})
 # A flush that keeps failing must not grow memory without bound: the oldest minutes go first.
 MAX_PENDING_BUCKETS = 5_000
+# The audit sample is bounded too: a window of a few minutes of SPY at the open is ~30k trades; past the cap new rows are dropped (counted).
+MAX_AUDIT_ROWS = 100_000
 
 # bucket = [calls_delta_flow, puts_delta_flow, trades_classified, trades_unclassified, contracts_classified, contracts_total]
 _CALLS, _PUTS, _TRADES_OK, _TRADES_NO, _CONTRACTS_OK, _CONTRACTS_ALL = range(6)
@@ -45,6 +51,50 @@ class MinuteFlowRecorder:
         self._deltas: dict[str, float] = {}
         self._meta: dict[str, tuple[str, str]] = {}
         self._buckets: dict[tuple[int, str, str], list[float]] = {}
+        self._audit_symbols: frozenset[str] = frozenset()
+        self._audit_from = self._audit_to = 0  # ET minute of the day, [from, to)
+        self._audit_rows: list[dict] = []
+        self.audit_dropped = 0
+
+    def set_audit(self, symbols: frozenset[str], window: str) -> None:
+        """window = 'HH:MM-HH:MM' (ET, end exclusive). A bad window leaves the audit off."""
+        try:
+            start, end = window.split("-")
+            first = int(start[:2]) * 60 + int(start[3:5])
+            last = int(end[:2]) * 60 + int(end[3:5])
+        except (ValueError, IndexError):
+            return
+        if last <= first or not symbols:
+            return
+        self._audit_symbols = symbols
+        self._audit_from, self._audit_to = first, last
+
+    def take_audit(self) -> list[dict]:
+        rows, self._audit_rows = self._audit_rows, []
+        return rows
+
+    def _audit(self, stamp: datetime, event: FlowEvent, quote, delta, outcome: str, contribution: float) -> None:
+        local = stamp.astimezone(EASTERN)
+        if not (self._audit_from <= local.hour * 60 + local.minute < self._audit_to):
+            return
+        if len(self._audit_rows) >= MAX_AUDIT_ROWS:
+            self.audit_dropped += 1
+            return
+        self._audit_rows.append(
+            {
+                "t": local.isoformat(timespec="milliseconds"),
+                "symbol": event.symbol,
+                "occ": event.occ_symbol,
+                "size": event.size,
+                "price": round(float(event.premium / (event.size * 100)), 4) if event.size > 0 else None,
+                "bid": None if quote is None else float(quote[0]),
+                "ask": None if quote is None else float(quote[1]),
+                "condition": event.condition,
+                "outcome": outcome,
+                "abs_delta": delta,
+                "contribution": round(contribution, 4),
+            }
+        )
 
     @property
     def symbols(self) -> frozenset[str]:
@@ -77,13 +127,18 @@ class MinuteFlowRecorder:
                     del self._buckets[old]
         size = event.size
         bucket[_CONTRACTS_ALL] += size
+        audit = bool(self._audit_symbols) and symbol in self._audit_symbols
         if event.condition != SIMPLE_TRADE_CONDITION:
             bucket[_TRADES_NO] += 1
+            if audit:
+                self._audit(stamp, event, self._quotes.get(occ), self._deltas.get(occ), "other_condition", 0.0)
             return
         quote = self._quotes.get(occ)
         delta = self._deltas.get(occ)
         if quote is None or delta is None or size <= 0:
             bucket[_TRADES_NO] += 1
+            if audit:
+                self._audit(stamp, event, quote, delta, "no_quote" if quote is None else "no_delta", 0.0)
             return
         price = event.premium / (size * 100)
         if price >= quote[1]:
@@ -92,18 +147,22 @@ class MinuteFlowRecorder:
             sign = -1.0
         else:
             bucket[_TRADES_NO] += 1
+            if audit:
+                self._audit(stamp, event, quote, delta, "inside_quote", 0.0)
             return
         flow = sign * size * delta
         if meta[1] == "C":
             bucket[_CALLS] += flow
         else:
             bucket[_PUTS] -= flow
+        if audit:
+            self._audit(stamp, event, quote, delta, "buy" if sign > 0 else "sell", flow if meta[1] == "C" else -flow)
         bucket[_TRADES_OK] += 1
         bucket[_CONTRACTS_OK] += size
 
     def take_before(self, epoch_seconds: float | None = None) -> list[MinuteOptionFlow]:
         """Hands over every minute strictly before the minute that contains `epoch_seconds` (now by default) and forgets it."""
-        now_minute = int((time.time() if epoch_seconds is None else epoch_seconds)) // 60
+        now_minute = int(time.time() if epoch_seconds is None else epoch_seconds) // 60
         ready = [key for key in self._buckets if key[0] < now_minute]
         rows: list[MinuteOptionFlow] = []
         for key in sorted(ready):

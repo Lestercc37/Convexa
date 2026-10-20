@@ -15,7 +15,7 @@ from backend.adapters.storage.memory import InMemoryStorage
 from backend.adapters.storage.sync_read_adapter import SyncStorageAsyncReadAdapter
 from backend.domain.entities import FlowEvent, FlowEventType, MinuteOptionFlow, QuoteEvent, Side
 from backend.domain.use_cases.minute_flow import MinuteFlowRecorder, _root_and_right
-from backend.stream_processor_worker import _handle_raw_frame, _ProcessorState
+from backend.stream_processor_worker import _handle_raw_frame
 
 CALL = "SPXW261019C07700000"
 PUT = "SPXW261019P07700000"
@@ -245,3 +245,41 @@ def test_the_serializer_rounds_and_computes_the_classified_share() -> None:
     assert payload["symbol"] == "SPX"
     assert payload["minutes"][0] == {"minute": "2026-10-19T14:31:00Z", "calls_delta_flow": 12.35, "puts_delta_flow": -7.89, "classified_share": 0.6}
     assert payload["minutes"][1]["classified_share"] is None
+
+
+def test_audit_is_off_by_default_and_keeps_nothing() -> None:
+    recorder = _recorder()
+    recorder.observe_trade(_trade(CALL, "10.50"))
+    assert recorder.take_audit() == []
+
+
+def test_audit_keeps_every_trade_inside_the_window_with_its_outcome() -> None:
+    recorder = _recorder(delta=0.5)
+    recorder.set_audit(frozenset({"SPX"}), "10:31-10:32")  # T0 is 10:31:10 ET
+    recorder.observe_trade(_trade(CALL, "10.50", size=10))  # buy
+    recorder.observe_trade(_trade(PUT, "10.00", size=4))  # sell a put: +2.0 of puts flow
+    recorder.observe_trade(_trade(CALL, "10.20", size=3))  # inside the quote
+    recorder.observe_trade(_trade(CALL, "10.50", size=2, condition=130))  # multi-leg
+    recorder.observe_trade(_trade("SPY261019C00767000", "1.00", symbol="SPY"))  # other underlying: not audited
+    rows = recorder.take_audit()
+    assert [(r["occ"][-9], r["outcome"], r["contribution"]) for r in rows] == [("C", "buy", 5.0), ("P", "sell", 2.0), ("C", "inside_quote", 0.0), ("C", "other_condition", 0.0)]
+    assert rows[0]["bid"] == 10.0 and rows[0]["ask"] == 10.5 and rows[0]["price"] == 10.5 and rows[0]["abs_delta"] == 0.5
+    assert recorder.take_audit() == []
+
+
+def test_audit_ignores_trades_outside_its_window_and_a_bad_window_stays_off() -> None:
+    recorder = _recorder()
+    recorder.set_audit(frozenset({"SPX"}), "10:32-10:35")
+    recorder.observe_trade(_trade(CALL, "10.50"))  # 10:31 ET, before the window
+    assert recorder.take_audit() == []
+    broken = _recorder()
+    broken.set_audit(frozenset({"SPX"}), "nonsense")
+    broken.observe_trade(_trade(CALL, "10.50"))
+    assert broken.take_audit() == []
+
+
+def test_audit_file_gets_one_ndjson_line_per_row(tmp_path, monkeypatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    worker._append_minute_flow_audit([{"occ": CALL, "outcome": "buy"}, {"occ": PUT, "outcome": "sell"}])
+    (path,) = list((tmp_path / "logs").glob("minute_flow_audit_*.ndjson"))
+    assert [json.loads(line)["outcome"] for line in path.read_text(encoding="utf-8").splitlines()] == ["buy", "sell"]
