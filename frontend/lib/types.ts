@@ -372,6 +372,10 @@ export type WhaleAlert = {
   contracts?: number | null;
   condition_premium?: Record<string, number> | null;
   simple_flow?: { buy: number; sell: number } | null;
+  // When the trades happened (null for alerts written before migration 0049): start of the ET minute (or of the 15-minute window of a SUSTAINED_FLOW alert) and how many minutes it spans.
+  // `timestamp` is when the alert was ISSUED, which is later.
+  trade_start?: string | null;
+  trade_minutes?: number | null;
   // How many alerts this exact contract has produced so far this session,
   // this one included (1 the first time). Flags real accumulation at one
   // strike versus an isolated print.

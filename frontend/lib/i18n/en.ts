@@ -106,6 +106,7 @@ export const en: Translations = {
     },
     cubeMultilegWarning: "Mostly multi-leg: buying or selling a leg may not be directional",
     cubeTrialLine: (label) => `Label counting only simple trades: ${label} (trial)`,
+    cubeIssuedLine: (time) => `Alert issued ${time}`,
     cubeDistanceLine: (signedPoints) =>
       `Strike ${signedPoints >= 0 ? "+" : "−"}${Math.abs(signedPoints).toFixed(0)} pts from the price`,
     heatmapLabel: "Heatmap",

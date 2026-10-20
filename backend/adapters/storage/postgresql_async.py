@@ -630,7 +630,7 @@ class AsyncPostgreSQLStorage:
                     SELECT w.time, u.symbol, w.occ_symbol, w.alert_type, w.amount,
                            w.estimated_buy_volume, w.estimated_sell_volume, w.quote_unavailable,
                            w.moneyness, w.near_gamma_level, w.repeat_count,
-                           w.condition_premium, w.simple_flow, w.delta, w.contracts
+                           w.condition_premium, w.simple_flow, w.delta, w.contracts, w.trade_start, w.trade_minutes
                     FROM whale_alerts AS w
                     JOIN underlyings AS u ON u.id = w.underlying_id
                     WHERE u.symbol = :symbol
@@ -662,6 +662,8 @@ class AsyncPostgreSQLStorage:
                 simple_flow=_json_decimals(row["simple_flow"]),
                 delta=_optional_decimal(row["delta"]),
                 contracts=int(row["contracts"]) if row["contracts"] is not None else None,
+                trade_start=row["trade_start"],
+                trade_minutes=int(row["trade_minutes"]) if row["trade_minutes"] is not None else None,
             )
             for row in rows
         ]

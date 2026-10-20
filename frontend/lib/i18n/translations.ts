@@ -86,6 +86,7 @@ export type Translations = {
     cubeMultilegWarning: string;
     cubeTrialLine: (label: string) => string;
     cubeDistanceLine: (signedPoints: number) => string;
+    cubeIssuedLine: (time: string) => string;
     heatmapLabel: string;
     heatmapMetricAriaLabel: string;
     heatmapMetricGamma: string;
