@@ -22,6 +22,7 @@ from backend.domain.entities import (
     Greeks,
     LargeTradePrint,
     MarketPrice,
+    MinuteOptionFlow,
     OptionChain,
     OptionContract,
     OptionQuoteMinute,
@@ -63,6 +64,7 @@ MARKET_PRICE_CHANNEL = "market_price_updates"
 # Rows per transaction when the stream processor flushes a minute of quotes (a minute is a few hundred).
 OPTION_QUOTE_MINUTES_BATCH = 1000
 LARGE_TRADE_PRINTS_BATCH = 500
+MINUTE_OPTION_FLOW_BATCH = 500
 
 # How many of a symbol's newest distinct snapshot times the fast tier of
 # get_latest_chain_snapshot inspects when looking for the latest multi-
@@ -785,6 +787,81 @@ class AsyncPostgreSQLStorage:
         except Exception:
             logger.exception("Reading the volume corrections failed; serving the live counters")
             return {}
+
+    async def save_minute_option_flow(self, rows: list[MinuteOptionFlow]) -> None:
+        """Adds the minutes the stream processor accumulated (migration 0048). A minute that already has a row (a late trade that arrived after its flush) is ADDED to, never replaced;
+        every batch is one transaction, so a failed flush leaves nothing half written."""
+        if not rows:
+            return
+        statement = text(
+            """
+            INSERT INTO minute_option_flow (minute, symbol, root, calls_delta_flow, puts_delta_flow, trades_classified, trades_unclassified, contracts_classified, contracts_total)
+            VALUES (:minute, :symbol, :root, :calls, :puts, :trades_ok, :trades_no, :contracts_ok, :contracts_all)
+            ON CONFLICT (symbol, minute, root) DO UPDATE SET
+                calls_delta_flow = minute_option_flow.calls_delta_flow + EXCLUDED.calls_delta_flow,
+                puts_delta_flow = minute_option_flow.puts_delta_flow + EXCLUDED.puts_delta_flow,
+                trades_classified = minute_option_flow.trades_classified + EXCLUDED.trades_classified,
+                trades_unclassified = minute_option_flow.trades_unclassified + EXCLUDED.trades_unclassified,
+                contracts_classified = minute_option_flow.contracts_classified + EXCLUDED.contracts_classified,
+                contracts_total = minute_option_flow.contracts_total + EXCLUDED.contracts_total
+            """
+        )
+        for start in range(0, len(rows), MINUTE_OPTION_FLOW_BATCH):
+            batch = rows[start : start + MINUTE_OPTION_FLOW_BATCH]
+            async with self.session_factory.begin() as session:
+                await session.execute(
+                    statement,
+                    [
+                        {
+                            "minute": row.minute,
+                            "symbol": row.symbol,
+                            "root": row.root,
+                            "calls": row.calls_delta_flow,
+                            "puts": row.puts_delta_flow,
+                            "trades_ok": row.trades_classified,
+                            "trades_no": row.trades_unclassified,
+                            "contracts_ok": row.contracts_classified,
+                            "contracts_all": row.contracts_total,
+                        }
+                        for row in batch
+                    ],
+                )
+
+    async def get_minute_option_flow(self, underlying: str, start: datetime, end: datetime) -> list[MinuteOptionFlow]:
+        """The minutes of one underlying in [start, end), the roots (SPX + SPXW, NDX + NDXP) summed per minute; a missing table or any read error returns [] so the chart simply shows no flow."""
+        try:
+            async with self.session_factory() as session:
+                rows = (
+                    await session.execute(
+                        text(
+                            """
+                            SELECT minute, SUM(calls_delta_flow), SUM(puts_delta_flow), SUM(trades_classified), SUM(trades_unclassified), SUM(contracts_classified), SUM(contracts_total)
+                            FROM minute_option_flow
+                            WHERE symbol = :symbol AND minute >= :start AND minute < :end
+                            GROUP BY minute
+                            ORDER BY minute
+                            """
+                        ),
+                        {"symbol": underlying.upper(), "start": start, "end": end},
+                    )
+                ).all()
+        except Exception:
+            logger.exception("Reading the minute option flow failed; serving none")
+            return []
+        return [
+            MinuteOptionFlow(
+                minute=row[0],
+                symbol=underlying.upper(),
+                root="*",
+                calls_delta_flow=float(row[1]),
+                puts_delta_flow=float(row[2]),
+                trades_classified=int(row[3]),
+                trades_unclassified=int(row[4]),
+                contracts_classified=int(row[5]),
+                contracts_total=int(row[6]),
+            )
+            for row in rows
+        ]
 
     async def save_large_trade_prints(self, rows: list[LargeTradePrint]) -> None:
         """Appends the large SPY/QQQ prints the stream processor captured (migration 0043). A plain append: the stream delivers a print once, and a

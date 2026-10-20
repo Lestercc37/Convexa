@@ -14,6 +14,7 @@ from backend.api.schemas import (
     GammaHeatmapResponse,
     GammaHistoryResponse,
     GammaResponse,
+    MinuteFlowResponse,
     OptionChainResponse,
     UnderlyingsResponse,
 )
@@ -27,10 +28,12 @@ from backend.api.serializers import (
     gamma_heatmap_response,
     gamma_history_response,
     gamma_response,
+    minute_flow_response,
     underlyings_response,
 )
 from backend.core.container import Container
 from backend.domain.entities import GammaFlip, GammaView
+from backend.domain.use_cases.futures_proxy import proxy_symbol_for
 from backend.domain.use_cases.market_hours import EASTERN_TIME
 from backend.domain.use_cases.volume_corrections import apply_volume_corrections
 from backend.domain.use_cases import (
@@ -223,6 +226,36 @@ async def gamma_heatmap(
         container.async_market_storage, symbol, view, metric, start, end, bucket_seconds, source
     )
     return GammaHeatmapResponse.model_validate(gamma_heatmap_response(heatmap))
+
+
+@router.get(
+    "/flow/{symbol}/minutes",
+    response_model=MinuteFlowResponse,
+    summary="Signed option delta flow per ET minute",
+    description=(
+        "Reads minute_option_flow (written by the stream processor: simple option trades classified against the prevailing bid/ask, in delta-equivalent contracts, "
+        "calls and puts apart). An estimate of customer flow, not inventory or the market maker's position. Defaults to today (ET), at most 5 days per request. ES/NQ read SPX/NDX."
+    ),
+)
+async def minute_flow(
+    symbol: str,
+    request: Request,
+    start: datetime | None = None,
+    end: datetime | None = None,
+) -> MinuteFlowResponse:
+    container: Container = request.app.state.container
+    reading = (proxy_symbol_for(symbol) or symbol).upper()
+    today_start = datetime.now(EASTERN_TIME).replace(hour=0, minute=0, second=0, microsecond=0)
+    end = end or datetime.now(timezone.utc)
+    start = start or today_start
+    if start.tzinfo is None or end.tzinfo is None:
+        raise HTTPException(status_code=422, detail="start and end must include a timezone (e.g. ...Z)")
+    if end <= start:
+        raise HTTPException(status_code=422, detail="end must be after start")
+    if end - start > HEATMAP_MAX_RANGE:
+        raise HTTPException(status_code=422, detail="the minute flow range is limited to 5 days per request")
+    minutes = await container.async_market_storage.get_minute_option_flow(reading, start, end)
+    return MinuteFlowResponse.model_validate(minute_flow_response(symbol, minutes))
 
 
 @router.get("/flow/{symbol}", response_model=FlowResponse)

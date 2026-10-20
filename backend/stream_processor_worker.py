@@ -118,6 +118,7 @@ from backend.core.whale_alerts_relay import WhaleAlertsRelayServer
 from backend.domain.entities import OptionQuoteMinute, QuoteEvent, UnderlyingTradeEvent
 from backend.domain.underlyings import ACTIVE_UNDERLYINGS
 from backend.domain.use_cases.large_prints import LargePrintRecorder
+from backend.domain.use_cases.minute_flow import MINUTE_FLOW_SYMBOLS, MinuteFlowRecorder
 from backend.domain.use_cases.market_hours import EASTERN_TIME, is_market_open
 from backend.domain.use_cases.stream_underlying_price import (
     StreamUnderlyingPriceUseCase,
@@ -159,6 +160,12 @@ MINUTE_QUOTES_LOG_EVERY_SECONDS = 900
 LARGE_PRINTS_FLUSH_SECONDS = 30
 LARGE_PRINTS_LOG_EVERY_SECONDS = 1800
 
+# minute_option_flow (migration 0048): the flush runs this long after each minute boundary (late trades of the minute are still accepted and ADDED to the row), and the |delta| of every contract is
+# refreshed from the latest chain snapshots once a minute per underlying.
+MINUTE_FLOW_FLUSH_DELAY_SECONDS = 3.0
+MINUTE_FLOW_DELTA_REFRESH_SECONDS = 60
+MINUTE_FLOW_LOG_EVERY_SECONDS = 1800
+
 
 class _ProcessorState:
     """Everything one raw frame's handling needs beyond the pure
@@ -192,6 +199,8 @@ class _ProcessorState:
         self._minute_quotes_date: date | None = None
         self.large_prints_enabled = True
         self.large_prints = LargePrintRecorder()
+        self.minute_flow_enabled = False
+        self.minute_flow = MinuteFlowRecorder()
         self._pending_prices: dict[str, UnderlyingTradeEvent] = {}
         self._price_writers: dict[str, asyncio.Task[None]] = {}
         self._price_write_slots = asyncio.Semaphore(PRICE_WRITE_CONCURRENCY)
@@ -328,6 +337,8 @@ def _handle_raw_frame(state: _ProcessorState, raw: str) -> None:
             if parsed is not None:
                 state.whale_alerts_relay.publish_quote(parsed.event)
                 state.record_minute_quote(parsed.event)
+                if state.minute_flow_enabled:
+                    state.minute_flow.observe_quote(parsed.event)
         elif msg_type == "TRADE":
             security_type = message.get("contract", {}).get("security_type")
             if security_type == "OPTION":
@@ -339,6 +350,8 @@ def _handle_raw_frame(state: _ProcessorState, raw: str) -> None:
                     )
                     if parsed.event is not None:
                         state.whale_alerts_relay.publish_trade(parsed.event)
+                        if state.minute_flow_enabled:
+                            state.minute_flow.observe_trade(parsed.event, parsed.exchange_ts)
             elif security_type in ("STOCK", "INDEX"):
                 parsed_underlying = parse_underlying_trade_message(message, _SYMBOLS)
                 if parsed_underlying is not None:
@@ -412,6 +425,51 @@ async def _record_option_quote_minutes_periodically(container, state: _Processor
                 minute_start.strftime("%H:%M"),
             )
             rows_since_log = 0
+            last_log = time.monotonic()
+
+
+async def _refresh_minute_flow_deltas_periodically(container, state: _ProcessorState) -> None:
+    """Once a minute per underlying: the |delta| of every contract from its latest chain snapshots (one light query each, in a worker thread). A failed read keeps the deltas already held."""
+    while True:
+        for symbol in sorted(state.minute_flow.symbols):
+            try:
+                deltas = await asyncio.to_thread(container.storage.get_latest_option_abs_deltas, symbol)
+                if deltas:
+                    state.minute_flow.set_deltas(deltas)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.exception("Stream processor worker: reading the %s option deltas for the minute flow failed, keeping the last ones", symbol)
+        await asyncio.sleep(MINUTE_FLOW_DELTA_REFRESH_SECONDS)
+
+
+async def _flush_minute_flow_periodically(container, state: _ProcessorState) -> None:
+    """At every minute boundary (+ a few seconds) writes the signed delta flow of the minutes that ended to minute_option_flow. Never raises: a failed write puts its minutes back for the
+    next flush (bounded, see MinuteFlowRecorder), it must not take the stream processor down."""
+    written = 0
+    last_log = time.monotonic()
+    while True:
+        now = datetime.now(EASTERN_TIME)
+        next_minute = now.replace(second=0, microsecond=0) + timedelta(minutes=1)
+        await asyncio.sleep(max(0.5, (next_minute - now).total_seconds() + MINUTE_FLOW_FLUSH_DELAY_SECONDS))
+        rows = state.minute_flow.take_before(time.time() - MINUTE_FLOW_FLUSH_DELAY_SECONDS + 1.0)
+        if rows:
+            try:
+                await container.async_market_storage.save_minute_option_flow(rows)
+                written += len(rows)
+            except asyncio.CancelledError:
+                state.minute_flow.put_back(rows)
+                raise
+            except Exception:
+                state.minute_flow.put_back(rows)
+                logger.exception("Stream processor worker: writing %d minute-flow rows failed, they stay queued", len(rows))
+        if time.monotonic() - last_log >= MINUTE_FLOW_LOG_EVERY_SECONDS:
+            logger.info(
+                "Stream processor worker: minute_option_flow wrote %d rows in the last %.0f min",
+                written,
+                (time.monotonic() - last_log) / 60,
+            )
+            written = 0
             last_log = time.monotonic()
 
 
@@ -541,6 +599,19 @@ async def run() -> None:
         asyncio.create_task(_flush_large_prints_periodically(container, state)) if state.large_prints_enabled else None
     )
 
+    state.minute_flow_enabled = container.settings.minute_option_flow_enabled
+    if state.minute_flow_enabled:
+        configured = frozenset(s.strip().upper() for s in container.settings.minute_option_flow_symbols.split(",") if s.strip())
+        state.minute_flow = MinuteFlowRecorder(configured or MINUTE_FLOW_SYMBOLS)
+    minute_flow_tasks = (
+        [
+            asyncio.create_task(_refresh_minute_flow_deltas_periodically(container, state)),
+            asyncio.create_task(_flush_minute_flow_periodically(container, state)),
+        ]
+        if state.minute_flow_enabled
+        else []
+    )
+
     relay = StreamProcessorRelayClient(
         container.settings.stream_processor_relay_host,
         container.settings.stream_processor_relay_port,
@@ -561,6 +632,8 @@ async def run() -> None:
             minute_quotes_task.cancel()
         if large_prints_task is not None:
             large_prints_task.cancel()
+        for task in minute_flow_tasks:
+            task.cancel()
         export_task.cancel()
         try:
             await export_task

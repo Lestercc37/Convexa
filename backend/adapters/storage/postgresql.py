@@ -1411,6 +1411,26 @@ class PostgreSQLStorage:
             ).first()
         return None if row is None or row[0] is None else Decimal(row[0])
 
+    def get_latest_option_abs_deltas(self, underlying: str, window_minutes: int = 3) -> dict[str, float]:
+        """|delta| of every contract of one underlying in its chain snapshots of the last few minutes (the latest value per contract wins): what the minute flow of the stream processor
+        sizes each trade with. One query per underlying per minute, never per trade; a window of several snapshots (not just the latest one) so a narrow single-expiration snapshot that
+        happened to land last cannot hide the rest of the chain."""
+        with self.session_factory() as session:
+            rows = session.execute(
+                text(
+                    """
+                    SELECT DISTINCT ON (oc.occ_symbol) oc.occ_symbol, s.delta
+                    FROM option_chain_snapshots AS s
+                    JOIN option_contracts AS oc ON oc.id = s.contract_id
+                    WHERE s.underlying_id = (SELECT id FROM underlyings WHERE symbol = :symbol)
+                      AND s.time >= now() - make_interval(mins => :window)
+                    ORDER BY oc.occ_symbol, s.time DESC
+                    """
+                ),
+                {"symbol": underlying.upper(), "window": window_minutes},
+            ).all()
+        return {row[0]: abs(float(row[1])) for row in rows if row[1] is not None}
+
     def get_symbol_flow_pressure(self, underlying: str) -> SymbolFlowPressure | None:
         with self.session_factory() as session:
             row = (

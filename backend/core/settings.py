@@ -56,6 +56,10 @@ class Settings(BaseSettings):
     # The stream processor keeps the large SPY/QQQ prints (over $1M) with their exchange and condition in large_trade_prints
     # (migration 0043). QLL_LARGE_TRADE_PRINTS_ENABLED=false and a restart of ConvexaStreamProcessor switches it off.
     large_trade_prints_enabled: bool = Field(default=True)
+    # The stream processor keeps the signed option delta flow per ET minute (minute_option_flow, migration 0048): simple trades classified against the prevailing bid/ask, sized with the delta of the
+    # latest chain snapshot. QLL_MINUTE_OPTION_FLOW_ENABLED=false and a restart of ConvexaStreamProcessor switches it off without reverting any code.
+    minute_option_flow_enabled: bool = Field(default=True)
+    minute_option_flow_symbols: str = Field(default="SPX,NDX,SPY,QQQ,IWM,NVDA")
     # Local-only TCP link (see backend/core/whale_alerts_relay.py): worker.py
     # forwards every trade/quote event to backend/whale_alerts_worker.py's
     # own process over this, so whale-alerts' own CPU-bound classification

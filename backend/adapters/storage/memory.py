@@ -200,6 +200,13 @@ class InMemoryStorage:
                         return contract.greeks.delta
         return None
 
+    def get_latest_option_abs_deltas(self, underlying: str, window_minutes: int = 3) -> dict[str, float]:
+        deltas: dict[str, float] = {}
+        for chain in self._chains.get(underlying.upper(), []):
+            for contract in chain.contracts:
+                deltas[contract.occ_symbol] = abs(float(contract.greeks.delta))
+        return deltas
+
     def save_market_price(self, price: MarketPrice) -> None:
         self._prices[price.symbol] = price
         self._price_history.setdefault(price.symbol, []).append(price)

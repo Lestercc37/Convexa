@@ -11,6 +11,7 @@ from backend.domain.entities import (
     GammaHeatmap,
     LargeTradePrint,
     MarketPrice,
+    MinuteOptionFlow,
     OptionChain,
     OptionQuoteMinute,
     PriceCandle,
@@ -40,6 +41,7 @@ class SyncStorageAsyncReadAdapter:
         self._storage = storage
         self.option_quote_minutes: list[OptionQuoteMinute] = []
         self.large_trade_prints: list[LargeTradePrint] = []
+        self.minute_option_flow: list[MinuteOptionFlow] = []
 
     async def get_latest_gamma_aggregate(
         self, underlying: str, view: str = "structural"
@@ -61,6 +63,15 @@ class SyncStorageAsyncReadAdapter:
 
     async def save_large_trade_prints(self, rows: list[LargeTradePrint]) -> None:
         self.large_trade_prints.extend(rows)
+
+    async def save_minute_option_flow(self, rows: list[MinuteOptionFlow]) -> None:
+        self.minute_option_flow.extend(rows)
+
+    async def get_minute_option_flow(self, underlying: str, start: datetime, end: datetime) -> list[MinuteOptionFlow]:
+        return sorted(
+            (row for row in self.minute_option_flow if row.symbol == underlying.upper() and start <= row.minute < end),
+            key=lambda row: row.minute,
+        )
 
     async def get_price_candles(
         self, underlying: str, bucket_seconds: int, sessions: int, since: datetime

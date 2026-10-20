@@ -864,6 +864,22 @@ class PriceCandle:
 
 
 @dataclass(frozen=True, slots=True)
+class MinuteOptionFlow:
+    """The signed delta flow of one underlying's option trades in one ET minute (one row per root; see migration 0048). `minute` is the START of the minute. Flows are in
+    delta-equivalent contracts (contracts x |delta|), buying a call +, selling a call -, buying a put -, selling a put + (positive = bullish pressure on both sides)."""
+
+    minute: datetime
+    symbol: str
+    root: str
+    calls_delta_flow: float
+    puts_delta_flow: float
+    trades_classified: int
+    trades_unclassified: int
+    contracts_classified: int
+    contracts_total: int
+
+
+@dataclass(frozen=True, slots=True)
 class OptionQuoteMinute:
     """The last bid/ask of one option contract in one ET minute in which it changed (see migration 0040).
     `minute` is the START of the minute; a minute without a row still holds the previous row's quote."""

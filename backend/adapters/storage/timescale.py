@@ -51,6 +51,9 @@ class TimescaleStorage:
     def get_latest_option_delta(self, occ_symbol: str) -> Decimal | None:
         raise NotImplementedError
 
+    def get_latest_option_abs_deltas(self, underlying: str, window_minutes: int = 3) -> dict[str, float]:
+        raise NotImplementedError
+
     def save_market_price(self, price: MarketPrice) -> None:
         raise NotImplementedError
 
