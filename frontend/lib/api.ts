@@ -9,6 +9,7 @@ import type {
   GammaView,
   MarketPriceHistoryResponse,
   MarketResponse,
+  MinuteFlowResponse,
   OptionChainResponse,
   PriceCandlesResponse,
   ScreenerPresetName,
@@ -162,6 +163,13 @@ export function getPriceCandles(
 ) {
   const params = new URLSearchParams({ timeframe, sessions: String(sessions) });
   return getJson<PriceCandlesResponse>(`/market/${encodeURIComponent(symbol)}/candles?${params.toString()}`, signal);
+}
+
+export function getMinuteFlow(symbol: string, options: { start?: Date }, signal?: AbortSignal) {
+  const params = new URLSearchParams();
+  if (options.start) params.set("start", options.start.toISOString());
+  const query = params.toString() ? `?${params.toString()}` : "";
+  return getJson<MinuteFlowResponse>(`/flow/${encodeURIComponent(symbol)}/minutes${query}`, signal);
 }
 
 export function getGammaHeatmap(
