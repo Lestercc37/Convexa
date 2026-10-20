@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from decimal import Decimal
 from typing import Any
 
@@ -16,6 +16,7 @@ from backend.domain.entities import (
     Greeks,
     MarketPrice,
     MarketSnapshot,
+    MinuteOptionFlow,
     MaxPain,
     OptionChain,
     OptionContract,
@@ -252,6 +253,22 @@ def gamma_history_response(symbol: str, items: list[GammaAggregate]) -> dict[str
         "schema_version": SCHEMA_VERSION,
         "symbol": symbol.upper(),
         "items": [gamma_response(item) for item in items],
+    }
+
+
+def minute_flow_response(symbol: str, minutes: list[MinuteOptionFlow]) -> dict[str, Any]:
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "symbol": symbol.upper(),
+        "minutes": [
+            {
+                "minute": _dt(row.minute.astimezone(timezone.utc)),
+                "calls_delta_flow": round(row.calls_delta_flow, 2),
+                "puts_delta_flow": round(row.puts_delta_flow, 2),
+                "classified_share": None if row.contracts_total <= 0 else round(row.contracts_classified / row.contracts_total, 3),
+            }
+            for row in minutes
+        ],
     }
 
 

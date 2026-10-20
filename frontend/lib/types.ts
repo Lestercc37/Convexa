@@ -226,6 +226,13 @@ export type GammaHeatmapMetric = "gamma" | "absolute_gamma" | "delta" | "vanna" 
 
 // GET /gamma/{symbol}/heatmap: a strike x time matrix of one stored per-strike figure. `values` of each column are aligned to
 // `strikes`; null = no stored value (delta is null for rows written before it was stored, never 0).
+// GET /flow/{symbol}/minutes: the signed option delta flow per ET minute (an estimate of customer flow from simple trades classified against the bid/ask; delta-equivalent contracts).
+export type MinuteFlowResponse = {
+  schema_version: number;
+  symbol: string;
+  minutes: { minute: string; calls_delta_flow: number; puts_delta_flow: number; classified_share: number | null }[];
+};
+
 export type GammaHeatmapResponse = {
   schema_version: number;
   symbol: string;

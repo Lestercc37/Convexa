@@ -40,6 +40,7 @@ const chartMocks = vi.hoisted(() => ({
   getGammaHeatmap: vi.fn(),
   getOptionChain: vi.fn(),
   getOptionChainExpirations: vi.fn(),
+  getMinuteFlow: vi.fn(),
 }));
 
 vi.mock("@/lib/api", async () => {
@@ -56,12 +57,14 @@ vi.mock("@/lib/api", async () => {
         : chartMocks.getGammaHeatmap(symbol, options, signal),
     getOptionChain: chartMocks.getOptionChain,
     getOptionChainExpirations: chartMocks.getOptionChainExpirations,
+    getMinuteFlow: chartMocks.getMinuteFlow,
   };
 });
 
 vi.mock("lightweight-charts", () => ({
   CandlestickSeries: "CandlestickSeries",
   LineSeries: "LineSeries",
+  HistogramSeries: "HistogramSeries",
   ColorType: { Solid: "solid" },
   LineStyle: { Dashed: 2, Solid: 0 },
   // Real values from the library itself -- Simple: 0, WithSteps: 1, Curved: 2.
@@ -120,6 +123,7 @@ beforeEach(() => {
   // No current expiration by default: the smile dots stay out of the way of the other tests (they have their own above).
   chartMocks.getOptionChainExpirations.mockResolvedValue({ schema_version: 1, symbol: "SPY", expirations: [] });
   chartMocks.getOptionChain.mockResolvedValue({ schema_version: 1, symbol: "SPY", as_of: "2026-08-06T14:31:40Z", spot_price: 505, contracts: [] });
+  chartMocks.getMinuteFlow.mockResolvedValue({ schema_version: 1, symbol: "SPY", minutes: [] });
   chartMocks.getGammaHistory.mockResolvedValue({
     schema_version: 1,
     symbol: "SPY",
@@ -654,6 +658,36 @@ describe("PriceChart", () => {
     act(() => onCrosshairMove({ point: { x: 300, y: 120 } }));
     expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
     hit.mockRestore();
+  });
+
+  it("shows the option flow under the candles on demand: a calls pane and a puts pane fed by the minute flow endpoint", async () => {
+    chartMocks.getMinuteFlow.mockResolvedValue({
+      schema_version: 1,
+      symbol: "SPY",
+      minutes: [
+        { minute: "2026-08-03T14:30:00Z", calls_delta_flow: 12.5, puts_delta_flow: -4, classified_share: 0.6 },
+        { minute: "2026-08-03T14:31:00Z", calls_delta_flow: -3, puts_delta_flow: 2, classified_share: 0.5 },
+      ],
+    });
+    const user = userEvent.setup();
+    renderWithLanguage(<PriceChart symbol="SPY" candles={candlesWithRange} gamma={gamma} gammaView="tactical" />);
+    expect(screen.getByLabelText("Flujo")).not.toBeChecked(); // hidden by default
+    expect(chartMocks.getMinuteFlow).not.toHaveBeenCalled();
+
+    await user.click(screen.getByLabelText("Flujo"));
+
+    await waitFor(() => expect(chartMocks.getMinuteFlow).toHaveBeenCalledWith("SPY", { start: expect.any(Date) }, expect.any(AbortSignal)));
+    expect(chartMocks.addSeries).toHaveBeenCalledWith("HistogramSeries", expect.objectContaining({ title: "Calls Δ" }), 1);
+    expect(chartMocks.addSeries).toHaveBeenCalledWith("HistogramSeries", expect.objectContaining({ title: "Puts Δ" }), 2);
+    await waitFor(() => {
+      const arrays = chartMocks.lineSetData.mock.calls.map((call) => call[0] as { value: number }[]);
+      expect(arrays.some((bars) => bars.map((bar) => bar.value).join() === "12.5,-3")).toBe(true); // calls, per candle minute
+      expect(arrays.some((bars) => bars.map((bar) => bar.value).join() === "-4,2")).toBe(true); // puts
+    });
+
+    chartMocks.removeSeries.mockClear();
+    await user.click(screen.getByLabelText("Flujo"));
+    expect(chartMocks.removeSeries).toHaveBeenCalledTimes(2); // both flow series leave with the toggle
   });
 
   it("feeds the profile from the latest heatmap values for vanna and charm, with their own colours and caption", async () => {

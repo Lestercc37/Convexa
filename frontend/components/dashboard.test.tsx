@@ -98,6 +98,7 @@ vi.mock("@/lib/market-session", async () => {
 vi.mock("lightweight-charts", () => ({
   CandlestickSeries: "CandlestickSeries",
   LineSeries: "LineSeries",
+  HistogramSeries: "HistogramSeries",
   ColorType: { Solid: "solid" },
   LineStyle: { Dashed: 2, Solid: 0 },
   TickMarkType: { Year: 0, Month: 1, DayOfMonth: 2, Time: 3, TimeWithSeconds: 4 },

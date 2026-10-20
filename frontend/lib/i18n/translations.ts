@@ -66,6 +66,10 @@ export type Translations = {
     atrRangeLabel: string;
     gexHistogramLabel: string;
     smileLabel: string;
+    flowLabel: string;
+    flowTitle: string;
+    flowCallsTitle: string;
+    flowPutsTitle: string;
     smileExpirationAriaLabel: string;
     smileExpirationNearest: string;
     smileTooltip: (strike: number, right: "call" | "put", ivPercent: string, expiration: string) => string;

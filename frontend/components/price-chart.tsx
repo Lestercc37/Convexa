@@ -7,6 +7,7 @@ import {
   ColorType,
   createChart,
   CrosshairMode,
+  HistogramSeries,
   LineSeries,
   LineStyle,
   LineType,
@@ -17,7 +18,8 @@ import {
   type ISeriesApi,
   type UTCTimestamp,
 } from "lightweight-charts";
-import { getAlerts, getGammaHistory, getGammaProfile, getOptionChain, getOptionChainExpirations } from "@/lib/api";
+import { getAlerts, getGammaHistory, getGammaProfile, getMinuteFlow, getOptionChain, getOptionChainExpirations } from "@/lib/api";
+import { flowBarsFromResponse } from "@/lib/minute-flow";
 import { buildCubes, CUBE_MIN_OPTIONS, DEFAULT_CUBE_FILTER } from "@/lib/alert-cubes";
 import { aggregateVwapPoints, type MinuteCandle, type Timeframe, type VwapPoint } from "@/lib/candles";
 import { recordChartEvent } from "@/lib/chart-lifecycle";
@@ -483,6 +485,8 @@ export function PriceChart({
   // aligned with the price axis. On by default; it replaces the old bottom GEX-by-strike view. The Smile dots ride on the same line.
   const [showProfile, setShowProfile] = useState(true);
   const [showSmile, setShowSmile] = useState(true);
+  // The minute flow panes (calls and puts, under the candles, hidden by default): one histogram series each, in its own pane so the time axis and the crosshair are the candles'.
+  const [showFlow, setShowFlow] = useState(false);
   // The Smile's expiration: "" = the nearest current one; the list of the symbol's current expirations; and the dot under the mouse (strike, IV and where it is on screen).
   // Both are remembered together with the symbol they belong to, so a symbol switch needs no reset: what was chosen for another symbol reads as "nothing chosen".
   const [smileChoice, setSmileChoice] = useState<{ symbol: string; date: string }>({ symbol, date: "" });
@@ -877,6 +881,39 @@ export function PriceChart({
     if (!showProfile || profileFromEndpoint || !heatmapProfile) return;
     profilePrimitiveRef.current?.setBars(heatmapProfile, showHeatmap && sidesOn ? "gamma" : paletteForMetric(profileMetric), profileCaption);
   }, [showProfile, profileFromEndpoint, heatmapProfile, profileMetric, profileCaption, showHeatmap, sidesOn]);
+
+  // Option flow under the candles: two small panes (calls, puts) sharing the candles' time scale, polled like the other live panels; a failed poll keeps the bars already drawn.
+  useEffect(() => {
+    const chart = chartRef.current;
+    if (!showFlow || !chart) return;
+    const options = { priceLineVisible: false, lastValueVisible: false, priceFormat: { type: "price" as const, precision: 0, minMove: 1 } };
+    const calls = chart.addSeries(HistogramSeries, { ...options, title: t.priceChart.flowCallsTitle }, 1);
+    const puts = chart.addSeries(HistogramSeries, { ...options, title: t.priceChart.flowPutsTitle }, 2);
+    chart.panes?.().forEach((pane, index) => {
+      if (index > 0) pane.setHeight(64);
+    });
+    const controller = new AbortController();
+    const refresh = () => {
+      const start = new Date(heatmapStartSeconds(lastCandleTimeRef.current) * 1000);
+      getMinuteFlow(symbol, { start }, controller.signal)
+        .then((response) => {
+          const bars = flowBarsFromResponse(response, timeframe);
+          calls.setData(bars.calls.map((bar) => ({ ...bar, time: bar.time as UTCTimestamp })));
+          puts.setData(bars.puts.map((bar) => ({ ...bar, time: bar.time as UTCTimestamp })));
+        })
+        .catch(() => {
+          // A failed poll keeps the bars already drawn; the next one retries.
+        });
+    };
+    refresh();
+    const interval = window.setInterval(refresh, LIVE_LEVELS_POLLING_INTERVAL_MS);
+    return () => {
+      controller.abort();
+      window.clearInterval(interval);
+      chart.removeSeries(calls);
+      chart.removeSeries(puts);
+    };
+  }, [showFlow, symbol, timeframe, t]);
 
   // Smile dots on the AHORA line: the nearest current expiration, polled like the other live panels; a failed poll keeps the dots already drawn.
   useEffect(() => {
@@ -1404,6 +1441,10 @@ export function PriceChart({
                 onChange={(event) => setShowExpectedMove(event.target.checked)}
               />
               {t.priceChart.expectedMoveRangeLabel}
+            </label>
+            <label className="chart-toggle" title={t.priceChart.flowTitle}>
+              <input type="checkbox" checked={showFlow} onChange={(event) => setShowFlow(event.target.checked)} />
+              {t.priceChart.flowLabel}
             </label>
             <label className="chart-toggle">
               <input

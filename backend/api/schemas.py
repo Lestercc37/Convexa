@@ -365,6 +365,22 @@ class GammaHeatmapColumnResponse(BaseModel):
     values: list[Number | None] = Field(description="One value per entry of `strikes`, same order; null = no stored value.")
 
 
+class MinuteFlowPointResponse(BaseModel):
+    minute: str = Field(description="Start of the ET minute (ISO 8601, UTC).", examples=["2026-10-19T14:31:00Z"])
+    calls_delta_flow: Number = Field(description="Calls, in delta-equivalent contracts (contracts x |delta|): buying a call +, selling a call -.")
+    puts_delta_flow: Number = Field(description="Puts, same unit: buying a put -, selling a put + (positive = bullish pressure on both sides).")
+    classified_share: Number | None = Field(description="Share (0-1) of the minute's contracts that carry a side (simple trade classified against the bid/ask); null when nothing traded.")
+
+
+class MinuteFlowResponse(BaseModel):
+    """Signed option delta flow per ET minute (table minute_option_flow, written by the stream processor). An ESTIMATE of customer flow from the aggressor side of simple trades: not inventory,
+    not the market maker's position. ES/NQ read SPX/NDX. Minutes without trades are simply absent."""
+
+    schema_version: int = Field(examples=[1])
+    symbol: str = Field(examples=["SPX"])
+    minutes: list[MinuteFlowPointResponse]
+
+
 class GammaHeatmapResponse(BaseModel):
     """Strike x time matrix of one stored per-strike figure (gamma_aggregate_items), binned by `bucket_seconds`; each column is
     the last stored snapshot of its bucket. Read-only: nothing is calculated here. `scale_p98` is the 98th percentile of
