@@ -51,7 +51,6 @@ import {
   type SmilePoint,
 } from "./live-profile-primitive";
 import { LIVE_LEVELS_POLLING_INTERVAL_MS, POLLING_INTERVAL_MS } from "@/lib/polling";
-import { RegimeCompactBadge } from "./regime-badge";
 import { currentExpirations, smilePointsFromChain } from "@/lib/volatility-smile-data";
 
 type PriceChartProps = {
@@ -1615,7 +1614,6 @@ export function PriceChart({
               {t.priceChart.clearTrendlineButton}
             </button>
           </fieldset>
-          <RegimeCompactBadge gamma={gamma} />
           <span className="mode-pill">{t.dashboard.liveButton}</span>
           {streamStatus === "fallback" && (
             <span

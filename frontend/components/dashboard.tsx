@@ -25,6 +25,7 @@ import {
 import { startChartLifecycleRecorder } from "@/lib/chart-lifecycle";
 import { describeError } from "@/lib/i18n/describe-error";
 import { useLanguage, type Language } from "@/lib/i18n/language-context";
+import { RegimeCompactBadge } from "./regime-badge";
 import { SessionClock } from "./session-clock";
 import { isWithinTheMostRecentSession } from "@/lib/market-session";
 import {
@@ -558,6 +559,8 @@ export function Dashboard() {
             </button>
           ))}
         </div>
+        {/* The regime (long / short gamma and the net gamma amount) lives in the top bar, between the timeframes and the Day / Week selector. */}
+        {gamma && <RegimeCompactBadge gamma={gamma} />}
         {!isFutureSymbol && (
           <div className="tv-timeframes" role="group" aria-label={t.dashboard.rangeGroupAriaLabel}>
             {(["day", "week"] as const).map((option) => (
