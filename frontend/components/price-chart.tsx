@@ -37,6 +37,8 @@ import type {
 } from "@/lib/types";
 import { LEVEL_MERGE_THRESHOLD } from "./gravity-map";
 import { AlertCubesPrimitive } from "./alert-cubes-primitive";
+import { CandleCountdownPrimitive } from "./candle-countdown-primitive";
+import { candleSecondsLeft, formatCountdown } from "@/lib/candle-countdown";
 import { AlertCubeTooltip } from "./alert-cube-tooltip";
 import { HEATMAP_FAST_POLLING_INTERVAL_MS, loadHeatmap } from "./heatmap-source";
 import { GammaHeatmapPrimitive, mergeSides, paletteForMetric, type HeatmapData } from "./gamma-heatmap-primitive";
@@ -49,7 +51,6 @@ import {
   type SmilePoint,
 } from "./live-profile-primitive";
 import { LIVE_LEVELS_POLLING_INTERVAL_MS, POLLING_INTERVAL_MS } from "@/lib/polling";
-import { RegimeCompactBadge } from "./regime-badge";
 import { currentExpirations, smilePointsFromChain } from "@/lib/volatility-smile-data";
 
 type PriceChartProps = {
@@ -63,6 +64,8 @@ type PriceChartProps = {
   atrRange?: AtrRange;
   expectedMove?: ExpectedMove;
   timeframe?: Timeframe;
+  // The forming candle's countdown under the last price (default on; the week view has no forming intraday candle).
+  candleCountdown?: boolean;
   streamStatus?: MarketPriceStreamStatus;
 };
 
@@ -432,6 +435,7 @@ export function PriceChart({
   atrRange,
   expectedMove,
   timeframe = "1m",
+  candleCountdown = true,
   streamStatus = "connected",
 }: PriceChartProps) {
   const { t } = useLanguage();
@@ -731,6 +735,7 @@ export function PriceChart({
     previousCandleCountRef.current = candles.length;
     lastCloseRef.current = candles.at(-1)?.close ?? null;
     lastCandleTimeRef.current = candles.at(-1)?.time ?? null;
+    lastOpenRef.current = candles.at(-1)?.open ?? null;
     // Bulk changes only (a seed landing, a reset to zero): single live ticks would flood the 80-entry log.
     if (previousCandleCount === 0 || Math.abs(candles.length - previousCandleCount) > 1) {
       recordChartEvent("candles", { count: candles.length, previous: previousCandleCount });
@@ -1378,6 +1383,26 @@ export function PriceChart({
     };
   }, [atrRange, showAtr, candles]);
 
+
+  // The countdown of the forming candle: a second label on the price axis under the last-price tag. The primitive reads the refs while the chart draws (it follows every tick); a one second
+  // timer only asks for the redraw that moves the digits.
+  const lastOpenRef = useRef<number | null>(null);
+  useEffect(() => {
+    const series = seriesRef.current;
+    if (!candleCountdown || !series) return;
+    const primitive = new CandleCountdownPrimitive(() => {
+      const left = candleSecondsLeft(lastCandleTimeRef.current, timeframe, Date.now() / 1000);
+      const close = lastCloseRef.current;
+      return { price: close, secondsText: left === null ? null : formatCountdown(left), up: close === null || lastOpenRef.current === null || close >= lastOpenRef.current };
+    });
+    series.attachPrimitive(primitive);
+    const interval = window.setInterval(() => primitive.refresh(), 1000);
+    return () => {
+      window.clearInterval(interval);
+      series.detachPrimitive(primitive);
+    };
+  }, [candleCountdown, timeframe, symbol]);
+
   return (
     <section className="panel price-chart-panel" aria-labelledby="price-chart-title">
       <div className="panel-heading">
@@ -1589,7 +1614,6 @@ export function PriceChart({
               {t.priceChart.clearTrendlineButton}
             </button>
           </fieldset>
-          <RegimeCompactBadge gamma={gamma} />
           <span className="mode-pill">{t.dashboard.liveButton}</span>
           {streamStatus === "fallback" && (
             <span

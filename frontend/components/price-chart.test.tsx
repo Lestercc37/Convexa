@@ -24,6 +24,7 @@ const chartMocks = vi.hoisted(() => ({
   priceToCoordinate: vi.fn(),
   coordinateToPrice: vi.fn(),
   attachPrimitive: vi.fn(),
+  attachedCountdowns: [] as { priceAxisViews: () => { text: () => string }[]; refresh: () => void }[],
   detachPrimitive: vi.fn(),
   getGammaProfile: vi.fn(),
   getAlerts: vi.fn(),
@@ -88,7 +89,11 @@ beforeAll(() => {
           removePriceLine: chartMocks.removePriceLine,
           priceToCoordinate: chartMocks.priceToCoordinate,
           coordinateToPrice: chartMocks.coordinateToPrice,
-          attachPrimitive: chartMocks.attachPrimitive,
+          // The countdown label (a price-axis primitive) is tracked apart so the index-based assertions on the other primitives stay about those.
+          attachPrimitive: (primitive: { priceAxisViews?: unknown }) => {
+            if (typeof primitive.priceAxisViews === "function") chartMocks.attachedCountdowns.push(primitive as never);
+            else chartMocks.attachPrimitive(primitive);
+          },
           detachPrimitive: chartMocks.detachPrimitive,
         }
       : { setData: chartMocks.lineSetData },
@@ -116,6 +121,7 @@ beforeAll(() => {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  chartMocks.attachedCountdowns.length = 0;
   chartMocks.priceToCoordinate.mockImplementation(() => null);
   chartMocks.coordinateToPrice.mockImplementation(() => null);
   chartMocks.coordinateToTime.mockImplementation(() => null);
@@ -198,10 +204,8 @@ describe("PriceChart", () => {
     expect(screen.getByLabelText("Chart de velas para SPY")).toBeInTheDocument();
     expect(container.querySelector('img[src*="logo-watermark.png"]')).toBeInTheDocument();
     expect(screen.getByText("SPY · Velas de 1 minuto")).toBeInTheDocument();
-    // RegimeCompactBadge, next to the "En vivo" mode-pill -- reads gamma
-    // straight from this same prop, so it's already live-updating on
-    // every 30s poll that refreshes `gamma`, not a frozen snapshot.
-    expect(screen.getByText(/^LONG GAMMA/)).toBeInTheDocument();
+    // The regime badge moved to the dashboard's top bar (between the timeframes and Day / Week): the chart no longer draws it.
+    expect(screen.queryByText(/^LONG GAMMA/)).toBeNull();
     expect(screen.getByText("En vivo")).toBeInTheDocument();
     expect(chartMocks.createChart).toHaveBeenCalledOnce();
     expect(chartMocks.createChart).toHaveBeenCalledWith(
@@ -570,6 +574,27 @@ describe("PriceChart", () => {
     // *different* UTC epoch (20:59 UTC) -- not a fixed 4-hour offset.
     const estEpochSeconds = Date.UTC(2026, 0, 15, 20, 59, 0) / 1000;
     expect(formatter(estEpochSeconds, TickMarkType.Time, "en-US")).toBe("15:59");
+  });
+
+  it("puts the countdown of the forming candle under the last price, and not at all when asked off", () => {
+    const start = Math.floor(Date.UTC(2026, 9, 20, 14, 42, 0) / 1000);
+    const forming = { time: start, open: 100, high: 102, low: 99, close: 101 };
+    const nowSpy = vi.spyOn(Date, "now").mockReturnValue((start + 31) * 1000);
+    chartMocks.priceToCoordinate.mockImplementation(() => 200);
+    renderWithLanguage(<PriceChart symbol="SPY" candles={[forming]} gamma={gamma} />);
+    expect(chartMocks.attachedCountdowns).toHaveLength(1);
+    const view = chartMocks.attachedCountdowns[0].priceAxisViews()[0];
+    expect(view.text()).toBe("00:29");
+    nowSpy.mockReturnValue((start + 50) * 1000);
+    expect(view.text()).toBe("00:10");
+    nowSpy.mockReturnValue((start + 60 + 600) * 1000); // closed market: the last candle is long gone
+    expect((view as unknown as { visible: () => boolean }).visible()).toBe(false);
+    nowSpy.mockRestore();
+  });
+
+  it("attaches no countdown for the week view", () => {
+    renderWithLanguage(<PriceChart symbol="SPY" candles={candlesWithRange} gamma={gamma} candleCountdown={false} />);
+    expect(chartMocks.attachedCountdowns).toHaveLength(0);
   });
 
   it("attaches the live profile (AHORA line + one bar per strike) by default, fed by the gamma profile, and detaches it when the box is unchecked", async () => {

@@ -602,6 +602,15 @@ button, select { font: inherit; }
 }
 .tv-settings-button:hover { background: var(--tv-panel-raised); color: var(--tv-text); }
 
+.tv-session-clock {
+  color: var(--tv-text);
+  font-size: 0.8rem;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.02em;
+  margin-right: 10px;
+  white-space: nowrap;
+}
+
 .tv-logout-button {
   border: 1px solid var(--tv-border);
   border-radius: 6px;

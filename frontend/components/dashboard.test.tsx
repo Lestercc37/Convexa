@@ -358,6 +358,21 @@ describe("Dashboard", () => {
     consoleError.mockRestore();
   });
 
+  it("puts the regime badge in the top bar, between the timeframes and the Day / Week selector", async () => {
+    const { container } = renderWithLanguage(<Dashboard />);
+    await screen.findByLabelText("Chart de velas para SPY");
+
+    // (the test fixture has no has_data flag, so the badge shows its "no data" dash here; the badge's own text is covered in regime-badge.test.tsx)
+    const badge = container.querySelector(".regime-badge-compact") as HTMLElement;
+    expect(badge).not.toBeNull();
+    const timeframes = screen.getByRole("group", { name: "Marco temporal" });
+    const range = screen.getByRole("group", { name: "Rango del gráfico" });
+    expect(timeframes.compareDocumentPosition(badge) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(badge.compareDocumentPosition(range) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(badge.closest("header")).not.toBeNull();
+    expect(container.querySelectorAll(".regime-badge-compact")).toHaveLength(1);
+  });
+
   it("shows the Dealers group folded under the chart with only its numbers, opens the four cards together on a click, and has none of the old right-hand panels", async () => {
     renderWithLanguage(<Dashboard />);
 

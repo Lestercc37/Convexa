@@ -24,6 +24,8 @@ export const en: Translations = {
     settingsButtonAriaLabel: "Whale Alerts threshold settings",
     resizeSeparatorAriaLabel: "Resize panels",
     logoutButton: "Log out",
+    clockAriaLabel: "New York time",
+    clockTitle: "Market time (New York, ET)",
   },
   regimeBadge: {
     ariaLabel: "Gamma regime",
