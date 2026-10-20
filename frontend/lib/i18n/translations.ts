@@ -22,6 +22,8 @@ export type Translations = {
     settingsButtonAriaLabel: string;
     resizeSeparatorAriaLabel: string;
     logoutButton: string;
+    clockAriaLabel: string;
+    clockTitle: string;
   };
   regimeBadge: {
     ariaLabel: string;

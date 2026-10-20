@@ -9,6 +9,7 @@ import type {
 } from "lightweight-charts";
 import type { AlertCube, CubeSide } from "@/lib/alert-cubes";
 import { timeToX } from "@/lib/chart-time";
+import { EASTERN_TIME_ZONE } from "@/lib/market-session";
 
 // Alert cubes drawn ON TOP of the candles at the chart's own coordinates (timeToX in lib/chart-time.ts / priceToCoordinate), so they follow zoom and
 // scrolling. A strike outside the visible price range is pinned to the pane's top or bottom edge and drawn fainter; cubes that land on the same
@@ -22,6 +23,13 @@ export const CUBE_COLORS: Record<CubeSide, string> = {
 const OUTSIDE_ALPHA = 0.45;
 const EDGE_MARGIN = 8;
 const STACK_GAP = 2;
+// The time of the trade (ET, HH:MM) drawn to the right of each cube; a label that would sit on top of another label, or leave the pane, is skipped (the tooltip keeps the full time with seconds).
+const LABEL_FONT = "10px sans-serif";
+const LABEL_GAP = 3;
+const LABEL_HEIGHT = 11;
+const LABEL_COLOR = "#D1D4DC";
+const LABEL_OUTLINE = "#131722";
+const LABEL_FORMAT = new Intl.DateTimeFormat("en-GB", { timeZone: EASTERN_TIME_ZONE, hour: "2-digit", minute: "2-digit", hour12: false });
 
 type DrawTarget = Parameters<IPrimitivePaneRenderer["draw"]>[0];
 
@@ -39,6 +47,7 @@ class AlertCubesRenderer implements IPrimitivePaneRenderer {
       const timeScale = chart.timeScale();
       const paneHeight = scope.mediaSize.height;
       const stacked = new Map<string, number>();
+      const labels: { left: number; right: number; top: number; bottom: number }[] = [];
 
       for (const cube of cubes) {
         const rawX = timeToX(timeScale, series, cube.time);
@@ -65,6 +74,27 @@ class AlertCubesRenderer implements IPrimitivePaneRenderer {
         context.lineWidth = this.source.hoveredId === cube.id ? 2 : 1;
         context.strokeRect(left + 0.5, top + 0.5, width - 1, height - 1);
         context.restore();
+
+        if (inside) {
+          const text = LABEL_FORMAT.format(new Date(cube.time * 1000));
+          context.save();
+          context.font = LABEL_FONT;
+          const textWidth = context.measureText(text).width / scope.horizontalPixelRatio;
+          const labelLeft = x + cube.size / 2 + LABEL_GAP;
+          const box = { left: labelLeft, right: labelLeft + textWidth, top: y - LABEL_HEIGHT / 2, bottom: y + LABEL_HEIGHT / 2 };
+          const fits = box.right <= scope.mediaSize.width && !labels.some((other) => box.left < other.right && box.right > other.left && box.top < other.bottom && box.bottom > other.top);
+          if (fits) {
+            labels.push(box);
+            context.textBaseline = "middle";
+            context.lineWidth = 3;
+            context.lineJoin = "round";
+            context.strokeStyle = LABEL_OUTLINE;
+            context.strokeText(text, labelLeft * scope.horizontalPixelRatio, y * scope.verticalPixelRatio);
+            context.fillStyle = LABEL_COLOR;
+            context.fillText(text, labelLeft * scope.horizontalPixelRatio, y * scope.verticalPixelRatio);
+          }
+          context.restore();
+        }
       }
     });
   }

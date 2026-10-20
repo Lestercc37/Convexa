@@ -3,6 +3,12 @@ import type { AlertCube } from "@/lib/alert-cubes";
 import { AlertCubesPrimitive, CUBE_COLORS } from "./alert-cubes-primitive";
 
 type FakeContext = {
+  font: string;
+  textBaseline: string;
+  lineJoin: string;
+  fillText: ReturnType<typeof vi.fn>;
+  strokeText: ReturnType<typeof vi.fn>;
+  measureText: (text: string) => { width: number };
   fillStyle: string;
   strokeStyle: string;
   lineWidth: number;
@@ -16,6 +22,12 @@ type FakeContext = {
 
 function fakeContext(): FakeContext {
   const context: FakeContext = {
+    font: "",
+    textBaseline: "",
+    lineJoin: "",
+    fillText: vi.fn(),
+    strokeText: vi.fn(),
+    measureText: (text: string) => ({ width: text.length * 6 }),
     fillStyle: "",
     strokeStyle: "",
     lineWidth: 1,
@@ -149,5 +161,31 @@ describe("AlertCubesPrimitive", () => {
     primitive.detached();
     expect(primitive.series).toBeNull();
     expect(primitive.placed).toEqual([]);
+  });
+
+  it("draws the trade time (ET, HH:MM) to the right of each cube", () => {
+    const { primitive } = attached();
+    primitive.setCubes([cube({ id: "a" })]); // epoch 1000 s = 19:16 ET the evening before
+    const context = fakeContext();
+    draw(primitive, context);
+    expect(context.fillText).toHaveBeenCalledTimes(1);
+    const [text, x, y] = context.fillText.mock.calls[0];
+    expect(text).toBe("19:16");
+    expect(x).toBe(100 + 9 / 2 + 3);
+    expect(y).toBe(300);
+  });
+
+  it("skips a label that would sit on top of another one or leave the pane", () => {
+    const { primitive } = attached();
+    primitive.setCubes([cube({ id: "a" }), cube({ id: "b" })]); // same spot: the second cube is laid beside the first and its label would overlap
+    const context = fakeContext();
+    draw(primitive, context);
+    expect(context.fillText).toHaveBeenCalledTimes(1);
+
+    const edge = attached();
+    edge.primitive.setCubes([cube({ id: "far", time: 1000 + 60 * 49 })]); // x = 100 + 49 * 20 = 1080, outside the 1000 px pane
+    const edgeContext = fakeContext();
+    draw(edge.primitive, edgeContext);
+    expect(edgeContext.fillText).not.toHaveBeenCalled();
   });
 });

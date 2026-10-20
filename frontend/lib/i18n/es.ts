@@ -24,6 +24,8 @@ export const es: Translations = {
     settingsButtonAriaLabel: "Configuración de umbrales de Whale Alerts",
     resizeSeparatorAriaLabel: "Redimensionar paneles",
     logoutButton: "Cerrar sesión",
+    clockAriaLabel: "Hora de Nueva York",
+    clockTitle: "Hora del mercado (Nueva York, ET)",
   },
   regimeBadge: {
     ariaLabel: "Régimen gamma",

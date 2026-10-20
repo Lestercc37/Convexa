@@ -25,6 +25,7 @@ import {
 import { startChartLifecycleRecorder } from "@/lib/chart-lifecycle";
 import { describeError } from "@/lib/i18n/describe-error";
 import { useLanguage, type Language } from "@/lib/i18n/language-context";
+import { SessionClock } from "./session-clock";
 import { isWithinTheMostRecentSession } from "@/lib/market-session";
 import {
   connectMarketPriceStream,
@@ -596,6 +597,7 @@ export function Dashboard() {
           </button>
         </div>
         <div className="tv-topbar-right">
+          <SessionClock />
           <button
             type="button"
             className="tv-settings-button"
@@ -668,6 +670,8 @@ export function Dashboard() {
                     atrRange={isWeek ? undefined : market.atr_range}
                     expectedMove={isWeek ? undefined : market.expected_move}
                     timeframe={shownTimeframe}
+                    // The countdown belongs to the candle being formed: the week view has daily candles.
+                    candleCountdown={!isWeek}
                     streamStatus={streamStatus}
                   />
                   {dealersDock}
