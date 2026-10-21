@@ -467,6 +467,11 @@ export function PriceChart({
   // above -- see the mount effect's handleSizeChange for why a candle-
   // count jump alone isn't enough to catch every case.
   const hasRefitAfterRealSizeRef = useRef(false);
+  // The chart keeps itself fitted to the day's candles until the user touches it (wheel, drag, touch): after that their own pan/zoom is never fought. This replaces "only within 15 s of the mount"
+  // for the seed and the size changes (2026-10-21, Lester: after a symbol switch the chart came out spread out and had to be fitted by hand when the history or the layout settled late).
+  const userAdjustedRef = useRef(false);
+  const lastFitWidthRef = useRef(0);
+  const firstCandleTimeRef = useRef<number | null>(candles[0]?.time ?? null);
   // Computed once per mount (the whole component remounts on symbol
   // change via its `key`, so a new session's open is picked up then) --
   // see withSessionOpenAnchor for why this only anchors the left edge.
@@ -551,6 +556,12 @@ export function PriceChart({
     if (!container) return;
 
     mountedAtRef.current = Date.now();
+    userAdjustedRef.current = false;
+    const markUserAdjusted = () => {
+      userAdjustedRef.current = true;
+    };
+    container.addEventListener("wheel", markUserAdjusted, { passive: true });
+    container.addEventListener("pointerdown", markUserAdjusted, { passive: true });
 
     const chart = createChart(container, {
       // `autoSize` delegates to the library's own internal ResizeObserver,
@@ -660,8 +671,9 @@ export function PriceChart({
       // regardless of whether the jump-based re-fit ever fires too; a
       // later, unrelated resize (window resize, sidebar toggle) must not
       // keep re-fitting and fighting the user's own pan/zoom.
-      if (!hasRefitAfterRealSizeRef.current && width > 0) {
+      if (width > 0 && (!hasRefitAfterRealSizeRef.current || (!userAdjustedRef.current && width !== lastFitWidthRef.current))) {
         hasRefitAfterRealSizeRef.current = true;
+        lastFitWidthRef.current = width;
         chart.timeScale().fitContent();
       }
       // Works around a real, confirmed lightweight-charts (5.2.0) resize bug
@@ -723,6 +735,8 @@ export function PriceChart({
 
     return () => {
       chart.timeScale().unsubscribeSizeChange(handleSizeChange);
+      container.removeEventListener("wheel", markUserAdjusted);
+      container.removeEventListener("pointerdown", markUserAdjusted);
       chart.remove();
       chartRef.current = null;
       seriesRef.current = null;
@@ -808,9 +822,15 @@ export function PriceChart({
     // once, ever" guard could spend its single re-fit on an early, still-
     // partial jump, permanently under-fitting the chart even once the
     // rest of the day's candles arrived moments later.
+    // Also while the user has not touched the chart (not only in the first 15 s): a slow history load, or a late layout, no longer leaves it spread out. A different FIRST candle means another
+    // history landed (a symbol or timeframe swap that kept the count), which is a new picture to fit too.
+    const firstCandleTime = candles[0]?.time ?? null;
+    const historyChanged = firstCandleTimeRef.current !== null && firstCandleTime !== null && firstCandleTime !== firstCandleTimeRef.current;
+    firstCandleTimeRef.current = firstCandleTime;
     if (
-      candles.length - previousCandleCount > 1 &&
-      Date.now() - mountedAtRef.current < CANDLE_SEED_SETTLING_WINDOW_MS
+      (candles.length - previousCandleCount > 1 &&
+        (Date.now() - mountedAtRef.current < CANDLE_SEED_SETTLING_WINDOW_MS || !userAdjustedRef.current)) ||
+      (historyChanged && !userAdjustedRef.current)
     ) {
       chartRef.current?.timeScale().fitContent();
     }

@@ -1,4 +1,4 @@
-import { act, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { TickMarkType } from "lightweight-charts";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
@@ -478,9 +478,9 @@ describe("PriceChart", () => {
     );
     expect(chartMocks.fitContent).toHaveBeenCalledTimes(3);
 
-    // Once the settling window has elapsed, a further bulk jump (e.g. the
-    // user switched timeframe and a new batch landed) must NOT keep
-    // re-fitting and fighting the user's own pan/zoom.
+    // Once the settling window has elapsed AND the user has touched the chart (wheel / drag), a further bulk jump must NOT keep
+    // re-fitting and fighting the user's own pan/zoom. (Without a touch it still re-fits: see the test below.)
+    fireEvent.pointerDown(screen.getByLabelText("Chart de velas para SPY"));
     vi.setSystemTime(new Date("2026-09-21T14:00:20Z"));
     rerender(
       <PriceChart
@@ -502,7 +502,7 @@ describe("PriceChart", () => {
     vi.useRealTimers();
   });
 
-  it("re-fits the visible range once the container reports its real size, even when the full day's candles were already present at first render (regression)", () => {
+  it("re-fits the visible range once the container reports its real size, even when the full day's candles were already present at first render (regression)", async () => {
     // AAPL/SPY confirmed live, 2026-09-17: their history endpoint can
     // resolve fast enough that `candles` already holds the full trading
     // day on the very first render -- unlike the test above, there is no
@@ -531,10 +531,52 @@ describe("PriceChart", () => {
 
     expect(chartMocks.fitContent).toHaveBeenCalledTimes(2);
 
-    // A later, unrelated resize (window resize, sidebar toggle) must not
-    // keep re-fitting and fighting the user's own pan/zoom afterward.
+    // The component swallows the resizes its own repaint nudge causes for ~50 ms; wait it out like a real second resize would.
+    const settle = () => act(async () => { await new Promise((resolve) => setTimeout(resolve, 90)); });
+
+    // A later resize while the user has NOT touched the chart (the layout settling, a panel opening) re-fits again, so it never stays spread out...
+    await settle();
     act(() => sizeChangeHandler(900, 420));
+    expect(chartMocks.fitContent).toHaveBeenCalledTimes(3);
+    await settle();
+    act(() => sizeChangeHandler(900, 420)); // the same width again is not a change
+    expect(chartMocks.fitContent).toHaveBeenCalledTimes(3);
+
+    // ...but once the user has panned or zoomed, a later resize must not fight their own view afterward.
+    fireEvent.wheel(screen.getByLabelText("Chart de velas para AAPL"));
+    await settle();
+    act(() => sizeChangeHandler(1000, 420));
+    expect(chartMocks.fitContent).toHaveBeenCalledTimes(3);
+  });
+
+  it("keeps fitting a late history while the user has not touched the chart, even after the first 15 seconds, and when another history replaces it with the same number of candles", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-10-21T14:00:00Z"));
+    const day = (start: number, n: number): MinuteCandle[] =>
+      Array.from({ length: n }, (_, i) => ({ time: start + i * 60, open: 500, high: 501, low: 499, close: 500.5 }));
+
+    const { rerender } = renderWithLanguage(<PriceChart symbol="SPY" gamma={gamma} candles={day(1_785_763_800, 1)} />);
+    expect(chartMocks.fitContent).toHaveBeenCalledTimes(1);
+
+    // The history of a slow load lands 40 s after the mount (outside the old 15 s window): still fitted.
+    vi.setSystemTime(new Date("2026-10-21T14:00:40Z"));
+    rerender(<PriceChart symbol="SPY" gamma={gamma} candles={day(1_785_763_800, 60)} />);
     expect(chartMocks.fitContent).toHaveBeenCalledTimes(2);
+
+    // Another history of the SAME length replaces it (a different first candle): a new picture, fitted too.
+    rerender(<PriceChart symbol="SPY" gamma={gamma} candles={day(1_785_850_200, 60)} />);
+    expect(chartMocks.fitContent).toHaveBeenCalledTimes(3);
+
+    // A single new live candle never re-fits.
+    rerender(<PriceChart symbol="SPY" gamma={gamma} candles={day(1_785_850_200, 61)} />);
+    expect(chartMocks.fitContent).toHaveBeenCalledTimes(3);
+
+    // After the user touches the chart, none of it fights them.
+    fireEvent.pointerDown(screen.getByLabelText("Chart de velas para SPY"));
+    rerender(<PriceChart symbol="SPY" gamma={gamma} candles={day(1_785_936_600, 61)} />);
+    rerender(<PriceChart symbol="SPY" gamma={gamma} candles={day(1_785_936_600, 70)} />);
+    expect(chartMocks.fitContent).toHaveBeenCalledTimes(3);
+    vi.useRealTimers();
   });
 
   it("shows a subtle indicator next to the live pill only while the real-time stream is in fallback mode (regression)", () => {
