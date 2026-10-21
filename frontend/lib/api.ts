@@ -24,6 +24,7 @@ import type {
   WhaleThresholdsResponse,
   WhaleThresholdUpdate,
 } from "./types";
+import { redirectToLoginOnUnauthorized } from "./session-redirect";
 
 const API_PREFIX = "/backend/api/v1";
 
@@ -40,7 +41,8 @@ export class ApiError extends Error {
   }
 }
 
-async function apiErrorFrom(response: Response): Promise<ApiError> {
+async function apiErrorFrom(response: Response, path: string): Promise<ApiError> {
+  if (response.status === 401) redirectToLoginOnUnauthorized(path);
   let code: string | null = null;
   try {
     const body = (await response.json()) as { error?: { code?: unknown } };
@@ -53,7 +55,7 @@ async function apiErrorFrom(response: Response): Promise<ApiError> {
 
 async function getJson<T>(path: string, signal?: AbortSignal): Promise<T> {
   const response = await fetch(`${API_PREFIX}${path}`, { cache: "no-store", signal });
-  if (!response.ok) throw await apiErrorFrom(response);
+  if (!response.ok) throw await apiErrorFrom(response, path);
   return (await response.json()) as T;
 }
 
@@ -69,7 +71,7 @@ async function patchJson<T>(path: string, body: unknown, signal?: AbortSignal): 
     cache: "no-store",
     signal,
   });
-  if (!response.ok) throw await apiErrorFrom(response);
+  if (!response.ok) throw await apiErrorFrom(response, path);
   return (await response.json()) as T;
 }
 
@@ -81,7 +83,7 @@ async function postJson<T>(path: string, body: unknown, signal?: AbortSignal): P
     cache: "no-store",
     signal,
   });
-  if (!response.ok) throw await apiErrorFrom(response);
+  if (!response.ok) throw await apiErrorFrom(response, path);
   return (await response.json()) as T;
 }
 
@@ -93,7 +95,7 @@ async function putJson<T>(path: string, body: unknown, signal?: AbortSignal): Pr
     cache: "no-store",
     signal,
   });
-  if (!response.ok) throw await apiErrorFrom(response);
+  if (!response.ok) throw await apiErrorFrom(response, path);
   return (await response.json()) as T;
 }
 
