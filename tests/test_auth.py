@@ -276,3 +276,99 @@ def test_preview_invite_404s_for_an_unknown_token() -> None:
     with TestClient(app) as client:
         response = client.get("/api/v1/auth/invites/not-a-real-token")
         assert response.status_code == 404
+
+
+# --- sliding sessions (2026-10-21) -------------------------------------------------------------------------------------------------------------------------------------------------
+
+
+def _aged_token(age_seconds: float) -> str:
+    """A valid token issued `age_seconds` ago (the helper bypasses the clock by signing the payload the way create_session_token does)."""
+    import time
+
+    import backend.core.sessions as sessions_module
+
+    user = _make_user(is_admin=True)
+    payload = {"uid": user.id, "u": user.username, "adm": user.is_admin, "exp": int(time.time() - age_seconds) + sessions_module.SESSION_TTL_SECONDS}
+    return sessions_module._sign(SECRET, payload)
+
+
+def test_session_lasts_thirty_days_without_use() -> None:
+    import backend.core.sessions as sessions_module
+
+    assert sessions_module.SESSION_TTL_SECONDS == 30 * 24 * 3600
+    session = verify_session_token(SECRET, create_session_token(SECRET, _make_user()))
+    assert session is not None and abs(session.expires_at - (__import__("time").time() + 30 * 24 * 3600)) < 5
+
+
+def test_a_token_is_renewed_only_when_older_than_a_day_and_keeps_the_same_user() -> None:
+    from backend.core.sessions import renewed_session_token
+
+    assert renewed_session_token(SECRET, _aged_token(60)) is None  # a minute old: fresh
+    assert renewed_session_token(SECRET, _aged_token(23 * 3600)) is None
+    fresh = renewed_session_token(SECRET, _aged_token(25 * 3600))
+    assert fresh is not None
+    session = verify_session_token(SECRET, fresh)
+    assert session is not None and (session.user_id, session.username, session.is_admin) == (1, "lester", True)
+    assert renewed_session_token(SECRET, fresh) is None  # the new one is fresh again
+
+
+def test_a_bad_or_expired_token_is_never_renewed() -> None:
+    from backend.core.sessions import renewed_session_token
+
+    assert renewed_session_token(SECRET, "not.a.token") is None
+    assert renewed_session_token("another secret", _aged_token(25 * 3600)) is None
+    assert renewed_session_token(SECRET, _aged_token(31 * 24 * 3600)) is None  # already expired
+
+
+def test_an_old_14_day_cookie_gets_a_30_day_one_back_and_the_attributes_match_login() -> None:
+    app = create_app()
+    with TestClient(app) as client:
+        storage = app.state.container.storage
+        password_hash, salt = hash_password("correct horse battery staple")
+        storage.create_user(username="lester", password_hash=password_hash, salt=salt, is_admin=True)
+        secret = app.state.container.settings.session_secret
+        login = client.post("/api/v1/auth/login", json={"username": "lester", "password": "correct horse battery staple"})
+        login_cookie = login.headers["set-cookie"]
+
+        import time
+
+        import backend.core.sessions as sessions_module
+
+        old = sessions_module._sign(secret, {"uid": 1, "u": "lester", "adm": True, "exp": int(time.time()) + 13 * 24 * 3600})  # a 14-day token, one day used
+        client.cookies.set(sessions_module.SESSION_COOKIE_NAME, old)
+        response = client.get("/api/v1/underlyings")
+        assert response.status_code == 200
+        renewed = response.headers.get("set-cookie")
+        assert renewed is not None and sessions_module.SESSION_COOKIE_NAME in renewed
+        new_token = renewed.split(";", 1)[0].split("=", 1)[1]
+        session = verify_session_token(secret, new_token)
+        assert session is not None and session.expires_at > time.time() + 29 * 24 * 3600
+        # Same attributes as the login cookie (everything after the value).
+        assert sorted(part.strip().lower().split("=")[0] for part in renewed.split(";")[1:]) == sorted(part.strip().lower().split("=")[0] for part in login_cookie.split(";")[1:])
+
+        # The next request carries the fresh cookie: nothing more to renew.
+        client.cookies.set(sessions_module.SESSION_COOKIE_NAME, new_token)
+        assert "set-cookie" not in client.get("/api/v1/underlyings").headers
+
+
+def test_no_cookie_is_set_for_a_fresh_session_a_failed_request_or_logout() -> None:
+    app = create_app()
+    with TestClient(app) as client:
+        storage = app.state.container.storage
+        password_hash, salt = hash_password("correct horse battery staple")
+        storage.create_user(username="lester", password_hash=password_hash, salt=salt, is_admin=True)
+        client.post("/api/v1/auth/login", json={"username": "lester", "password": "correct horse battery staple"})
+        assert "set-cookie" not in client.get("/api/v1/underlyings").headers  # just logged in: fresh
+
+        import time
+
+        import backend.core.sessions as sessions_module
+
+        secret = app.state.container.settings.session_secret
+        old = sessions_module._sign(secret, {"uid": 1, "u": "lester", "adm": True, "exp": int(time.time()) + 13 * 24 * 3600})
+        client.cookies.set(sessions_module.SESSION_COOKIE_NAME, old)
+        missing = client.get("/api/v1/gamma/NOPE-DOES-NOT-EXIST")
+        assert missing.status_code >= 400 and "set-cookie" not in missing.headers  # failed request: leave the cookie alone
+        out = client.post("/api/v1/auth/logout")
+        assert out.headers["set-cookie"].count(sessions_module.SESSION_COOKIE_NAME) == 1  # only the deletion, no renewed cookie next to it
+        assert "Max-Age=0" in out.headers["set-cookie"] or "expires" in out.headers["set-cookie"].lower()

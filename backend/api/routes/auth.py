@@ -12,9 +12,9 @@ from backend.api.schemas import (
 from backend.core.container import Container
 from backend.core.sessions import (
     SESSION_COOKIE_NAME,
-    SESSION_TTL_SECONDS,
     SessionPayload,
     create_session_token,
+    session_cookie_options,
 )
 from backend.domain.entities import User
 from backend.domain.use_cases.errors import NotFoundError, UnauthorizedError
@@ -24,18 +24,11 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 
 def _set_session_cookie(response: Response, container: Container, user: User) -> None:
     token = create_session_token(container.settings.session_secret, user)
-    response.set_cookie(
-        key=SESSION_COOKIE_NAME,
-        value=token,
-        max_age=SESSION_TTL_SECONDS,
-        httponly=True,
-        samesite="lax",
-        # Cloudflare Tunnel terminates TLS in front of this app, so the
-        # browser always sees HTTPS in production -- this must be True
-        # there (QLL_ENVIRONMENT != "development") or the browser silently
-        # drops the cookie. False only for local http://localhost dev.
-        secure=container.settings.environment != "development",
-    )
+    # Cloudflare Tunnel terminates TLS in front of this app, so the
+    # browser always sees HTTPS in production -- secure must be True
+    # there (QLL_ENVIRONMENT != "development") or the browser silently
+    # drops the cookie. False only for local http://localhost dev.
+    response.set_cookie(value=token, **session_cookie_options(container.settings.environment != "development"))
 
 
 @router.post("/login", response_model=SessionUserResponse)

@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { redirectToLoginOnUnauthorized } from "./session-redirect";
 import {
   getGamma,
   getGammaHeatmap,
@@ -11,6 +12,8 @@ import {
   historyWindowStart,
   setFutureOpeningPrice,
 } from "./api";
+
+vi.mock("./session-redirect", () => ({ redirectToLoginOnUnauthorized: vi.fn() }));
 
 const fetchMock = vi.fn();
 
@@ -146,5 +149,24 @@ describe("Historical level window", () => {
     expect(parsed.pathname.endsWith("/gamma/SPY/history")).toBe(true);
     expect(parsed.searchParams.get("view")).toBe("tactical");
     expect(parsed.searchParams.get("start")).toBe(historyWindowStart().toISOString());
+  });
+});
+
+describe("a 401 from the API", () => {
+  it("asks for the login page with the path that failed, for every kind of request", async () => {
+    vi.mocked(redirectToLoginOnUnauthorized).mockClear();
+    fetchMock.mockResolvedValue({ ok: false, status: 401, json: async () => ({ error: { code: "UNAUTHORIZED" } }) });
+
+    await expect(getUnderlyings()).rejects.toMatchObject({ status: 401 });
+    expect(redirectToLoginOnUnauthorized).toHaveBeenCalledWith("/underlyings");
+  });
+
+  it("does not ask for the login page on a 500 or a network failure", async () => {
+    vi.mocked(redirectToLoginOnUnauthorized).mockClear();
+    fetchMock.mockResolvedValue({ ok: false, status: 500, json: async () => ({}) });
+    await expect(getUnderlyings()).rejects.toMatchObject({ status: 500 });
+    fetchMock.mockRejectedValue(new TypeError("Failed to fetch"));
+    await expect(getUnderlyings()).rejects.toBeInstanceOf(TypeError);
+    expect(redirectToLoginOnUnauthorized).not.toHaveBeenCalled();
   });
 });

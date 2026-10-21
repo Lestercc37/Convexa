@@ -9,6 +9,7 @@ from fastapi.responses import JSONResponse
 
 from backend.api.routes import api_router
 from backend.api.serializers import error_response
+from backend.api.session_renewal import SessionRenewalMiddleware
 from backend.core.container import build_container
 from backend.core.logging import configure_logging
 from backend.domain.use_cases.errors import ForbiddenError, QllError, UnauthorizedError
@@ -110,6 +111,7 @@ def create_app() -> FastAPI:
         }.get(error.code, 500)
         return JSONResponse(status_code=status_code, content=error_response(error))
 
+    app.add_middleware(SessionRenewalMiddleware)
     app.include_router(api_router())
     return app
 
