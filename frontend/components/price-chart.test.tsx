@@ -8,7 +8,7 @@ import { mostRecentSessionRange, regularSessionRange } from "@/lib/market-sessio
 import type { AtrRange, ExpectedMove, GammaResponse } from "@/lib/types";
 import { derivedMetricsFixture } from "@/test/fixtures";
 import { LiveProfilePrimitive } from "./live-profile-primitive";
-import { PriceChart } from "./price-chart";
+import { cappedRange, MAX_FIT_BAR_SPACING_PX, PriceChart } from "./price-chart";
 
 const chartMocks = vi.hoisted(() => ({
   createChart: vi.fn(),
@@ -36,6 +36,9 @@ const chartMocks = vi.hoisted(() => ({
   subscribeSizeChange: vi.fn(),
   unsubscribeSizeChange: vi.fn(),
   fitContent: vi.fn(),
+  setVisibleLogicalRange: vi.fn(),
+  timeScaleRange: { from: 0, to: 100 } as { from: number; to: number },
+  timeScaleWidth: 1000,
   setVisibleRange: vi.fn(),
   getGammaHistory: vi.fn(),
   getGammaHeatmap: vi.fn(),
@@ -107,7 +110,9 @@ beforeAll(() => {
     timeScale: () => ({
       fitContent: chartMocks.fitContent,
       // A valid range: the null-range resync in setSeriesData() must stay out of the way of the other tests (it has its own test file).
-      getVisibleLogicalRange: () => ({ from: 0, to: 100 }),
+      getVisibleLogicalRange: () => chartMocks.timeScaleRange,
+      width: () => chartMocks.timeScaleWidth,
+      setVisibleLogicalRange: chartMocks.setVisibleLogicalRange,
       setVisibleRange: chartMocks.setVisibleRange,
       coordinateToTime: chartMocks.coordinateToTime,
       subscribeVisibleLogicalRangeChange: chartMocks.subscribeVisibleLogicalRangeChange,
@@ -122,6 +127,8 @@ beforeAll(() => {
 beforeEach(() => {
   vi.clearAllMocks();
   chartMocks.attachedCountdowns.length = 0;
+  chartMocks.timeScaleRange = { from: 0, to: 100 };
+  chartMocks.timeScaleWidth = 1000;
   chartMocks.priceToCoordinate.mockImplementation(() => null);
   chartMocks.coordinateToPrice.mockImplementation(() => null);
   chartMocks.coordinateToTime.mockImplementation(() => null);
@@ -616,6 +623,29 @@ describe("PriceChart", () => {
     // *different* UTC epoch (20:59 UTC) -- not a fixed 4-hour offset.
     const estEpochSeconds = Date.UTC(2026, 0, 15, 20, 59, 0) / 1000;
     expect(formatter(estEpochSeconds, TickMarkType.Time, "en-US")).toBe("15:59");
+  });
+
+  it("caps the width of the candles after a fit when only a few of them stretch over the chart, keeping the left edge", async () => {
+    // 8 bars over 1000 px = 125 px each: far wider than MAX_FIT_BAR_SPACING_PX.
+    chartMocks.timeScaleRange = { from: -1, to: 7 };
+    chartMocks.timeScaleWidth = 1000;
+    renderWithLanguage(<PriceChart symbol="SPY" gamma={gamma} candles={[{ time: 1_785_763_800, open: 500, high: 501, low: 499, close: 500.5 }]} />);
+    await waitFor(() => expect(chartMocks.setVisibleLogicalRange).toHaveBeenCalled());
+    expect(chartMocks.setVisibleLogicalRange).toHaveBeenCalledWith({ from: -1, to: -1 + 1000 / MAX_FIT_BAR_SPACING_PX });
+  });
+
+  it("leaves the range alone when the candles already have a normal width, or once the user has touched the chart", async () => {
+    chartMocks.timeScaleRange = { from: 0, to: 390 }; // 1000 px / 390 bars = 2.6 px
+    renderWithLanguage(<PriceChart symbol="SPY" gamma={gamma} candles={[{ time: 1_785_763_800, open: 500, high: 501, low: 499, close: 500.5 }]} />);
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    expect(chartMocks.setVisibleLogicalRange).not.toHaveBeenCalled();
+
+    chartMocks.timeScaleRange = { from: -1, to: 7 };
+    fireEvent.pointerDown(screen.getByLabelText("Chart de velas para SPY")); // the user's own view from now on
+    const sizeChangeHandler = chartMocks.subscribeSizeChange.mock.calls.at(-1)?.[0];
+    act(() => sizeChangeHandler(1200, 420));
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    expect(chartMocks.setVisibleLogicalRange).not.toHaveBeenCalled();
   });
 
   it("puts the countdown of the forming candle under the last price, and not at all when asked off", () => {
@@ -1907,5 +1937,16 @@ describe("PriceChart trendline drawing", () => {
     expect(chartMocks.applyOptions).not.toHaveBeenCalledWith(
       expect.objectContaining({ handleScroll: false }),
     );
+  });
+});
+
+describe("cappedRange", () => {
+  it("widens the range to the capped spacing from the same left edge, and is null when the spacing is already fine or the input is unusable", () => {
+    expect(cappedRange({ from: -1, to: 7 }, 1000, 10)).toEqual({ from: -1, to: 99 });
+    expect(cappedRange({ from: 0, to: 100 }, 1000, 10)).toBeNull(); // exactly 10 px: fine
+    expect(cappedRange({ from: 0, to: 390 }, 1000, 10)).toBeNull();
+    expect(cappedRange(null, 1000)).toBeNull();
+    expect(cappedRange({ from: 0, to: 0 }, 1000)).toBeNull();
+    expect(cappedRange({ from: 0, to: 5 }, 0)).toBeNull();
   });
 });

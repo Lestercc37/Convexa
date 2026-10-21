@@ -115,6 +115,36 @@ const VWAP_COLOR = "#f3c969";
 // user's own pan/zoom.
 const CANDLE_SEED_SETTLING_WINDOW_MS = 15_000;
 
+// With only a few candles (the first minutes of the session, a symbol that just loaded) fitContent() stretches them over the whole width and they come out huge ("spread out", Lester 2026-10-21).
+// After every fit the live spacing is measured and, when it is wider than this, the visible range is widened so the candles keep a normal width and the empty room goes to the right.
+export const MAX_FIT_BAR_SPACING_PX = 10;
+
+/** The visible logical range that keeps the left edge and gives each bar at most `maxSpacing` pixels, or null when the current spacing is already fine. */
+export function cappedRange(range: { from: number; to: number } | null, width: number, maxSpacing: number = MAX_FIT_BAR_SPACING_PX): { from: number; to: number } | null {
+  if (!range || !(width > 0)) return null;
+  const bars = range.to - range.from;
+  if (!(bars > 0) || width / bars <= maxSpacing) return null;
+  return { from: range.from, to: range.from + width / maxSpacing };
+}
+
+/** fitContent() now, then (the library applies the new spacing a moment later) the spacing cap; the measured numbers go to the flight recorder (convexaChartLog) so the fit can be checked numerically. */
+function fitCandles(chart: IChartApi, stillWanted: () => boolean): void {
+  chart.timeScale().fitContent();
+  window.setTimeout(() => {
+    if (!stillWanted()) return;
+    try {
+      const timeScale = chart.timeScale();
+      const range = timeScale.getVisibleLogicalRange();
+      const width = timeScale.width();
+      const next = cappedRange(range, width);
+      recordChartEvent("fit", { bars: range ? Math.round((range.to - range.from) * 10) / 10 : null, spacing: range && width > 0 ? Math.round((width / (range.to - range.from)) * 10) / 10 : null, width, capped: next !== null });
+      if (next) timeScale.setVisibleLogicalRange(next);
+    } catch {
+      // the chart was removed between the fit and the check: nothing to cap
+    }
+  }, 80);
+}
+
 // Neutral, distinct from every color already in use on this chart (candles,
 // Gamma levels, VWAP, ATR bands) — a user-drawn annotation, not something
 // Convexa calculated.
@@ -625,7 +655,7 @@ export function PriceChart({
         mergePriceRange(original(), referenceLevelsRef.current),
     });
     series.setData(withSessionOpenAnchor(initialCandlesRef.current, sessionOpenSecondsRef.current));
-    chart.timeScale().fitContent();
+    fitCandles(chart, () => chartRef.current === chart && !userAdjustedRef.current);
     chartRef.current = chart;
     seriesRef.current = series;
 
@@ -674,7 +704,7 @@ export function PriceChart({
       if (width > 0 && (!hasRefitAfterRealSizeRef.current || (!userAdjustedRef.current && width !== lastFitWidthRef.current))) {
         hasRefitAfterRealSizeRef.current = true;
         lastFitWidthRef.current = width;
-        chart.timeScale().fitContent();
+        fitCandles(chart, () => chartRef.current === chart && !userAdjustedRef.current);
       }
       // Works around a real, confirmed lightweight-charts (5.2.0) resize bug
       // -- live, 2026-09-23: after some resizes, the candlestick series and
@@ -832,7 +862,10 @@ export function PriceChart({
         (Date.now() - mountedAtRef.current < CANDLE_SEED_SETTLING_WINDOW_MS || !userAdjustedRef.current)) ||
       (historyChanged && !userAdjustedRef.current)
     ) {
-      chartRef.current?.timeScale().fitContent();
+      if (chartRef.current) {
+        const chart = chartRef.current;
+        fitCandles(chart, () => chartRef.current === chart && !userAdjustedRef.current);
+      }
     }
   }, [candles]);
 
@@ -860,7 +893,7 @@ export function PriceChart({
     if (reserved === reservedRightPxRef.current) return;
     reservedRightPxRef.current = reserved;
     chart.applyOptions({ timeScale: { rightOffsetPixels: reserved } });
-    chart.timeScale().fitContent();
+    fitCandles(chart, () => chartRef.current === chart);
   }, [showProfile]);
 
   // What the profile shows follows the heatmap's figure while the heatmap is on (net gamma otherwise).
