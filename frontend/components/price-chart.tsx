@@ -115,6 +115,51 @@ const VWAP_COLOR = "#f3c969";
 // user's own pan/zoom.
 const CANDLE_SEED_SETTLING_WINDOW_MS = 15_000;
 
+// With only a few candles (the first minutes of the session, a symbol that just loaded) fitContent() stretches them over the whole width and they come out huge ("spread out", Lester 2026-10-21).
+// After every fit the live spacing is measured and, when it is wider than this, the candles keep this width and start from the CENTER of the chart (his request): the first candle sits in the middle
+// of the candle area (the pane minus the profile column) and the new ones grow to the right; once they reach the right edge the last one stays there.
+export const MAX_FIT_BAR_SPACING_PX = 10;
+
+/**
+ * The visible logical range for the few-candles case, or null when the spacing of the current fit is already fine. `range` is what fitContent() left (first bar at `range.from`, the strip reserved on the
+ * right counted in `range.to`), `width` the whole pane and `reservedPx` the strip. The candle area is the pane without the strip: with n bars of `maxSpacing` px, the first bar goes to the middle of that area
+ * while the n bars fit in its right half, and from then on the last bar stays at its right edge.
+ */
+export function cappedRange(
+  range: { from: number; to: number } | null,
+  width: number,
+  reservedPx = 0,
+  maxSpacing: number = MAX_FIT_BAR_SPACING_PX,
+): { from: number; to: number } | null {
+  if (!range || !(width > 0)) return null;
+  const bars = range.to - range.from;
+  if (!(bars > 0) || width / bars <= maxSpacing) return null;
+  const candleArea = width - reservedPx;
+  if (!(candleArea > 0)) return null;
+  const lastIndex = range.to - reservedPx / (width / bars);
+  const count = lastIndex - range.from + 1;
+  const from = count * maxSpacing <= candleArea / 2 ? range.from - candleArea / 2 / maxSpacing : lastIndex - candleArea / maxSpacing;
+  return { from, to: from + width / maxSpacing };
+}
+
+/** fitContent() now, then (the library applies the new spacing a moment later) the spacing cap; the measured numbers go to the flight recorder (convexaChartLog) so the fit can be checked numerically. */
+function fitCandles(chart: IChartApi, stillWanted: () => boolean, reservedPx: () => number): void {
+  chart.timeScale().fitContent();
+  window.setTimeout(() => {
+    if (!stillWanted()) return;
+    try {
+      const timeScale = chart.timeScale();
+      const range = timeScale.getVisibleLogicalRange();
+      const width = timeScale.width();
+      const next = cappedRange(range, width, reservedPx());
+      recordChartEvent("fit", { bars: range ? Math.round((range.to - range.from) * 10) / 10 : null, spacing: range && width > 0 ? Math.round((width / (range.to - range.from)) * 10) / 10 : null, width, capped: next !== null });
+      if (next) timeScale.setVisibleLogicalRange(next);
+    } catch {
+      // the chart was removed between the fit and the check: nothing to cap
+    }
+  }, 80);
+}
+
 // Neutral, distinct from every color already in use on this chart (candles,
 // Gamma levels, VWAP, ATR bands) — a user-drawn annotation, not something
 // Convexa calculated.
@@ -467,6 +512,11 @@ export function PriceChart({
   // above -- see the mount effect's handleSizeChange for why a candle-
   // count jump alone isn't enough to catch every case.
   const hasRefitAfterRealSizeRef = useRef(false);
+  // The chart keeps itself fitted to the day's candles until the user touches it (wheel, drag, touch): after that their own pan/zoom is never fought. This replaces "only within 15 s of the mount"
+  // for the seed and the size changes (2026-10-21, Lester: after a symbol switch the chart came out spread out and had to be fitted by hand when the history or the layout settled late).
+  const userAdjustedRef = useRef(false);
+  const lastFitWidthRef = useRef(0);
+  const firstCandleTimeRef = useRef<number | null>(candles[0]?.time ?? null);
   // Computed once per mount (the whole component remounts on symbol
   // change via its `key`, so a new session's open is picked up then) --
   // see withSessionOpenAnchor for why this only anchors the left edge.
@@ -551,6 +601,12 @@ export function PriceChart({
     if (!container) return;
 
     mountedAtRef.current = Date.now();
+    userAdjustedRef.current = false;
+    const markUserAdjusted = () => {
+      userAdjustedRef.current = true;
+    };
+    container.addEventListener("wheel", markUserAdjusted, { passive: true });
+    container.addEventListener("pointerdown", markUserAdjusted, { passive: true });
 
     const chart = createChart(container, {
       // `autoSize` delegates to the library's own internal ResizeObserver,
@@ -614,7 +670,7 @@ export function PriceChart({
         mergePriceRange(original(), referenceLevelsRef.current),
     });
     series.setData(withSessionOpenAnchor(initialCandlesRef.current, sessionOpenSecondsRef.current));
-    chart.timeScale().fitContent();
+    fitCandles(chart, () => chartRef.current === chart && !userAdjustedRef.current, () => reservedRightPxRef.current);
     chartRef.current = chart;
     seriesRef.current = series;
 
@@ -660,9 +716,10 @@ export function PriceChart({
       // regardless of whether the jump-based re-fit ever fires too; a
       // later, unrelated resize (window resize, sidebar toggle) must not
       // keep re-fitting and fighting the user's own pan/zoom.
-      if (!hasRefitAfterRealSizeRef.current && width > 0) {
+      if (width > 0 && (!hasRefitAfterRealSizeRef.current || (!userAdjustedRef.current && width !== lastFitWidthRef.current))) {
         hasRefitAfterRealSizeRef.current = true;
-        chart.timeScale().fitContent();
+        lastFitWidthRef.current = width;
+        fitCandles(chart, () => chartRef.current === chart && !userAdjustedRef.current, () => reservedRightPxRef.current);
       }
       // Works around a real, confirmed lightweight-charts (5.2.0) resize bug
       // -- live, 2026-09-23: after some resizes, the candlestick series and
@@ -723,6 +780,8 @@ export function PriceChart({
 
     return () => {
       chart.timeScale().unsubscribeSizeChange(handleSizeChange);
+      container.removeEventListener("wheel", markUserAdjusted);
+      container.removeEventListener("pointerdown", markUserAdjusted);
       chart.remove();
       chartRef.current = null;
       seriesRef.current = null;
@@ -808,11 +867,20 @@ export function PriceChart({
     // once, ever" guard could spend its single re-fit on an early, still-
     // partial jump, permanently under-fitting the chart even once the
     // rest of the day's candles arrived moments later.
+    // Also while the user has not touched the chart (not only in the first 15 s): a slow history load, or a late layout, no longer leaves it spread out. A different FIRST candle means another
+    // history landed (a symbol or timeframe swap that kept the count), which is a new picture to fit too.
+    const firstCandleTime = candles[0]?.time ?? null;
+    const historyChanged = firstCandleTimeRef.current !== null && firstCandleTime !== null && firstCandleTime !== firstCandleTimeRef.current;
+    firstCandleTimeRef.current = firstCandleTime;
     if (
-      candles.length - previousCandleCount > 1 &&
-      Date.now() - mountedAtRef.current < CANDLE_SEED_SETTLING_WINDOW_MS
+      (candles.length - previousCandleCount > 1 &&
+        (Date.now() - mountedAtRef.current < CANDLE_SEED_SETTLING_WINDOW_MS || !userAdjustedRef.current)) ||
+      (historyChanged && !userAdjustedRef.current)
     ) {
-      chartRef.current?.timeScale().fitContent();
+      if (chartRef.current) {
+        const chart = chartRef.current;
+        fitCandles(chart, () => chartRef.current === chart && !userAdjustedRef.current, () => reservedRightPxRef.current);
+      }
     }
   }, [candles]);
 
@@ -840,7 +908,7 @@ export function PriceChart({
     if (reserved === reservedRightPxRef.current) return;
     reservedRightPxRef.current = reserved;
     chart.applyOptions({ timeScale: { rightOffsetPixels: reserved } });
-    chart.timeScale().fitContent();
+    fitCandles(chart, () => chartRef.current === chart, () => reservedRightPxRef.current);
   }, [showProfile]);
 
   // What the profile shows follows the heatmap's figure while the heatmap is on (net gamma otherwise).
