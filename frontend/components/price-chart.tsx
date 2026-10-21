@@ -116,19 +116,34 @@ const VWAP_COLOR = "#f3c969";
 const CANDLE_SEED_SETTLING_WINDOW_MS = 15_000;
 
 // With only a few candles (the first minutes of the session, a symbol that just loaded) fitContent() stretches them over the whole width and they come out huge ("spread out", Lester 2026-10-21).
-// After every fit the live spacing is measured and, when it is wider than this, the visible range is widened so the candles keep a normal width and the empty room goes to the right.
+// After every fit the live spacing is measured and, when it is wider than this, the candles keep this width and start from the CENTER of the chart (his request): the first candle sits in the middle
+// of the candle area (the pane minus the profile column) and the new ones grow to the right; once they reach the right edge the last one stays there.
 export const MAX_FIT_BAR_SPACING_PX = 10;
 
-/** The visible logical range that keeps the left edge and gives each bar at most `maxSpacing` pixels, or null when the current spacing is already fine. */
-export function cappedRange(range: { from: number; to: number } | null, width: number, maxSpacing: number = MAX_FIT_BAR_SPACING_PX): { from: number; to: number } | null {
+/**
+ * The visible logical range for the few-candles case, or null when the spacing of the current fit is already fine. `range` is what fitContent() left (first bar at `range.from`, the strip reserved on the
+ * right counted in `range.to`), `width` the whole pane and `reservedPx` the strip. The candle area is the pane without the strip: with n bars of `maxSpacing` px, the first bar goes to the middle of that area
+ * while the n bars fit in its right half, and from then on the last bar stays at its right edge.
+ */
+export function cappedRange(
+  range: { from: number; to: number } | null,
+  width: number,
+  reservedPx = 0,
+  maxSpacing: number = MAX_FIT_BAR_SPACING_PX,
+): { from: number; to: number } | null {
   if (!range || !(width > 0)) return null;
   const bars = range.to - range.from;
   if (!(bars > 0) || width / bars <= maxSpacing) return null;
-  return { from: range.from, to: range.from + width / maxSpacing };
+  const candleArea = width - reservedPx;
+  if (!(candleArea > 0)) return null;
+  const lastIndex = range.to - reservedPx / (width / bars);
+  const count = lastIndex - range.from + 1;
+  const from = count * maxSpacing <= candleArea / 2 ? range.from - candleArea / 2 / maxSpacing : lastIndex - candleArea / maxSpacing;
+  return { from, to: from + width / maxSpacing };
 }
 
 /** fitContent() now, then (the library applies the new spacing a moment later) the spacing cap; the measured numbers go to the flight recorder (convexaChartLog) so the fit can be checked numerically. */
-function fitCandles(chart: IChartApi, stillWanted: () => boolean): void {
+function fitCandles(chart: IChartApi, stillWanted: () => boolean, reservedPx: () => number): void {
   chart.timeScale().fitContent();
   window.setTimeout(() => {
     if (!stillWanted()) return;
@@ -136,7 +151,7 @@ function fitCandles(chart: IChartApi, stillWanted: () => boolean): void {
       const timeScale = chart.timeScale();
       const range = timeScale.getVisibleLogicalRange();
       const width = timeScale.width();
-      const next = cappedRange(range, width);
+      const next = cappedRange(range, width, reservedPx());
       recordChartEvent("fit", { bars: range ? Math.round((range.to - range.from) * 10) / 10 : null, spacing: range && width > 0 ? Math.round((width / (range.to - range.from)) * 10) / 10 : null, width, capped: next !== null });
       if (next) timeScale.setVisibleLogicalRange(next);
     } catch {
@@ -655,7 +670,7 @@ export function PriceChart({
         mergePriceRange(original(), referenceLevelsRef.current),
     });
     series.setData(withSessionOpenAnchor(initialCandlesRef.current, sessionOpenSecondsRef.current));
-    fitCandles(chart, () => chartRef.current === chart && !userAdjustedRef.current);
+    fitCandles(chart, () => chartRef.current === chart && !userAdjustedRef.current, () => reservedRightPxRef.current);
     chartRef.current = chart;
     seriesRef.current = series;
 
@@ -704,7 +719,7 @@ export function PriceChart({
       if (width > 0 && (!hasRefitAfterRealSizeRef.current || (!userAdjustedRef.current && width !== lastFitWidthRef.current))) {
         hasRefitAfterRealSizeRef.current = true;
         lastFitWidthRef.current = width;
-        fitCandles(chart, () => chartRef.current === chart && !userAdjustedRef.current);
+        fitCandles(chart, () => chartRef.current === chart && !userAdjustedRef.current, () => reservedRightPxRef.current);
       }
       // Works around a real, confirmed lightweight-charts (5.2.0) resize bug
       // -- live, 2026-09-23: after some resizes, the candlestick series and
@@ -864,7 +879,7 @@ export function PriceChart({
     ) {
       if (chartRef.current) {
         const chart = chartRef.current;
-        fitCandles(chart, () => chartRef.current === chart && !userAdjustedRef.current);
+        fitCandles(chart, () => chartRef.current === chart && !userAdjustedRef.current, () => reservedRightPxRef.current);
       }
     }
   }, [candles]);
@@ -893,7 +908,7 @@ export function PriceChart({
     if (reserved === reservedRightPxRef.current) return;
     reservedRightPxRef.current = reserved;
     chart.applyOptions({ timeScale: { rightOffsetPixels: reserved } });
-    fitCandles(chart, () => chartRef.current === chart);
+    fitCandles(chart, () => chartRef.current === chart, () => reservedRightPxRef.current);
   }, [showProfile]);
 
   // What the profile shows follows the heatmap's figure while the heatmap is on (net gamma otherwise).

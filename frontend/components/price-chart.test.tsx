@@ -626,12 +626,12 @@ describe("PriceChart", () => {
   });
 
   it("caps the width of the candles after a fit when only a few of them stretch over the chart, keeping the left edge", async () => {
-    // 8 bars over 1000 px = 125 px each: far wider than MAX_FIT_BAR_SPACING_PX.
-    chartMocks.timeScaleRange = { from: -1, to: 7 };
+    // 8 bars over 1000 px = 125 px each: far wider than MAX_FIT_BAR_SPACING_PX. With no strip reserved (the profile column is off in the mock) the first bar goes to the middle: 500 px / 10 = 50 bars left of it.
+    chartMocks.timeScaleRange = { from: 0, to: 8 };
     chartMocks.timeScaleWidth = 1000;
     renderWithLanguage(<PriceChart symbol="SPY" gamma={gamma} candles={[{ time: 1_785_763_800, open: 500, high: 501, low: 499, close: 500.5 }]} />);
     await waitFor(() => expect(chartMocks.setVisibleLogicalRange).toHaveBeenCalled());
-    expect(chartMocks.setVisibleLogicalRange).toHaveBeenCalledWith({ from: -1, to: -1 + 1000 / MAX_FIT_BAR_SPACING_PX });
+    expect(chartMocks.setVisibleLogicalRange).toHaveBeenCalledWith({ from: -50, to: -50 + 1000 / MAX_FIT_BAR_SPACING_PX });
   });
 
   it("leaves the range alone when the candles already have a normal width, or once the user has touched the chart", async () => {
@@ -1941,12 +1941,34 @@ describe("PriceChart trendline drawing", () => {
 });
 
 describe("cappedRange", () => {
-  it("widens the range to the capped spacing from the same left edge, and is null when the spacing is already fine or the input is unusable", () => {
-    expect(cappedRange({ from: -1, to: 7 }, 1000, 10)).toEqual({ from: -1, to: 99 });
-    expect(cappedRange({ from: 0, to: 100 }, 1000, 10)).toBeNull(); // exactly 10 px: fine
-    expect(cappedRange({ from: 0, to: 390 }, 1000, 10)).toBeNull();
+  it("puts the first bar in the middle of the candle area while the few bars fit in its right half, then keeps the last bar at the right edge", () => {
+    // 1000 px pane, no strip, 10 px per bar: the middle is 50 bars from the left edge of the window.
+    expect(cappedRange({ from: 0, to: 8 }, 1000, 0, 10)).toEqual({ from: -50, to: 50 });
+    // 40 bars = 400 px <= the right half (500 px): the first bar is still in the middle.
+    expect(cappedRange({ from: 0, to: 40 }, 1000, 0, 10)).toEqual({ from: -50, to: 50 });
+    // The last bar is index 60 (61 bars = 610 px): they do not fit in the right half any more, so the last bar stays at the right edge of a 100-bar window.
+    expect(cappedRange({ from: 0, to: 60 }, 1000, 0, 10)).toEqual({ from: 60 - 100, to: 60 });
+  });
+
+  it("leaves the strip on the right free: the middle and the right edge are those of the candle area", () => {
+    // 1000 px pane with a 200 px strip: the candle area is 800 px (middle = 400 px = 40 bars). fitContent() left bars 0..28 (the strip counted: 200 px / (1000/28 px per bar) = 5.6 bars).
+    const result = cappedRange({ from: 0, to: 28 }, 1000, 200, 10);
+    expect(result).not.toBeNull();
+    expect(result!.from).toBeCloseTo(-40, 5); // 22.4 + 1 = 23.4 bars = 234 px <= 400 px: the first bar in the middle of the 800 px
+    expect(result!.to - result!.from).toBeCloseTo(100, 5); // the whole 1000 px at 10 px per bar
+    // Many more bars: the last bar (index lastIndex) at the right edge of the 800 px area.
+    const later = cappedRange({ from: 0, to: 95 }, 1000, 200, 10); // 1000/95 = 10.5 px: just above the cap
+    expect(later).not.toBeNull();
+    const lastIndex = 95 - 200 / (1000 / 95);
+    expect(later!.from).toBeCloseTo(lastIndex - 80, 5);
+  });
+
+  it("is null when the spacing is already fine or the input is unusable", () => {
+    expect(cappedRange({ from: 0, to: 100 }, 1000, 0, 10)).toBeNull(); // exactly 10 px: fine
+    expect(cappedRange({ from: 0, to: 390 }, 1000, 0, 10)).toBeNull();
     expect(cappedRange(null, 1000)).toBeNull();
     expect(cappedRange({ from: 0, to: 0 }, 1000)).toBeNull();
     expect(cappedRange({ from: 0, to: 5 }, 0)).toBeNull();
+    expect(cappedRange({ from: 0, to: 5 }, 1000, 1000)).toBeNull(); // no candle area left
   });
 });
