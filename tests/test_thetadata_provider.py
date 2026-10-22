@@ -4213,3 +4213,89 @@ class TestStreamHubFirstMessageOfTheSession:
         with pytest.raises(asyncio.CancelledError):
             await stream._watch_for_data_silence()
         assert stream._first_message_logged == set()
+class TestItmIvFromTwin:
+    """Opt-in (settings.thetadata_itm_iv_from_twin): the gamma / vanna / charm of an in-the-money quote with no readable time value use the IV of its OTM twin, the contract's own `iv`
+    stays ThetaData's. Measured 2026-10-19: this moves the vanna / charm / net sums, not the levels."""
+
+    EXPIRATION = "2099-01-15"
+
+    def _handler(self, itm_call_iv: float):
+        # spot 769.36: the 760 call is 9.36 in the money, bid/ask 9.30/9.50 -> mid 9.40, time value 0.04 < half the spread 0.10: noisy. Its OTM twin, the 760 put, quotes 0.16.
+        call = _first_order_entry("760", "CALL", expiration=self.EXPIRATION, implied_vol=itm_call_iv)
+        call["data"][0].update({"bid": 9.30, "ask": 9.50})
+        put = _first_order_entry("760", "PUT", expiration=self.EXPIRATION, implied_vol=0.16)
+        put["data"][0].update({"bid": 0.90, "ask": 1.00})
+        oi = [_open_interest_entry("760", "CALL", 100, expiration=self.EXPIRATION), _open_interest_entry("760", "PUT", 100, expiration=self.EXPIRATION)]
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            path = request.url.path
+            if path == "/v3/option/snapshot/greeks/first_order":
+                return httpx.Response(200, json={"response": [call, put]})
+            if path == "/v3/option/snapshot/open_interest":
+                return httpx.Response(200, json={"response": oi})
+            if path == "/v3/interest_rate/history/eod":
+                return httpx.Response(200, json={"response": [{"rate": 3.64, "created": "2026-08-31"}]})
+            if path == "/v3/stock/history/eod":
+                return httpx.Response(200, json=_daily_bars_response(base_close=769.0, daily_range=6.0))
+            raise AssertionError(f"unexpected request: {request.url}")
+
+        return handler
+
+    def _chain(self, flag: bool, itm_call_iv: float = 0.30):
+        provider = _provider_with_transport(self._handler(itm_call_iv))
+        provider._itm_iv_from_twin = flag
+        chain = provider.get_option_chain("SPY", expiration=date.fromisoformat(self.EXPIRATION))
+        return {(c.strike, c.contract_type): c for c in chain.contracts}
+
+    def _expected_gamma(self, iv: str):
+        from backend.domain.use_cases.calculate_bsm_greeks import calculate_bsm_greeks
+
+        as_of = provider_module._parse_et_timestamp("2026-08-31T14:35:22.752")
+        return calculate_bsm_greeks(
+            Decimal("769.36"), Decimal(760), Decimal("0.0364"), Decimal(iv), provider_module._time_to_expiration_years(date.fromisoformat(self.EXPIRATION), as_of)
+        )
+
+    def test_off_by_default_the_noisy_quote_keeps_its_own_iv_in_the_greeks(self) -> None:
+        contracts = self._chain(False)
+        call = contracts[(Decimal(760), ContractType.CALL)]
+        assert call.iv == Decimal("0.3")
+        assert call.greeks.gamma == self._expected_gamma("0.3").gamma
+
+    def test_on_the_noisy_quote_uses_the_twin_iv_for_gamma_vanna_charm_but_keeps_its_own_iv_field(self) -> None:
+        contracts = self._chain(True)
+        call = contracts[(Decimal(760), ContractType.CALL)]
+        expected = self._expected_gamma("0.16")
+        assert call.iv == Decimal("0.3")  # ThetaData's own IV is untouched
+        assert (call.greeks.gamma, call.greeks.vanna, call.greeks.charm) == (expected.gamma, expected.vanna, expected.charm)
+        # the OTM twin itself and every readable quote are unchanged
+        put = contracts[(Decimal(760), ContractType.PUT)]
+        assert put.greeks.gamma == self._expected_gamma("0.16").gamma
+
+    def test_a_readable_itm_quote_is_left_alone(self) -> None:
+        # time value 0.55 well above half the 0.1 spread: readable, keeps its own IV even with the flag on
+        handler_call = self._handler(0.20)
+        # widen the call's mid: bid/ask 9.90/10.00 -> mid 9.95, intrinsic 9.36, time value 0.59
+        def wide(request: httpx.Request) -> httpx.Response:
+            response = handler_call(request)
+            if request.url.path == "/v3/option/snapshot/greeks/first_order":
+                body = json.loads(response.content)
+                body["response"][0]["data"][0].update({"bid": 9.90, "ask": 10.00})
+                return httpx.Response(200, json=body)
+            return response
+
+        provider = _provider_with_transport(wide)
+        provider._itm_iv_from_twin = True
+        chain = provider.get_option_chain("SPY", expiration=date.fromisoformat(self.EXPIRATION))
+        call = next(c for c in chain.contracts if c.contract_type == ContractType.CALL)
+        assert call.greeks.gamma == self._expected_gamma("0.2").gamma
+
+
+def test_is_noisy_itm_quote_matches_the_charts_readable_iv_rule() -> None:
+    from backend.adapters.providers.thetadata.provider import _is_noisy_itm_quote
+
+    spot = Decimal(1000)
+    assert _is_noisy_itm_quote("PUT", Decimal(1010), spot, Decimal("9.7"), Decimal("10.7")) is True  # time value 0.2 < half spread 0.5
+    assert _is_noisy_itm_quote("PUT", Decimal(1010), spot, Decimal("10.1"), Decimal("10.3")) is False  # time value 0.1 = half spread 0.1: readable
+    assert _is_noisy_itm_quote("CALL", Decimal(990), spot, Decimal("9.9"), Decimal("10.1")) is True  # mid = intrinsic 10: no time value at all
+    assert _is_noisy_itm_quote("CALL", Decimal(1010), spot, Decimal(1), Decimal("1.2")) is False  # OTM is never noisy
+    assert _is_noisy_itm_quote("CALL", Decimal(990), spot, Decimal(11), Decimal(10)) is False  # crossed quote: not judged

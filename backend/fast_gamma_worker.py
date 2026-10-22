@@ -48,6 +48,7 @@ async def run() -> None:
         container.calculate_gamma_exposure_orchestrator,
         time_to_expiration=_time_to_expiration_years,
         risk_free_rate=risk_free_rate,
+        itm_iv_from_twin=settings.thetadata_itm_iv_from_twin,
     )
     logger.info("Fast gamma worker running: symbols=%s interval=%.1fs", symbols, settings.fast_gamma_interval_seconds)
 

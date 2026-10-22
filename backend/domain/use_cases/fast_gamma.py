@@ -21,11 +21,21 @@ from dataclasses import dataclass, replace
 from datetime import date, datetime
 from decimal import Decimal
 
-from backend.domain.entities import DailyBar, GammaAggregate, OptionChain, OptionContract, OptionGreeks
+from backend.domain.entities import (
+    ContractType,
+    DailyBar,
+    GammaAggregate,
+    OptionChain,
+    OptionContract,
+    OptionGreeks,
+)
 from backend.domain.ports import IStorage
 from backend.domain.use_cases.calculate_atr_range import REQUIRED_DAILY_BARS
 from backend.domain.use_cases.calculate_bsm_greeks import calculate_bsm_greeks
-from backend.domain.use_cases.gamma import CalculateGammaExposureOrchestrator, TACTICAL_ENABLED_SYMBOLS
+from backend.domain.use_cases.gamma import (
+    TACTICAL_ENABLED_SYMBOLS,
+    CalculateGammaExposureOrchestrator,
+)
 from backend.domain.use_cases.market_hours import EASTERN_TIME
 
 logger = logging.getLogger(__name__)
@@ -68,6 +78,7 @@ class FastGammaLayer:
         chain_refresh_seconds: float = CHAIN_REFRESH_SECONDS,
         clock: Callable[[], float] = time.monotonic,
         now: Callable[[], datetime] = lambda: datetime.now(EASTERN_TIME),
+        itm_iv_from_twin: bool = False,
     ) -> None:
         self._storage = storage
         self._orchestrator = orchestrator
@@ -76,6 +87,9 @@ class FastGammaLayer:
         self._chain_refresh_seconds = chain_refresh_seconds
         self._clock = clock
         self._now = now
+        # Same rule as the REST cycle (ThetaDataProvider, Settings.thetadata_itm_iv_from_twin): a noisy in-the-money quote is re-priced with the IV of its OTM twin, so the 10-second columns do not
+        # fall back to the noisy IV the cycle already replaced.
+        self._itm_iv_from_twin = itm_iv_from_twin
         self._cache: dict[str, _CachedChain] = {}
         self._last_pass: dict[str, _LastPass] = {}
 
@@ -131,17 +145,27 @@ class FastGammaLayer:
         rate = self._risk_free_rate()
         chain = cached.chain
         old_spot = chain.spot_price
-        contracts = tuple(self._reprice(contract, spot, old_spot, rate, now_et) for contract in chain.contracts)
+        twin_iv = twin_iv_by_contract(chain.contracts, old_spot) if self._itm_iv_from_twin else {}
+        contracts = tuple(self._reprice(contract, spot, old_spot, rate, now_et, twin_iv) for contract in chain.contracts)
         moved = replace(chain, spot_price=spot, contracts=contracts)
         return self._orchestrator.build_tactical(symbol, moved, cached.daily_bars)
 
     def _reprice(
-        self, contract: OptionContract, spot: Decimal, old_spot: Decimal, rate: Decimal, now_et: datetime
+        self,
+        contract: OptionContract,
+        spot: Decimal,
+        old_spot: Decimal,
+        rate: Decimal,
+        now_et: datetime,
+        twin_iv: dict[tuple[date, Decimal, ContractType], Decimal] | None = None,
     ) -> OptionContract:
         iv = contract.iv
         if iv is None or iv <= 0:
             # Same rule as the cycle: no usable IV, no gamma (calculate_bsm_greeks returns zeros). The stored greeks already are those zeros.
             return contract
+        if twin_iv and is_noisy_itm_quote(contract.contract_type, contract.strike, old_spot, contract.bid, contract.ask):
+            other = ContractType.PUT if contract.contract_type == ContractType.CALL else ContractType.CALL
+            iv = twin_iv.get((contract.expiration, contract.strike, other), iv)
         bsm = calculate_bsm_greeks(
             spot, contract.strike, rate, iv, self._time_to_expiration(contract.expiration, now_et)
         )
@@ -158,3 +182,26 @@ class FastGammaLayer:
                 vanna=bsm.vanna,
             ),
         )
+
+
+def is_noisy_itm_quote(contract_type: ContractType, strike: Decimal, spot: Decimal, bid: Decimal, ask: Decimal) -> bool:
+    """An in-the-money quote whose time value (mid - intrinsic) is smaller than half its bid/ask spread: the price says almost nothing about volatility, so the IV solved from it is noise-prone
+    (measured 2026-10-19: such contracts' IV runs 2-7 vol points above the OTM side of the same strike). The same rule as ThetaDataProvider._is_noisy_itm_quote and the chart's hasReadableIv."""
+    if not ask >= bid:
+        return False
+    intrinsic = max(spot - strike, Decimal(0)) if contract_type == ContractType.CALL else max(strike - spot, Decimal(0))
+    if intrinsic <= 0:
+        return False
+    return (bid + ask) / 2 - intrinsic < (ask - bid) / 2
+
+
+def twin_iv_by_contract(contracts: tuple[OptionContract, ...], spot: Decimal) -> dict[tuple[date, Decimal, ContractType], Decimal]:
+    """The IV of every readable (positive IV, not noisy-ITM) contract keyed by (expiration, strike, type): the OTM side of a strike is the reliable one and, by put-call parity, also the IV of its ITM twin."""
+    twins: dict[tuple[date, Decimal, ContractType], Decimal] = {}
+    for contract in contracts:
+        if contract.iv is None or contract.iv <= 0:
+            continue
+        if is_noisy_itm_quote(contract.contract_type, contract.strike, spot, contract.bid, contract.ask):
+            continue
+        twins[(contract.expiration, contract.strike, contract.contract_type)] = contract.iv
+    return twins

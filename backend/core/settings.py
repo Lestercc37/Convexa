@@ -49,6 +49,10 @@ class Settings(BaseSettings):
     # process with the live stream. OFF by default; set QLL_THETADATA_RECONCILE_ENABLED=true
     # and restart the Worker to bring it back without reverting any code.
     thetadata_reconcile_enabled: bool = Field(default=False)
+    # Gamma / vanna / charm of an in-the-money contract with no readable time value (its IV is noise-prone) use the IV of its OTM twin (same strike and expiration, the other right).
+    # Measured 2026-10-19 on stored chains: the levels (flip, walls, ABS) do not move, the vanna / charm / net sums move by 10-500 %. ON by default since Lester's yes on 2026-10-22; the REST cycle (provider)
+    # and the 10-second fast layer apply the same rule. QLL_THETADATA_ITM_IV_FROM_TWIN=false and a restart of the scheduler worker and the fast gamma worker turn it off. See docs/hm_iv_noise_levels.py.
+    thetadata_itm_iv_from_twin: bool = Field(default=True)
     # The stream processor keeps the last changed bid/ask of every contract per minute in
     # option_quote_minutes (migration 0040). QLL_OPTION_QUOTE_MINUTES_ENABLED=false and a restart of
     # ConvexaStreamProcessor switches it off without reverting any code.

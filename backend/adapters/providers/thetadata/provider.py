@@ -611,6 +611,35 @@ def _time_to_expiration_years(expiration_date: date, quote_time_et: datetime) ->
     return Decimal(max(seconds_remaining, THETADATA_MINIMUM_TIME_SECONDS)) / Decimal(86400) / Decimal(365)
 
 
+def _is_noisy_itm_quote(right: str, strike: Decimal, spot: Decimal, bid: Decimal, ask: Decimal) -> bool:
+    """An in-the-money quote whose time value (mid - intrinsic) is smaller than half its bid/ask spread: the price carries almost no information about volatility, so the IV solved from it is
+    noise-prone (measured 2026-10-19: those contracts' IV runs 2-7 vol points above the OTM side of the same strike). Same rule as the chart's `hasReadableIv`."""
+    if not ask >= bid:
+        return False
+    intrinsic = max(spot - strike, Decimal(0)) if right == "CALL" else max(strike - spot, Decimal(0))
+    if intrinsic <= 0:
+        return False
+    return (bid + ask) / 2 - intrinsic < (ask - bid) / 2
+
+
+def _twin_iv_by_strike_and_right(entries: list[dict[str, Any]]) -> dict[tuple[Decimal, str], Decimal]:
+    """The IV of every readable (not noisy-ITM) contract of one expiration, keyed by (strike, right): the OTM side of a strike is the reliable one, and by put-call parity it
+    is also the IV of its ITM twin."""
+    twins: dict[tuple[Decimal, str], Decimal] = {}
+    for entry in entries:
+        meta = entry["contract"]
+        data = entry["data"][0]
+        iv = Decimal(str(data["implied_vol"]))
+        if iv <= 0:
+            continue
+        right = meta["right"]
+        strike = Decimal(str(meta["strike"]))
+        if _is_noisy_itm_quote(right, strike, Decimal(str(data["underlying_price"])), Decimal(str(data["bid"])), Decimal(str(data["ask"]))):
+            continue
+        twins[(strike, right)] = iv
+    return twins
+
+
 def _nearest_expiration_cutoff(now_et: datetime) -> date:
     """The earliest expiration date still eligible to be picked as the
     "nearest" one -- before MARKET_CLOSE_ET today's own date counts (a
@@ -2397,8 +2426,11 @@ class ThetaDataProvider:
         ws_url: str,
         request_slots: PostgresThetaRequestSlots | InProcessThetaRequestSlots | None = None,
         reconcile_enabled: bool = True,
+        itm_iv_from_twin: bool = False,
     ) -> None:
         self._client = httpx.Client(base_url=rest_base_url, timeout=10.0)
+        # Gamma / vanna / charm of a noisy in-the-money quote are computed with the IV of its OTM twin (see _is_noisy_itm_quote); the contract's own `iv` field stays ThetaData's. Off by default.
+        self._itm_iv_from_twin = itm_iv_from_twin
         # REST calls currently running in this process (diagnostics only: see _log_thetadata_transport_failure)
         self._rest_in_flight = 0
         self._rest_in_flight_lock = threading.Lock()
@@ -3267,6 +3299,7 @@ class ThetaDataProvider:
         contracts = []
         crossed_quotes: list[tuple[str, Decimal, Decimal]] = []
         for chain in gamma_calc_chains:
+            twin_iv = _twin_iv_by_strike_and_right(chain.entries) if self._itm_iv_from_twin else {}
             # Time to expiration is computed per contract below, from that
             # contract's own quote time, because that is what ThetaData's IV
             # was solved with (see _time_to_expiration_years).
@@ -3295,7 +3328,10 @@ class ThetaDataProvider:
                 vega = Decimal(str(data["vega"]))
                 as_of = _parse_et_timestamp(data["timestamp"])
                 time_to_expiration = _time_to_expiration_years(chain.expiration, as_of)
-                bsm = calculate_bsm_greeks(underlying_price, strike, rate, iv, time_to_expiration)
+                greeks_iv = iv
+                if twin_iv and iv > 0 and _is_noisy_itm_quote(right, strike, underlying_price, bid, ask):
+                    greeks_iv = twin_iv.get((strike, "PUT" if right == "CALL" else "CALL"), iv)
+                bsm = calculate_bsm_greeks(underlying_price, strike, rate, greeks_iv, time_to_expiration)
 
                 occ_symbol = _build_occ_symbol(root, chain.expiration, contract_type, strike)
                 open_interest = open_interest_by_key.get((root, strike, right, chain.expiration), 0)
