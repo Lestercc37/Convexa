@@ -38,8 +38,16 @@ def test_endpoint_answers_an_empty_list_when_nothing_is_stored() -> None:
 
 def test_endpoint_rejects_unknown_timeframes_and_session_counts() -> None:
     with TestClient(app) as client:
-        for query in ("?timeframe=1m", "?timeframe=2h", "?sessions=0", "?sessions=11"):
+        for query in ("?timeframe=2h", "?sessions=0", "?sessions=11", "?timeframe=1m&sessions=6"):
             assert client.get(f"/api/v1/market/SPX/candles{query}").status_code == 422, query
+
+
+def test_endpoint_serves_one_minute_candles_for_the_moving_averages_up_to_five_sessions() -> None:
+    with TestClient(app) as client:
+        for sessions in (1, 5):
+            response = client.get(f"/api/v1/market/SPX/candles?timeframe=1m&sessions={sessions}")
+            assert response.status_code == 200, sessions
+            assert response.json()["timeframe"] == "1m"
 
 
 def test_futures_have_no_multi_session_candles() -> None:

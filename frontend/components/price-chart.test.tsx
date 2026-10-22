@@ -45,6 +45,7 @@ const chartMocks = vi.hoisted(() => ({
   getOptionChain: vi.fn(),
   getOptionChainExpirations: vi.fn(),
   getMinuteFlow: vi.fn(),
+  getPriceCandles: vi.fn(),
 }));
 
 vi.mock("@/lib/api", async () => {
@@ -62,6 +63,7 @@ vi.mock("@/lib/api", async () => {
     getOptionChain: chartMocks.getOptionChain,
     getOptionChainExpirations: chartMocks.getOptionChainExpirations,
     getMinuteFlow: chartMocks.getMinuteFlow,
+    getPriceCandles: chartMocks.getPriceCandles,
   };
 });
 
@@ -137,6 +139,8 @@ beforeEach(() => {
   chartMocks.getOptionChainExpirations.mockResolvedValue({ schema_version: 1, symbol: "SPY", expirations: [] });
   chartMocks.getOptionChain.mockResolvedValue({ schema_version: 1, symbol: "SPY", as_of: "2026-08-06T14:31:40Z", spot_price: 505, contracts: [] });
   chartMocks.getMinuteFlow.mockResolvedValue({ schema_version: 1, symbol: "SPY", minutes: [] });
+  chartMocks.getPriceCandles.mockResolvedValue({ schema_version: 1, symbol: "SPY", timeframe: "1m", sessions: 5, candles: [] });
+  window.localStorage.clear();
   chartMocks.getGammaHistory.mockResolvedValue({
     schema_version: 1,
     symbol: "SPY",
@@ -792,6 +796,83 @@ describe("PriceChart", () => {
     await user.click(screen.getByLabelText("Flujo"));
     expect(chartMocks.removeSeries).toHaveBeenCalledTimes(2); // both flow series leave with the toggle
     expect(screen.queryByText("Flujo desde la apertura")).not.toBeInTheDocument(); // the line leaves with the toggle
+  });
+
+  it("EMAs: the menu starts empty and any typed period draws a coloured line with the EMA of the candle closes, persisted in this browser", async () => {
+    const user = userEvent.setup();
+    renderWithLanguage(<PriceChart symbol="SPY" candles={candlesWithRange} gamma={gamma} gammaView="tactical" />);
+    expect(chartMocks.getPriceCandles).not.toHaveBeenCalled(); // no line, no request
+
+    await user.click(screen.getByRole("button", { name: "EMAs" }));
+    expect(screen.getByText("Sin medias: escribe un período y agrégalo.")).toBeInTheDocument();
+    await user.type(screen.getByLabelText("Período de la nueva EMA"), "2");
+    await user.click(screen.getByRole("button", { name: "Agregar" }));
+
+    await waitFor(() => expect(chartMocks.addSeries).toHaveBeenCalledWith("LineSeries", expect.objectContaining({ color: "#f5c542" })));
+    await waitFor(() => expect(chartMocks.getPriceCandles).toHaveBeenCalledWith("SPY", "1m", 5, expect.any(AbortSignal)));
+    await waitFor(() => {
+      const emaCalls = chartMocks.lineSetData.mock.calls.map((call) => call[0] as { time: number; value: number }[]).filter((data) => data.length === 2 && data[0].value === 500);
+      expect(emaCalls.length).toBeGreaterThan(0);
+      expect(emaCalls.at(-1)![1].value).toBeCloseTo(503.3333, 3); // alpha 2/3: (2/3) * 505 + (1/3) * 500
+    });
+    expect(JSON.parse(window.localStorage.getItem("convexa.ema.v1")!)).toEqual([{ id: "ema-2", period: 2, color: "#f5c542", visible: true }]);
+
+    chartMocks.removeSeries.mockClear();
+    await user.click(screen.getByLabelText("Mostrar EMA 2")); // hide
+    await waitFor(() => expect(chartMocks.removeSeries).toHaveBeenCalledTimes(1));
+    await user.click(screen.getByRole("button", { name: "Quitar EMA 2" }));
+    expect(screen.getByText("Sin medias: escribe un período y agrégalo.")).toBeInTheDocument();
+    expect(JSON.parse(window.localStorage.getItem("convexa.ema.v1")!)).toEqual([]);
+  });
+
+  it("EMAs: an invalid or repeated period is refused with a message and the previous sessions warm the line up", async () => {
+    chartMocks.getPriceCandles.mockResolvedValue({
+      schema_version: 1,
+      symbol: "SPY",
+      timeframe: "1m",
+      sessions: 5,
+      candles: [
+        { time: 1_785_763_680, open: 100, high: 100, low: 100, close: 100 },
+        { time: 1_785_763_740, open: 100, high: 100, low: 100, close: 100 },
+        { time: 1_785_763_800, open: 495, high: 505, low: 490, close: 500 }, // today's first candle again: must not count twice
+      ],
+    });
+    const user = userEvent.setup();
+    renderWithLanguage(<PriceChart symbol="SPY" candles={candlesWithRange} gamma={gamma} gammaView="tactical" />);
+    await user.click(screen.getByRole("button", { name: "EMAs" }));
+    const input = screen.getByLabelText("Período de la nueva EMA");
+    await user.type(input, "0");
+    await user.click(screen.getByRole("button", { name: "Agregar" }));
+    expect(screen.getByRole("alert")).toHaveTextContent("Escribe un número entero entre 1 y 1000.");
+
+    await user.clear(input);
+    await user.type(input, "2");
+    await user.click(screen.getByRole("button", { name: "Agregar" }));
+    await user.type(input, "2");
+    await user.click(screen.getByRole("button", { name: "Agregar" }));
+    expect(screen.getByRole("alert")).toHaveTextContent("Esa EMA ya está en la lista.");
+
+    await waitFor(() => {
+      const warmed = chartMocks.lineSetData.mock.calls.map((call) => call[0] as { value: number }[]).filter((data) => data.length === 2 && data[0].value > 360 && data[0].value < 370);
+      expect(warmed.length).toBeGreaterThan(0);
+      expect(warmed.at(-1)![0].value).toBeCloseTo(366.6667, 3); // seed [100, 100] then 500 at alpha 2/3
+      expect(warmed.at(-1)![1].value).toBeCloseTo(458.8889, 3);
+    });
+  });
+
+  it("EMAs: a saved list comes back with the chart, hidden lines get no series", async () => {
+    window.localStorage.setItem(
+      "convexa.ema.v1",
+      JSON.stringify([
+        { id: "ema-9", period: 9, color: "#4aa8ff", visible: true },
+        { id: "ema-50", period: 50, color: "#ff7a59", visible: false },
+      ]),
+    );
+    renderWithLanguage(<PriceChart symbol="SPY" candles={candlesWithRange} gamma={gamma} gammaView="tactical" />);
+
+    await waitFor(() => expect(chartMocks.addSeries).toHaveBeenCalledWith("LineSeries", expect.objectContaining({ color: "#4aa8ff" })));
+    expect(chartMocks.addSeries).not.toHaveBeenCalledWith("LineSeries", expect.objectContaining({ color: "#ff7a59" }));
+    expect(screen.getByRole("button", { name: /EMAs \(1\/2\)/ })).toBeInTheDocument();
   });
 
   it("feeds the profile from the latest heatmap values for vanna and charm, with their own colours and caption", async () => {

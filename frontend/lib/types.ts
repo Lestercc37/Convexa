@@ -217,7 +217,7 @@ export type GammaHistoryResponse = {
 export type PriceCandlesResponse = {
   schema_version: number;
   symbol: string;
-  timeframe: "5m" | "15m" | "30m" | "1h";
+  timeframe: "1m" | "5m" | "15m" | "30m" | "1h";
   sessions: number;
   candles: { time: number; open: number; high: number; low: number; close: number }[];
 };
