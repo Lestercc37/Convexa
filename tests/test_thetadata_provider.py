@@ -2671,6 +2671,13 @@ class TestStreamHubResubscribeOrder:
         assert sec_types.index("STOCK") < sec_types.index("OPTION")
 
 
+def _live_old_connection(stream: ThetaStreamHub) -> None:
+    """A connection that has been open (and the market open) for a long time: the state the silence checks are meant to judge."""
+    stream._active_websocket = object()  # type: ignore[assignment]
+    stream._connection_opened_at = time.monotonic() - 3600
+    stream._market_open_since = time.monotonic() - 3600
+
+
 class TestStreamHubDataSilenceWatchdog:
     """One watchdog task now tracks 3 independent timestamps (QUOTE,
     option TRADE, underlying TRADE) instead of 3 separate classes each
@@ -2689,6 +2696,7 @@ class TestStreamHubDataSilenceWatchdog:
         reconnects: list[int] = []
         monkeypatch.setattr(stream, "request_reconnect", lambda: reconnects.append(1))
         monkeypatch.setattr(provider_module, "is_market_open", lambda now: True)
+        _live_old_connection(stream)
         stream._last_quote_at = (
             time.monotonic() - provider_module.DATA_SILENCE_THRESHOLD_SECONDS - 1
         )
@@ -2708,6 +2716,7 @@ class TestStreamHubDataSilenceWatchdog:
         reconnects: list[int] = []
         monkeypatch.setattr(stream, "request_reconnect", lambda: reconnects.append(1))
         monkeypatch.setattr(provider_module, "is_market_open", lambda now: True)
+        _live_old_connection(stream)
         stream._last_option_trade_at = (
             time.monotonic() - provider_module.DATA_SILENCE_THRESHOLD_SECONDS - 1
         )
@@ -2734,6 +2743,7 @@ class TestStreamHubDataSilenceWatchdog:
         reconnects: list[int] = []
         monkeypatch.setattr(stream, "request_reconnect", lambda: reconnects.append(1))
         monkeypatch.setattr(provider_module, "is_market_open", lambda now: True)
+        _live_old_connection(stream)
         stream._last_underlying_trade_at = (
             time.monotonic() - provider_module.DATA_SILENCE_THRESHOLD_SECONDS - 1
         )
@@ -2779,6 +2789,7 @@ class TestStreamHubDataSilenceWatchdog:
         reconnects: list[int] = []
         monkeypatch.setattr(stream, "request_reconnect", lambda: reconnects.append(1))
         monkeypatch.setattr(provider_module, "is_market_open", lambda now: True)
+        _live_old_connection(stream)
         assert stream._last_quote_at is None
         assert stream._last_option_trade_at is None
         assert stream._last_underlying_trade_at is None
@@ -2798,6 +2809,7 @@ class TestStreamHubDataSilenceWatchdog:
         reconnects: list[int] = []
         monkeypatch.setattr(stream, "request_reconnect", lambda: reconnects.append(1))
         monkeypatch.setattr(provider_module, "is_market_open", lambda now: True)
+        _live_old_connection(stream)
         fresh = time.monotonic()  # well under the threshold
         stream._last_quote_at = fresh
         stream._last_option_trade_at = fresh
@@ -4099,3 +4111,76 @@ class TestCrossedQuoteSkipsOnlyThatContract:
 
         with pytest.raises(RuntimeError, match="no usable contracts"):
             provider.get_option_chain("SPX", expiration=date(2026, 9, 18))
+
+
+class TestStreamHubDataSilenceWatchdogLockStep:
+    """2026-10-22: from 09:30 to 09:55 no stream data reached us because the watchdog closed every new connection within seconds (the 2026-10-04 lock-step, fixed then for STATUS only)."""
+
+    @staticmethod
+    def _stream(monkeypatch: pytest.MonkeyPatch) -> tuple[ThetaStreamHub, list[int]]:
+        stream = ThetaStreamHub(WS_URL, httpx.Client(base_url=REST_URL))
+        reconnects: list[int] = []
+        monkeypatch.setattr(stream, "request_reconnect", lambda: reconnects.append(1))
+        monkeypatch.setattr(provider_module, "is_market_open", lambda now: True)
+        return stream, reconnects
+
+    @pytest.mark.asyncio
+    async def test_no_reconnect_while_there_is_no_live_connection(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        stream, reconnects = self._stream(monkeypatch)
+        stale = time.monotonic() - 10_000
+        stream._last_quote_at = stream._last_option_trade_at = stream._last_underlying_trade_at = stale
+        stream._market_open_since = time.monotonic() - 3600
+        assert stream._active_websocket is None
+        monkeypatch.setattr(asyncio, "sleep", _fake_sleep_letting_n_iterations_run(3))
+        with pytest.raises(asyncio.CancelledError):
+            await stream._watch_for_data_silence()
+        assert reconnects == []
+
+    @pytest.mark.asyncio
+    async def test_a_connection_that_just_opened_is_not_closed_for_silence_that_predates_it(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        stream, reconnects = self._stream(monkeypatch)
+        stale = time.monotonic() - 600  # the last messages came long before this connection
+        stream._last_quote_at = stream._last_option_trade_at = stream._last_underlying_trade_at = stale
+        stream._market_open_since = time.monotonic() - 3600
+        stream._active_websocket = object()  # type: ignore[assignment]
+        stream._connection_opened_at = time.monotonic() - 3  # opened 3 s ago
+        monkeypatch.setattr(asyncio, "sleep", _fake_sleep_letting_n_iterations_run(1))
+        with pytest.raises(asyncio.CancelledError):
+            await stream._watch_for_data_silence()
+        assert reconnects == []
+
+    @pytest.mark.asyncio
+    async def test_a_connection_that_stays_silent_past_the_threshold_is_still_closed(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        stream, reconnects = self._stream(monkeypatch)
+        stream._last_option_trade_at = time.monotonic() - 600
+        stream._market_open_since = time.monotonic() - 3600
+        stream._active_websocket = object()  # type: ignore[assignment]
+        stream._connection_opened_at = time.monotonic() - provider_module.DATA_SILENCE_THRESHOLD_SECONDS - 1
+        monkeypatch.setattr(asyncio, "sleep", _fake_sleep_letting_n_iterations_run(1))
+        with pytest.raises(asyncio.CancelledError):
+            await stream._watch_for_data_silence()
+        assert reconnects == [1]
+
+    @pytest.mark.asyncio
+    async def test_the_first_seconds_of_the_open_do_not_count_the_hours_since_the_last_close(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        stream, reconnects = self._stream(monkeypatch)
+        stream._last_option_trade_at = time.monotonic() - 62_105  # yesterday's last trade
+        stream._last_quote_at = stream._last_underlying_trade_at = time.monotonic() - 62_105
+        stream._active_websocket = object()  # type: ignore[assignment]
+        stream._connection_opened_at = time.monotonic() - 62_000  # a connection that lived through the night
+        assert stream._market_open_since is None  # the first tick of the open sets it
+        monkeypatch.setattr(asyncio, "sleep", _fake_sleep_letting_n_iterations_run(1))
+        with pytest.raises(asyncio.CancelledError):
+            await stream._watch_for_data_silence()
+        assert reconnects == []
+        assert stream._market_open_since is not None
+
+    @pytest.mark.asyncio
+    async def test_the_market_state_is_forgotten_when_it_closes(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        stream = ThetaStreamHub(WS_URL, httpx.Client(base_url=REST_URL))
+        monkeypatch.setattr(provider_module, "is_market_open", lambda now: False)
+        stream._market_open_since = time.monotonic() - 100
+        monkeypatch.setattr(asyncio, "sleep", _fake_sleep_letting_n_iterations_run(1))
+        with pytest.raises(asyncio.CancelledError):
+            await stream._watch_for_data_silence()
+        assert stream._market_open_since is None

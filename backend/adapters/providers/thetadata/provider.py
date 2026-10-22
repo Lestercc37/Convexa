@@ -963,6 +963,8 @@ class ThetaStreamHub:
         # opened connection is never judged against a STATUS timestamp left
         # over from before the outage -- see _watch_for_data_silence.
         self._connection_opened_at = 0.0
+        # When the market was first seen open by the data-silence watchdog (monotonic); None while closed. Silence is measured from this too, so the 17 hours since yesterday's last trade never count.
+        self._market_open_since: float | None = None
         self._watchdog_task: asyncio.Task[None] | None = None
         # Message-lag diagnostic (added 2026-10-02) -- see
         # _parse_stream_tick_timestamp's own docstring and
@@ -1284,6 +1286,15 @@ class ThetaStreamHub:
                     self.request_reconnect()
                     self._last_status_at = now
             if not is_market_open(utc_now()):
+                self._market_open_since = None
+                continue
+            if self._market_open_since is None:
+                self._market_open_since = now
+            # Same rule as the STATUS check above, now for QUOTE / option TRADE / underlying TRADE (2026-10-22: the stream sat dead from 09:30 to 09:55). The silence is judged only while a
+            # connection is live and is counted from the LATEST of: the last message, the moment this connection opened, and the moment the market was first seen open. Before, `now - last_at`
+            # was compared even with no connection, and at the first tick of the open the last trade was 17 hours old: the open forced a reconnect, and with the reconnect backoff at its 60 s cap
+            # (3 x 20 s) every new connection was closed ~6 s after opening, before a freshly started Terminal could log in to FPSS and send its first frame (the 2026-10-04 lock-step again).
+            if self._active_websocket is None:
                 continue
             for name, attr in (
                 ("QUOTE", "_last_quote_at"),
@@ -1293,7 +1304,7 @@ class ThetaStreamHub:
                 last_at = getattr(self, attr)
                 if last_at is None:
                     continue
-                silence = now - last_at
+                silence = now - max(last_at, self._connection_opened_at, self._market_open_since)
                 if silence > DATA_SILENCE_THRESHOLD_SECONDS:
                     logger.warning(
                         "ThetaStreamHub: no %s message in %.0fs during market hours -- "
