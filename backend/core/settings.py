@@ -87,6 +87,9 @@ class Settings(BaseSettings):
     # volume is computed differently because of it. Kill switch for the
     # per-trade accumulation: QLL_WHALE_ALERTS_STORE_CONDITIONS=false.
     whale_alerts_store_conditions: bool = Field(default=True)
+    # Alerts from the open: UNUSUAL / WHALE from 2 finalized minutes and SUSTAINED_FLOW from 3 minutes with a prorated minimum, instead of waiting 5 / 15 minutes
+    # (WhaleAlertsEngine._MIN_PREVIOUS_BUCKETS_PARTIAL). Kill switch: QLL_WHALE_ALERTS_PARTIAL_WINDOWS=false.
+    whale_alerts_partial_windows: bool = Field(default=True)
     # Local-only TCP link (see backend/core/stream_processor_relay.py):
     # worker.py forwards raw QUOTE/TRADE WS frames to
     # backend/stream_processor_worker.py's own process over this, and
