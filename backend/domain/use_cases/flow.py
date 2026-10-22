@@ -451,6 +451,13 @@ class WhaleAlertsEngine:
 
     _WINDOW_SIZE = 5
     _SUSTAINED_WINDOW_SIZE = 15
+    # Alerts from the open (Lester 2026-10-22: the flow of the 09:30 algorithms reached him at 09:45). With partial windows (default) a contract's alerts start
+    # as soon as its own history allows: UNUSUAL / WHALE from 2 finalized minutes (compared with the average of the minutes it has, at most 5) and SUSTAINED_FLOW
+    # from 3 minutes against a PRORATED minimum (sustained_flow_min x minutes / 15); at 15 minutes it is exactly the old rule. Replay on stage-3 trades:
+    # docs/hm_open_alerts_replay.py (SPXW +14 % alerts per day, SPY +6 %, median first alert 3 minutes instead of 15). Production: Settings.whale_alerts_partial_windows,
+    # kill switch QLL_WHALE_ALERTS_PARTIAL_WINDOWS=false.
+    _MIN_PREVIOUS_BUCKETS_PARTIAL = 2
+    _MIN_SUSTAINED_BUCKETS_PARTIAL = 3
     _CONTRACT_MULTIPLIER = Decimal(100)
     # See this class's own docstring for the live measurements behind this
     # number. process_trade() is called concurrently from many different
@@ -481,8 +488,12 @@ class WhaleAlertsEngine:
         thresholds_cache_ttl_seconds: float = _THRESHOLDS_CACHE_TTL_SECONDS,
         bvc_alerts_enabled: bool = True,
         store_conditions: bool = True,
+        partial_windows: bool = False,
     ) -> None:
         self._storage = storage
+        # See _MIN_PREVIOUS_BUCKETS_PARTIAL. The class default stays False (the 5 / 15 full-window rule, so every direct caller and test is unchanged);
+        # production turns it on through Settings.whale_alerts_partial_windows (default True) in build_whale_alerts_engine.
+        self._partial_windows = partial_windows
         # True: process_trade() also tallies each bucket's premium by OPRA
         # trade-condition code and _emit() stores it on the alert. Capture
         # only -- see WhaleAlert.condition_premium. Settings.
@@ -869,8 +880,9 @@ class WhaleAlertsEngine:
         finalized_contracts = state.bucket_contracts
         finalized_bucket_start = state.bucket_start
 
-        if len(state.previous_amounts) == self._WINDOW_SIZE:
-            average_amount = sum(state.previous_amounts, Decimal()) / self._WINDOW_SIZE
+        min_previous = self._MIN_PREVIOUS_BUCKETS_PARTIAL if self._partial_windows else self._WINDOW_SIZE
+        if len(state.previous_amounts) >= min_previous:
+            average_amount = sum(state.previous_amounts, Decimal()) / len(state.previous_amounts)
             alert_type = self._classify(finalized_amount, average_amount, thresholds)
             if alert_type is not None:
                 generated.append(
@@ -899,9 +911,12 @@ class WhaleAlertsEngine:
         state.sustained_condition_premium.append(finalized_condition_premium)
         state.sustained_simple_flow.append(finalized_simple_flow)
         state.sustained_contracts.append(finalized_contracts)
-        if len(state.sustained_amounts) == self._SUSTAINED_WINDOW_SIZE:
+        buckets = len(state.sustained_amounts)
+        min_buckets = self._MIN_SUSTAINED_BUCKETS_PARTIAL if self._partial_windows else self._SUSTAINED_WINDOW_SIZE
+        if buckets >= min_buckets:
             sustained_total = sum(state.sustained_amounts, Decimal())
-            if sustained_total >= thresholds.sustained_flow_min:
+            required = thresholds.sustained_flow_min * Decimal(buckets) / Decimal(self._SUSTAINED_WINDOW_SIZE)
+            if sustained_total >= required:
                 if not state.sustained_alerted:
                     state.sustained_alerted = True
                     generated.append(
@@ -918,8 +933,8 @@ class WhaleAlertsEngine:
                             _merge_condition_premium(state.sustained_condition_premium),
                             _merge_simple_flow(state.sustained_simple_flow),
                             sum(state.sustained_contracts),
-                            finalized_bucket_start - timedelta(minutes=self._SUSTAINED_WINDOW_SIZE - 1),
-                            self._SUSTAINED_WINDOW_SIZE,
+                            finalized_bucket_start - timedelta(minutes=buckets - 1),
+                            buckets,
                         )
                     )
             else:
