@@ -26,6 +26,7 @@ import { recordChartEvent } from "@/lib/chart-lifecycle";
 import { useLanguage } from "@/lib/i18n/language-context";
 import type { MarketPriceStreamStatus } from "@/lib/market-price-stream";
 import { currentEasternDate, EASTERN_TIME_ZONE, heatmapStartSeconds, mostRecentSessionRange } from "@/lib/market-session";
+import { formatDeltaFlow, formatPremium, summarizeOpeningAlerts, summarizeOpeningFlow, type OpeningAlerts, type OpeningFlow } from "@/lib/opening-flow";
 import type {
   AtrRange,
   ExpectedMove,
@@ -541,6 +542,9 @@ export function PriceChart({
   const [showSmile, setShowSmile] = useState(true);
   // The minute flow panes (calls and puts, under the candles, hidden by default): one histogram series each, in its own pane so the time axis and the crosshair are the candles'.
   const [showFlow, setShowFlow] = useState(false);
+  // The flow since the open, summarised from the poll the flow panes already make (no extra request) and shown in a line above the chart; the alerts half comes from the cubes' poll.
+  const [openingFlow, setOpeningFlow] = useState<OpeningFlow | null>(null);
+  const [openingAlerts, setOpeningAlerts] = useState<OpeningAlerts | null>(null);
   // The Smile's expiration: "" = the nearest current one; the list of the symbol's current expirations; and the dot under the mouse (strike, IV and where it is on screen).
   // Both are remembered together with the symbol they belong to, so a symbol switch needs no reset: what was chosen for another symbol reads as "nothing chosen".
   const [smileChoice, setSmileChoice] = useState<{ symbol: string; date: string }>({ symbol, date: "" });
@@ -970,6 +974,7 @@ export function PriceChart({
       const start = new Date(heatmapStartSeconds(lastCandleTimeRef.current) * 1000);
       getMinuteFlow(symbol, { start }, controller.signal)
         .then((response) => {
+          setOpeningFlow(summarizeOpeningFlow(response, heatmapStartSeconds(lastCandleTimeRef.current) + 3600));
           const bars = flowBarsFromResponse(response, timeframe);
           calls.setData(bars.calls.map((bar) => ({ ...bar, time: bar.time as UTCTimestamp })));
           puts.setData(bars.puts.map((bar) => ({ ...bar, time: bar.time as UTCTimestamp })));
@@ -985,6 +990,7 @@ export function PriceChart({
       window.clearInterval(interval);
       chart.removeSeries(calls);
       chart.removeSeries(puts);
+      setOpeningFlow(null);
     };
   }, [showFlow, symbol, timeframe, t]);
 
@@ -1057,7 +1063,10 @@ export function PriceChart({
     const controller = new AbortController();
     const refresh = () => {
       getAlerts(symbol, controller.signal, 500)
-        .then((response) => setCubeAlerts(response.alerts))
+        .then((response) => {
+          setCubeAlerts(response.alerts);
+          setOpeningAlerts(summarizeOpeningAlerts(response.alerts, heatmapStartSeconds(lastCandleTimeRef.current) + 3600));
+        })
         .catch(() => {
           // A failed poll keeps the cubes already drawn; the next one retries.
         });
@@ -1071,6 +1080,7 @@ export function PriceChart({
       series.detachPrimitive(primitive);
       cubesPrimitiveRef.current = null;
       setHoveredCube(null);
+      setOpeningAlerts(null);
     };
   }, [showAlertCubes, symbol]);
 
@@ -1693,6 +1703,39 @@ export function PriceChart({
           )}
         </div>
       </div>
+      {showFlow && openingFlow && (
+        <div className="opening-flow-strip" role="status" title={t.priceChart.openingFlowHint}>
+          <strong>{t.priceChart.openingFlowLabel}</strong>
+          <span className={openingFlow.calls >= 0 ? "opening-flow-up" : "opening-flow-down"}>
+            Calls {formatDeltaFlow(openingFlow.calls)} Δ
+          </span>
+          <span className={openingFlow.puts >= 0 ? "opening-flow-up" : "opening-flow-down"}>
+            Puts {formatDeltaFlow(openingFlow.puts)} Δ
+          </span>
+          <span className={openingFlow.net >= 0 ? "opening-flow-up" : "opening-flow-down"}>
+            {t.priceChart.openingFlowNet} {formatDeltaFlow(openingFlow.net)} Δ
+          </span>
+          {openingFlow.classifiedShare !== null && (
+            <span className="opening-flow-dim">
+              {Math.round(openingFlow.classifiedShare * 100)}% {t.priceChart.openingFlowClassified}
+            </span>
+          )}
+          {openingAlerts && (
+            <span className="opening-flow-alerts">
+              {t.priceChart.openingFlowAlerts}:{" "}
+              <span className="opening-flow-up">
+                {formatPremium(openingAlerts.bullishPremium)} {t.priceChart.openingFlowBullish} ({openingAlerts.bullishCount})
+              </span>{" "}
+              <span className="opening-flow-down">
+                {formatPremium(openingAlerts.bearishPremium)} {t.priceChart.openingFlowBearish} ({openingAlerts.bearishCount})
+              </span>{" "}
+              <span className="opening-flow-dim">
+                {openingAlerts.unclearCount} {t.priceChart.openingFlowUnclear}
+              </span>
+            </span>
+          )}
+        </div>
+      )}
       <div className="price-chart-frame">
         <div
           ref={containerRef}

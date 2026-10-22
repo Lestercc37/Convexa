@@ -781,10 +781,17 @@ describe("PriceChart", () => {
       expect(arrays.some((bars) => bars.map((bar) => bar.value).join() === "12.5,-3")).toBe(true); // calls, per candle minute
       expect(arrays.some((bars) => bars.map((bar) => bar.value).join() === "-4,2")).toBe(true); // puts
     });
+    // the line above the chart sums the flow since the open (calls 12.5 - 3, puts -4 + 2, mean classified share 55 %), from the same poll
+    expect(await screen.findByText("Flujo desde la apertura")).toBeInTheDocument();
+    expect(screen.getByText("Calls +10 Δ")).toBeInTheDocument();
+    expect(screen.getByText("Puts −2 Δ")).toBeInTheDocument();
+    expect(screen.getByText("Neto +8 Δ")).toBeInTheDocument();
+    expect(screen.getByText("55% clasificado")).toBeInTheDocument();
 
     chartMocks.removeSeries.mockClear();
     await user.click(screen.getByLabelText("Flujo"));
     expect(chartMocks.removeSeries).toHaveBeenCalledTimes(2); // both flow series leave with the toggle
+    expect(screen.queryByText("Flujo desde la apertura")).not.toBeInTheDocument(); // the line leaves with the toggle
   });
 
   it("feeds the profile from the latest heatmap values for vanna and charm, with their own colours and caption", async () => {

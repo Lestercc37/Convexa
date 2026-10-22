@@ -357,6 +357,11 @@ button, select { font: inherit; }
 .level-mode-selector button { border: 0; border-radius: 6px; background: transparent; color: var(--tv-text-dim); cursor: pointer; font: inherit; font-size: 0.7rem; padding: 4px 7px; }
 .level-mode-selector button[aria-pressed="true"] { background: var(--tv-panel-raised); color: var(--tv-text); }
 
+.opening-flow-strip { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 14px; padding: 4px 10px; font-size: 0.72rem; color: var(--tv-text); background: var(--tv-panel, transparent); border-bottom: 1px solid var(--tv-border, rgba(128, 128, 128, 0.25)); font-variant-numeric: tabular-nums; }
+.opening-flow-strip strong { font-weight: 600; }
+.opening-flow-up { color: #1fbf6a; }
+.opening-flow-down { color: #ff5056; }
+.opening-flow-dim { color: var(--tv-text-dim); }
 .overlay-toggles { display: flex; align-items: center; gap: 8px; margin: 0; padding: 0; border: 0; }
 .overlay-toggles legend { float: left; margin: 0 5px 0 0; padding: 0; color: var(--tv-text-dim); font-size: 0.68rem; }
 .chart-controls select { padding: 3px 8px; border: 1px solid var(--tv-border); border-radius: 999px; background: var(--tv-panel-raised); color: var(--tv-text); font: inherit; font-size: 0.7rem; cursor: pointer; }
