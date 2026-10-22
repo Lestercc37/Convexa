@@ -4184,3 +4184,32 @@ class TestStreamHubDataSilenceWatchdogLockStep:
         with pytest.raises(asyncio.CancelledError):
             await stream._watch_for_data_silence()
         assert stream._market_open_since is None
+
+
+class TestStreamHubFirstMessageOfTheSession:
+    """2026-10-22: the first option trade of the open arrived late; the watchdog now records, once per stream per session, how long after the market was seen open the first message came."""
+
+    @pytest.mark.asyncio
+    async def test_the_first_message_of_each_stream_is_logged_once_and_the_log_resets_at_the_close(
+        self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        stream = ThetaStreamHub(WS_URL, httpx.Client(base_url=REST_URL))
+        monkeypatch.setattr(stream, "request_reconnect", lambda: None)
+        state = {"open": True}
+        monkeypatch.setattr(provider_module, "is_market_open", lambda now: state["open"])
+        opened = time.monotonic() - 10
+        stream._market_open_since = opened
+        stream._active_websocket = object()  # type: ignore[assignment]
+        stream._connection_opened_at = opened
+        stream._last_quote_at = opened + 0.5  # a quote 0.5 s after the open; no trades yet
+        monkeypatch.setattr(asyncio, "sleep", _fake_sleep_letting_n_iterations_run(2))
+        with caplog.at_level("INFO"), pytest.raises(asyncio.CancelledError):
+            await stream._watch_for_data_silence()
+        first = [r.getMessage() for r in caplog.records if "first" in r.getMessage() and "message of the session" in r.getMessage()]
+        assert len(first) == 1 and "QUOTE" in first[0] and "0.5s" in first[0]  # logged once, not on the second tick, and only for the stream that has spoken
+
+        state["open"] = False
+        monkeypatch.setattr(asyncio, "sleep", _fake_sleep_letting_n_iterations_run(1))
+        with pytest.raises(asyncio.CancelledError):
+            await stream._watch_for_data_silence()
+        assert stream._first_message_logged == set()

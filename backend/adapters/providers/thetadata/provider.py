@@ -288,6 +288,7 @@ STABLE_CONNECTION_RESET_SECONDS = 2 * STATUS_STALE_AFTER_SECONDS
 # genuinely quiet closed market never trips it.
 DATA_SILENCE_THRESHOLD_SECONDS = 20
 DATA_SILENCE_CHECK_INTERVAL_SECONDS = 5
+FIRST_MESSAGE_FAST_TICK_WINDOW_SECONDS = 180
 
 # Investigation instrumentation (2026-09-09): after PR #122 consolidated
 # 3 separate connections into ThetaStreamHub's one shared read loop, the
@@ -965,6 +966,8 @@ class ThetaStreamHub:
         self._connection_opened_at = 0.0
         # When the market was first seen open by the data-silence watchdog (monotonic); None while closed. Silence is measured from this too, so the 17 hours since yesterday's last trade never count.
         self._market_open_since: float | None = None
+        # Which streams already logged their first message of the session (reset when the market closes): 2026-10-22 the first option trade of the open arrived late; this records how late, every day.
+        self._first_message_logged: set[str] = set()
         self._watchdog_task: asyncio.Task[None] | None = None
         # Message-lag diagnostic (added 2026-10-02) -- see
         # _parse_stream_tick_timestamp's own docstring and
@@ -1253,7 +1256,9 @@ class ThetaStreamHub:
         than once in the same tick.
         """
         while True:
-            await asyncio.sleep(DATA_SILENCE_CHECK_INTERVAL_SECONDS)
+            # A 1 s tick for the first 3 minutes after the open (so the first message of each stream is timed to the second), the usual interval otherwise.
+            fast = self._market_open_since is not None and time.monotonic() - self._market_open_since < FIRST_MESSAGE_FAST_TICK_WINDOW_SECONDS
+            await asyncio.sleep(1 if fast else DATA_SILENCE_CHECK_INTERVAL_SECONDS)
             now = time.monotonic()
             # STATUS checked unconditionally, not gated on is_market_open
             # like the other three below -- Theta Terminal pushes a STATUS
@@ -1287,9 +1292,23 @@ class ThetaStreamHub:
                     self._last_status_at = now
             if not is_market_open(utc_now()):
                 self._market_open_since = None
+                self._first_message_logged.clear()
                 continue
             if self._market_open_since is None:
                 self._market_open_since = now
+            for name, attr in (
+                ("QUOTE", "_last_quote_at"),
+                ("option TRADE", "_last_option_trade_at"),
+                ("underlying TRADE", "_last_underlying_trade_at"),
+            ):
+                seen_at = getattr(self, attr)
+                if name not in self._first_message_logged and seen_at is not None and seen_at >= self._market_open_since:
+                    self._first_message_logged.add(name)
+                    logger.info(
+                        "ThetaStreamHub: first %s message of the session %.1fs after the market was seen open",
+                        name,
+                        seen_at - self._market_open_since,
+                    )
             # Same rule as the STATUS check above, now for QUOTE / option TRADE / underlying TRADE (2026-10-22: the stream sat dead from 09:30 to 09:55). The silence is judged only while a
             # connection is live and is counted from the LATEST of: the last message, the moment this connection opened, and the moment the market was first seen open. Before, `now - last_at`
             # was compared even with no connection, and at the first tick of the open the last trade was 17 hours old: the open forced a reconnect, and with the reconnect backoff at its 60 s cap
