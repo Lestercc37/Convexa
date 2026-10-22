@@ -225,6 +225,18 @@ def check_volume_correction(log_text: str, now_local: datetime) -> Check:
     return Check("volume_correction", True, "no volume-correction pass in the log yet", "notice")
 
 
+def decide_one_shot_notice(check: Check, state: dict) -> tuple[str | None, dict]:
+    """A failed volume-correction pass is announced ONCE (a pass runs a few times a day, a repeat every
+    REALERT_MINUTES would only nag). Re-armed when the check passes again, so the next failure speaks again.
+    Kept out of decide_alert on purpose: it must not feed that function's 'back to normal' message."""
+    key = "volume_correction_notified"
+    if check.ok:
+        return None, {k: v for k, v in state.items() if k != key}
+    if state.get(key) == check.detail:
+        return None, state
+    return f"CONVEXA NOTICE: {check.name}: {check.detail}", {**state, key: check.detail}
+
+
 def decide_alert(now: datetime, failing: list[Check], state: dict) -> tuple[str | None, dict]:
     """(message or None, new state). Alerts on a new/changed failure set, again
     every REALERT_MINUTES while failing, and once on recovery."""
@@ -380,8 +392,11 @@ def run_once(logs_dir: Path, state_path: Path, toast_task: str | None = None, au
             datetime.now(),  # noqa: DTZ005 -- compared against naive local log stamps
         ),
     ]
-    failing = [c for c in checks if not c.ok]
+    failing = [c for c in checks if not c.ok and c.name != "volume_correction"]
     message, state = decide_alert(now, failing, state)
+    vc_message, state = decide_one_shot_notice(next(c for c in checks if c.name == "volume_correction"), state)
+    if vc_message:
+        message = f"{message} | {vc_message}" if message else vc_message
     restarted: bool | None = None
     if auto_restart:
         should_restart, state = decide_auto_restart(now, checks, market_open, state)

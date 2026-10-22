@@ -265,3 +265,31 @@ class TestVolumeCorrectionCheck:
 
     def test_an_empty_or_missing_log_is_fine(self) -> None:
         assert shc.check_volume_correction("", self.NOW).ok
+
+
+class TestVolumeCorrectionOneShot:
+    FAILED = shc.Check("volume_correction", False, "the 10:30 pass stopped early (SPY: RuntimeError)", "notice")
+    OK = shc.Check("volume_correction", True, "last pass finished cleanly", "notice")
+
+    def test_a_failure_is_announced_once(self) -> None:
+        message, state = shc.decide_one_shot_notice(self.FAILED, {})
+        assert message is not None and "10:30" in message
+        again, state = shc.decide_one_shot_notice(self.FAILED, state)
+        assert again is None
+
+    def test_a_clean_pass_rearms_it(self) -> None:
+        _, state = shc.decide_one_shot_notice(self.FAILED, {})
+        cleared, state = shc.decide_one_shot_notice(self.OK, state)
+        assert cleared is None
+        message, _ = shc.decide_one_shot_notice(self.FAILED, state)
+        assert message is not None
+
+    def test_a_different_failure_speaks_again(self) -> None:
+        _, state = shc.decide_one_shot_notice(self.FAILED, {})
+        other = shc.Check("volume_correction", False, "the 14:00 pass stopped early (QQQ: RuntimeError)", "notice")
+        message, _ = shc.decide_one_shot_notice(other, state)
+        assert message is not None and "14:00" in message
+
+    def test_it_never_touches_the_other_alert_state(self) -> None:
+        _, state = shc.decide_one_shot_notice(self.FAILED, {"alerting_names": ["services"]})
+        assert state["alerting_names"] == ["services"]
