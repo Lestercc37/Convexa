@@ -233,3 +233,35 @@ def test_run_once_restarts_the_worker_only_with_the_flag(tmp_path, monkeypatch) 
     module.run_once(tmp_path, state, None, auto_restart=True)
     assert calls == [1]
     assert "auto-restarted ConvexaWorker" in (tmp_path / "stream_health.log").read_text(encoding="utf-8")
+
+
+class TestVolumeCorrectionCheck:
+    NOW = datetime(2026, 10, 22, 12, 23, 0)  # noqa: DTZ001 -- naive local log time
+    FAILED = (
+        "2026-10-22 10:30:02,894 WARNING [__main__] Volume correction pass stopped at SPY 2026-10-22: RuntimeError\n"
+        "2026-10-22 10:30:02,928 INFO [__main__] Volume correction pass done: {'requests': 0, 'contracts': 0, "
+        "'volume': 0, 'seconds': 0.7, 'stopped_because': 'SPY 2026-10-22: RuntimeError'}\n"
+    )
+    CLEAN = (
+        "2026-10-22 12:00:10,490 INFO [__main__] Volume correction pass done: {'requests': 12, 'contracts': 2745, "
+        "'volume': 2501742, 'seconds': 7.8, 'stopped_because': None}\n"
+    )
+
+    def test_a_pass_that_stopped_early_is_flagged_as_a_notice(self) -> None:
+        check = shc.check_volume_correction(self.FAILED, self.NOW)
+        assert not check.ok
+        assert check.severity == "notice"
+        assert "10:30" in check.detail
+        assert "SPY 2026-10-22: RuntimeError" in check.detail
+
+    def test_a_later_clean_pass_clears_it(self) -> None:
+        assert shc.check_volume_correction(self.FAILED + self.CLEAN, self.NOW).ok
+
+    def test_only_the_last_pass_counts(self) -> None:
+        assert not shc.check_volume_correction(self.CLEAN + self.FAILED, self.NOW).ok
+
+    def test_a_stale_failure_is_ignored(self) -> None:
+        assert shc.check_volume_correction(self.FAILED, datetime(2026, 10, 23, 9, 41, 0)).ok  # noqa: DTZ001 -- naive local log time
+
+    def test_an_empty_or_missing_log_is_fine(self) -> None:
+        assert shc.check_volume_correction("", self.NOW).ok

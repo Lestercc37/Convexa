@@ -81,6 +81,8 @@ AUTO_RESTART_COOLDOWN_MINUTES = 15
 AUTO_RESTART_MAX_PER_DAY = 3
 AUTO_RESTART_SERVICE = "ConvexaWorker"
 SERVICES = ("ConvexaWorker", "ConvexaStreamProcessor", "ConvexaWhaleAlerts", "ConvexaThetaTerminal")
+VOLUME_CORRECTION_LOG = "volume_correction_pass.log"
+VOLUME_CORRECTION_MAX_AGE_HOURS = 6
 LOG_TAIL_BYTES = 512 * 1024
 _LOG_TIME = re.compile(r"^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}),\d+ ")
 
@@ -191,6 +193,36 @@ def check_contract_count(count: int | None) -> Check:
             "notice",
         )
     return Check("contract_count", True, f"{count} contracts registered (plan {CONTRACT_PLAN_LIMIT})", "notice")
+
+
+_PASS_DONE = re.compile(r"Volume correction pass done: .*'stopped_because': (None|'([^']*)')")
+
+
+def check_volume_correction(log_text: str, now_local: datetime) -> Check:
+    """The LAST volume-correction pass (ConvexaVolumeCorrection task) must not have stopped early.
+    A pass that hits a 503 / timeout stops at its first request and writes nothing; the task itself
+    still ends with result 0, so only its log shows it. Clears when a later pass finishes cleanly;
+    a failed pass older than VOLUME_CORRECTION_MAX_AGE_HOURS is ignored (a stale line must not alarm)."""
+    for line in reversed(log_text.splitlines()):
+        done = _PASS_DONE.search(line)
+        if not done:
+            continue
+        stamp = _LOG_TIME.match(line)
+        if not stamp:
+            continue
+        at = datetime.strptime(stamp.group(1), "%Y-%m-%d %H:%M:%S")  # noqa: DTZ007 -- log stamps are naive local time
+        if done.group(1) == "None":
+            return Check("volume_correction", True, f"last pass at {at:%H:%M} finished cleanly", "notice")
+        age_hours = (now_local - at).total_seconds() / 3600
+        if age_hours > VOLUME_CORRECTION_MAX_AGE_HOURS:
+            return Check("volume_correction", True, f"last failed pass is {age_hours:.0f} h old, ignored", "notice")
+        return Check(
+            "volume_correction",
+            False,
+            f"the {at:%H:%M} volume-correction pass stopped early ({done.group(2)}); totals wait for the next pass",
+            "notice",
+        )
+    return Check("volume_correction", True, "no volume-correction pass in the log yet", "notice")
 
 
 def decide_alert(now: datetime, failing: list[Check], state: dict) -> tuple[str | None, dict]:
@@ -343,6 +375,10 @@ def run_once(logs_dir: Path, state_path: Path, toast_task: str | None = None, au
             )
         ),
         check_contract_count(registered_contracts_from_logs(logs_dir)),
+        check_volume_correction(
+            read_log_tail(logs_dir / VOLUME_CORRECTION_LOG),
+            datetime.now(),  # noqa: DTZ005 -- compared against naive local log stamps
+        ),
     ]
     failing = [c for c in checks if not c.ok]
     message, state = decide_alert(now, failing, state)
