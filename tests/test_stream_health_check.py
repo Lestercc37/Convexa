@@ -156,3 +156,140 @@ class TestContractCountNotice:
         outage = shc.Check("services", False, "down")
         message, _ = shc.decide_alert(MARKET_NOW, [notice, outage], {})
         assert message and message.startswith("CONVEXA STREAM PROBLEM")
+
+
+# --- auto-recovery (2026-10-22) ------------------------------------------------------------------------------------------------------------------------------------------------------
+
+
+def _checks(volume_ok: bool = True, reconnect_ok: bool = True, services_ok: bool = True) -> list:
+    from backend.scripts.stream_health_check import Check
+
+    return [Check("volume_flow", volume_ok, "x"), Check("services", services_ok, "x"), Check("reconnect_loop", reconnect_ok, "x")]
+
+
+def _at(minute: int, hour: int = 14, day: int = 22):
+    return datetime(2026, 10, day, hour, minute, tzinfo=UTC)  # 10:xx ET (EDT)
+
+
+def test_auto_restart_waits_for_the_stream_to_fail_for_three_minutes_in_a_row() -> None:
+    from backend.scripts.stream_health_check import decide_auto_restart
+
+    state: dict = {}
+    decisions = []
+    for minute in (0, 1, 2, 3):
+        go, state = decide_auto_restart(_at(minute), _checks(reconnect_ok=False), True, state)
+        decisions.append(go)
+    assert decisions == [False, False, False, True]  # the 4th run is 3 minutes after the first failing one
+    assert len(state["auto_restarts"]) == 1 and state["stream_failing_since"] is None
+
+
+def test_auto_restart_clock_resets_when_the_stream_recovers_or_the_market_closes_or_a_service_is_down() -> None:
+    from backend.scripts.stream_health_check import decide_auto_restart
+
+    state: dict = {}
+    _, state = decide_auto_restart(_at(0), _checks(volume_ok=False), True, state)
+    assert state["stream_failing_since"] is not None
+    _, state = decide_auto_restart(_at(1), _checks(), True, state)  # healthy
+    assert state["stream_failing_since"] is None
+    _, state = decide_auto_restart(_at(2), _checks(volume_ok=False), True, state)
+    _, state = decide_auto_restart(_at(3), _checks(volume_ok=False), False, state)  # market closed
+    assert state["stream_failing_since"] is None
+    _, state = decide_auto_restart(_at(4), _checks(volume_ok=False), True, state)
+    go, state = decide_auto_restart(_at(8), _checks(volume_ok=False, services_ok=False), True, state)  # a service is down: restarting the worker would not fix it
+    assert go is False and state["stream_failing_since"] is None
+
+
+def test_auto_restart_has_a_cooldown_and_a_daily_cap() -> None:
+    from backend.scripts.stream_health_check import AUTO_RESTART_COOLDOWN_MINUTES, AUTO_RESTART_MAX_PER_DAY, decide_auto_restart
+
+    state: dict = {"auto_restarts": [_at(0).isoformat()], "stream_failing_since": _at(0).isoformat()}
+    go, state = decide_auto_restart(_at(5), _checks(reconnect_ok=False), True, state)  # 5 min after the last restart: cooldown
+    assert go is False
+    go, state = decide_auto_restart(_at(AUTO_RESTART_COOLDOWN_MINUTES + 1), _checks(reconnect_ok=False), True, state)
+    assert go is True
+    capped = {"auto_restarts": [_at(m).isoformat() for m in range(0, AUTO_RESTART_MAX_PER_DAY * 20, 20)], "stream_failing_since": _at(0).isoformat()}
+    go, _ = decide_auto_restart(_at(59), _checks(reconnect_ok=False), True, capped)
+    assert go is False  # already restarted the maximum times today
+    next_day = {"auto_restarts": [_at(0, day=21).isoformat()] * AUTO_RESTART_MAX_PER_DAY, "stream_failing_since": _at(0).isoformat()}
+    go, _ = decide_auto_restart(_at(5), _checks(reconnect_ok=False), True, next_day)
+    assert go is True  # yesterday's restarts do not count
+
+
+def test_run_once_restarts_the_worker_only_with_the_flag(tmp_path, monkeypatch) -> None:
+    import backend.scripts.stream_health_check as module
+
+    calls: list[int] = []
+    monkeypatch.setattr(module, "restart_worker", lambda: calls.append(1) or True)
+    monkeypatch.setattr(module, "read_volume_total", lambda: 5)
+    monkeypatch.setattr(module, "windows_service_statuses", lambda: {name: "RUNNING" for name in module.SERVICES})
+    monkeypatch.setattr(module, "is_market_open", lambda now: True)
+    monkeypatch.setattr(module, "registered_contracts_from_logs", lambda logs_dir: 100)
+    monkeypatch.setattr(module, "count_recent_reconnects", lambda *args, **kwargs: 9)  # a reconnect loop
+    state = tmp_path / "state.json"
+    long_ago = (datetime.now(UTC) - timedelta(minutes=10)).isoformat()
+    state.write_text(__import__("json").dumps({"stream_failing_since": long_ago}))
+    module.run_once(tmp_path, state, None, auto_restart=False)
+    assert calls == []
+    module.run_once(tmp_path, state, None, auto_restart=True)
+    assert calls == [1]
+    assert "auto-restarted ConvexaWorker" in (tmp_path / "stream_health.log").read_text(encoding="utf-8")
+
+
+class TestVolumeCorrectionCheck:
+    NOW = datetime(2026, 10, 22, 12, 23, 0)  # noqa: DTZ001 -- naive local log time
+    FAILED = (
+        "2026-10-22 10:30:02,894 WARNING [__main__] Volume correction pass stopped at SPY 2026-10-22: RuntimeError\n"
+        "2026-10-22 10:30:02,928 INFO [__main__] Volume correction pass done: {'requests': 0, 'contracts': 0, "
+        "'volume': 0, 'seconds': 0.7, 'stopped_because': 'SPY 2026-10-22: RuntimeError'}\n"
+    )
+    CLEAN = (
+        "2026-10-22 12:00:10,490 INFO [__main__] Volume correction pass done: {'requests': 12, 'contracts': 2745, "
+        "'volume': 2501742, 'seconds': 7.8, 'stopped_because': None}\n"
+    )
+
+    def test_a_pass_that_stopped_early_is_flagged_as_a_notice(self) -> None:
+        check = shc.check_volume_correction(self.FAILED, self.NOW)
+        assert not check.ok
+        assert check.severity == "notice"
+        assert "10:30" in check.detail
+        assert "SPY 2026-10-22: RuntimeError" in check.detail
+
+    def test_a_later_clean_pass_clears_it(self) -> None:
+        assert shc.check_volume_correction(self.FAILED + self.CLEAN, self.NOW).ok
+
+    def test_only_the_last_pass_counts(self) -> None:
+        assert not shc.check_volume_correction(self.CLEAN + self.FAILED, self.NOW).ok
+
+    def test_a_stale_failure_is_ignored(self) -> None:
+        assert shc.check_volume_correction(self.FAILED, datetime(2026, 10, 23, 9, 41, 0)).ok  # noqa: DTZ001 -- naive local log time
+
+    def test_an_empty_or_missing_log_is_fine(self) -> None:
+        assert shc.check_volume_correction("", self.NOW).ok
+
+
+class TestVolumeCorrectionOneShot:
+    FAILED = shc.Check("volume_correction", False, "the 10:30 pass stopped early (SPY: RuntimeError)", "notice")
+    OK = shc.Check("volume_correction", True, "last pass finished cleanly", "notice")
+
+    def test_a_failure_is_announced_once(self) -> None:
+        message, state = shc.decide_one_shot_notice(self.FAILED, {})
+        assert message is not None and "10:30" in message
+        again, state = shc.decide_one_shot_notice(self.FAILED, state)
+        assert again is None
+
+    def test_a_clean_pass_rearms_it(self) -> None:
+        _, state = shc.decide_one_shot_notice(self.FAILED, {})
+        cleared, state = shc.decide_one_shot_notice(self.OK, state)
+        assert cleared is None
+        message, _ = shc.decide_one_shot_notice(self.FAILED, state)
+        assert message is not None
+
+    def test_a_different_failure_speaks_again(self) -> None:
+        _, state = shc.decide_one_shot_notice(self.FAILED, {})
+        other = shc.Check("volume_correction", False, "the 14:00 pass stopped early (QQQ: RuntimeError)", "notice")
+        message, _ = shc.decide_one_shot_notice(other, state)
+        assert message is not None and "14:00" in message
+
+    def test_it_never_touches_the_other_alert_state(self) -> None:
+        _, state = shc.decide_one_shot_notice(self.FAILED, {"alerting_names": ["services"]})
+        assert state["alerting_names"] == ["services"]

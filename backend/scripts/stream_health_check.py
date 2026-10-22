@@ -1,4 +1,4 @@
-"""Read-only dead-stream alarm. Meant to be run every minute by Windows Task
+"""Dead-stream alarm (read-only unless --auto-restart-worker is given, see below). Meant to be run every minute by Windows Task
 Scheduler on the server (or with --loop); it never writes to the database and
 never talks to ThetaData or to the relay ports.
 
@@ -43,6 +43,10 @@ Nothing is sent anywhere unless one of them is set.
     python -m backend.scripts.stream_health_check            # one check
     python -m backend.scripts.stream_health_check --loop 60  # forever
 
+Auto-recovery (2026-10-22, Lester: "si" -- the stream sat dead from 09:30 to 09:55 until ConvexaWorker was restarted by hand): with --auto-restart-worker, when volume_flow or
+reconnect_loop has been failing for AUTO_RESTART_AFTER_MINUTES in a row during market hours while every service is RUNNING (the Terminal included: a Terminal that is down is not fixed by
+restarting the worker), the script restarts ConvexaWorker once, then waits AUTO_RESTART_COOLDOWN_MINUTES, at most AUTO_RESTART_MAX_PER_DAY times a day, and says so in the alert. Off by default.
+
 Known limit: a weekday market holiday looks like a stalled market. The next
 one is Thanksgiving (2026-11-26); mute the task that day.
 """
@@ -72,7 +76,13 @@ GRACE_AFTER_OPEN_MINUTES = 10
 RECONNECT_LOOP_COUNT = 6
 RECONNECT_LOOP_WINDOW_MINUTES = 5
 REALERT_MINUTES = 30
+AUTO_RESTART_AFTER_MINUTES = 3
+AUTO_RESTART_COOLDOWN_MINUTES = 15
+AUTO_RESTART_MAX_PER_DAY = 3
+AUTO_RESTART_SERVICE = "ConvexaWorker"
 SERVICES = ("ConvexaWorker", "ConvexaStreamProcessor", "ConvexaWhaleAlerts", "ConvexaThetaTerminal")
+VOLUME_CORRECTION_LOG = "volume_correction_pass.log"
+VOLUME_CORRECTION_MAX_AGE_HOURS = 6
 LOG_TAIL_BYTES = 512 * 1024
 _LOG_TIME = re.compile(r"^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}),\d+ ")
 
@@ -185,6 +195,48 @@ def check_contract_count(count: int | None) -> Check:
     return Check("contract_count", True, f"{count} contracts registered (plan {CONTRACT_PLAN_LIMIT})", "notice")
 
 
+_PASS_DONE = re.compile(r"Volume correction pass done: .*'stopped_because': (None|'([^']*)')")
+
+
+def check_volume_correction(log_text: str, now_local: datetime) -> Check:
+    """The LAST volume-correction pass (ConvexaVolumeCorrection task) must not have stopped early.
+    A pass that hits a 503 / timeout stops at its first request and writes nothing; the task itself
+    still ends with result 0, so only its log shows it. Clears when a later pass finishes cleanly;
+    a failed pass older than VOLUME_CORRECTION_MAX_AGE_HOURS is ignored (a stale line must not alarm)."""
+    for line in reversed(log_text.splitlines()):
+        done = _PASS_DONE.search(line)
+        if not done:
+            continue
+        stamp = _LOG_TIME.match(line)
+        if not stamp:
+            continue
+        at = datetime.strptime(stamp.group(1), "%Y-%m-%d %H:%M:%S")  # noqa: DTZ007 -- log stamps are naive local time
+        if done.group(1) == "None":
+            return Check("volume_correction", True, f"last pass at {at:%H:%M} finished cleanly", "notice")
+        age_hours = (now_local - at).total_seconds() / 3600
+        if age_hours > VOLUME_CORRECTION_MAX_AGE_HOURS:
+            return Check("volume_correction", True, f"last failed pass is {age_hours:.0f} h old, ignored", "notice")
+        return Check(
+            "volume_correction",
+            False,
+            f"the {at:%H:%M} volume-correction pass stopped early ({done.group(2)}); totals wait for the next pass",
+            "notice",
+        )
+    return Check("volume_correction", True, "no volume-correction pass in the log yet", "notice")
+
+
+def decide_one_shot_notice(check: Check, state: dict) -> tuple[str | None, dict]:
+    """A failed volume-correction pass is announced ONCE (a pass runs a few times a day, a repeat every
+    REALERT_MINUTES would only nag). Re-armed when the check passes again, so the next failure speaks again.
+    Kept out of decide_alert on purpose: it must not feed that function's 'back to normal' message."""
+    key = "volume_correction_notified"
+    if check.ok:
+        return None, {k: v for k, v in state.items() if k != key}
+    if state.get(key) == check.detail:
+        return None, state
+    return f"CONVEXA NOTICE: {check.name}: {check.detail}", {**state, key: check.detail}
+
+
 def decide_alert(now: datetime, failing: list[Check], state: dict) -> tuple[str | None, dict]:
     """(message or None, new state). Alerts on a new/changed failure set, again
     every REALERT_MINUTES while failing, and once on recovery."""
@@ -207,7 +259,43 @@ def decide_alert(now: datetime, failing: list[Check], state: dict) -> tuple[str 
     return None, state
 
 
+def decide_auto_restart(now: datetime, checks: list[Check], market_open: bool, state: dict) -> tuple[bool, dict]:
+    """(restart the worker now?, new state). The stream is 'failing' when volume_flow or reconnect_loop fails while the market is open and every service is RUNNING. It must fail for
+    AUTO_RESTART_AFTER_MINUTES in a row; then one restart, a cooldown, and a daily cap. Any healthy run, a closed market or a stopped service resets the clock."""
+    by_name = {c.name: c for c in checks}
+    stream_failing = any(not by_name[n].ok for n in ("volume_flow", "reconnect_loop") if n in by_name)
+    services_ok = by_name["services"].ok if "services" in by_name else False
+    if not (market_open and stream_failing and services_ok):
+        return False, {**state, "stream_failing_since": None}
+    since = state.get("stream_failing_since")
+    if since is None:
+        return False, {**state, "stream_failing_since": now.isoformat()}
+    if (now - datetime.fromisoformat(since)).total_seconds() < AUTO_RESTART_AFTER_MINUTES * 60:
+        return False, state
+    day = now.astimezone(EASTERN).date().isoformat()
+    restarts = [t for t in state.get("auto_restarts", []) if datetime.fromisoformat(t).astimezone(EASTERN).date().isoformat() == day]
+    if len(restarts) >= AUTO_RESTART_MAX_PER_DAY:
+        return False, {**state, "auto_restarts": restarts}
+    if restarts and (now - datetime.fromisoformat(restarts[-1])).total_seconds() < AUTO_RESTART_COOLDOWN_MINUTES * 60:
+        return False, {**state, "auto_restarts": restarts}
+    return True, {**state, "auto_restarts": [*restarts, now.isoformat()], "stream_failing_since": None}
+
+
 # ------------------------------------------------------------------ impure
+def restart_worker() -> bool:
+    """Restarts the worker Windows service; True when the command succeeded."""
+    if sys.platform != "win32":
+        return False
+    result = subprocess.run(
+        ["powershell", "-NoProfile", "-Command", f"Restart-Service {AUTO_RESTART_SERVICE} -Force"],
+        capture_output=True,
+        text=True,
+        timeout=90,
+        check=False,
+    )
+    return result.returncode == 0
+
+
 def read_log_text(path: Path, max_bytes: int = 12 * 1024 * 1024) -> str:
     """Up to the last max_bytes of a log; worker.log rotates at ~9.5 MB so this
     is normally the whole file."""
@@ -283,7 +371,7 @@ def notify(message: str) -> None:
         urllib.request.urlopen(request, timeout=10).close()
 
 
-def run_once(logs_dir: Path, state_path: Path, toast_task: str | None = None) -> list[Check]:
+def run_once(logs_dir: Path, state_path: Path, toast_task: str | None = None, auto_restart: bool = False) -> list[Check]:
     now = datetime.now(UTC)
     state = json.loads(state_path.read_text()) if state_path.exists() else {}
     market_open = is_market_open(now)
@@ -299,9 +387,23 @@ def run_once(logs_dir: Path, state_path: Path, toast_task: str | None = None) ->
             )
         ),
         check_contract_count(registered_contracts_from_logs(logs_dir)),
+        check_volume_correction(
+            read_log_tail(logs_dir / VOLUME_CORRECTION_LOG),
+            datetime.now(),  # noqa: DTZ005 -- compared against naive local log stamps
+        ),
     ]
-    failing = [c for c in checks if not c.ok]
+    failing = [c for c in checks if not c.ok and c.name != "volume_correction"]
     message, state = decide_alert(now, failing, state)
+    vc_message, state = decide_one_shot_notice(next(c for c in checks if c.name == "volume_correction"), state)
+    if vc_message:
+        message = f"{message} | {vc_message}" if message else vc_message
+    restarted: bool | None = None
+    if auto_restart:
+        should_restart, state = decide_auto_restart(now, checks, market_open, state)
+        if should_restart:
+            restarted = restart_worker()
+            note = f"auto-restarted {AUTO_RESTART_SERVICE}" if restarted else f"auto-restart of {AUTO_RESTART_SERVICE} FAILED"
+            message = f"{message} | {note}" if message else f"CONVEXA STREAM: {note}"
     state_path.parent.mkdir(parents=True, exist_ok=True)
     state_path.write_text(json.dumps(state))
     stamp = now.astimezone(EASTERN).strftime("%Y-%m-%d %H:%M:%S ET")
@@ -330,10 +432,11 @@ def main() -> None:
     parser.add_argument("--state", default="logs/stream_health_state.json")
     parser.add_argument("--loop", type=int, default=0, help="seconds between checks; 0 = run once")
     parser.add_argument("--toast-task", default=None, help="scheduled task that shows a Windows toast")
+    parser.add_argument("--auto-restart-worker", action="store_true", help="restart ConvexaWorker when the stream has been failing for AUTO_RESTART_AFTER_MINUTES")
     args = parser.parse_args()
     logs_dir = Path(args.logs_dir)
     while True:
-        checks = run_once(logs_dir, Path(args.state), args.toast_task)
+        checks = run_once(logs_dir, Path(args.state), args.toast_task, args.auto_restart_worker)
         if not args.loop:
             sys.exit(0 if all(c.ok for c in checks) else 1)
         time.sleep(args.loop)
