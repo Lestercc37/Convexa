@@ -156,3 +156,80 @@ class TestContractCountNotice:
         outage = shc.Check("services", False, "down")
         message, _ = shc.decide_alert(MARKET_NOW, [notice, outage], {})
         assert message and message.startswith("CONVEXA STREAM PROBLEM")
+
+
+# --- auto-recovery (2026-10-22) ------------------------------------------------------------------------------------------------------------------------------------------------------
+
+
+def _checks(volume_ok: bool = True, reconnect_ok: bool = True, services_ok: bool = True) -> list:
+    from backend.scripts.stream_health_check import Check
+
+    return [Check("volume_flow", volume_ok, "x"), Check("services", services_ok, "x"), Check("reconnect_loop", reconnect_ok, "x")]
+
+
+def _at(minute: int, hour: int = 14, day: int = 22):
+    return datetime(2026, 10, day, hour, minute, tzinfo=UTC)  # 10:xx ET (EDT)
+
+
+def test_auto_restart_waits_for_the_stream_to_fail_for_three_minutes_in_a_row() -> None:
+    from backend.scripts.stream_health_check import decide_auto_restart
+
+    state: dict = {}
+    decisions = []
+    for minute in (0, 1, 2, 3):
+        go, state = decide_auto_restart(_at(minute), _checks(reconnect_ok=False), True, state)
+        decisions.append(go)
+    assert decisions == [False, False, False, True]  # the 4th run is 3 minutes after the first failing one
+    assert len(state["auto_restarts"]) == 1 and state["stream_failing_since"] is None
+
+
+def test_auto_restart_clock_resets_when_the_stream_recovers_or_the_market_closes_or_a_service_is_down() -> None:
+    from backend.scripts.stream_health_check import decide_auto_restart
+
+    state: dict = {}
+    _, state = decide_auto_restart(_at(0), _checks(volume_ok=False), True, state)
+    assert state["stream_failing_since"] is not None
+    _, state = decide_auto_restart(_at(1), _checks(), True, state)  # healthy
+    assert state["stream_failing_since"] is None
+    _, state = decide_auto_restart(_at(2), _checks(volume_ok=False), True, state)
+    _, state = decide_auto_restart(_at(3), _checks(volume_ok=False), False, state)  # market closed
+    assert state["stream_failing_since"] is None
+    _, state = decide_auto_restart(_at(4), _checks(volume_ok=False), True, state)
+    go, state = decide_auto_restart(_at(8), _checks(volume_ok=False, services_ok=False), True, state)  # a service is down: restarting the worker would not fix it
+    assert go is False and state["stream_failing_since"] is None
+
+
+def test_auto_restart_has_a_cooldown_and_a_daily_cap() -> None:
+    from backend.scripts.stream_health_check import AUTO_RESTART_COOLDOWN_MINUTES, AUTO_RESTART_MAX_PER_DAY, decide_auto_restart
+
+    state: dict = {"auto_restarts": [_at(0).isoformat()], "stream_failing_since": _at(0).isoformat()}
+    go, state = decide_auto_restart(_at(5), _checks(reconnect_ok=False), True, state)  # 5 min after the last restart: cooldown
+    assert go is False
+    go, state = decide_auto_restart(_at(AUTO_RESTART_COOLDOWN_MINUTES + 1), _checks(reconnect_ok=False), True, state)
+    assert go is True
+    capped = {"auto_restarts": [_at(m).isoformat() for m in range(0, AUTO_RESTART_MAX_PER_DAY * 20, 20)], "stream_failing_since": _at(0).isoformat()}
+    go, _ = decide_auto_restart(_at(59), _checks(reconnect_ok=False), True, capped)
+    assert go is False  # already restarted the maximum times today
+    next_day = {"auto_restarts": [_at(0, day=21).isoformat()] * AUTO_RESTART_MAX_PER_DAY, "stream_failing_since": _at(0).isoformat()}
+    go, _ = decide_auto_restart(_at(5), _checks(reconnect_ok=False), True, next_day)
+    assert go is True  # yesterday's restarts do not count
+
+
+def test_run_once_restarts_the_worker_only_with_the_flag(tmp_path, monkeypatch) -> None:
+    import backend.scripts.stream_health_check as module
+
+    calls: list[int] = []
+    monkeypatch.setattr(module, "restart_worker", lambda: calls.append(1) or True)
+    monkeypatch.setattr(module, "read_volume_total", lambda: 5)
+    monkeypatch.setattr(module, "windows_service_statuses", lambda: {name: "RUNNING" for name in module.SERVICES})
+    monkeypatch.setattr(module, "is_market_open", lambda now: True)
+    monkeypatch.setattr(module, "registered_contracts_from_logs", lambda logs_dir: 100)
+    monkeypatch.setattr(module, "count_recent_reconnects", lambda *args, **kwargs: 9)  # a reconnect loop
+    state = tmp_path / "state.json"
+    long_ago = (datetime.now(UTC) - timedelta(minutes=10)).isoformat()
+    state.write_text(__import__("json").dumps({"stream_failing_since": long_ago}))
+    module.run_once(tmp_path, state, None, auto_restart=False)
+    assert calls == []
+    module.run_once(tmp_path, state, None, auto_restart=True)
+    assert calls == [1]
+    assert "auto-restarted ConvexaWorker" in (tmp_path / "stream_health.log").read_text(encoding="utf-8")
