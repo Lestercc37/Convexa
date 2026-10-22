@@ -18,9 +18,10 @@ import {
   type ISeriesApi,
   type UTCTimestamp,
 } from "lightweight-charts";
-import { getAlerts, getGammaHistory, getGammaProfile, getMinuteFlow, getOptionChain, getOptionChainExpirations, getPriceCandles } from "@/lib/api";
+import { getAlerts, getGammaHistory, getGammaProfile, getMinuteFlow, getOptionChain, getOptionChainExpirations, getPriceCandles, getCubeMinimums } from "@/lib/api";
 import { flowBarsFromResponse } from "@/lib/minute-flow";
-import { buildCubes, CUBE_MIN_OPTIONS, DEFAULT_CUBE_FILTER } from "@/lib/alert-cubes";
+import { buildCubes, DEFAULT_CUBE_FILTER } from "@/lib/alert-cubes";
+import { CUBE_MIN_LIMIT, effectiveCubeMin, loadCubeMins, parseCubeMin, saveCubeMins } from "@/lib/cube-minimum";
 import { aggregateVwapPoints, type MinuteCandle, type Timeframe, type VwapPoint } from "@/lib/candles";
 import { recordChartEvent } from "@/lib/chart-lifecycle";
 import { useLanguage } from "@/lib/i18n/language-context";
@@ -570,7 +571,13 @@ export function PriceChart({
   const lastCandleTimeRef = useRef<number | null>(candles.at(-1)?.time ?? null);
   // Whale alerts as small squares on the chart (design 12.8 to 12.14); off by default until it is checked against live alerts.
   const [showAlertCubes, setShowAlertCubes] = useState(false);
-  const [cubeMinDeq, setCubeMinDeq] = useState<number>(DEFAULT_CUBE_FILTER.minDeq);
+  // Minimum cube size per symbol (item 12b): the API's suggestion (about 40 cubes a session each, recomputed daily) unless the viewer typed their own, which this browser remembers per symbol.
+  const [customCubeMins, setCustomCubeMins] = useState<Record<string, number>>({});
+  const [cubeMinsLoaded, setCubeMinsLoaded] = useState(false);
+  const [suggestedCubeMins, setSuggestedCubeMins] = useState<Record<string, number>>({});
+  const [cubeMinDraft, setCubeMinDraft] = useState<{ symbol: string; text: string } | null>(null);
+  const cubeMin = effectiveCubeMin(symbol, customCubeMins, suggestedCubeMins);
+  const cubeMinDeq = cubeMin.value;
   const [cubeShowFar, setCubeShowFar] = useState(DEFAULT_CUBE_FILTER.showFar);
   const [cubeAlerts, setCubeAlerts] = useState<WhaleAlert[]>([]);
   const [hoveredCube, setHoveredCube] = useState<{ id: string; x: number; y: number } | null>(null);
@@ -966,6 +973,41 @@ export function PriceChart({
     if (!showProfile || profileFromEndpoint || !heatmapProfile) return;
     profilePrimitiveRef.current?.setBars(heatmapProfile, showHeatmap && sidesOn ? "gamma" : paletteForMetric(profileMetric), profileCaption);
   }, [showProfile, profileFromEndpoint, heatmapProfile, profileMetric, profileCaption, showHeatmap, sidesOn]);
+
+  // The viewer's own cube minimums load once after mount (never during render) and save on every change after that; the suggestions are asked whenever the cubes are switched on (the API caches them for an hour).
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- loads this browser's saved minimums once after mount (localStorage does not exist on the server, so it cannot be the initial state)
+    setCustomCubeMins(loadCubeMins());
+    setCubeMinsLoaded(true);
+  }, []);
+  useEffect(() => {
+    if (cubeMinsLoaded) saveCubeMins(customCubeMins);
+  }, [customCubeMins, cubeMinsLoaded]);
+  useEffect(() => {
+    if (!showAlertCubes) return;
+    const controller = new AbortController();
+    getCubeMinimums(controller.signal)
+      .then((response) => setSuggestedCubeMins(response.minimums))
+      .catch(() => {
+        // No suggestion: every symbol keeps the legacy default until the next try.
+      });
+    return () => controller.abort();
+  }, [showAlertCubes]);
+  const setCubeMinFor = (value: number | null) => {
+    const key = symbol.toUpperCase();
+    setCustomCubeMins((previous) => {
+      const next = { ...previous };
+      if (value === null) delete next[key];
+      else next[key] = value;
+      return next;
+    });
+    setCubeMinDraft(null);
+  };
+  const commitCubeMinDraft = () => {
+    const parsed = cubeMinDraft && cubeMinDraft.symbol === symbol ? parseCubeMin(cubeMinDraft.text) : null;
+    if (parsed === null) setCubeMinDraft(null);
+    else setCubeMinFor(parsed);
+  };
 
   // EMAs. The list lives in this browser (localStorage); it loads once after mount (never during render) and saves on every change after that.
   useEffect(() => {
@@ -1723,18 +1765,37 @@ export function PriceChart({
             </label>
             {showAlertCubes && (
               <>
-                <select
-                  aria-label={t.priceChart.alertCubesMinAriaLabel}
-                  value={cubeMinDeq}
-                  onChange={(event) => setCubeMinDeq(Number(event.target.value))}
-                >
-                  {CUBE_MIN_OPTIONS.map((option) => (
-                    <option key={option} value={option}>
-                      {"≥ "}
-                      {option}
-                    </option>
-                  ))}
-                </select>
+                <span className="cube-min">
+                  <span className="cube-min-prefix" aria-hidden="true">
+                    {"≥"}
+                  </span>
+                  <input
+                    type="text"
+                    inputMode="numeric"
+                    className="cube-min-input"
+                    aria-label={t.priceChart.alertCubesMinAriaLabel}
+                    title={t.priceChart.alertCubesMinTitle(cubeMin.source, cubeMinDeq)}
+                    maxLength={9}
+                    value={cubeMinDraft && cubeMinDraft.symbol === symbol ? cubeMinDraft.text : String(cubeMinDeq)}
+                    onChange={(event) => setCubeMinDraft({ symbol, text: event.target.value })}
+                    onBlur={commitCubeMinDraft}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter") commitCubeMinDraft();
+                      if (event.key === "Escape") setCubeMinDraft(null);
+                    }}
+                  />
+                  <button type="button" className="cube-min-button" onClick={() => setCubeMinFor(Math.max(1, Math.round(cubeMinDeq / 2)))}>
+                    {t.priceChart.alertCubesHalf}
+                  </button>
+                  <button type="button" className="cube-min-button" onClick={() => setCubeMinFor(Math.min(CUBE_MIN_LIMIT, cubeMinDeq * 2))}>
+                    {t.priceChart.alertCubesDouble}
+                  </button>
+                  {cubeMin.source === "custom" && (
+                    <button type="button" className="cube-min-button" title={t.priceChart.alertCubesAutoTitle} onClick={() => setCubeMinFor(null)}>
+                      {t.priceChart.alertCubesAuto}
+                    </button>
+                  )}
+                </span>
                 <label className="chart-toggle">
                   <input
                     type="checkbox"

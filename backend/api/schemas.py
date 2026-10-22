@@ -797,3 +797,12 @@ class InvitePreviewResponse(BaseModel):
 class AcceptInviteRequest(BaseModel):
     token: str = Field(min_length=1)
     password: str = Field(min_length=8)
+
+
+class CubeMinimumsResponse(BaseModel):
+    """Suggested minimum size (delta-equivalent contracts) of the alert cubes per symbol, from the last completed sessions' alerts (use_cases/cube_minimums.py). Symbols without enough history are absent."""
+
+    schema_version: int = Field(examples=[1])
+    target_per_session: int = Field(examples=[40])
+    sessions: int = Field(examples=[5])
+    minimums: dict[str, int]

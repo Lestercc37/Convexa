@@ -46,6 +46,7 @@ const chartMocks = vi.hoisted(() => ({
   getOptionChainExpirations: vi.fn(),
   getMinuteFlow: vi.fn(),
   getPriceCandles: vi.fn(),
+  getCubeMinimums: vi.fn(),
 }));
 
 vi.mock("@/lib/api", async () => {
@@ -64,6 +65,7 @@ vi.mock("@/lib/api", async () => {
     getOptionChainExpirations: chartMocks.getOptionChainExpirations,
     getMinuteFlow: chartMocks.getMinuteFlow,
     getPriceCandles: chartMocks.getPriceCandles,
+    getCubeMinimums: chartMocks.getCubeMinimums,
   };
 });
 
@@ -141,6 +143,7 @@ beforeEach(() => {
   chartMocks.getMinuteFlow.mockResolvedValue({ schema_version: 1, symbol: "SPY", minutes: [] });
   chartMocks.getPriceCandles.mockResolvedValue({ schema_version: 1, symbol: "SPY", timeframe: "1m", sessions: 5, candles: [] });
   window.localStorage.clear();
+  chartMocks.getCubeMinimums.mockResolvedValue({ schema_version: 1, target_per_session: 40, sessions: 5, minimums: {} });
   chartMocks.getGammaHistory.mockResolvedValue({
     schema_version: 1,
     symbol: "SPY",
@@ -959,7 +962,9 @@ describe("PriceChart", () => {
     expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
 
     // The size filter and the 'Lejos' switch change what is drawn.
-    await user.selectOptions(screen.getByLabelText("Tamaño mínimo de las alertas (contratos-delta)"), "100");
+    const minInput = screen.getByLabelText("Tamaño mínimo de las alertas (contratos-delta)");
+    await user.clear(minInput);
+    await user.type(minInput, "100{Enter}");
     await waitFor(() => expect(primitive.cubes.map((cube: { strike: number }) => cube.strike).sort()).toEqual([535, 540]));
     await user.click(screen.getByLabelText("Lejos"));
     await waitFor(() => expect(primitive.cubes).toHaveLength(3));
@@ -967,6 +972,55 @@ describe("PriceChart", () => {
     await user.click(screen.getByLabelText("Alertas"));
     expect(chartMocks.detachPrimitive).toHaveBeenCalledWith(primitive);
     expect(chartMocks.unsubscribeCrosshairMove).toHaveBeenCalledWith(onCrosshairMove);
+  });
+
+  it("alert cubes: each symbol starts at its suggested minimum, the viewer can type their own (kept per symbol in this browser), halve, double or go back to Auto", async () => {
+    chartMocks.getCubeMinimums.mockResolvedValue({ schema_version: 1, target_per_session: 40, sessions: 5, minimums: { SPY: 2000, NDX: 20 } });
+    chartMocks.getAlerts.mockResolvedValue({ schema_version: 1, symbol: "SPY", alerts: [] });
+    const user = userEvent.setup();
+    renderWithLanguage(<PriceChart symbol="SPY" candles={candlesWithRange} gamma={gamma} gammaView="tactical" />);
+    expect(chartMocks.getCubeMinimums).not.toHaveBeenCalled(); // asked only when the cubes are switched on
+
+    await user.click(screen.getByLabelText("Alertas"));
+    const input = await screen.findByLabelText("Tamaño mínimo de las alertas (contratos-delta)");
+    await waitFor(() => expect(input).toHaveValue("2000")); // SPY's automatic minimum
+    expect(input).toHaveAttribute("title", expect.stringContaining("Mínimo automático: 2000"));
+    expect(screen.queryByRole("button", { name: "Auto" })).not.toBeInTheDocument();
+
+    await user.clear(input);
+    await user.type(input, "2,500{Enter}");
+    expect(input).toHaveValue("2500");
+    expect(JSON.parse(window.localStorage.getItem("convexa.cube-min.v1")!)).toEqual({ SPY: 2500 });
+    expect(screen.getByRole("button", { name: "Auto" })).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "×2" }));
+    expect(input).toHaveValue("5000");
+    await user.click(screen.getByRole("button", { name: "½" }));
+    await user.click(screen.getByRole("button", { name: "½" }));
+    expect(input).toHaveValue("1250");
+
+    await user.clear(input);
+    await user.type(input, "abc{Enter}"); // not a number: the previous value stays
+    expect(input).toHaveValue("1250");
+
+    await user.click(screen.getByRole("button", { name: "Auto" }));
+    expect(input).toHaveValue("2000");
+    expect(JSON.parse(window.localStorage.getItem("convexa.cube-min.v1")!)).toEqual({});
+  });
+
+  it("alert cubes: a symbol without a suggestion keeps the old 200 and a saved minimum comes back after a reload", async () => {
+    window.localStorage.setItem("convexa.cube-min.v1", JSON.stringify({ SPY: 7777 }));
+    chartMocks.getAlerts.mockResolvedValue({ schema_version: 1, symbol: "SPY", alerts: [] });
+    const user = userEvent.setup();
+    const { unmount } = renderWithLanguage(<PriceChart symbol="SPY" candles={candlesWithRange} gamma={gamma} gammaView="tactical" />);
+    await user.click(screen.getByLabelText("Alertas"));
+    await waitFor(() => expect(screen.getByLabelText("Tamaño mínimo de las alertas (contratos-delta)")).toHaveValue("7777"));
+    unmount();
+
+    window.localStorage.clear();
+    renderWithLanguage(<PriceChart symbol="SPY" candles={candlesWithRange} gamma={gamma} gammaView="tactical" />);
+    await user.click(screen.getByLabelText("Alertas"));
+    await waitFor(() => expect(screen.getByLabelText("Tamaño mínimo de las alertas (contratos-delta)")).toHaveValue("200")); // no suggestion for SPY here
   });
 
   it("keeps the gamma heatmap off until the toggle is checked, then attaches a primitive fed by the heatmap endpoint", async () => {

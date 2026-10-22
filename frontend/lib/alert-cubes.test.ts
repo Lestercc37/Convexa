@@ -31,7 +31,7 @@ function alert(overrides: Partial<WhaleAlert> = {}): WhaleAlert {
 
 describe("cubeSizePx", () => {
   it("uses three sizes: 200-400 small, 400-600 medium, 600 and up large", () => {
-    expect([100, 399, 400, 599, 600, 5000].map(cubeSizePx)).toEqual([6, 6, 9, 9, 12, 12]);
+    expect([100, 399, 400, 599, 600, 5000].map((deq) => cubeSizePx(deq))).toEqual([6, 6, 9, 9, 12, 12]);
   });
 });
 
@@ -113,5 +113,17 @@ describe("trialLabel", () => {
     expect(trialLabel({ buy: 50, sell: 50 }, 100)).toBe("mixed");
     expect(trialLabel({ buy: 20, sell: 20 }, 100)).toBe("none");
     expect(trialLabel(null, 100)).toBeNull();
+  });
+});
+
+describe("cubeSizePx relative to the minimum in use", () => {
+  it("is small from the minimum, medium from twice it and large from three times it", () => {
+    expect([2500, 4999, 5000, 7499, 7500, 40000].map((deq) => cubeSizePx(deq, 2500))).toEqual([6, 6, 9, 9, 12, 12]);
+    expect([20, 39, 40, 59, 60].map((deq) => cubeSizePx(deq, 20))).toEqual([6, 6, 9, 9, 12]);
+  });
+
+  it("buildCubes sizes its cubes against the filter's own minimum", () => {
+    const [cube] = buildCubes([alert({ delta: 0.5, contracts: 100, moneyness: "ATM" })], { minDeq: 20, showFar: false }); // 50 delta contracts = 2.5x the minimum
+    expect(cube.size).toBe(9);
   });
 });

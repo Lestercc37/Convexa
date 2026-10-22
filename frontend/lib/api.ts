@@ -19,6 +19,7 @@ import type {
   ScreenerPresetSettingsUpdate,
   UnderlyingsResponse,
   VwapHistoryResponse,
+  CubeMinimumsResponse,
   WhaleAlertsResponse,
   WhaleThreshold,
   WhaleThresholdsResponse,
@@ -165,6 +166,10 @@ export function getPriceCandles(
 ) {
   const params = new URLSearchParams({ timeframe, sessions: String(sessions) });
   return getJson<PriceCandlesResponse>(`/market/${encodeURIComponent(symbol)}/candles?${params.toString()}`, signal);
+}
+
+export function getCubeMinimums(signal?: AbortSignal) {
+  return getJson<CubeMinimumsResponse>("/alert-cubes/minimums", signal);
 }
 
 export function getMinuteFlow(symbol: string, options: { start?: Date }, signal?: AbortSignal) {

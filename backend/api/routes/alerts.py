@@ -2,9 +2,10 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Query, Request
 
-from backend.api.schemas import WhaleAlertsResponse
+from backend.api.schemas import CubeMinimumsResponse, WhaleAlertsResponse
 from backend.core.container import Container
 from backend.domain.entities import SCHEMA_VERSION
+from backend.domain.use_cases.cube_minimums import get_cube_minimums_async
 
 router = APIRouter(tags=["alerts"])
 
@@ -54,3 +55,10 @@ async def get_alerts(
             ],
         }
     )
+
+
+@router.get("/alert-cubes/minimums", response_model=CubeMinimumsResponse)
+async def get_alert_cube_minimums(request: Request) -> CubeMinimumsResponse:
+    """The suggested minimum size of the alert cubes per symbol (about 40 cubes a session each), recomputed from the last completed sessions and cached for an hour."""
+    container: Container = request.app.state.container
+    return CubeMinimumsResponse.model_validate(await get_cube_minimums_async(container.async_market_storage))

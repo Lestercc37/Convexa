@@ -222,6 +222,9 @@ export type PriceCandlesResponse = {
   candles: { time: number; open: number; high: number; low: number; close: number }[];
 };
 
+// GET /alert-cubes/minimums: the suggested minimum size of the alert cubes per symbol (about `target_per_session` cubes a session each); symbols without history are absent.
+export type CubeMinimumsResponse = { schema_version: number; target_per_session: number; sessions: number; minimums: Record<string, number> };
+
 export type GammaHeatmapMetric = "gamma" | "absolute_gamma" | "delta" | "vanna" | "charm" | "call_gamma" | "put_gamma" | "total_gamma";
 
 // GET /gamma/{symbol}/heatmap: a strike x time matrix of one stored per-strike figure. `values` of each column are aligned to
