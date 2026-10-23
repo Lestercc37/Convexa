@@ -30,6 +30,11 @@ export const en: Translations = {
   regimeBadge: {
     ariaLabel: "Gamma regime",
   },
+  expectedMoveBadge: {
+    label: "EXP. MOVE",
+    title: (points, pct, low, high, iv) =>
+      `Expected move (1 standard deviation) to the close: ±${points} (±${pct}%), range ${low} – ${high}. Equivalent IV ${iv}%. The same EMC / EMP lines as the chart.`,
+  },
   futureOpeningPrice: {
     label: "9:30 ET Open",
     saveButton: "Save",

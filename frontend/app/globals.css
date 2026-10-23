@@ -302,6 +302,8 @@ button, select { font: inherit; }
 .regime-badge.short { border-color: rgba(250, 0, 10, 0.4); background: linear-gradient(145deg, var(--risk-soft), var(--tv-panel)); }
 .regime-badge.no-data { color: var(--tv-text-dim); }
 .regime-badge-compact.no-data { color: var(--tv-text-dim); }
+.expected-move-compact { display: inline-flex; align-items: center; gap: 5px; font-weight: 600; color: var(--tv-text); cursor: help; }
+.expected-move-compact-points { color: var(--tv-text-dim); font-weight: 500; }
 .regime-label { margin: 0; font-size: 1.6rem; line-height: 1; letter-spacing: -0.02em; }
 .long .regime-label { color: var(--calm); }
 .short .regime-label { color: var(--risk); }
