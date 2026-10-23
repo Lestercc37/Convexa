@@ -372,8 +372,10 @@ async def get_gamma_heatmap_async(
     )
 
 
-# timeframe -> bucket seconds of the multi-session candle endpoint (1m stays on /market/{symbol}/history: a week of 1-minute candles is ~2,000).
-CANDLE_TIMEFRAME_SECONDS = {"5m": 300, "15m": 900, "30m": 1800, "1h": 3600}
+# timeframe -> bucket seconds of the multi-session candle endpoint. 1m exists for the chart's moving averages (they need the previous sessions' 1-minute
+# closes to start already warmed up); a week of 1-minute candles is ~2,000, so the route caps 1m at MAX_SESSIONS_1M sessions. The Semana view still starts at 5m.
+CANDLE_TIMEFRAME_SECONDS = {"1m": 60, "5m": 300, "15m": 900, "30m": 1800, "1h": 3600}
+MAX_SESSIONS_1M = 5
 _CANDLE_CACHE_TTL_SECONDS = 30.0
 _CANDLE_SCAN_DAYS = 14  # calendar days scanned to find `sessions` trading dates (covers holidays and long weekends)
 _candle_cache: dict[tuple[str, int, int], tuple[float, list[PriceCandle]]] = {}

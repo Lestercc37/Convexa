@@ -18,7 +18,7 @@ import {
   type ISeriesApi,
   type UTCTimestamp,
 } from "lightweight-charts";
-import { getAlerts, getGammaHistory, getGammaProfile, getMinuteFlow, getOptionChain, getOptionChainExpirations } from "@/lib/api";
+import { getAlerts, getGammaHistory, getGammaProfile, getMinuteFlow, getOptionChain, getOptionChainExpirations, getPriceCandles } from "@/lib/api";
 import { flowBarsFromResponse } from "@/lib/minute-flow";
 import { buildCubes, CUBE_MIN_OPTIONS, DEFAULT_CUBE_FILTER } from "@/lib/alert-cubes";
 import { aggregateVwapPoints, type MinuteCandle, type Timeframe, type VwapPoint } from "@/lib/candles";
@@ -27,6 +27,7 @@ import { useLanguage } from "@/lib/i18n/language-context";
 import type { MarketPriceStreamStatus } from "@/lib/market-price-stream";
 import { currentEasternDate, EASTERN_TIME_ZONE, heatmapStartSeconds, mostRecentSessionRange } from "@/lib/market-session";
 import { formatDeltaFlow, formatPremium, summarizeOpeningAlerts, summarizeOpeningFlow, type OpeningAlerts, type OpeningFlow } from "@/lib/opening-flow";
+import { emaValues, loadEmas, saveEmas, type EmaConfig } from "@/lib/ema";
 import type {
   AtrRange,
   ExpectedMove,
@@ -38,6 +39,7 @@ import type {
 } from "@/lib/types";
 import { LEVEL_MERGE_THRESHOLD } from "./gravity-map";
 import { AlertCubesPrimitive } from "./alert-cubes-primitive";
+import { EmaMenu } from "./ema-menu";
 import { CandleCountdownPrimitive } from "./candle-countdown-primitive";
 import { candleSecondsLeft, formatCountdown } from "@/lib/candle-countdown";
 import { AlertCubeTooltip } from "./alert-cube-tooltip";
@@ -545,6 +547,12 @@ export function PriceChart({
   // The flow since the open, summarised from the poll the flow panes already make (no extra request) and shown in a line above the chart; the alerts half comes from the cubes' poll.
   const [openingFlow, setOpeningFlow] = useState<OpeningFlow | null>(null);
   const [openingAlerts, setOpeningAlerts] = useState<OpeningAlerts | null>(null);
+  // Moving averages (any period, own colour; chosen in the EMAs menu, kept in this browser). `emaSeed` = closes of the sessions BEFORE the first candle on screen, only used to warm the lines up.
+  const [emas, setEmas] = useState<EmaConfig[]>([]);
+  const [emasLoaded, setEmasLoaded] = useState(false);
+  const [emaSeed, setEmaSeed] = useState<{ key: string; closes: { time: number; close: number }[] }>({ key: "", closes: [] });
+  const [convergingEmas, setConvergingEmas] = useState<ReadonlySet<string>>(new Set());
+  const emaSeriesRef = useRef<Map<string, ISeriesApi<"Line">>>(new Map());
   // The Smile's expiration: "" = the nearest current one; the list of the symbol's current expirations; and the dot under the mouse (strike, IV and where it is on screen).
   // Both are remembered together with the symbol they belong to, so a symbol switch needs no reset: what was chosen for another symbol reads as "nothing chosen".
   const [smileChoice, setSmileChoice] = useState<{ symbol: string; date: string }>({ symbol, date: "" });
@@ -958,6 +966,71 @@ export function PriceChart({
     if (!showProfile || profileFromEndpoint || !heatmapProfile) return;
     profilePrimitiveRef.current?.setBars(heatmapProfile, showHeatmap && sidesOn ? "gamma" : paletteForMetric(profileMetric), profileCaption);
   }, [showProfile, profileFromEndpoint, heatmapProfile, profileMetric, profileCaption, showHeatmap, sidesOn]);
+
+  // EMAs. The list lives in this browser (localStorage); it loads once after mount (never during render) and saves on every change after that.
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- loads this browser's saved list once after mount (localStorage does not exist on the server, so it cannot be the initial state)
+    setEmas(loadEmas());
+    setEmasLoaded(true);
+  }, []);
+  useEffect(() => {
+    if (emasLoaded) saveEmas(emas);
+  }, [emas, emasLoaded]);
+
+  // Warm-up closes: the candles of the sessions before the first one on screen, same timeframe, asked once per symbol / timeframe while a line is showing (they are history). ES / NQ have
+  // no stored candles (404): their lines start at the first candle of the day. A failed request just leaves the lines to settle from the day's own candles.
+  const anyEmaVisible = emas.some((ema) => ema.visible);
+  useEffect(() => {
+    if (!anyEmaVisible) return;
+    const key = `${symbol}|${timeframe}`;
+    const controller = new AbortController();
+    getPriceCandles(symbol, timeframe, timeframe === "1m" ? 5 : 10, controller.signal)
+      .then((response) => setEmaSeed({ key, closes: response.candles.map((candle) => ({ time: candle.time, close: candle.close })) }))
+      .catch(() => setEmaSeed({ key, closes: [] }));
+    return () => controller.abort();
+  }, [anyEmaVisible, symbol, timeframe]);
+
+  // One line series per visible EMA (created / removed when the list, a colour, the symbol or the timeframe changes), then its values on every candle update. The line only gets a point
+  // at the time of each candle ON SCREEN: points of the warm-up sessions would widen the shared time scale and break fitContent (the VWAP lesson of 2026-09-18).
+  const emaStructure = emas
+    .filter((ema) => ema.visible)
+    .map((ema) => `${ema.id}:${ema.color}`)
+    .join("|");
+  useEffect(() => {
+    const chart = chartRef.current;
+    if (!chart || emaStructure === "") return;
+    const series = new Map<string, ISeriesApi<"Line">>();
+    for (const ema of emas) {
+      if (!ema.visible) continue;
+      series.set(
+        ema.id,
+        chart.addSeries(LineSeries, { color: ema.color, lineWidth: 1, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false }),
+      );
+    }
+    emaSeriesRef.current = series;
+    return () => {
+      for (const line of series.values()) chart.removeSeries(line);
+      emaSeriesRef.current = new Map();
+    };
+    // `emas` only matters through emaStructure (visibility and colour); the closes below read the full list.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [emaStructure, symbol, timeframe]);
+  useEffect(() => {
+    const series = emaSeriesRef.current;
+    if (series.size === 0 || candles.length === 0) return;
+    const firstTime = candles[0].time;
+    const seed = emaSeed.key === `${symbol}|${timeframe}` ? emaSeed.closes.filter((entry) => entry.time < firstTime).map((entry) => entry.close) : [];
+    const closes = candles.map((candle) => candle.close);
+    const converging = new Set<string>();
+    for (const ema of emas) {
+      const line = series.get(ema.id);
+      if (!line) continue;
+      const { values, warm } = emaValues(seed, closes, ema.period);
+      if (!warm) converging.add(ema.id);
+      line.setData(candles.map((candle, index) => ({ time: candle.time as UTCTimestamp, value: values[index] })));
+    }
+    setConvergingEmas((previous) => (previous.size === converging.size && [...converging].every((id) => previous.has(id)) ? previous : converging));
+  }, [candles, emas, emaSeed, emaStructure, symbol, timeframe]);
 
   // Option flow under the candles: two small panes (calls, puts) sharing the candles' time scale, polled like the other live panels; a failed poll keeps the bars already drawn.
   useEffect(() => {
@@ -1549,6 +1622,7 @@ export function PriceChart({
               <input type="checkbox" checked={showFlow} onChange={(event) => setShowFlow(event.target.checked)} />
               {t.priceChart.flowLabel}
             </label>
+            <EmaMenu emas={emas} convergingIds={convergingEmas} onChange={setEmas} />
             <label className="chart-toggle">
               <input
                 type="checkbox"

@@ -101,7 +101,7 @@ class PriceCandlesResponse(BaseModel):
 
     schema_version: int = Field(examples=[1])
     symbol: str = Field(examples=["SPY"])
-    timeframe: Literal["5m", "15m", "30m", "1h"]
+    timeframe: Literal["1m", "5m", "15m", "30m", "1h"]
     sessions: int = Field(examples=[5])
     candles: list[PriceCandleResponse]
 

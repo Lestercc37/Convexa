@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Literal
 
 from fastapi import APIRouter, Query, Request
+from fastapi.exceptions import RequestValidationError
 
 from backend.api.schemas import (
     MarketSnapshotResponse,
@@ -17,6 +18,7 @@ from backend.api.serializers import (
     vwap_history_response,
 )
 from backend.core.container import Container
+from backend.domain.use_cases.read_models import MAX_SESSIONS_1M
 from backend.domain.use_cases import (
     build_market_snapshot_async,
     get_price_candles_async,
@@ -86,11 +88,15 @@ async def get_price_history(symbol: str, request: Request) -> PriceHistoryRespon
 async def get_price_candles(
     symbol: str,
     request: Request,
-    timeframe: Literal["5m", "15m", "30m", "1h"] = Query(default="5m"),
+    timeframe: Literal["1m", "5m", "15m", "30m", "1h"] = Query(default="5m"),
     sessions: int = Query(default=5, ge=1, le=10),
 ) -> PriceCandlesResponse:
     """The multi-session view of the chart ("Semana"): candles aggregated in SQL from the stored prices, regular session only (09:30 to
     16:00 ET), bucketed from 09:30 ET. Day mode keeps using /market/{symbol}/history. 404 for ES/NQ (see get_price_candles_async)."""
+    if timeframe == "1m" and sessions > MAX_SESSIONS_1M:
+        raise RequestValidationError(
+            [{"type": "value_error", "loc": ("query", "sessions"), "msg": f"1m candles are limited to {MAX_SESSIONS_1M} sessions", "input": sessions}]
+        )
     container: Container = request.app.state.container
     candles = await get_price_candles_async(container.async_market_storage, symbol, timeframe, sessions)
     return PriceCandlesResponse.model_validate(price_candles_response(symbol, timeframe, sessions, candles))
