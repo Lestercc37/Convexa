@@ -100,6 +100,11 @@ export type Translations = {
     alertCubesLabel: string;
     alertCubesMinAriaLabel: string;
     alertCubesFarLabel: string;
+    alertCubesMinTitle: (source: "custom" | "auto" | "default", value: number) => string;
+    alertCubesAuto: string;
+    alertCubesAutoTitle: string;
+    alertCubesHalf: string;
+    alertCubesDouble: string;
     cubeTypes: { UNUSUAL: string; WHALE: string; SUSTAINED_FLOW: string };
     cubeSides: { buy: string; sell: string; mixed: string; none: string };
     cubeRight: { C: string; P: string };

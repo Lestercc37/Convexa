@@ -31,12 +31,11 @@ export type CubeFilter = {
 };
 
 export const DEFAULT_CUBE_FILTER: CubeFilter = { minDeq: 200, showFar: false };
-export const CUBE_MIN_OPTIONS = [100, 200, 400] as const;
 
-// 200-400 small, 400-600 medium, 600 and up large.
-export function cubeSizePx(deq: number): number {
-  if (deq >= 600) return 12;
-  if (deq >= 400) return 9;
+// Relative to the minimum in use (item 12b): from the minimum up to twice it small, twice to three times medium, three times and up large (with the old 200: 200-400 / 400-600 / 600+).
+export function cubeSizePx(deq: number, minimum: number = DEFAULT_CUBE_FILTER.minDeq): number {
+  if (deq >= 3 * minimum) return 12;
+  if (deq >= 2 * minimum) return 9;
   return 6;
 }
 
@@ -79,7 +78,7 @@ export function buildCubes(alerts: WhaleAlert[], filter: CubeFilter = DEFAULT_CU
       strike,
       right: side === "call" ? "C" : "P",
       deq,
-      size: cubeSizePx(deq),
+      size: cubeSizePx(deq, filter.minDeq),
       side: cubeSide(alert),
       zone: alert.moneyness,
       alert,

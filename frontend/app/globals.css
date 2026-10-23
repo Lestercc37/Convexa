@@ -362,6 +362,10 @@ button, select { font: inherit; }
 .opening-flow-up { color: #1fbf6a; }
 .opening-flow-down { color: #ff5056; }
 .opening-flow-dim { color: var(--tv-text-dim); }
+.cube-min { display: inline-flex; align-items: center; gap: 4px; }
+.cube-min-prefix { color: var(--tv-text-dim); }
+.cube-min-input { width: 5.4em; padding: 1px 5px; border: 1px solid var(--tv-border, rgba(128, 128, 128, 0.4)); border-radius: 4px; background: transparent; color: inherit; font: inherit; font-variant-numeric: tabular-nums; text-align: right; }
+.cube-min-button { padding: 0 6px; border: 1px solid var(--tv-border, rgba(128, 128, 128, 0.4)); border-radius: 4px; background: transparent; color: inherit; font: inherit; cursor: pointer; }
 .ema-menu { position: relative; }
 .ema-menu-button { cursor: pointer; background: transparent; border: 0; color: inherit; font: inherit; padding: 0; }
 .ema-menu-panel { position: absolute; top: calc(100% + 6px); right: 0; z-index: 30; min-width: 230px; padding: 10px; border: 1px solid var(--tv-border, rgba(128, 128, 128, 0.4)); border-radius: 6px; background: var(--tv-panel, #1e222d); color: var(--tv-text, inherit); box-shadow: 0 6px 20px rgba(0, 0, 0, 0.35); font-size: 0.75rem; }

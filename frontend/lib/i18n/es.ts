@@ -112,6 +112,16 @@ export const es: Translations = {
     alertCubesLabel: "Alertas",
     alertCubesMinAriaLabel: "Tamaño mínimo de las alertas (contratos-delta)",
     alertCubesFarLabel: "Lejos",
+    alertCubesMinTitle: (source, value) =>
+      source === "custom"
+        ? `Tu mínimo para este símbolo: ${value}. Escribe otro número y pulsa Enter, o "Auto" para volver al automático.`
+        : source === "auto"
+          ? `Mínimo automático: ${value} (unos 40 cubos por sesión, recalculado cada día con las últimas sesiones). Escribe otro número y pulsa Enter para usar el tuyo.`
+          : `Mínimo por defecto: ${value} (aún no hay historial suficiente de este símbolo). Escribe otro número y pulsa Enter para usar el tuyo.`,
+    alertCubesAuto: "Auto",
+    alertCubesAutoTitle: "Volver al mínimo automático de este símbolo",
+    alertCubesHalf: "½",
+    alertCubesDouble: "×2",
     cubeTypes: { UNUSUAL: "Inusual", WHALE: "Ballena", SUSTAINED_FLOW: "Flujo sostenido" },
     cubeSides: { buy: "COMPRA", sell: "VENTA", mixed: "SIN LADO CLARO", none: "SIN LADO" },
     cubeRight: { C: "Call", P: "Put" },
