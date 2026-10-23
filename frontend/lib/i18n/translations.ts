@@ -28,6 +28,10 @@ export type Translations = {
   regimeBadge: {
     ariaLabel: string;
   };
+  expectedMoveBadge: {
+    label: string;
+    title: (points: string, pct: string, low: string, high: string, iv: string) => string;
+  };
   futureOpeningPrice: {
     label: string;
     saveButton: string;
