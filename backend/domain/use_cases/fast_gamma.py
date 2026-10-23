@@ -160,12 +160,14 @@ class FastGammaLayer:
         twin_iv: dict[tuple[date, Decimal, ContractType], Decimal] | None = None,
     ) -> OptionContract:
         iv = contract.iv
+        # The twin first: an ITM contract with a noisy quote OR no IV at all (ThetaData's IV 0 when the mid is at or below intrinsic, deep ITM 0DTE late in the day)
+        # takes the IV of its OTM twin, the same rule as the cycle (ThetaDataProvider._needs_twin_iv).
+        if twin_iv and needs_twin_iv(contract.contract_type, contract.strike, old_spot, contract.bid, contract.ask, iv):
+            other = ContractType.PUT if contract.contract_type == ContractType.CALL else ContractType.CALL
+            iv = twin_iv.get((contract.expiration, contract.strike, other), iv)
         if iv is None or iv <= 0:
             # Same rule as the cycle: no usable IV, no gamma (calculate_bsm_greeks returns zeros). The stored greeks already are those zeros.
             return contract
-        if twin_iv and is_noisy_itm_quote(contract.contract_type, contract.strike, old_spot, contract.bid, contract.ask):
-            other = ContractType.PUT if contract.contract_type == ContractType.CALL else ContractType.CALL
-            iv = twin_iv.get((contract.expiration, contract.strike, other), iv)
         bsm = calculate_bsm_greeks(
             spot, contract.strike, rate, iv, self._time_to_expiration(contract.expiration, now_et)
         )
@@ -193,6 +195,16 @@ def is_noisy_itm_quote(contract_type: ContractType, strike: Decimal, spot: Decim
     if intrinsic <= 0:
         return False
     return (bid + ask) / 2 - intrinsic < (ask - bid) / 2
+
+
+def needs_twin_iv(contract_type: ContractType, strike: Decimal, spot: Decimal, bid: Decimal, ask: Decimal, iv: Decimal | None) -> bool:
+    """In the money and either a noisy quote or no IV at all (None / 0): the contract's own IV cannot be used for gamma."""
+    if not ask >= bid:
+        return False
+    intrinsic = max(spot - strike, Decimal(0)) if contract_type == ContractType.CALL else max(strike - spot, Decimal(0))
+    if intrinsic <= 0:
+        return False
+    return iv is None or iv <= 0 or (bid + ask) / 2 - intrinsic < (ask - bid) / 2
 
 
 def twin_iv_by_contract(contracts: tuple[OptionContract, ...], spot: Decimal) -> dict[tuple[date, Decimal, ContractType], Decimal]:

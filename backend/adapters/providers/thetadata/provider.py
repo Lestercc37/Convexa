@@ -622,6 +622,18 @@ def _is_noisy_itm_quote(right: str, strike: Decimal, spot: Decimal, bid: Decimal
     return (bid + ask) / 2 - intrinsic < (ask - bid) / 2
 
 
+def _needs_twin_iv(right: str, strike: Decimal, spot: Decimal, bid: Decimal, ask: Decimal, iv: Decimal) -> bool:
+    """An in-the-money contract whose own IV cannot be trusted: a noisy quote (see _is_noisy_itm_quote) or NO IV at all. ThetaData returns implied_vol 0 when the mid is at
+    or below intrinsic, which happens to deep ITM 0DTE contracts late in the session (2026-10-23 15:21 ET: every SPX 0DTE put from 7650 to 7700, 25,000+ open interest, had
+    IV 0 and gamma 0 with spot 7629.6), so their gamma vanished from the profile and the net gamma above the price looked call-only and positive."""
+    if not ask >= bid:
+        return False
+    intrinsic = max(spot - strike, Decimal(0)) if right == "CALL" else max(strike - spot, Decimal(0))
+    if intrinsic <= 0:
+        return False
+    return iv <= 0 or (bid + ask) / 2 - intrinsic < (ask - bid) / 2
+
+
 def _twin_iv_by_strike_and_right(entries: list[dict[str, Any]]) -> dict[tuple[Decimal, str], Decimal]:
     """The IV of every readable (not noisy-ITM) contract of one expiration, keyed by (strike, right): the OTM side of a strike is the reliable one, and by put-call parity it
     is also the IV of its ITM twin."""
@@ -3329,7 +3341,7 @@ class ThetaDataProvider:
                 as_of = _parse_et_timestamp(data["timestamp"])
                 time_to_expiration = _time_to_expiration_years(chain.expiration, as_of)
                 greeks_iv = iv
-                if twin_iv and iv > 0 and _is_noisy_itm_quote(right, strike, underlying_price, bid, ask):
+                if twin_iv and _needs_twin_iv(right, strike, underlying_price, bid, ask, iv):
                     greeks_iv = twin_iv.get((strike, "PUT" if right == "CALL" else "CALL"), iv)
                 bsm = calculate_bsm_greeks(underlying_price, strike, rate, greeks_iv, time_to_expiration)
 

@@ -7,11 +7,13 @@ from datetime import date, datetime
 from decimal import Decimal
 
 from backend.adapters.providers.thetadata.provider import _is_noisy_itm_quote as provider_is_noisy
+from backend.adapters.providers.thetadata.provider import _needs_twin_iv as provider_needs_twin_iv
 from backend.adapters.storage.memory import InMemoryStorage
 from backend.domain.entities import ContractType, Greeks, OptionContract
 from backend.domain.use_cases.fast_gamma import (
     FastGammaLayer,
     is_noisy_itm_quote,
+    needs_twin_iv,
     twin_iv_by_contract,
 )
 from backend.domain.use_cases.market_hours import EASTERN_TIME
@@ -95,3 +97,32 @@ def test_a_noisy_contract_without_a_twin_keeps_its_own_iv() -> None:
     with_switch = _layer(True)._reprice(NOISY_CALL, SPOT, SPOT, RATE, NOW_ET, twin_iv)
     without = _layer(False)._reprice(NOISY_CALL, SPOT, SPOT, RATE, NOW_ET, None)
     assert with_switch.greeks == without.greeks
+
+
+# 2026-10-23 15:21 ET: ThetaData answers implied_vol 0 for a deep-ITM 0DTE quote whose mid is at or below intrinsic (every SPX put 7650-7700 with spot 7629.6), so its gamma
+# was 0 and the net gamma above the price looked call-only. Here a 560 put with spot 550: intrinsic 10.00, mid 9.95 (below intrinsic), IV 0; its twin, the 560 call, is OTM.
+ZERO_IV_PUT = _contract(ContractType.PUT, 560, "9.90", "10.00", "0")
+TWIN_CALL = _contract(ContractType.CALL, 560, "0.05", "0.07", "0.21")
+
+
+def test_needs_twin_iv_matches_the_provider_and_includes_itm_quotes_without_iv() -> None:
+    grid = [(kind, strike, bid, ask, iv) for kind in (ContractType.CALL, ContractType.PUT) for strike in (500, 545, 550, 555, 600)
+            for bid, ask in (("0.01", "0.03"), ("5.00", "5.20"), ("9.90", "10.00"), ("3", "2")) for iv in ("0", "0.2")]
+    for kind, strike, bid, ask, iv in grid:
+        expected = provider_needs_twin_iv("CALL" if kind == ContractType.CALL else "PUT", Decimal(strike), SPOT, Decimal(bid), Decimal(ask), Decimal(iv))
+        assert needs_twin_iv(kind, Decimal(strike), SPOT, Decimal(bid), Decimal(ask), Decimal(iv)) is expected, (kind, strike, bid, ask, iv)
+    assert needs_twin_iv(ContractType.PUT, Decimal(560), SPOT, Decimal("9.90"), Decimal("10.00"), Decimal(0))
+    assert not needs_twin_iv(ContractType.PUT, Decimal(540), SPOT, Decimal("0.05"), Decimal("0.07"), Decimal(0))  # OTM without IV: no twin, stays without gamma
+
+
+def test_an_itm_contract_without_iv_gets_its_twins_iv_and_a_real_gamma() -> None:
+    twin_iv = twin_iv_by_contract((ZERO_IV_PUT, TWIN_CALL), SPOT)
+    on = _layer(True)._reprice(ZERO_IV_PUT, SPOT, SPOT, RATE, NOW_ET, twin_iv)
+    priced_with_twin = _layer(False)._reprice(_contract(ContractType.PUT, 560, "9.90", "10.00", "0.21"), SPOT, SPOT, RATE, NOW_ET, None)
+    assert on.greeks.gamma > 0
+    assert on.greeks.gamma == priced_with_twin.greeks.gamma
+    assert on.iv == Decimal(0)  # the stored IV field is still ThetaData's
+    off = _layer(False)._reprice(ZERO_IV_PUT, SPOT, SPOT, RATE, NOW_ET, None)
+    assert off is ZERO_IV_PUT  # switch off: unchanged, as before
+    no_twin = _layer(True)._reprice(ZERO_IV_PUT, SPOT, SPOT, RATE, NOW_ET, twin_iv_by_contract((ZERO_IV_PUT,), SPOT))
+    assert no_twin is ZERO_IV_PUT  # no twin available: unchanged
