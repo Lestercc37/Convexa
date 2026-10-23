@@ -4271,6 +4271,14 @@ class TestItmIvFromTwin:
         put = contracts[(Decimal(760), ContractType.PUT)]
         assert put.greeks.gamma == self._expected_gamma("0.16").gamma
 
+    def test_on_an_itm_quote_without_iv_gets_the_twin_iv_for_its_greeks(self) -> None:
+        # ThetaData's implied_vol 0 on a deep-ITM quote (mid at or below intrinsic): before 2026-10-23 its gamma stayed 0; now it is priced with the OTM twin's IV.
+        contracts = self._chain(True, itm_call_iv=0.0)
+        call = contracts[(Decimal(760), ContractType.CALL)]
+        expected = self._expected_gamma("0.16")
+        assert call.iv == Decimal(0)
+        assert call.greeks.gamma == expected.gamma > 0
+
     def test_a_readable_itm_quote_is_left_alone(self) -> None:
         # time value 0.55 well above half the 0.1 spread: readable, keeps its own IV even with the flag on
         handler_call = self._handler(0.20)
