@@ -243,8 +243,11 @@ def worker_role(seconds: int, results: mp.Queue, stop: mp.Event, go: mp.Event) -
     logging.getLogger().setLevel(logging.WARNING)
 
     async def main() -> None:
+        # LOADTEST_HUB_URL points the hub somewhere else, e.g. the native stream proxy (tools/stream_proxy) listening in
+        # front of this fake Terminal: StreamProxy run --listen-port 26521 --upstream ws://127.0.0.1:26520/v1/events
         hub = ThetaStreamHub(
-            f"ws://{HOST}:{TERMINAL_PORT}/v1/events", httpx.Client(base_url="http://127.0.0.1:1")
+            os.environ.get("LOADTEST_HUB_URL", f"ws://{HOST}:{TERMINAL_PORT}/v1/events"),
+            httpx.Client(base_url="http://127.0.0.1:1"),
         )
         for i in range(CONTRACTS):
             hub.register_contract(
