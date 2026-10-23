@@ -72,6 +72,14 @@ export type Translations = {
     flowTitle: string;
     flowCallsTitle: string;
     flowPutsTitle: string;
+    openingFlowLabel: string;
+    openingFlowNet: string;
+    openingFlowClassified: string;
+    openingFlowAlerts: string;
+    openingFlowBullish: string;
+    openingFlowBearish: string;
+    openingFlowUnclear: string;
+    openingFlowHint: string;
     smileExpirationAriaLabel: string;
     smileExpirationNearest: string;
     smileTooltip: (strike: number, right: "call" | "put", ivPercent: string, expiration: string) => string;
