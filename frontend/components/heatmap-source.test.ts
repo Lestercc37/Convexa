@@ -140,3 +140,74 @@ describe("loadHeatmap", () => {
     expect((await loadHeatmap("SPY", REQUEST)).fast).toBe(true); // the abort did not mark the layer unavailable
   });
 });
+
+describe("loadHeatmap: incremental fast polls", () => {
+  const BUCKET_START = Date.parse("2026-10-19T14:02:10Z");
+
+  function fastOrCycle(fastResponses: GammaHeatmapResponse[]) {
+    let calls = 0;
+    api.getGammaHeatmap.mockImplementation((_symbol: string, options: { source?: string }) => {
+      if (options.source !== "fast") return Promise.resolve(CYCLE);
+      return Promise.resolve(fastResponses[Math.min(calls++, fastResponses.length - 1)]);
+    });
+  }
+
+  it("asks the whole window the first time and only the last bucket onward afterwards, merging the tail", async () => {
+    const tail = response(10, [
+      { as_of: "2026-10-19T14:02:13Z", values: [11, 12] }, // the last bucket again (refreshed)
+      { as_of: "2026-10-19T14:02:23Z", values: [13, 14] }, // a new one
+    ]);
+    fastOrCycle([FAST, tail]);
+
+    const first = await loadHeatmap("SPY", REQUEST);
+    const second = await loadHeatmap("SPY", REQUEST);
+
+    const fastCalls = api.getGammaHeatmap.mock.calls.filter((call) => call[1].source === "fast");
+    expect(fastCalls[0][1].start).toBe(START); // the full window
+    expect(fastCalls[1][1].start).toEqual(new Date(BUCKET_START)); // from the last column's bucket
+    expect(first.data.columns.map((column) => column.values)).toEqual([[1, 2], [3, 4], [7, 8], [9, 10]]);
+    expect(second.data.columns.map((column) => column.values)).toEqual([[1, 2], [3, 4], [7, 8], [11, 12], [13, 14]]);
+    expect(second.fast).toBe(true);
+  });
+
+  it("unions the strikes of the tail with the ones already held", async () => {
+    const tail = response(10, [{ as_of: "2026-10-19T14:02:13Z", values: [20, 21] }], [555, 560]);
+    fastOrCycle([FAST, tail]);
+    await loadHeatmap("SPY", REQUEST);
+    const second = await loadHeatmap("SPY", REQUEST);
+    expect(second.data.strikes).toEqual([550, 555, 560]);
+    expect(second.data.columns.at(-1)!.values).toEqual([null, 20, 21]);
+    expect(second.data.columns.find((column) => column.time === Date.parse("2026-10-19T14:02:00Z") / 1000)!.values).toEqual([7, 8, null]);
+  });
+
+  it("asks the whole window again after five minutes and when the key changes", async () => {
+    fastOrCycle([FAST]);
+    const now = vi.spyOn(Date, "now");
+    now.mockReturnValue(1_000_000);
+    await loadHeatmap("SPY", REQUEST);
+    now.mockReturnValue(1_000_000 + 4 * 60_000);
+    await loadHeatmap("SPY", REQUEST);
+    now.mockReturnValue(1_000_000 + 5 * 60_000 + 1);
+    await loadHeatmap("SPY", REQUEST);
+    await loadHeatmap("SPY", { ...REQUEST, metric: "vanna" });
+    const starts = api.getGammaHeatmap.mock.calls.filter((call) => call[1].source === "fast").map((call) => call[1].start);
+    expect(starts[0]).toBe(START);
+    expect(starts[1]).toEqual(new Date(BUCKET_START)); // within five minutes: incremental
+    expect(starts[2]).toBe(START); // past five minutes: full again
+    expect(starts[3]).toBe(START); // another metric has its own matrix
+    now.mockRestore();
+  });
+
+  it("keeps working when a tail request fails: falls back to the cycle's columns for a minute, then asks again", async () => {
+    let fastCalls = 0;
+    api.getGammaHeatmap.mockImplementation((_symbol: string, options: { source?: string }) => {
+      if (options.source !== "fast") return Promise.resolve(CYCLE);
+      fastCalls += 1;
+      return fastCalls === 2 ? Promise.reject(new Error("boom")) : Promise.resolve(FAST);
+    });
+    await loadHeatmap("SPY", REQUEST);
+    const afterFailure = await loadHeatmap("SPY", REQUEST);
+    expect(afterFailure.fast).toBe(false);
+    expect(afterFailure.data.columns).toHaveLength(3); // the cycle's own columns
+  });
+});
