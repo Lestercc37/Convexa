@@ -1051,8 +1051,11 @@ export function PriceChart({
     }
     emaSeriesRef.current = series;
     return () => {
-      for (const line of series.values()) chart.removeSeries(line);
       emaSeriesRef.current = new Map();
+      // On unmount (symbol / timeframe / Día-Semana switch: the chart is keyed) the chart effect above has already called chart.remove(), and
+      // removeSeries on a removed chart throws "Value is undefined", which took the whole page down (2026-10-24, Semana with EMAs on).
+      if (chartRef.current !== chart) return;
+      for (const line of series.values()) chart.removeSeries(line);
     };
     // `emas` only matters through emaStructure (visibility and colour); the closes below read the full list.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1103,9 +1106,11 @@ export function PriceChart({
     return () => {
       controller.abort();
       window.clearInterval(interval);
+      setOpeningFlow(null);
+      // Same as the EMA lines: never touch a chart that unmounting already removed.
+      if (chartRef.current !== chart) return;
       chart.removeSeries(calls);
       chart.removeSeries(puts);
-      setOpeningFlow(null);
     };
   }, [showFlow, symbol, timeframe, t]);
 
