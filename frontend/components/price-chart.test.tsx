@@ -885,6 +885,28 @@ describe("PriceChart", () => {
     chartMocks.removeSeries.mockReset();
   });
 
+  it("unmounting detaches no primitive from the removed chart (a detach asks it for a redraw that fails with 'Object is disposed')", async () => {
+    let removed = false;
+    const detachedAfterRemove: unknown[] = [];
+    chartMocks.remove.mockImplementation(() => {
+      removed = true;
+    });
+    chartMocks.detachPrimitive.mockImplementation((primitive: unknown) => {
+      if (removed) detachedAfterRemove.push(primitive);
+    });
+    chartMocks.getAlerts.mockResolvedValue({ schema_version: 1, symbol: "SPY", alerts: [] });
+    const user = userEvent.setup();
+    const { unmount } = renderWithLanguage(<PriceChart symbol="SPY" candles={candlesWithRange} gamma={gamma} gammaView="tactical" candleCountdown />);
+    await user.click(screen.getByLabelText("Alertas")); // the cubes primitive too; the live profile is on by default
+    await waitFor(() => expect(chartMocks.attachPrimitive).toHaveBeenCalled());
+
+    unmount();
+    expect(chartMocks.remove).toHaveBeenCalled();
+    expect(detachedAfterRemove).toEqual([]);
+    chartMocks.remove.mockReset();
+    chartMocks.detachPrimitive.mockReset();
+  });
+
   it("EMAs: a saved list comes back with the chart, hidden lines get no series", async () => {
     window.localStorage.setItem(
       "convexa.ema.v1",
