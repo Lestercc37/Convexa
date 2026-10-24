@@ -14,6 +14,12 @@ how long each process's event loop is blocked (the thing that makes the
 
     python -m backend.scripts.loadtest_stream_split --rates 10000,20000,40000 --seconds 30
 
+--repeat-share 0.85 makes that share of the option QUOTEs repeats (same bid/ask as the contract's previous quote, as
+at a real open, where ~85 % only change sizes); the processor drops them before the whale relay, so the expected whale
+quotes exclude them. --upstream-dedupe says something in front of the hub already drops them (the native stream proxy,
+via LOADTEST_HUB_URL), so the processor should handle only the non-repeats. Valid from ~10,000 frames/s up: below that
+a contract's run of repeats can outlast the 1.0 s refresh and one gets forwarded again.
+
 Not covered: the real worker's other work (REST reconcile, price persistence,
 15 symbols' subscribers) and real Terminal behaviour. A pass here means the
 split has headroom at that rate, not that production is verified.
@@ -81,8 +87,38 @@ def _lag_summary(samples: list[float]) -> dict[str, float]:
     }
 
 
-def _option_frames(count: int) -> list[tuple[str, str]]:
+def _quote_steps(count: int, repeat_share: float) -> dict[int, int]:
+    """Ask step (0-6) of each quote position in a pool of `count` frames, cycled by the feeder.
+
+    Without repeats the step follows the position, so a contract never sees the same bid/ask twice in a row. With
+    repeats, a contract's k-th quote in the pool takes step floor(k * (1 - repeat_share)) % 7, so it changes on
+    ~(1 - repeat_share) of its quotes; the last quote of the pool is forced off the first one's step, so the cycle
+    seam is never a repeat and the very first quote sent (no previous one) is counted right too."""
+    if repeat_share <= 0:
+        return {i: i % 7 for i in range(count) if (i % 100) < QUOTE_SHARE * 100}
+    per_contract: dict[int, list[int]] = {}
+    for i in range(count):
+        if (i % 100) < QUOTE_SHARE * 100:
+            per_contract.setdefault(i % CONTRACTS, []).append(i)
+    steps: dict[int, int] = {}
+    for positions in per_contract.values():
+        for k, i in enumerate(positions):
+            steps[i] = int(k * (1 - repeat_share)) % 7
+        if len(positions) > 1 and steps[positions[-1]] == steps[positions[0]]:
+            steps[positions[-1]] = (steps[positions[0]] + 1) % 7
+            if steps[positions[-1]] == steps[positions[-2]] and len(positions) > 2:
+                steps[positions[-1]] = (steps[positions[0]] + 2) % 7
+    return steps
+
+
+def _option_frames(count: int, repeat_share: float = 0.0) -> list[tuple[str, str]]:
+    """Kinds: "quote" (a new bid/ask for its contract), "repeat" (same bid/ask as its previous quote), "trade"."""
     frames: list[tuple[str, str]] = []
+    steps = _quote_steps(count, repeat_share)
+    last_step: dict[int, int] = {}
+    if repeat_share > 0:   # the pool is cycled: a contract's first quote follows its last one of the previous cycle
+        for i in sorted(steps):
+            last_step[i % CONTRACTS] = steps[i]
     for i in range(count):
         contract = {
             "security_type": "OPTION",
@@ -91,15 +127,18 @@ def _option_frames(count: int) -> list[tuple[str, str]]:
             "strike": 770000 + (i % CONTRACTS) * 500,
             "right": "C" if i % 2 else "P",
         }
-        if (i % 100) < QUOTE_SHARE * 100:
+        if i in steps:
+            step = steps[i]
+            kind = "repeat" if last_step.get(i % CONTRACTS) == step else "quote"
+            last_step[i % CONTRACTS] = step
             frames.append(
                 (
-                    "quote",
+                    kind,
                     json.dumps(
                         {
                             "header": {"type": "QUOTE", "status": "CONNECTED"},
                             "contract": contract,
-                            "quote": {"bid": 1.08, "ask": 1.09 + (i % 7) * 0.01},
+                            "quote": {"bid": 1.08, "ask": round(1.09 + step * 0.01, 2)},
                         }
                     ),
                 )
@@ -134,15 +173,16 @@ def _marker_frame() -> str:
 
 # ------------------------------------------------------------------- roles
 def terminal_role(
-    rate: int, seconds: int, results: mp.Queue, stop: mp.Event, go: mp.Event
+    rate: int, seconds: int, results: mp.Queue, stop: mp.Event, go: mp.Event, repeat_share: float = 0.0
 ) -> None:
     from websockets.asyncio.server import serve
 
     expected_subscriptions = CONTRACTS * 2 + 1
 
     async def main() -> None:
-        pool = _option_frames(5000)
-        sent = {"quote": 0, "trade": 0, "marker": 0}
+        # with repeats, each contract needs ~100 quotes per pool for the share to come out right
+        pool = _option_frames(CONTRACTS * 100 if repeat_share > 0 else 5000, repeat_share)
+        sent = {"quote": 0, "repeat": 0, "trade": 0, "marker": 0}
         report: dict[str, object] = {}
         feed_done = asyncio.Event()
 
@@ -152,7 +192,7 @@ def terminal_role(
             index = 0
             while time.perf_counter() - started < seconds:
                 due = int((time.perf_counter() - started) * rate) - sum(
-                    sent[k] for k in ("quote", "trade")
+                    sent[k] for k in ("quote", "repeat", "trade")
                 )
                 for _ in range(min(max(due, 0), 1500)):
                     kind, frame = pool[index % len(pool)]
@@ -219,10 +259,11 @@ def terminal_role(
         results.put(
             {
                 "role": "terminal",
-                "sent_quotes": sent["quote"],
+                "sent_quotes": sent["quote"] + sent["repeat"],
+                "sent_repeats": sent["repeat"],
                 "sent_trades": sent["trade"],
                 "markers": sent["marker"],
-                "achieved_rate": round((sent["quote"] + sent["trade"]) / elapsed),
+                "achieved_rate": round((sent["quote"] + sent["repeat"] + sent["trade"]) / elapsed),
                 "cpu_s": round(time.process_time(), 1),
             }
         )
@@ -428,13 +469,13 @@ def consumer_role(seconds: int, results: mp.Queue, stop: mp.Event) -> None:
 
 
 # -------------------------------------------------------------------- main
-def run_step(rate: int, seconds: int) -> dict[str, dict]:
+def run_step(rate: int, seconds: int, repeat_share: float = 0.0) -> dict[str, dict]:
     ctx = mp.get_context("spawn")
     results: mp.Queue = ctx.Queue()
     stop = ctx.Event()
     go = ctx.Event()
     procs = [
-        ctx.Process(target=terminal_role, args=(rate, seconds, results, stop, go)),
+        ctx.Process(target=terminal_role, args=(rate, seconds, results, stop, go, repeat_share)),
         ctx.Process(target=processor_role, args=(seconds, results, stop)),
         ctx.Process(target=consumer_role, args=(seconds, results, stop)),
     ]
@@ -464,7 +505,7 @@ def run_step(rate: int, seconds: int) -> dict[str, dict]:
     return out
 
 
-def report(rate: int, seconds: int, r: dict[str, dict]) -> bool:
+def report(rate: int, seconds: int, r: dict[str, dict], upstream_dedupe: bool = False) -> bool:
     t, w, p, c = (r.get(k, {}) for k in ("terminal", "worker", "processor", "consumer"))
     for key, item in r.items():
         if key.startswith("profile_"):
@@ -473,12 +514,19 @@ def report(rate: int, seconds: int, r: dict[str, dict]) -> bool:
         print(f"\n== target {rate:,}/s: missing results from {sorted({'terminal','worker','processor','consumer'} - set(r))}")
         return False
     sent = t["sent_quotes"] + t["sent_trades"] + t["markers"]
-    lost_proc = sent - p["frames_handled"]
-    lost_quotes = t["sent_quotes"] - c["quotes"]
+    repeats = t.get("sent_repeats", 0)
+    # repeats never reach the whale relay (the processor drops them), nor the processor when a proxy drops them first
+    expected_proc = sent - (repeats if upstream_dedupe else 0)
+    expected_quotes = t["sent_quotes"] - repeats
+    lost_proc = expected_proc - p["frames_handled"]
+    lost_quotes = expected_quotes - c["quotes"]
     lost_trades = t["sent_trades"] - c["trades"]
     print(f"\n== target {rate:,}/s for {seconds}s  (terminal achieved {t['achieved_rate']:,}/s)")
-    print(f"   data frames: sent {sent:,} | processor handled {p['frames_handled']:,} (lost {lost_proc:,})")
-    print(f"   whale events: quotes {c['quotes']:,}/{t['sent_quotes']:,} (lost {lost_quotes:,}) | "
+    if repeats:
+        print(f"   repeated quotes sent {repeats:,} ({100 * repeats / max(1, t['sent_quotes']):.1f} % of quotes), "
+              f"dropped {'before the hub (upstream dedupe)' if upstream_dedupe else 'by the processor'}")
+    print(f"   data frames: sent {sent:,} | processor handled {p['frames_handled']:,} of {expected_proc:,} expected (lost {lost_proc:,})")
+    print(f"   whale events: quotes {c['quotes']:,}/{expected_quotes:,} (lost {lost_quotes:,}) | "
           f"trades {c['trades']:,}/{t['sent_trades']:,} (lost {lost_trades:,})")
     print(f"   marker end-to-end latency ms: {p['marker_latency_ms']}")
     print(f"   event-loop lag ms  worker {w['loop_lag']} | processor {p['loop_lag']} | consumer {c['loop_lag']}")
@@ -501,10 +549,14 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--rates", default="10000,20000,40000")
     parser.add_argument("--seconds", type=int, default=30)
+    parser.add_argument("--repeat-share", type=float, default=0.0,
+                        help="share of option QUOTEs that repeat the contract's previous bid/ask (real open ~0.85)")
+    parser.add_argument("--upstream-dedupe", action="store_true",
+                        help="something in front of the hub (the native stream proxy) drops the repeated quotes")
     args = parser.parse_args()
     all_ok = True
     for rate in (int(x) for x in args.rates.split(",")):
-        all_ok &= report(rate, args.seconds, run_step(rate, args.seconds))
+        all_ok &= report(rate, args.seconds, run_step(rate, args.seconds, args.repeat_share), args.upstream_dedupe)
     print("\nOVERALL:", "PASS" if all_ok else "FAIL")
 
 
