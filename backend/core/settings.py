@@ -94,9 +94,6 @@ class Settings(BaseSettings):
     # Alerts from the open: UNUSUAL / WHALE from 2 finalized minutes and SUSTAINED_FLOW from 3 minutes with a prorated minimum, instead of waiting 5 / 15 minutes
     # (WhaleAlertsEngine._MIN_PREVIOUS_BUCKETS_PARTIAL). Kill switch: QLL_WHALE_ALERTS_PARTIAL_WINDOWS=false.
     whale_alerts_partial_windows: bool = Field(default=True)
-    # With partial windows, also emit the classic 15-minute SUSTAINED_FLOW once per episode when the window fills while still above the full minimum
-    # (the early alert latched it away since 2026-10-22, see WhaleAlertsEngine). Kill switch: QLL_WHALE_ALERTS_FULL_WINDOW_SUSTAINED=false.
-    whale_alerts_full_window_sustained: bool = Field(default=True)
     # Local-only TCP link (see backend/core/stream_processor_relay.py):
     # worker.py forwards raw QUOTE/TRADE WS frames to
     # backend/stream_processor_worker.py's own process over this, and

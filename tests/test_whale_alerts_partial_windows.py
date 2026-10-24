@@ -65,53 +65,15 @@ def test_below_the_prorated_minimum_nothing_fires() -> None:
     assert [a for a, _ in _feed(engine, ["30000"] * 14) if a.alert_type is WhaleAlertType.SUSTAINED_FLOW] == []
 
 
-def _sustained(alerts):
-    return [(a, m) for a, m in alerts if a.alert_type is WhaleAlertType.SUSTAINED_FLOW]
-
-
 def test_at_fifteen_minutes_the_rule_is_exactly_the_old_one() -> None:
     legacy = WhaleAlertsEngine(InMemoryStorage())
     partial = WhaleAlertsEngine(InMemoryStorage(), partial_windows=True)
     flow = ["40000"] * 16
-    legacy_alerts = [a for a, _ in _sustained(_feed(legacy, flow))]
+    legacy_alerts = [a for a, _ in _feed(legacy, flow) if a.alert_type is WhaleAlertType.SUSTAINED_FLOW]
     assert len(legacy_alerts) == 1 and legacy_alerts[0].trade_minutes == 15
-    # the same flow also satisfies the partial rule earlier (3 minutes), and the classic 15-minute alert still follows, identical to legacy's
-    partial_alerts = [a for a, _ in _sustained(_feed(partial, flow))]
-    assert [a.trade_minutes for a in partial_alerts] == [3, 15]
-    assert partial_alerts[1].amount == legacy_alerts[0].amount == Decimal(600000)
-    assert partial_alerts[1].trade_start == legacy_alerts[0].trade_start
-
-
-def test_the_full_window_alert_comes_once_per_episode_when_the_window_fills() -> None:
-    engine = WhaleAlertsEngine(InMemoryStorage(), partial_windows=True)
-    # 25 minutes above the full minimum: early alert at the 3rd bucket, the 15-minute one when the window fills, nothing after (window stays full)
-    alerts = _sustained(_feed(engine, ["40000"] * 25))
-    assert [(a.trade_minutes, m) for a, m in alerts] == [(3, 3), (15, 15)]
-
-
-def test_no_full_window_alert_when_the_window_fills_below_the_full_minimum() -> None:
-    engine = WhaleAlertsEngine(InMemoryStorage(), partial_windows=True)
-    # $120,000 in the first 3 minutes (early alert: >= $100,000), then $10,000 a minute: 3 x 40,000 + 12 x 10,000 = $240,000 < $500,000 at 15 minutes.
-    # The total falls below the prorated minimum right after (4 minutes: $130,000 < $133,333), which ends the episode, and never climbs back.
-    alerts = _sustained(_feed(engine, ["40000"] * 3 + ["10000"] * 12))
-    assert [a.trade_minutes for a, _ in alerts] == [3]
-
-
-def test_a_new_episode_after_the_reset_gets_its_own_early_and_full_alerts() -> None:
-    engine = WhaleAlertsEngine(InMemoryStorage(), partial_windows=True)
-    # episode 1: 16 strong minutes (3 and 15); then 15 silent-ish minutes drain the window below the minimum (reset); episode 2: the window is
-    # full again (15 buckets) when it crosses, so its first alert is already the 15-minute one and is not repeated.
-    flow = ["40000"] * 16 + ["100"] * 15 + ["40000"] * 15
-    alerts = _sustained(_feed(engine, flow))
-    assert [a.trade_minutes for a, _ in alerts] == [3, 15, 15]
-
-
-def test_the_switch_turns_the_full_window_alert_off() -> None:
-    engine = WhaleAlertsEngine(InMemoryStorage(), partial_windows=True, full_window_sustained=False)
-    assert [a.trade_minutes for a, _ in _sustained(_feed(engine, ["40000"] * 16))] == [3]
-    # and without partial windows it changes nothing: one 15-minute alert, as before
-    legacy = WhaleAlertsEngine(InMemoryStorage(), full_window_sustained=False)
-    assert [a.trade_minutes for a, _ in _sustained(_feed(legacy, ["40000"] * 16))] == [15]
+    # the same flow also satisfies the partial rule, only earlier, and fires once
+    partial_alerts = [a for a, _ in _feed(partial, flow) if a.alert_type is WhaleAlertType.SUSTAINED_FLOW]
+    assert len(partial_alerts) == 1 and partial_alerts[0].trade_minutes == 3
 
 
 def test_a_whale_minute_is_classified_from_two_previous_minutes() -> None:
@@ -140,5 +102,3 @@ def test_the_average_uses_only_the_minutes_that_exist() -> None:
 def test_production_builder_turns_partial_windows_on_and_the_switch_turns_them_off() -> None:
     assert build_whale_alerts_engine(InMemoryStorage())._partial_windows is True
     assert build_whale_alerts_engine(InMemoryStorage(), partial_windows=False)._partial_windows is False
-    assert build_whale_alerts_engine(InMemoryStorage())._full_window_sustained is True
-    assert build_whale_alerts_engine(InMemoryStorage(), full_window_sustained=False)._full_window_sustained is False

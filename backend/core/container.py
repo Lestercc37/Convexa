@@ -100,11 +100,7 @@ class Container:
 
 
 def build_whale_alerts_engine(
-    storage: IStorage,
-    bvc_alerts_enabled: bool = True,
-    store_conditions: bool = True,
-    partial_windows: bool = True,
-    full_window_sustained: bool = True,
+    storage: IStorage, bvc_alerts_enabled: bool = True, store_conditions: bool = True, partial_windows: bool = True
 ) -> WhaleAlertsEngine:
     """Build Whale Alerts, reading per-symbol threshold overrides live from storage.
 
@@ -112,14 +108,12 @@ def build_whale_alerts_engine(
     (off with ThetaData, see that property); the default keeps every other
     caller's behavior unchanged. `store_conditions` is
     Settings.whale_alerts_store_conditions (capture of trade-condition codes). `partial_windows` is
-    Settings.whale_alerts_partial_windows (alerts from the open instead of after 5 / 15 minutes). `full_window_sustained` is
-    Settings.whale_alerts_full_window_sustained (the 15-minute SUSTAINED_FLOW after an early one)."""
+    Settings.whale_alerts_partial_windows (alerts from the open instead of after 5 / 15 minutes)."""
     return WhaleAlertsEngine(
         storage=storage,
         bvc_alerts_enabled=bvc_alerts_enabled,
         store_conditions=store_conditions,
         partial_windows=partial_windows,
-        full_window_sustained=full_window_sustained,
     )
 
 
@@ -252,7 +246,6 @@ def build_container() -> Container:
         bvc_alerts_enabled=settings.whale_alerts_bvc_active,
         store_conditions=settings.whale_alerts_store_conditions,
         partial_windows=settings.whale_alerts_partial_windows,
-        full_window_sustained=settings.whale_alerts_full_window_sustained,
     )
     refresh_underlying_snapshot_use_case = RefreshUnderlyingSnapshotUseCase(
         storage=storage,
