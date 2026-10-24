@@ -20,6 +20,11 @@ quotes exclude them. --upstream-dedupe says something in front of the hub alread
 via LOADTEST_HUB_URL), so the processor should handle only the non-repeats. Valid from ~10,000 frames/s up: below that
 a contract's run of repeats can outlast the 1.0 s refresh and one gets forwarded again.
 
+--burst-every 5 --burst-silence 1.0 copies the open's pattern behind SLOW CONSUMER: every 5 s the fake Terminal sends
+nothing for 1 s, then flushes that backlog (rate x 1 s frames) as fast as the reader takes it; the report shows how fast
+each flush went. The fake Terminal is Python too, so a flush can never go faster than it can send: compare with the
+same run through the native proxy (which drains far faster than this sender) to see whether the hub is the limit.
+
 Not covered: the real worker's other work (REST reconcile, price persistence,
 15 symbols' subscribers) and real Terminal behaviour. A pass here means the
 split has headroom at that rate, not that production is verified.
@@ -173,7 +178,8 @@ def _marker_frame() -> str:
 
 # ------------------------------------------------------------------- roles
 def terminal_role(
-    rate: int, seconds: int, results: mp.Queue, stop: mp.Event, go: mp.Event, repeat_share: float = 0.0
+    rate: int, seconds: int, results: mp.Queue, stop: mp.Event, go: mp.Event, repeat_share: float = 0.0,
+    burst_every: float = 0.0, burst_silence: float = 1.0,
 ) -> None:
     from websockets.asyncio.server import serve
 
@@ -183,6 +189,7 @@ def terminal_role(
         # with repeats, each contract needs ~100 quotes per pool for the share to come out right
         pool = _option_frames(CONTRACTS * 100 if repeat_share > 0 else 5000, repeat_share)
         sent = {"quote": 0, "repeat": 0, "trade": 0, "marker": 0}
+        bursts: list[tuple[int, float]] = []   # (frames flushed, seconds the flush took)
         report: dict[str, object] = {}
         feed_done = asyncio.Event()
 
@@ -190,7 +197,24 @@ def terminal_role(
             started = time.perf_counter()
             last_marker = 0.0
             index = 0
+            next_burst = started + burst_every if burst_every > 0 else None
             while time.perf_counter() - started < seconds:
+                if next_burst is not None and time.perf_counter() >= next_burst:
+                    # what the real Terminal does at the open: ~burst_silence s with nothing sent, then the backlog
+                    # as fast as the reader takes it (the send only slows down when the reader's socket is full)
+                    await asyncio.sleep(burst_silence)
+                    backlog = int((time.perf_counter() - started) * rate) - sum(
+                        sent[k] for k in ("quote", "repeat", "trade")
+                    )
+                    flush_started = time.perf_counter()
+                    for _ in range(max(backlog, 0)):
+                        kind, frame = pool[index % len(pool)]
+                        index += 1
+                        await ws.send(frame)
+                        sent[kind] += 1
+                    bursts.append((backlog, time.perf_counter() - flush_started))
+                    next_burst += burst_every
+                    continue
                 due = int((time.perf_counter() - started) * rate) - sum(
                     sent[k] for k in ("quote", "repeat", "trade")
                 )
@@ -264,6 +288,7 @@ def terminal_role(
                 "sent_trades": sent["trade"],
                 "markers": sent["marker"],
                 "achieved_rate": round((sent["quote"] + sent["repeat"] + sent["trade"]) / elapsed),
+                "bursts": bursts,
                 "cpu_s": round(time.process_time(), 1),
             }
         )
@@ -469,13 +494,15 @@ def consumer_role(seconds: int, results: mp.Queue, stop: mp.Event) -> None:
 
 
 # -------------------------------------------------------------------- main
-def run_step(rate: int, seconds: int, repeat_share: float = 0.0) -> dict[str, dict]:
+def run_step(
+    rate: int, seconds: int, repeat_share: float = 0.0, burst_every: float = 0.0, burst_silence: float = 1.0
+) -> dict[str, dict]:
     ctx = mp.get_context("spawn")
     results: mp.Queue = ctx.Queue()
     stop = ctx.Event()
     go = ctx.Event()
     procs = [
-        ctx.Process(target=terminal_role, args=(rate, seconds, results, stop, go, repeat_share)),
+        ctx.Process(target=terminal_role, args=(rate, seconds, results, stop, go, repeat_share, burst_every, burst_silence)),
         ctx.Process(target=processor_role, args=(seconds, results, stop)),
         ctx.Process(target=consumer_role, args=(seconds, results, stop)),
     ]
@@ -525,6 +552,11 @@ def report(rate: int, seconds: int, r: dict[str, dict], upstream_dedupe: bool = 
     if repeats:
         print(f"   repeated quotes sent {repeats:,} ({100 * repeats / max(1, t['sent_quotes']):.1f} % of quotes), "
               f"dropped {'before the hub (upstream dedupe)' if upstream_dedupe else 'by the processor'}")
+    if t.get("bursts"):
+        rates = [round(frames / max(secs, 1e-9)) for frames, secs in t["bursts"]]
+        print(f"   bursts (silence, then the backlog as fast as the reader takes it): "
+              f"{', '.join(f'{frames:,} frames in {secs:.2f} s' for frames, secs in t['bursts'])}"
+              f" -> {', '.join(f'{r:,}' for r in rates)} frames/s")
     print(f"   data frames: sent {sent:,} | processor handled {p['frames_handled']:,} of {expected_proc:,} expected (lost {lost_proc:,})")
     print(f"   whale events: quotes {c['quotes']:,}/{expected_quotes:,} (lost {lost_quotes:,}) | "
           f"trades {c['trades']:,}/{t['sent_trades']:,} (lost {lost_trades:,})")
@@ -553,10 +585,14 @@ def main() -> None:
                         help="share of option QUOTEs that repeat the contract's previous bid/ask (real open ~0.85)")
     parser.add_argument("--upstream-dedupe", action="store_true",
                         help="something in front of the hub (the native stream proxy) drops the repeated quotes")
+    parser.add_argument("--burst-every", type=float, default=0.0,
+                        help="every N s the fake Terminal goes silent, then flushes the backlog at full speed (0 = off)")
+    parser.add_argument("--burst-silence", type=float, default=1.0, help="length of each silence, seconds")
     args = parser.parse_args()
     all_ok = True
     for rate in (int(x) for x in args.rates.split(",")):
-        all_ok &= report(rate, args.seconds, run_step(rate, args.seconds, args.repeat_share), args.upstream_dedupe)
+        step = run_step(rate, args.seconds, args.repeat_share, args.burst_every, args.burst_silence)
+        all_ok &= report(rate, args.seconds, step, args.upstream_dedupe)
     print("\nOVERALL:", "PASS" if all_ok else "FAIL")
 
 
