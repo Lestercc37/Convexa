@@ -334,6 +334,10 @@ class _ContractState:
     previous_amounts: deque[Decimal] = field(default_factory=lambda: deque(maxlen=5))
     sustained_amounts: deque[Decimal] = field(default_factory=lambda: deque(maxlen=15))
     sustained_alerted: bool = False
+    # Second latch of the same episode: the full-window (15-minute) SUSTAINED_FLOW was emitted. With partial windows the
+    # first alert of an episode fires early on a 3-minute window and sustained_alerted then held back the classic 15-minute
+    # alert that carried the big size (SPX cubes >= 200 collapsed on 2026-10-23). Reset together with sustained_alerted.
+    sustained_full_alerted: bool = False
     # BVC: price history and the rolling volatility window are tracked
     # per raw reading (not per finalized minute) — each reading gets its
     # own buy/sell classification, accumulated into the bucket alongside
@@ -489,11 +493,16 @@ class WhaleAlertsEngine:
         bvc_alerts_enabled: bool = True,
         store_conditions: bool = True,
         partial_windows: bool = False,
+        full_window_sustained: bool = True,
     ) -> None:
         self._storage = storage
         # See _MIN_PREVIOUS_BUCKETS_PARTIAL. The class default stays False (the 5 / 15 full-window rule, so every direct caller and test is unchanged);
         # production turns it on through Settings.whale_alerts_partial_windows (default True) in build_whale_alerts_engine.
         self._partial_windows = partial_windows
+        # With partial windows: also emit the classic 15-minute SUSTAINED_FLOW of an episode that already alerted early (see
+        # _ContractState.sustained_full_alerted). No effect without partial windows (the first alert is then always the 15-minute one).
+        # Settings.whale_alerts_full_window_sustained, kill switch QLL_WHALE_ALERTS_FULL_WINDOW_SUSTAINED=false.
+        self._full_window_sustained = full_window_sustained
         # True: process_trade() also tallies each bucket's premium by OPRA
         # trade-condition code and _emit() stores it on the alert. Capture
         # only -- see WhaleAlert.condition_premium. Settings.
@@ -641,6 +650,7 @@ class WhaleAlertsEngine:
                 state.previous_amounts.clear()
                 state.sustained_amounts.clear()
                 state.sustained_alerted = False
+                state.sustained_full_alerted = False
                 state.bucket_amount = Decimal(0)
                 state.bucket_start = current_bucket_start
                 state.previous_price = contract.last
@@ -917,8 +927,14 @@ class WhaleAlertsEngine:
             sustained_total = sum(state.sustained_amounts, Decimal())
             required = thresholds.sustained_flow_min * Decimal(buckets) / Decimal(self._SUSTAINED_WINDOW_SIZE)
             if sustained_total >= required:
-                if not state.sustained_alerted:
+                full_window = buckets >= self._SUSTAINED_WINDOW_SIZE
+                # The early (partial-window) alert opens the episode; the classic 15-minute alert follows once, when the window first fills while
+                # the total is still above the full sustained_flow_min (at 15 buckets `required` IS the full minimum). An episode whose first alert
+                # is already a full window (legacy rule, or flow that only crossed late) gets just that one.
+                emit_full = full_window and state.sustained_alerted and not state.sustained_full_alerted and self._full_window_sustained
+                if not state.sustained_alerted or emit_full:
                     state.sustained_alerted = True
+                    state.sustained_full_alerted = full_window
                     generated.append(
                         self._emit(
                             state,
@@ -939,6 +955,7 @@ class WhaleAlertsEngine:
                     )
             else:
                 state.sustained_alerted = False
+                state.sustained_full_alerted = False
 
         state.previous_amounts.append(finalized_amount)
         state.bucket_start = new_bucket_start

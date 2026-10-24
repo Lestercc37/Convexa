@@ -24,7 +24,7 @@ function cubeFor(overrides: Partial<WhaleAlert> = {}): AlertCube {
     contracts: 100,
     ...overrides,
   };
-  return { id: "x", time: Math.floor(Date.parse(ISSUED) / 1000), strike: 7720, right: "C", deq: 50, size: 9, side: "buy", zone: "ATM", alert };
+  return { id: "x", time: Math.floor(Date.parse(ISSUED) / 1000), strike: 7720, right: "C", deq: 50, netDeq: 50, size: 9, side: "buy", zone: "ATM", alert };
 }
 
 function renderTooltip(cube: AlertCube) {
@@ -53,5 +53,20 @@ describe("AlertCubeTooltip time", () => {
     const { container } = renderTooltip(cubeFor());
     expect(container.textContent).toContain("10:42:11");
     expect(screen.queryByText(/Alerta emitida/)).toBeNull();
+  });
+});
+
+describe("AlertCubeTooltip sizes", () => {
+  it("shows the gross size and, under it, the net size with the buy / sell premium", () => {
+    const cube = { ...cubeFor({ estimated_buy_volume: 40000, estimated_sell_volume: 25000 }), deq: 50, netDeq: 12 };
+    const { container } = renderTooltip(cube);
+    expect(container.textContent).toContain("Tamaño: 50 contratos-delta");
+    expect(container.textContent).toContain("Neto: 12 contratos-delta · compra $40k / venta $25k");
+  });
+
+  it("has no net line when the alert had no quote to sign against", () => {
+    const { container } = renderTooltip(cubeFor({ quote_unavailable: true }));
+    expect(container.textContent).toContain("Tamaño: 50 contratos-delta");
+    expect(container.textContent).not.toContain("Neto:");
   });
 });

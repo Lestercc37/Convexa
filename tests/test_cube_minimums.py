@@ -4,6 +4,7 @@ median of the last sessions, rounded to a 1 / 2 / 5 x 10^k number."""
 from __future__ import annotations
 
 import asyncio
+from dataclasses import replace
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 
@@ -87,7 +88,8 @@ def test_the_use_case_answers_per_symbol_and_caches_for_an_hour() -> None:
     storage = _Storage({"SPY": _session(date(2026, 10, 21), [2600.0] * 40)})
     now = datetime(2026, 10, 22, 21, 0, tzinfo=UTC)
     first = asyncio.run(cm.get_cube_minimums_async(storage, now))
-    assert first == {"schema_version": 1, "target_per_session": 40, "sessions": 5, "minimums": {"SPY": 2000}}
+    # every test alert is all buy, so its net size is its gross size
+    assert first == {"schema_version": 1, "target_per_session": 40, "sessions": 5, "minimums": {"SPY": 2000}, "net_minimums": {"SPY": 2000}}
     calls = len(storage.calls)
     assert calls == len(cm.CUBE_SYMBOLS)
     asyncio.run(cm.get_cube_minimums_async(storage, now))
@@ -100,5 +102,28 @@ def test_endpoint_answers_an_empty_map_when_nothing_is_stored() -> None:
     with TestClient(app) as client:
         response = client.get("/api/v1/alert-cubes/minimums")
     assert response.status_code == 200
-    assert response.json() == {"schema_version": 1, "target_per_session": 40, "sessions": 5, "minimums": {}}
+    assert response.json() == {"schema_version": 1, "target_per_session": 40, "sessions": 5, "minimums": {}, "net_minimums": {}}
     cm.reset_cache()
+
+
+def test_net_size_keeps_only_the_one_sided_part_and_never_shrinks_an_alert_without_a_quote() -> None:
+    base = _alert(date(2026, 10, 21), 0, 500.0)  # 1,000 contracts x 0.5
+    assert cm.gross_size(base) == 500.0
+    assert cm.net_size(replace(base, estimated_buy_volume=Decimal(70), estimated_sell_volume=Decimal(30))) == 200.0
+    assert cm.net_size(replace(base, estimated_buy_volume=Decimal(50), estimated_sell_volume=Decimal(50))) == 0.0
+    no_quote = replace(base, estimated_buy_volume=Decimal(50), estimated_sell_volume=Decimal(50), quote_unavailable=True)
+    assert cm.net_size(no_quote) == 500.0
+
+
+def test_the_net_minimum_ranks_the_net_sizes() -> None:
+    # 100 alerts of 1,000 gross each; the first 50 are 90/10 (net 800), the rest 50/50 (net 0): the 40th largest net is 800 -> 1000
+    alerts = _session(date(2026, 10, 21), [1000.0] * 100)
+    for index, alert in enumerate(alerts):
+        buy, sell = (Decimal(90), Decimal(10)) if index < 50 else (Decimal(50), Decimal(50))
+        alerts[index] = replace(alert, estimated_buy_volume=buy, estimated_sell_volume=sell)
+    assert cm.suggested_minimum(alerts, TODAY) == 1000
+    assert cm.suggested_minimum(alerts, TODAY, size_of=cm.net_size) == 1000
+    # with only 30 one-sided alerts the 40th largest net size is 0: no net suggestion
+    for index in range(30, 50):
+        alerts[index] = replace(alerts[index], estimated_buy_volume=Decimal(50), estimated_sell_volume=Decimal(50))
+    assert cm.suggested_minimum(alerts, TODAY, size_of=cm.net_size) is None

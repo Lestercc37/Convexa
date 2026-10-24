@@ -1008,6 +1008,24 @@ describe("PriceChart", () => {
     expect(JSON.parse(window.localStorage.getItem("convexa.cube-min.v1")!)).toEqual({});
   });
 
+  it("alert cubes: net size by default with the net suggestion, 'Neto' off goes back to the gross one, and the choice is kept", async () => {
+    chartMocks.getCubeMinimums.mockResolvedValue({
+      schema_version: 1, target_per_session: 40, sessions: 5, minimums: { SPY: 2000, NDX: 20 }, net_minimums: { SPY: 500 },
+    });
+    chartMocks.getAlerts.mockResolvedValue({ schema_version: 1, symbol: "SPY", alerts: [] });
+    const user = userEvent.setup();
+    renderWithLanguage(<PriceChart symbol="SPY" candles={candlesWithRange} gamma={gamma} gammaView="tactical" />);
+    await user.click(screen.getByLabelText("Alertas"));
+    const input = await screen.findByLabelText("Tamaño mínimo de las alertas (contratos-delta)");
+    const net = screen.getByLabelText("Neto");
+    expect(net).toBeChecked();
+    await waitFor(() => expect(input).toHaveValue("500")); // SPY's net suggestion
+    await user.click(net);
+    expect(net).not.toBeChecked();
+    await waitFor(() => expect(input).toHaveValue("2000")); // the gross one
+    expect(window.localStorage.getItem("convexa.cube-sizing.v1")).toBe("gross");
+  });
+
   it("alert cubes: a symbol without a suggestion keeps the old 200 and a saved minimum comes back after a reload", async () => {
     window.localStorage.setItem("convexa.cube-min.v1", JSON.stringify({ SPY: 7777 }));
     chartMocks.getAlerts.mockResolvedValue({ schema_version: 1, symbol: "SPY", alerts: [] });

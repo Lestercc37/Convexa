@@ -74,6 +74,7 @@ function cube(overrides: Partial<AlertCube> & { id: string }): AlertCube {
     strike: 500,
     right: "C",
     deq: 450,
+    netDeq: 450,
     size: 9,
     side: "buy",
     zone: "ATM",

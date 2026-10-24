@@ -117,6 +117,9 @@ export const es: Translations = {
     alertCubesLabel: "Alertas",
     alertCubesMinAriaLabel: "Tamaño mínimo de las alertas (contratos-delta)",
     alertCubesFarLabel: "Lejos",
+    alertCubesNetLabel: "Neto",
+    alertCubesNetTitle:
+      "Tamaño neto: cada cubo se mide solo por la parte que se inclinó a un lado (compra menos venta). Un cubo parejo se achica; uno de un solo lado conserva su tamaño. Las alertas sin cotización conservan su tamaño. Desmárcalo para volver al tamaño bruto.",
     alertCubesMinTitle: (source, value) =>
       source === "custom"
         ? `Tu mínimo para este símbolo: ${value}. Escribe otro número y pulsa Enter, o "Auto" para volver al automático.`
@@ -132,6 +135,7 @@ export const es: Translations = {
     cubeRight: { C: "Call", P: "Put" },
     cubeZones: { ITM: "ITM", ATM: "ATM", OTM: "OTM", FAR: "Lejos" },
     cubeSizeLine: (deq, premium, repeats) => `Tamaño: ${deq} contratos-delta · prima ${premium} · ×${repeats}`,
+    cubeNetLine: (netDeq, buyPremium, sellPremium) => `Neto: ${netDeq} contratos-delta · compra ${buyPremium} / venta ${sellPremium}`,
     cubeConditionTitle: "Condición",
     cubeCategories: {
       simple: "simple",
