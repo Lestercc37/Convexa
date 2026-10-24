@@ -806,3 +806,5 @@ class CubeMinimumsResponse(BaseModel):
     target_per_session: int = Field(examples=[40])
     sessions: int = Field(examples=[5])
     minimums: dict[str, int]
+    # The same rule on the NET cube size (gross x |buy - sell| / (buy + sell)), which the dashboard draws by default.
+    net_minimums: dict[str, int] = Field(default_factory=dict)

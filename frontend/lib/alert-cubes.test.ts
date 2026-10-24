@@ -6,6 +6,7 @@ import {
   conditionShares,
   cubeSide,
   cubeSizePx,
+  netDeltaContracts,
   occStrike,
   trialLabel,
 } from "./alert-cubes";
@@ -113,6 +114,40 @@ describe("trialLabel", () => {
     expect(trialLabel({ buy: 50, sell: 50 }, 100)).toBe("mixed");
     expect(trialLabel({ buy: 20, sell: 20 }, 100)).toBe("none");
     expect(trialLabel(null, 100)).toBeNull();
+  });
+});
+
+describe("net-sized cubes", () => {
+  it("keeps only the one-sided part: contracts x |delta| x |buy - sell| / (buy + sell)", () => {
+    // 1,000 contracts x 0.5 = 500 gross; 70 / 30 -> 40 % net = 200; 50 / 50 -> 0; all buy -> 500
+    const base = { contracts: 1000, delta: 0.5, quote_unavailable: false };
+    expect(netDeltaContracts({ ...base, estimated_buy_volume: 70, estimated_sell_volume: 30 })).toBe(200);
+    expect(netDeltaContracts({ ...base, estimated_buy_volume: 50, estimated_sell_volume: 50 })).toBe(0);
+    expect(netDeltaContracts({ ...base, estimated_buy_volume: 90, estimated_sell_volume: 0 })).toBe(500);
+    expect(netDeltaContracts({ ...base, delta: -0.5, estimated_buy_volume: 0, estimated_sell_volume: 10 })).toBe(500);
+    expect(netDeltaContracts({ ...base, delta: null, estimated_buy_volume: 1, estimated_sell_volume: 0 })).toBeNull();
+  });
+
+  it("never shrinks an alert that had no quote to sign against: it keeps its gross size", () => {
+    expect(netDeltaContracts({ contracts: 1000, delta: 0.5, quote_unavailable: true, estimated_buy_volume: 50, estimated_sell_volume: 50 })).toBe(500);
+    expect(netDeltaContracts({ contracts: 1000, delta: 0.5, quote_unavailable: false, estimated_buy_volume: 0, estimated_sell_volume: 0 })).toBe(500);
+  });
+
+  it("filters and sizes on the net part, keeps the color rule and the gross figure for the tooltip", () => {
+    const oneSided = alert({ contract: "SPXW261016C07720000", delta: 0.5, contracts: 1400, estimated_buy_volume: 900, estimated_sell_volume: 100 }); // 700 gross, 560 net
+    const balanced = alert({ contract: "SPXW261016C07725000", delta: 0.5, contracts: 1400, estimated_buy_volume: 500, estimated_sell_volume: 450 }); // 700 gross, 37 net
+    const net = buildCubes([oneSided, balanced], { minDeq: 200, showFar: false, sizing: "net" });
+    expect(net.map((cube) => [cube.strike, cube.deq, cube.netDeq, cube.size, cube.side])).toEqual([[7720, 700, 560, 9, "buy"]]);
+    // gross (the old sizing, and the default of buildCubes) draws both, the balanced one with no clear side
+    const gross = buildCubes([oneSided, balanced], { minDeq: 200, showFar: false, sizing: "gross" });
+    expect(gross.map((cube) => [cube.strike, cube.size, cube.side])).toEqual([[7720, 12, "buy"], [7725, 12, "mixed"]]);
+    expect(buildCubes([oneSided, balanced]).length).toBe(2);
+  });
+
+  it("still draws an alert without a quote at its gross size, as no clear side", () => {
+    const noQuote = alert({ delta: 0.5, contracts: 1000, quote_unavailable: true, estimated_buy_volume: 500, estimated_sell_volume: 500 });
+    const [cube] = buildCubes([noQuote], { minDeq: 200, showFar: false, sizing: "net" });
+    expect(cube).toMatchObject({ deq: 500, netDeq: 500, side: "mixed" });
   });
 });
 

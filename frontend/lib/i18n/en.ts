@@ -117,6 +117,9 @@ export const en: Translations = {
     alertCubesLabel: "Alerts",
     alertCubesMinAriaLabel: "Minimum alert size (delta contracts)",
     alertCubesFarLabel: "Far",
+    alertCubesNetLabel: "Net",
+    alertCubesNetTitle:
+      "Net size: each cube is measured only by the part that leaned to one side (buy minus sell). A balanced cube shrinks; a one-sided one keeps its size. Alerts without a quote keep their size. Untick to go back to the gross size.",
     alertCubesMinTitle: (source, value) =>
       source === "custom"
         ? `Your minimum for this symbol: ${value}. Type another number and press Enter, or "Auto" to go back to the automatic one.`
@@ -132,6 +135,7 @@ export const en: Translations = {
     cubeRight: { C: "Call", P: "Put" },
     cubeZones: { ITM: "ITM", ATM: "ATM", OTM: "OTM", FAR: "Far" },
     cubeSizeLine: (deq, premium, repeats) => `Size: ${deq} delta contracts · premium ${premium} · ×${repeats}`,
+    cubeNetLine: (netDeq, buyPremium, sellPremium) => `Net: ${netDeq} delta contracts · buy ${buyPremium} / sell ${sellPremium}`,
     cubeConditionTitle: "Condition",
     cubeCategories: {
       simple: "simple",

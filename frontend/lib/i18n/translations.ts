@@ -104,6 +104,8 @@ export type Translations = {
     alertCubesLabel: string;
     alertCubesMinAriaLabel: string;
     alertCubesFarLabel: string;
+    alertCubesNetLabel: string;
+    alertCubesNetTitle: string;
     alertCubesMinTitle: (source: "custom" | "auto" | "default", value: number) => string;
     alertCubesAuto: string;
     alertCubesAutoTitle: string;
@@ -114,6 +116,7 @@ export type Translations = {
     cubeRight: { C: string; P: string };
     cubeZones: { ITM: string; ATM: string; OTM: string; FAR: string };
     cubeSizeLine: (deq: number, premium: string, repeats: number) => string;
+    cubeNetLine: (netDeq: number, buyPremium: string, sellPremium: string) => string;
     cubeConditionTitle: string;
     cubeCategories: { simple: string; sweep: string; auction: string; cross: string; floor: string; multileg: string; cancel: string; other: string };
     cubeMultilegWarning: string;
