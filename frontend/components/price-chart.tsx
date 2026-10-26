@@ -916,7 +916,8 @@ export function PriceChart({
     series.attachPrimitive(primitive);
     return () => {
       if (profilePrimitiveRef.current === primitive) profilePrimitiveRef.current = null;
-      series.detachPrimitive(primitive);
+      // On unmount the chart is already removed: detaching would ask it for a redraw, and that frame then fails with "Object is disposed".
+      if (seriesRef.current === series) series.detachPrimitive(primitive);
     };
   }, [showProfile]);
 
@@ -1060,8 +1061,11 @@ export function PriceChart({
     }
     emaSeriesRef.current = series;
     return () => {
-      for (const line of series.values()) chart.removeSeries(line);
       emaSeriesRef.current = new Map();
+      // On unmount (symbol / timeframe / Día-Semana switch: the chart is keyed) the chart effect above has already called chart.remove(), and
+      // removeSeries on a removed chart throws "Value is undefined", which took the whole page down (2026-10-24, Semana with EMAs on).
+      if (chartRef.current !== chart) return;
+      for (const line of series.values()) chart.removeSeries(line);
     };
     // `emas` only matters through emaStructure (visibility and colour); the closes below read the full list.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1112,9 +1116,11 @@ export function PriceChart({
     return () => {
       controller.abort();
       window.clearInterval(interval);
+      setOpeningFlow(null);
+      // Same as the EMA lines: never touch a chart that unmounting already removed.
+      if (chartRef.current !== chart) return;
       chart.removeSeries(calls);
       chart.removeSeries(puts);
-      setOpeningFlow(null);
     };
   }, [showFlow, symbol, timeframe, t]);
 
@@ -1200,8 +1206,10 @@ export function PriceChart({
     return () => {
       controller.abort();
       window.clearInterval(interval);
-      chart.unsubscribeCrosshairMove(onCrosshairMove);
-      series.detachPrimitive(primitive);
+      if (chartRef.current === chart) {
+        chart.unsubscribeCrosshairMove(onCrosshairMove);
+        series.detachPrimitive(primitive);
+      }
       cubesPrimitiveRef.current = null;
       setHoveredCube(null);
       setOpeningAlerts(null);
@@ -1246,7 +1254,7 @@ export function PriceChart({
     return () => {
       controller.abort();
       window.clearTimeout(timer);
-      series.detachPrimitive(primitive);
+      if (seriesRef.current === series) series.detachPrimitive(primitive);
       setHeatmapProfile(null);
     };
   }, [showHeatmap, sidesOn, symbol, gammaView, heatmapMetric, dayScale]);
@@ -1294,7 +1302,7 @@ export function PriceChart({
     return () => {
       controller.abort();
       window.clearTimeout(timer);
-      series.detachPrimitive(primitive);
+      if (seriesRef.current === series) series.detachPrimitive(primitive);
       setHeatmapProfile(null);
     };
   }, [showHeatmap, sidesOn, sideLayers.calls, sideLayers.puts, symbol, gammaView, dayScale]);
@@ -1601,7 +1609,7 @@ export function PriceChart({
     const interval = window.setInterval(() => primitive.refresh(), 1000);
     return () => {
       window.clearInterval(interval);
-      series.detachPrimitive(primitive);
+      if (seriesRef.current === series) series.detachPrimitive(primitive);
     };
   }, [candleCountdown, timeframe, symbol]);
 

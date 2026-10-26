@@ -863,6 +863,50 @@ describe("PriceChart", () => {
     });
   });
 
+  it("unmounting with EMAs and Flujo on never touches the removed chart (the Semana / symbol switch crash of 2026-10-24)", async () => {
+    // The real library throws "Value is undefined" from removeSeries once chart.remove() ran; the chart effect's cleanup runs first on unmount.
+    let removed = false;
+    chartMocks.remove.mockImplementation(() => {
+      removed = true;
+    });
+    chartMocks.removeSeries.mockImplementation(() => {
+      if (removed) throw new Error("Value is undefined");
+    });
+    window.localStorage.setItem("convexa.ema.v1", JSON.stringify([{ id: "ema-9", period: 9, color: "#4aa8ff", visible: true }]));
+    const user = userEvent.setup();
+    const { unmount } = renderWithLanguage(<PriceChart symbol="SPY" candles={candlesWithRange} gamma={gamma} gammaView="tactical" />);
+    await waitFor(() => expect(chartMocks.addSeries).toHaveBeenCalledWith("LineSeries", expect.objectContaining({ color: "#4aa8ff" })));
+    await user.click(screen.getByLabelText("Flujo"));
+    await waitFor(() => expect(chartMocks.addSeries).toHaveBeenCalledWith("HistogramSeries", expect.anything(), 1));
+
+    expect(() => unmount()).not.toThrow();
+    expect(chartMocks.remove).toHaveBeenCalled();
+    chartMocks.remove.mockReset();
+    chartMocks.removeSeries.mockReset();
+  });
+
+  it("unmounting detaches no primitive from the removed chart (a detach asks it for a redraw that fails with 'Object is disposed')", async () => {
+    let removed = false;
+    const detachedAfterRemove: unknown[] = [];
+    chartMocks.remove.mockImplementation(() => {
+      removed = true;
+    });
+    chartMocks.detachPrimitive.mockImplementation((primitive: unknown) => {
+      if (removed) detachedAfterRemove.push(primitive);
+    });
+    chartMocks.getAlerts.mockResolvedValue({ schema_version: 1, symbol: "SPY", alerts: [] });
+    const user = userEvent.setup();
+    const { unmount } = renderWithLanguage(<PriceChart symbol="SPY" candles={candlesWithRange} gamma={gamma} gammaView="tactical" candleCountdown />);
+    await user.click(screen.getByLabelText("Alertas")); // the cubes primitive too; the live profile is on by default
+    await waitFor(() => expect(chartMocks.attachPrimitive).toHaveBeenCalled());
+
+    unmount();
+    expect(chartMocks.remove).toHaveBeenCalled();
+    expect(detachedAfterRemove).toEqual([]);
+    chartMocks.remove.mockReset();
+    chartMocks.detachPrimitive.mockReset();
+  });
+
   it("EMAs: a saved list comes back with the chart, hidden lines get no series", async () => {
     window.localStorage.setItem(
       "convexa.ema.v1",
