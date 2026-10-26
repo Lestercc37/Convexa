@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+import logging
 import threading
 from dataclasses import replace
 from datetime import date, datetime, timedelta
 from decimal import Decimal
 
-from backend.domain.entities import DailyBar, GammaAggregate, GammaView, OptionChain
+from backend.domain.entities import EXPIRATION_GAMMA_VIEWS, DailyBar, GammaAggregate, GammaView, OptionChain
 from backend.domain.ports import IAsyncMarketReadStorage, IStorage
 from backend.domain.use_cases.calculate_atr_range import REQUIRED_DAILY_BARS
 from backend.domain.use_cases.calculate_gamma_aggregate import (
@@ -28,6 +29,8 @@ from backend.domain.use_cases.futures_proxy import (
     shift_gamma_aggregate,
 )
 from backend.domain.use_cases.market_hours import EASTERN_TIME
+
+logger = logging.getLogger(__name__)
 
 
 def get_gamma_exposure(
@@ -208,7 +211,32 @@ class CalculateGammaExposureOrchestrator:
                     underlying, chain, daily_bars, TACTICAL_WINDOW_DAYS, anchor, "tactical"
                 )
         self._storage.save_gamma_aggregate(tactical)
+        if underlying.upper() in TACTICAL_ENABLED_SYMBOLS:
+            # The per-expiration views (0DTE / 1DTE / 2DTE tabs) after the 0-2 DTE one, each on its own: a failure here never
+            # costs the tactical aggregate (already saved) nor the other views.
+            for view in EXPIRATION_GAMMA_VIEWS:
+                try:
+                    self._storage.save_gamma_aggregate(
+                        self.build_expiration_view(underlying, chain, daily_bars, view)
+                    )
+                except Exception:
+                    logger.exception("%s: the %s gamma view failed this cycle", underlying.upper(), view)
         return tactical
+
+    def build_expiration_view(
+        self, underlying: str, chain: OptionChain, daily_bars: list[DailyBar], view: str
+    ) -> GammaAggregate:
+        """One listed expiration only (see listed_expiration_for_view), built by the same _build_view as the 0-2 DTE view: same
+        strike width, walls, flip search and exposures, just fewer contracts. Not persisted here (execute_both and the fast layer
+        save it). A chain that lists nothing for that slot returns the honest-empty aggregate."""
+        expiration = listed_expiration_for_view(chain, view)
+        if expiration is None:
+            return GammaAggregate(symbol=chain.symbol, as_of=chain.as_of, view=view)
+        one_expiration = replace(
+            chain, contracts=tuple(contract for contract in chain.contracts if contract.expiration == expiration)
+        )
+        with self._compute_semaphore:
+            return self._build_view(underlying, one_expiration, daily_bars, 0, expiration, view)
 
     def build_tactical(
         self, underlying: str, chain: OptionChain, daily_bars: list[DailyBar]
@@ -616,6 +644,16 @@ TACTICAL_ENABLED_SYMBOLS = frozenset({"SPX", "VIX", "NDX", "SPY", "QQQ", "IWM", 
 # days (vs. structural's 30/45) keeps it capturing only the next weekly
 # or two for VIX/DIA, not drifting into structural's own macro window.
 TACTICAL_FALLBACK_WINDOW_DAYS = 7
+
+
+def listed_expiration_for_view(chain: OptionChain, view: str) -> date | None:
+    """The expiration a per-expiration view reads: the n-th LISTED expiration from today (ET) on, by listed order, not by
+    calendar days ("0dte" = today's or the nearest one, "1dte" the next, "2dte" the one after; on a Friday "1dte" is
+    Monday's). NVDA / VIX, with no daily listings, therefore read their nearest weeklies instead of an empty view."""
+    position = EXPIRATION_GAMMA_VIEWS.index(view)
+    today = chain.as_of.astimezone(EASTERN_TIME).date()
+    listed = sorted({contract.expiration for contract in chain.contracts if contract.expiration >= today})
+    return listed[position] if len(listed) > position else None
 
 def _filter_to_near_term_expirations(
     chain: OptionChain, window_days: int, anchor: date | None = None

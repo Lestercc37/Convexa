@@ -1621,7 +1621,7 @@ export function PriceChart({
           <h2 id="price-chart-title">
             {t.priceChart.title(symbol, t.priceChart.timeframeLabels[timeframe])}
           </h2>
-          {gammaView === "tactical" && !gamma.has_data && (
+          {gammaView !== "structural" && !gamma.has_data && (
             <p className="no-tactical-data-notice">{t.dashboard.noTacticalDataLabel}</p>
           )}
         </div>

@@ -9,6 +9,7 @@ import {
   getGamma,
   getMarket,
   getMarketPriceHistory,
+  getOptionChainExpirations,
   getPriceCandles,
   getUnderlyings,
   getVwapHistory,
@@ -23,6 +24,16 @@ import {
   type VwapPoint,
 } from "@/lib/candles";
 import { startChartLifecycleRecorder } from "@/lib/chart-lifecycle";
+import {
+  DEFAULT_GAMMA_VIEW,
+  GAMMA_SOURCE_SYMBOL_BY_FUTURE,
+  GAMMA_VIEW_TABS,
+  isExpirationView,
+  listedExpirationForView,
+  readStoredGammaView,
+  storeGammaView,
+  todayInNewYork,
+} from "@/lib/gamma-views";
 import { describeError } from "@/lib/i18n/describe-error";
 import { useLanguage, type Language } from "@/lib/i18n/language-context";
 import { RegimeCompactBadge } from "./regime-badge";
@@ -140,12 +151,11 @@ export function Dashboard() {
   const [underlyings, setUnderlyings] = useState<Underlying[]>([]);
   const [symbol, setSymbol] = useState("");
   const [view, setView] = useState<"live" | "pre-session" | "scanner">("live");
-  // Tactical (0-2 DTE) is the only view shown. The Structural tab was hidden
-  // on 2026-10-16 at the user's request (never looked at, doubles the work);
-  // the metric cards that still come from the structural computation carry
-  // the "structural-only" badge. Named gammaView, not view, since that name
-  // is already the Live/Pre-Session/Scanner tab selector above.
-  const gammaView: GammaView = "tactical";
+  // The expiration tabs 0DTE | 1DTE | 2DTE | 0-2 DTE (Lester 2026-10-26; the Structural view was retired 2026-10-16). Opens on 0DTE, then
+  // remembers the last tab in this browser. Named gammaView, not view, since that name is already the Live/Pre-Session/Scanner selector above.
+  const [gammaView, setGammaView] = useState<GammaView>(DEFAULT_GAMMA_VIEW);
+  // The listed expirations of the symbol whose levels are shown (SPX / NDX for ES / NQ), for the "vence ..." label next to the tabs.
+  const [expirations, setExpirations] = useState<{ symbol: string; dates: string[] }>({ symbol: "", dates: [] });
   const [gamma, setGamma] = useState<GammaResponse | null>(null);
   const [market, setMarket] = useState<MarketResponse | null>(null);
   const [pricePoints, setPricePoints] = useState<PricePoint[]>([]);
@@ -216,6 +226,32 @@ export function Dashboard() {
     window.localStorage.setItem(LAST_SYMBOL_STORAGE_KEY, symbol);
   }, [symbol]);
 
+  useEffect(() => {
+    const stored = readStoredGammaView();
+    if (stored) setGammaView(stored);
+  }, []);
+
+  const gammaSourceSymbol = GAMMA_SOURCE_SYMBOL_BY_FUTURE[symbol] ?? symbol;
+  useEffect(() => {
+    if (!gammaSourceSymbol) return;
+    const controller = new AbortController();
+    const load = () =>
+      getOptionChainExpirations(gammaSourceSymbol, controller.signal)
+        .then((response) => {
+          if (!controller.signal.aborted) setExpirations({ symbol: gammaSourceSymbol, dates: response.expirations });
+        })
+        .catch(() => {
+          // The label is only a convenience: without it the tabs still work.
+        });
+    void load();
+    // Re-read every 10 minutes so the label rolls to the next expiration after midnight without a reload.
+    const interval = window.setInterval(() => void load(), 10 * 60_000);
+    return () => {
+      controller.abort();
+      window.clearInterval(interval);
+    };
+  }, [gammaSourceSymbol]);
+
   // `view` is an explicit parameter, not read off the `gammaView` state
   // closure -- this is what lets refresh() stay referentially stable
   // ([] deps, matching this callback's original shape pre-dating the
@@ -234,7 +270,8 @@ export function Dashboard() {
         getGamma(activeSymbol, view, signal),
         getMarket(activeSymbol, signal),
       ]);
-      setGamma(gammaData);
+      // A poll that left before a tab switch must not put the previous tab's levels back on screen.
+      if (view === gammaViewRef.current) setGamma(gammaData);
       setMarket(marketData);
       // The chart is meant to show only the most recent regular
       // 09:30-16:00 ET session -- confirmed live, 2026-09: the backend
@@ -298,6 +335,28 @@ export function Dashboard() {
   useEffect(() => {
     gammaViewRef.current = gammaView;
   }, [gammaView]);
+
+  const selectGammaView = (next: GammaView) => {
+    if (next === gammaView) return;
+    gammaViewRef.current = next;
+    setGammaView(next);
+    storeGammaView(next);
+    if (symbol) void refresh(symbol, next);
+  };
+  const today = todayInNewYork();
+  const shownExpiration =
+    expirations.symbol === gammaSourceSymbol ? listedExpirationForView(expirations.dates, gammaView, today) : null;
+  const expirationLabel = (() => {
+    if (!isExpirationView(gammaView) || expirations.symbol !== gammaSourceSymbol) return null;
+    if (!shownExpiration) return t.dashboard.gammaViewNoExpirationLabel;
+    const date = new Intl.DateTimeFormat(language === "es" ? "es-ES" : "en-US", {
+      weekday: "short",
+      day: "2-digit",
+      month: "2-digit",
+      timeZone: "UTC",
+    }).format(new Date(`${shownExpiration}T00:00:00Z`));
+    return `${t.dashboard.gammaViewExpiresLabel} ${date}`;
+  })();
 
   // Seeds pricePoints (and vwapPoints, same reasoning -- Lester's
   // report, 2026-09-17) with today's session-so-far, instead of starting
@@ -579,6 +638,25 @@ export function Dashboard() {
             ))}
           </div>
         )}
+        <div
+          className="tv-timeframes tv-gamma-views"
+          role="group"
+          aria-label={t.dashboard.gammaViewGroupAriaLabel}
+          title={t.dashboard.gammaViewVwapNote}
+        >
+          {GAMMA_VIEW_TABS.map((tab) => (
+            <button
+              key={tab.view}
+              type="button"
+              className="tv-timeframe"
+              aria-pressed={gammaView === tab.view}
+              onClick={() => selectGammaView(tab.view)}
+            >
+              {tab.label}
+            </button>
+          ))}
+          {expirationLabel && <span className="tv-gamma-view-expiration">{expirationLabel}</span>}
+        </div>
         <div className="tv-view-toggle" role="group" aria-label={t.dashboard.viewGroupAriaLabel}>
           <button
             type="button"

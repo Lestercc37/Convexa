@@ -45,7 +45,9 @@ export function resetHeatmapSourceState(): void {
 
 export async function loadHeatmap(symbol: string, request: HeatmapRequest, signal?: AbortSignal): Promise<LoadedHeatmap> {
   const key = `${symbol}|${request.view}|${request.metric}|${request.start.getTime()}`;
-  const retryAt = fastUnavailableUntil.get(symbol) ?? 0;
+  // Per symbol AND view: the fast layer writes 0-2 DTE and 0DTE only, so a 1DTE / 2DTE miss must not switch the others' fast columns off.
+  const fastKey = `${symbol}|${request.view}`;
+  const retryAt = fastUnavailableUntil.get(fastKey) ?? 0;
   if (Date.now() >= retryAt) {
     try {
       const now = Date.now();
@@ -75,7 +77,7 @@ export async function loadHeatmap(symbol: string, request: HeatmapRequest, signa
     } catch (error) {
       if (isAbort(error)) throw error;
     }
-    fastUnavailableUntil.set(symbol, Date.now() + FAST_RETRY_AFTER_MS);
+    fastUnavailableUntil.set(fastKey, Date.now() + FAST_RETRY_AFTER_MS);
   }
   const response = await getGammaHeatmap(symbol, { ...request, bucketSeconds: CYCLE_BUCKET_SECONDS }, signal);
   return { data: heatmapFromResponse(response), fast: false };

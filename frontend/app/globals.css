@@ -231,6 +231,8 @@ button, select { font: inherit; }
   padding: 5px 9px;
 }
 .tv-timeframe[aria-pressed="true"] { background: var(--tv-panel-raised); color: var(--tv-text); }
+/* The expiration tabs (0DTE | 1DTE | 2DTE | 0-2 DTE) and the date the selected one reads. */
+.tv-gamma-view-expiration { color: var(--tv-text-dim); font-size: 0.7rem; margin-left: 4px; white-space: nowrap; }
 
 /* `display: flex` (and flex-direction/flex-wrap/overflow) is set
    internally by Group itself and cannot be overridden — react-resizable-

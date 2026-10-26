@@ -200,7 +200,7 @@ HEATMAP_MAX_RANGE = timedelta(days=5)
 async def gamma_heatmap(
     symbol: str,
     request: Request,
-    view: Literal["tactical", "structural"] = Query(default="tactical"),
+    view: GammaView = Query(default="tactical"),
     metric: Literal["gamma", "absolute_gamma", "delta", "vanna", "charm", "call_gamma", "put_gamma", "total_gamma"] = Query(default="gamma"),
     start: datetime | None = None,
     end: datetime | None = None,

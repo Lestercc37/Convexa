@@ -492,14 +492,14 @@ describe("Dashboard", () => {
     await screen.findByLabelText("Chart de velas para SPY");
 
     await vi.waitFor(() =>
-      expect(apiMocks.getGamma).toHaveBeenCalledWith("SPY", "tactical", expect.any(AbortSignal)),
+      expect(apiMocks.getGamma).toHaveBeenCalledWith("SPY", "0dte", expect.any(AbortSignal)),
     );
 
     await vi.advanceTimersByTimeAsync(POLLING_INTERVAL_MS);
     await vi.waitFor(() =>
       expect(apiMocks.getGamma).toHaveBeenLastCalledWith(
         "SPY",
-        "tactical",
+        "0dte",
         expect.any(AbortSignal),
       ),
     );
@@ -683,13 +683,30 @@ describe("Dashboard", () => {
     await waitFor(() =>
       expect(apiMocks.getGammaProfile).toHaveBeenCalledWith(
         "SPY",
-        "tactical",
+        "0dte",
         expect.any(AbortSignal),
       ),
     );
 
     await user.click(screen.getByRole("button", { name: "En vivo" }));
     expect(await screen.findByLabelText("Chart de velas para SPY")).toBeInTheDocument();
+  });
+
+  it("opens on the 0DTE tab, switches every option figure to the clicked tab and remembers it", async () => {
+    const user = userEvent.setup();
+    renderWithLanguage(<Dashboard />);
+    await screen.findByLabelText("Chart de velas para SPY");
+    const tabs = screen.getByRole("group", { name: "Vencimiento de las opciones" });
+    expect(within(tabs).getAllByRole("button").map((button) => button.textContent)).toEqual(["0DTE", "1DTE", "2DTE", "0-2 DTE"]);
+    expect(within(tabs).getByRole("button", { name: "0DTE" })).toHaveAttribute("aria-pressed", "true");
+
+    await user.click(within(tabs).getByRole("button", { name: "0-2 DTE" }));
+
+    await waitFor(() =>
+      expect(apiMocks.getGamma).toHaveBeenLastCalledWith("SPY", "tactical", undefined),
+    );
+    expect(within(tabs).getByRole("button", { name: "0-2 DTE" })).toHaveAttribute("aria-pressed", "true");
+    expect(window.localStorage.getItem("convexa.gamma-view.v1")).toBe("tactical");
   });
 
   it("moves Quick Scanner into its own view, following the same toggle pattern as Pre-Sesión (regression)", async () => {

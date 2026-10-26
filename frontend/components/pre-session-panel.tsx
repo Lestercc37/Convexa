@@ -186,7 +186,7 @@ export function PreSessionPanel({ symbol, gamma, gammaView = "structural" }: Pre
         </div>
       ) : profile ? (
         <p className="pre-session-status">
-          {gammaView === "tactical" && !profile.has_data
+          {gammaView !== "structural" && !profile.has_data
             ? t.dashboard.noTacticalDataLabel
             : t.preSessionPanel.noBreakdown}
         </p>

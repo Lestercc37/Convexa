@@ -311,3 +311,42 @@ def test_execute_both_rebuilds_tactical_every_call_and_never_writes_structural()
     assert storage.get_latest_gamma_aggregate("SPY", view="structural") is None
 
 
+
+
+def test_execute_both_also_saves_one_view_per_listed_expiration_and_leaves_tactical_unchanged() -> None:
+    """The dashboard tabs 0DTE | 1DTE | 2DTE (2026-10-26): each reads ONE listed expiration, by listed order, while the 0-2 DTE
+    (tactical) aggregate is built exactly as before. Today's, tomorrow's and a listing 5 days out (the third LISTED one, outside
+    0-2 calendar days, like Thursday -> Monday)."""
+    storage = InMemoryStorage()
+    in_five_days = TODAY_ET + timedelta(days=5)
+    tomorrow = TODAY_ET + timedelta(days=1)
+    contracts = (
+        _contract("SPY260115C00550000", ContractType.CALL, Decimal(550), TODAY_ET, open_interest=100, gamma="0.02"),
+        _contract("SPY260115P00550000", ContractType.PUT, Decimal(550), TODAY_ET, open_interest=100, gamma="0.02"),
+        _contract("SPY260116C00552000", ContractType.CALL, Decimal(552), tomorrow, open_interest=100, gamma="0.01"),
+        _contract("SPY260120P00548000", ContractType.PUT, Decimal(548), in_five_days, open_interest=100, gamma="0.01"),
+    )
+    storage.save_chain_snapshot(OptionChain(symbol="SPY", as_of=AS_OF, spot_price=SPOT_PRICE, contracts=contracts))
+
+    tactical = _orchestrator(storage).execute_both("SPY")
+
+    assert {item.strike for item in tactical.items} == {Decimal(550), Decimal(552)}
+    strikes = {}
+    for view in ("0dte", "1dte", "2dte"):
+        saved = storage.get_latest_gamma_aggregate("SPY", view=view)
+        assert saved is not None and saved.view == view
+        strikes[view] = {item.strike for item in saved.items}
+    assert strikes == {"0dte": {Decimal(550)}, "1dte": {Decimal(552)}, "2dte": {Decimal(548)}}
+
+
+def test_a_missing_expiration_slot_is_an_honest_empty_view() -> None:
+    storage = InMemoryStorage()
+    contracts = (
+        _contract("SPY260115C00550000", ContractType.CALL, Decimal(550), TODAY_ET, open_interest=100, gamma="0.02"),
+    )
+    storage.save_chain_snapshot(OptionChain(symbol="SPY", as_of=AS_OF, spot_price=SPOT_PRICE, contracts=contracts))
+
+    _orchestrator(storage).execute_both("SPY")
+
+    second = storage.get_latest_gamma_aggregate("SPY", view="1dte")
+    assert second is not None and second.items == ()
