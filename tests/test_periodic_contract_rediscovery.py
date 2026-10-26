@@ -128,6 +128,77 @@ class TestPeriodicContractRediscovery:
         assert "SPY" not in register_calls
         assert set(register_calls) == set(ALL_SYMBOLS) - {"SPY"}
 
+    def test_an_unexpected_error_does_not_kill_the_loop(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Regression (2026-10-23 09:31 -> 10-26 09:34): an exception outside (HTTPError, ValueError) -- e.g. ThetaSlotsExhaustedError, a
+        TimeoutError -- killed the task silently and no contract was added for a whole trading day and a weekend."""
+        from backend.adapters.providers.thetadata.request_slots import ThetaSlotsExhaustedError
+
+        provider = _provider()
+        fetch_calls: list[str] = []
+
+        def fake_fetch(symbol: str, expiration: date | None) -> _NearTheMoneyChain:
+            fetch_calls.append(symbol)
+            if symbol == "SPY":
+                raise ThetaSlotsExhaustedError("no slot")
+            if symbol == "QQQ":
+                raise RuntimeError("anything else")
+            return _NearTheMoneyChain(date(2099, 1, 1), [])
+
+        monkeypatch.setattr(provider, "_fetch_near_the_money", fake_fetch)
+        monkeypatch.setattr(provider, "_register_streaming_contracts", lambda *a: None)
+        sleep_calls: list[float] = []
+
+        async def fake_sleep(seconds: float) -> None:
+            sleep_calls.append(seconds)
+            if len(sleep_calls) >= 3:
+                raise asyncio.CancelledError
+
+        monkeypatch.setattr(asyncio, "sleep", fake_sleep)
+
+        async def run() -> None:
+            with pytest.raises(asyncio.CancelledError):
+                await provider._periodic_contract_rediscovery()
+
+        asyncio.run(run())
+        # two full passes ran (every symbol twice), the failing ones included
+        assert fetch_calls.count("SPY") == 2 and fetch_calls.count("QQQ") == 2
+        assert len(fetch_calls) == 2 * len(ALL_SYMBOLS)
+
+    def test_a_new_day_drops_the_expired_contracts(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from decimal import Decimal
+
+        from backend.domain.entities import ContractType
+
+        provider = _provider()
+        hub = provider._hub
+        hub.register_contract("SPXW261023C07700000", "SPXW", date(2026, 10, 23), ContractType.CALL, Decimal(7700))
+        hub.register_contract("SPXW261026C07700000", "SPXW", date(2026, 10, 26), ContractType.CALL, Decimal(7700))
+        assert hub.drop_expired_contracts(date(2026, 10, 26)) == 1
+        assert not hub.has_contract("SPXW261023C07700000")
+        assert hub.has_contract("SPXW261026C07700000")
+        assert hub.drop_expired_contracts(date(2026, 10, 26)) == 0
+
+    def test_the_supervisor_restarts_a_task_that_died(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        provider = _provider()
+        runs: list[int] = []
+
+        async def fake_loop() -> None:
+            runs.append(len(runs))
+            if len(runs) == 1:
+                raise RuntimeError("died")
+            await asyncio.sleep(3600)
+
+        monkeypatch.setattr(provider, "_periodic_contract_rediscovery", fake_loop)
+
+        async def run() -> None:
+            provider._start_rediscovery_task()
+            for _ in range(5):
+                await asyncio.sleep(0)
+            assert len(runs) == 2  # died once, started again
+            provider._rediscovery_task.cancel()
+
+        asyncio.run(run())
+
     def test_offloads_the_blocking_fetch_to_a_thread_instead_of_calling_it_directly(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
