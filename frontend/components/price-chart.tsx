@@ -913,7 +913,8 @@ export function PriceChart({
     series.attachPrimitive(primitive);
     return () => {
       if (profilePrimitiveRef.current === primitive) profilePrimitiveRef.current = null;
-      series.detachPrimitive(primitive);
+      // On unmount the chart is already removed: detaching would ask it for a redraw, and that frame then fails with "Object is disposed".
+      if (seriesRef.current === series) series.detachPrimitive(primitive);
     };
   }, [showProfile]);
 
@@ -1196,8 +1197,10 @@ export function PriceChart({
     return () => {
       controller.abort();
       window.clearInterval(interval);
-      chart.unsubscribeCrosshairMove(onCrosshairMove);
-      series.detachPrimitive(primitive);
+      if (chartRef.current === chart) {
+        chart.unsubscribeCrosshairMove(onCrosshairMove);
+        series.detachPrimitive(primitive);
+      }
       cubesPrimitiveRef.current = null;
       setHoveredCube(null);
       setOpeningAlerts(null);
@@ -1242,7 +1245,7 @@ export function PriceChart({
     return () => {
       controller.abort();
       window.clearTimeout(timer);
-      series.detachPrimitive(primitive);
+      if (seriesRef.current === series) series.detachPrimitive(primitive);
       setHeatmapProfile(null);
     };
   }, [showHeatmap, sidesOn, symbol, gammaView, heatmapMetric, dayScale]);
@@ -1290,7 +1293,7 @@ export function PriceChart({
     return () => {
       controller.abort();
       window.clearTimeout(timer);
-      series.detachPrimitive(primitive);
+      if (seriesRef.current === series) series.detachPrimitive(primitive);
       setHeatmapProfile(null);
     };
   }, [showHeatmap, sidesOn, sideLayers.calls, sideLayers.puts, symbol, gammaView, dayScale]);
@@ -1597,7 +1600,7 @@ export function PriceChart({
     const interval = window.setInterval(() => primitive.refresh(), 1000);
     return () => {
       window.clearInterval(interval);
-      series.detachPrimitive(primitive);
+      if (seriesRef.current === series) series.detachPrimitive(primitive);
     };
   }, [candleCountdown, timeframe, symbol]);
 
