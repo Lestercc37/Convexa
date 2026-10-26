@@ -223,7 +223,14 @@ export type PriceCandlesResponse = {
 };
 
 // GET /alert-cubes/minimums: the suggested minimum size of the alert cubes per symbol (about `target_per_session` cubes a session each); symbols without history are absent.
-export type CubeMinimumsResponse = { schema_version: number; target_per_session: number; sessions: number; minimums: Record<string, number> };
+// `net_minimums` is the same rule on the net size (lib/alert-cubes.ts netDeltaContracts); absent from an API older than it.
+export type CubeMinimumsResponse = {
+  schema_version: number;
+  target_per_session: number;
+  sessions: number;
+  minimums: Record<string, number>;
+  net_minimums?: Record<string, number>;
+};
 
 export type GammaHeatmapMetric = "gamma" | "absolute_gamma" | "delta" | "vanna" | "charm" | "call_gamma" | "put_gamma" | "total_gamma";
 

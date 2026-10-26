@@ -20,8 +20,8 @@ import {
 } from "lightweight-charts";
 import { getAlerts, getGammaHistory, getGammaProfile, getMinuteFlow, getOptionChain, getOptionChainExpirations, getPriceCandles, getCubeMinimums } from "@/lib/api";
 import { flowBarsFromResponse } from "@/lib/minute-flow";
-import { buildCubes, DEFAULT_CUBE_FILTER } from "@/lib/alert-cubes";
-import { CUBE_MIN_LIMIT, effectiveCubeMin, loadCubeMins, parseCubeMin, saveCubeMins } from "@/lib/cube-minimum";
+import { buildCubes, DEFAULT_CUBE_FILTER, DEFAULT_CUBE_SIZING, type CubeSizing } from "@/lib/alert-cubes";
+import { CUBE_MIN_LIMIT, effectiveCubeMin, loadCubeMins, loadCubeSizing, parseCubeMin, saveCubeMins, saveCubeSizing } from "@/lib/cube-minimum";
 import { aggregateVwapPoints, type MinuteCandle, type Timeframe, type VwapPoint } from "@/lib/candles";
 import { recordChartEvent } from "@/lib/chart-lifecycle";
 import { useLanguage } from "@/lib/i18n/language-context";
@@ -574,17 +574,20 @@ export function PriceChart({
   // Minimum cube size per symbol (item 12b): the API's suggestion (about 40 cubes a session each, recomputed daily) unless the viewer typed their own, which this browser remembers per symbol.
   const [customCubeMins, setCustomCubeMins] = useState<Record<string, number>>({});
   const [cubeMinsLoaded, setCubeMinsLoaded] = useState(false);
-  const [suggestedCubeMins, setSuggestedCubeMins] = useState<Record<string, number>>({});
+  const [suggestedCubeMins, setSuggestedCubeMins] = useState<{ gross: Record<string, number>; net: Record<string, number> }>({ gross: {}, net: {} });
   const [cubeMinDraft, setCubeMinDraft] = useState<{ symbol: string; text: string } | null>(null);
-  const cubeMin = effectiveCubeMin(symbol, customCubeMins, suggestedCubeMins);
+  // Net-sized cubes (default, Lester 2026-10-23): only the one-sided part of an alert sizes and filters it; "Neto" off goes back to gross. Remembered by this browser.
+  const [cubeSizing, setCubeSizing] = useState<CubeSizing>(DEFAULT_CUBE_SIZING);
+  const [cubeSizingLoaded, setCubeSizingLoaded] = useState(false);
+  const cubeMin = effectiveCubeMin(symbol, customCubeMins, cubeSizing === "net" ? suggestedCubeMins.net : suggestedCubeMins.gross);
   const cubeMinDeq = cubeMin.value;
   const [cubeShowFar, setCubeShowFar] = useState(DEFAULT_CUBE_FILTER.showFar);
   const [cubeAlerts, setCubeAlerts] = useState<WhaleAlert[]>([]);
   const [hoveredCube, setHoveredCube] = useState<{ id: string; x: number; y: number } | null>(null);
   const cubesPrimitiveRef = useRef<AlertCubesPrimitive | null>(null);
   const cubes = useMemo(
-    () => buildCubes(cubeAlerts, { minDeq: cubeMinDeq, showFar: cubeShowFar }),
-    [cubeAlerts, cubeMinDeq, cubeShowFar],
+    () => buildCubes(cubeAlerts, { minDeq: cubeMinDeq, showFar: cubeShowFar, sizing: cubeSizing }),
+    [cubeAlerts, cubeMinDeq, cubeShowFar, cubeSizing],
   );
   // Gamma heatmap behind the candles (off by default): strike x time matrix read from /gamma/{symbol}/heatmap.
   const [showHeatmap, setShowHeatmap] = useState(false);
@@ -980,15 +983,21 @@ export function PriceChart({
     // eslint-disable-next-line react-hooks/set-state-in-effect -- loads this browser's saved minimums once after mount (localStorage does not exist on the server, so it cannot be the initial state)
     setCustomCubeMins(loadCubeMins());
     setCubeMinsLoaded(true);
+    setCubeSizing(loadCubeSizing());
+    setCubeSizingLoaded(true);
   }, []);
   useEffect(() => {
     if (cubeMinsLoaded) saveCubeMins(customCubeMins);
   }, [customCubeMins, cubeMinsLoaded]);
   useEffect(() => {
+    if (cubeSizingLoaded) saveCubeSizing(cubeSizing);
+  }, [cubeSizing, cubeSizingLoaded]);
+  useEffect(() => {
     if (!showAlertCubes) return;
     const controller = new AbortController();
     getCubeMinimums(controller.signal)
-      .then((response) => setSuggestedCubeMins(response.minimums))
+      // A symbol without a net suggestion (or an API older than it) falls back to its gross one, never to the old shared 200.
+      .then((response) => setSuggestedCubeMins({ gross: response.minimums, net: { ...response.minimums, ...(response.net_minimums ?? {}) } }))
       .catch(() => {
         // No suggestion: every symbol keeps the legacy default until the next try.
       });
@@ -1811,6 +1820,14 @@ export function PriceChart({
                     onChange={(event) => setCubeShowFar(event.target.checked)}
                   />
                   {t.priceChart.alertCubesFarLabel}
+                </label>
+                <label className="chart-toggle" title={t.priceChart.alertCubesNetTitle}>
+                  <input
+                    type="checkbox"
+                    checked={cubeSizing === "net"}
+                    onChange={(event) => setCubeSizing(event.target.checked ? "net" : "gross")}
+                  />
+                  {t.priceChart.alertCubesNetLabel}
                 </label>
               </>
             )}

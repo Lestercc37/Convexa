@@ -4,7 +4,7 @@ import { conditionShares, trialLabel, type AlertCube, type TrialLabel } from "@/
 import type { Translations } from "@/lib/i18n/translations";
 
 // The text of one alert cube, shown only while it is hovered: when it was TRADED (the minute, or the 15 minutes of a sustained flow; older alerts only have the issue time) and its type, when the alert was issued, the side (COMPRA / VENTA / SIN LADO CLARO, no percentages), call or
-// put with its strike and delta zone, size in delta contracts with premium and repeats, the trade-condition mix, the second label of the trial,
+// put with its strike and delta zone, size in delta contracts with premium and repeats, the net size with the buy / sell premium (when it had a quote), the trade-condition mix, the second label of the trial,
 // and how far the strike is from the price.
 
 function formatPremium(amount: number): string {
@@ -64,6 +64,9 @@ export function AlertCubeTooltip({
         {alert.delta != null ? `, delta ${alert.delta.toFixed(2)}` : ""})
       </div>
       <div>{t.cubeSizeLine(cube.deq, formatPremium(alert.amount), alert.repeat_count)}</div>
+      {!alert.quote_unavailable && (
+        <div>{t.cubeNetLine(cube.netDeq, formatPremium(alert.estimated_buy_volume), formatPremium(alert.estimated_sell_volume))}</div>
+      )}
       {mix.length > 0 && (
         <div>
           {t.cubeConditionTitle}: {mix.map((share) => `${t.cubeCategories[share.category]} ${share.percent} %`).join(" · ")}

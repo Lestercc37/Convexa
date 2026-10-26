@@ -1,6 +1,17 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { CUBE_MIN_LIMIT, CUBE_MIN_STORAGE_KEY, effectiveCubeMin, LEGACY_CUBE_MIN, loadCubeMins, parseCubeMin, saveCubeMins } from "@/lib/cube-minimum";
+import {
+  CUBE_MIN_LIMIT,
+  CUBE_MIN_STORAGE_KEY,
+  CUBE_SIZING_STORAGE_KEY,
+  effectiveCubeMin,
+  LEGACY_CUBE_MIN,
+  loadCubeMins,
+  loadCubeSizing,
+  parseCubeMin,
+  saveCubeMins,
+  saveCubeSizing,
+} from "@/lib/cube-minimum";
 
 afterEach(() => {
   window.localStorage.clear();
@@ -46,5 +57,23 @@ describe("storage", () => {
       throw new Error("blocked");
     });
     expect(() => saveCubeMins({ SPY: 1 })).not.toThrow();
+  });
+
+  it("remembers net or gross sizing, net by default and on anything unreadable or blocked", () => {
+    expect(loadCubeSizing()).toBe("net");
+    saveCubeSizing("gross");
+    expect(loadCubeSizing()).toBe("gross");
+    saveCubeSizing("net");
+    expect(loadCubeSizing()).toBe("net");
+    window.localStorage.setItem(CUBE_SIZING_STORAGE_KEY, "junk");
+    expect(loadCubeSizing()).toBe("net");
+    vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => {
+      throw new Error("blocked");
+    });
+    expect(loadCubeSizing()).toBe("net");
+    vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+      throw new Error("blocked");
+    });
+    expect(() => saveCubeSizing("gross")).not.toThrow();
   });
 });

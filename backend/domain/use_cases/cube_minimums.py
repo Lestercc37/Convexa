@@ -12,7 +12,7 @@ import math
 import statistics
 import time
 from collections import defaultdict
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from datetime import date, datetime
 from zoneinfo import ZoneInfo
 
@@ -37,18 +37,35 @@ def nice_number(value: float) -> int:
     return int(min(candidates, key=lambda candidate: abs(math.log(candidate) - math.log(value))))
 
 
+def gross_size(alert: WhaleAlert) -> float:
+    """Delta-equivalent contracts, contracts x |delta| (the cube's gross size)."""
+    return float(alert.contracts or 0) * abs(float(alert.delta or 0))
+
+
+def net_size(alert: WhaleAlert) -> float:
+    """The net cube size the dashboard draws by default (frontend lib/alert-cubes.ts netDeltaContracts): gross x |buy - sell| / (buy + sell);
+    an alert with no quote to sign against keeps its gross size."""
+    gross = gross_size(alert)
+    buy, sell = float(alert.estimated_buy_volume), float(alert.estimated_sell_volume)
+    if alert.quote_unavailable or buy + sell <= 0:
+        return gross
+    return gross * abs(buy - sell) / (buy + sell)
+
+
 def suggested_minimum(
     alerts: Sequence[WhaleAlert],
     today: date,
     target: int = TARGET_CUBES_PER_SESSION,
     sessions: int = SESSIONS,
+    size_of: Callable[[WhaleAlert], float] = gross_size,
 ) -> int | None:
-    """The suggested minimum for one symbol, or None when no completed session has at least `target` sizable alerts (the dashboard then keeps its legacy default)."""
+    """The suggested minimum for one symbol, or None when no completed session has at least `target` sizable alerts (the dashboard then keeps its legacy default).
+    `size_of` picks gross (default) or net cube sizes."""
     by_day: dict[date, list[float]] = defaultdict(list)
     for alert in alerts:
         if alert.moneyness is Moneyness.FAR or alert.contracts is None or alert.delta is None:
             continue
-        size = float(alert.contracts) * abs(float(alert.delta))
+        size = size_of(alert)
         if size <= 0:
             continue
         local = alert.as_of.astimezone(EASTERN)
@@ -67,19 +84,30 @@ def suggested_minimum(
 
 
 async def get_cube_minimums_async(storage: IAsyncMarketReadStorage, now: datetime | None = None, symbols: Sequence[str] = CUBE_SYMBOLS) -> dict:
-    """`/alert-cubes/minimums`: {"schema_version", "target_per_session", "sessions", "minimums": {symbol: int}}; symbols without enough history are left out. Cached for an hour."""
+    """`/alert-cubes/minimums`: {"schema_version", "target_per_session", "sessions", "minimums": {symbol: int}, "net_minimums": {symbol: int}} (gross and net
+    cube sizes); symbols without enough history are left out. Cached for an hour."""
     global _cache  # process-local cache, same pattern as the candle cache in read_models.py
     clock = time.monotonic()
     if _cache is not None and clock - _cache[0] < _CACHE_TTL_SECONDS:
         return _cache[1]
     today = (now or datetime.now(EASTERN)).astimezone(EASTERN).date()
     minimums: dict[str, int] = {}
+    net_minimums: dict[str, int] = {}
     for symbol in symbols:
         alerts = await storage.get_recent_whale_alerts(symbol, ALERTS_PER_SYMBOL_LIMIT)
         value = suggested_minimum(alerts, today)
         if value is not None:
             minimums[symbol] = value
-    result = {"schema_version": 1, "target_per_session": TARGET_CUBES_PER_SESSION, "sessions": SESSIONS, "minimums": minimums}
+        net_value = suggested_minimum(alerts, today, size_of=net_size)
+        if net_value is not None:
+            net_minimums[symbol] = net_value
+    result = {
+        "schema_version": 1,
+        "target_per_session": TARGET_CUBES_PER_SESSION,
+        "sessions": SESSIONS,
+        "minimums": minimums,
+        "net_minimums": net_minimums,
+    }
     _cache = (clock, result)
     return result
 

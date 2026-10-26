@@ -2,8 +2,8 @@ import { parseContractSide } from "@/lib/occ-symbol";
 import type { WhaleAlert } from "@/lib/types";
 
 // Alert cubes on the price chart (docs/diseno-heatmap-gamma-2026-10-14.txt, 12.8 to 12.14): one small square per whale alert, x = the alert's
-// time, y = the contract's strike. Size and filter are delta-equivalent contracts (contracts x |delta|), color is the estimated side, and
-// only the tooltip carries text. Pure functions here; the drawing is alert-cubes-primitive.ts.
+// time, y = the contract's strike. Size and filter are delta-equivalent contracts (contracts x |delta|, by default only its net, one-sided
+// part), color is the estimated side, and only the tooltip carries text. Pure functions here; the drawing is alert-cubes-primitive.ts.
 
 export type CubeSide = "buy" | "sell" | "mixed";
 export type CubeZone = "ITM" | "ATM" | "OTM" | "FAR";
@@ -14,23 +14,51 @@ export type AlertCube = {
   time: number;
   strike: number;
   right: "C" | "P";
-  /** Delta-equivalent contracts: contracts x |delta|, rounded. */
+  /** Delta-equivalent contracts: contracts x |delta|, rounded (the gross size, as the tooltip shows it). */
   deq: number;
-  /** Side length in CSS pixels (6 / 9 / 12). */
+  /** The net part of it: deq x |buy - sell| / (buy + sell); equal to deq when the alert had no quote to sign against (see netDeltaContracts). */
+  netDeq: number;
+  /** Side length in CSS pixels (6 / 9 / 12), from the net or the gross size depending on the filter's sizing. */
   size: number;
   side: CubeSide;
   zone: CubeZone;
   alert: WhaleAlert;
 };
 
+/**
+ * What sizes a cube and what the minimum is compared with. "gross": every delta contract traded. "net" (Lester 2026-10-23, walls of
+ * balanced cubes at the window-fill minute): only the part that leaned to one side, so a 50/50 alert shrinks and a one-sided one keeps
+ * its size. The color rule does not change.
+ */
+export type CubeSizing = "net" | "gross";
+
 export type CubeFilter = {
-  /** Minimum delta-equivalent contracts (the design default is 200). */
+  /** Minimum delta-equivalent contracts (the design default is 200), compared with the size the sizing picks. */
   minDeq: number;
   /** "Lejos" (|delta| outside 0.25-0.85) is hidden unless this is on. */
   showFar: boolean;
+  /** Gross when absent (the behavior before the net option). */
+  sizing?: CubeSizing;
 };
 
 export const DEFAULT_CUBE_FILTER: CubeFilter = { minDeq: 200, showFar: false };
+/** What the chart starts with (the viewer can switch it off, see the "Neto" toggle). */
+export const DEFAULT_CUBE_SIZING: CubeSizing = "net";
+
+/**
+ * Net delta-equivalent contracts: contracts x |delta| x |buy - sell| / (buy + sell), rounded; null when the alert cannot be sized. An alert
+ * whose trades had no quote at all (quote_unavailable) has no measured split, so it keeps its gross size: flow that could not be signed is
+ * never shrunk away, it is drawn as before (no clear side).
+ */
+export function netDeltaContracts(
+  alert: Pick<WhaleAlert, "contracts" | "delta" | "estimated_buy_volume" | "estimated_sell_volume" | "quote_unavailable">,
+): number | null {
+  if (alert.delta == null || alert.contracts == null) return null;
+  const gross = alert.contracts * Math.abs(alert.delta);
+  const total = alert.estimated_buy_volume + alert.estimated_sell_volume;
+  if (alert.quote_unavailable || !(total > 0)) return Math.round(gross);
+  return Math.round((gross * Math.abs(alert.estimated_buy_volume - alert.estimated_sell_volume)) / total);
+}
 
 // Relative to the minimum in use (item 12b): from the minimum up to twice it small, twice to three times medium, three times and up large (with the old 200: 200-400 / 400-600 / 600+).
 export function cubeSizePx(deq: number, minimum: number = DEFAULT_CUBE_FILTER.minDeq): number {
@@ -58,7 +86,7 @@ export function occStrike(occSymbol: string): number | null {
 
 /**
  * The cubes to draw for a list of alerts. An alert without delta or contracts (written before migration 0046, or from the BVC path) cannot be
- * sized and is left out; so is one under the minimum size, and a "Lejos" one unless asked for.
+ * sized and is left out; so is one under the minimum size (net or gross, see CubeSizing), and a "Lejos" one unless asked for.
  */
 export function buildCubes(alerts: WhaleAlert[], filter: CubeFilter = DEFAULT_CUBE_FILTER): AlertCube[] {
   const cubes: AlertCube[] = [];
@@ -68,7 +96,9 @@ export function buildCubes(alerts: WhaleAlert[], filter: CubeFilter = DEFAULT_CU
     const side = parseContractSide(alert.contract);
     if (strike === null || side === null) continue;
     const deq = Math.round(alert.contracts * alert.delta);
-    if (deq < filter.minDeq) continue;
+    const netDeq = netDeltaContracts(alert) ?? deq;
+    const sizedBy = filter.sizing === "net" ? netDeq : deq;
+    if (sizedBy < filter.minDeq) continue;
     if (alert.moneyness === "FAR" && !filter.showFar) continue;
     const time = Math.floor(Date.parse(alert.timestamp) / 1000);
     if (!Number.isFinite(time)) continue;
@@ -78,7 +108,8 @@ export function buildCubes(alerts: WhaleAlert[], filter: CubeFilter = DEFAULT_CU
       strike,
       right: side === "call" ? "C" : "P",
       deq,
-      size: cubeSizePx(deq, filter.minDeq),
+      netDeq,
+      size: cubeSizePx(sizedBy, filter.minDeq),
       side: cubeSide(alert),
       zone: alert.moneyness,
       alert,

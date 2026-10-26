@@ -51,3 +51,22 @@ export function saveCubeMins(values: Record<string, number>): void {
     // Storage blocked or full: the choice still holds for this visit.
   }
 }
+
+// Net or gross cube size (lib/alert-cubes.ts CubeSizing), remembered by this browser; anything unreadable means the default (net).
+export const CUBE_SIZING_STORAGE_KEY = "convexa.cube-sizing.v1";
+
+export function loadCubeSizing(): "net" | "gross" {
+  try {
+    return window.localStorage.getItem(CUBE_SIZING_STORAGE_KEY) === "gross" ? "gross" : "net";
+  } catch {
+    return "net";
+  }
+}
+
+export function saveCubeSizing(sizing: "net" | "gross"): void {
+  try {
+    window.localStorage.setItem(CUBE_SIZING_STORAGE_KEY, sizing);
+  } catch {
+    // Storage blocked or full: the choice still holds for this visit.
+  }
+}
