@@ -11,6 +11,7 @@ from concurrent.futures import ThreadPoolExecutor
 from collections.abc import AsyncIterator, Callable
 from datetime import date, datetime, timedelta
 from datetime import time as time_of_day
+from zoneinfo import ZoneInfo
 from decimal import Decimal
 from pathlib import Path
 from typing import Any, TypeVar
@@ -496,6 +497,9 @@ WILDCARD_MAX_DTE = 14
 # directly instead, matching that same cadence rather than inventing a
 # new one.
 CONTRACT_REDISCOVERY_INTERVAL_SECONDS = 60.0
+_EASTERN = ZoneInfo("America/New_York")
+# One "Contract rediscovery alive" INFO line every this many passes (~10 min).
+REDISCOVERY_ALIVE_EVERY_PASSES = 10
 
 # Open interest, unlike the near-the-money chain above, is confirmed
 # static intraday — Open Interest for US options is calculated and
@@ -1088,6 +1092,16 @@ class ThetaStreamHub:
     def has_contract(self, occ_symbol: str) -> bool:
         with self._contracts_lock:
             return occ_symbol in self._contracts
+
+    def drop_expired_contracts(self, today: date) -> int:
+        """Forget every registered contract that expired before `today`, so the next reconnect does not resubscribe yesterday's set (2026-10-26
+        open: after a weekend and a Terminal restart the worker resubscribed Friday's 638 contracts, the expired 0DTE included). Their live
+        subscriptions are left alone (an expired contract sends nothing); the cumulative volume counters are kept. Returns how many were dropped."""
+        with self._contracts_lock:
+            expired = [occ for occ, (_, expiration, _, _) in self._contracts.items() if expiration < today]
+            for occ in expired:
+                del self._contracts[occ]
+        return len(expired)
 
     def contract_count(self) -> int:
         """Number of contracts registered for streaming -- exposed for
@@ -2537,7 +2551,28 @@ class ThetaDataProvider:
                     occ_symbol, root, chain.expiration, contract_type, strike
                 )
         self._hub.start()
-        self._rediscovery_task = asyncio.create_task(self._periodic_contract_rediscovery())
+        self._start_rediscovery_task()
+
+    def _start_rediscovery_task(self) -> None:
+        """Starts the rediscovery loop with a supervisor: if the task ever ends with an exception (it must not, see the catch-all inside), it is
+        logged at CRITICAL and started again. On 2026-10-23 09:31 the loop died silently (an exception outside the two caught types) and the worker
+        added no contract until it was restarted on Monday's open."""
+        task = asyncio.create_task(self._periodic_contract_rediscovery())
+        self._rediscovery_task = task
+
+        def _on_done(done: asyncio.Task[None]) -> None:
+            if done.cancelled() or self._rediscovery_task is not done:
+                return
+            error = done.exception()
+            if error is None:
+                return
+            logger.critical("Contract rediscovery task died; restarting it", exc_info=error)
+            try:
+                self._start_rediscovery_task()
+            except RuntimeError:
+                logger.exception("Could not restart the contract rediscovery task (no running event loop)")
+
+        task.add_done_callback(_on_done)
 
     async def _periodic_contract_rediscovery(self) -> None:
         """See CONTRACT_REDISCOVERY_INTERVAL_SECONDS' own comment. Reuses
@@ -2564,8 +2599,18 @@ class ThetaDataProvider:
         asyncio.to_thread call above) -- offload the blocking call so
         this coroutine's own await here is what yields, not a raw
         function call the loop can't preempt."""
+        passes = 0
+        last_day: date | None = None
         while True:
             await asyncio.sleep(CONTRACT_REDISCOVERY_INTERVAL_SECONDS)
+            passes += 1
+            today = datetime.now(_EASTERN).date()
+            if today != last_day:
+                # A new day: forget the expired contracts (the new expiration is picked up by the fetch below), see drop_expired_contracts.
+                dropped = self._hub.drop_expired_contracts(today)
+                if dropped:
+                    logger.info("Contract rediscovery: new day %s, dropped %d expired contract(s)", today, dropped)
+                last_day = today
             for symbol, underlying in ACTIVE_UNDERLYINGS_BY_SYMBOL.items():
                 if underlying.kind == UnderlyingKind.FUTURE:
                     continue  # no options of its own, see start()
@@ -2573,12 +2618,20 @@ class ThetaDataProvider:
                     chain = await asyncio.to_thread(
                         self._fetch_near_the_money, symbol, expiration=None
                     )
+                    self._register_streaming_contracts(symbol, chain)
                 except (httpx.HTTPError, ValueError):
                     logger.exception(
                         "Failed to rediscover near-the-money contracts for %s", symbol
                     )
-                    continue
-                self._register_streaming_contracts(symbol, chain)
+                except Exception:  # noqa: BLE001 -- anything else (e.g. ThetaSlotsExhaustedError, a TimeoutError) must not kill the loop
+                    logger.exception(
+                        "Unexpected error rediscovering near-the-money contracts for %s; the loop goes on", symbol
+                    )
+            if passes % REDISCOVERY_ALIVE_EVERY_PASSES == 0:
+                # Proof of life: the 2026-10-23 death left no trace at all.
+                logger.info(
+                    "Contract rediscovery alive: pass %d, %d contracts registered", passes, self._hub.contract_count()
+                )
 
     def get_option_volume_snapshot(self, symbol: str, expiration: date) -> dict[str, int]:
         """The day's traded volume per contract of ONE expiration as ThetaData reports it (GET /v3/option/snapshot/ohlc, one request per root of the
