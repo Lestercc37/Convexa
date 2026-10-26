@@ -11,7 +11,38 @@ export const GAMMA_VIEW_TABS: readonly { view: GammaView; label: string }[] = [
 
 export const DEFAULT_GAMMA_VIEW: GammaView = "0dte";
 
-const EXPIRATION_POSITION: Partial<Record<GammaView, number>> = { "0dte": 0, "1dte": 1, "2dte": 2 };
+const EXPIRATION_POSITION: Partial<Record<GammaView, number>> = { "0dte": 0, "1dte": 1, "2dte": 2, "0dte_volume": 0 };
+
+// "OI | Volumen" (2026-10-26): the open interest (default) or the contracts traded today as the weight of every contract. Only the 0DTE tab has a
+// volume twin on the backend for now ("0dte_volume"); on the other tabs the volume button is disabled and the open interest is used.
+export type GammaWeight = "oi" | "volume";
+const VOLUME_VIEW_BY_TAB: Partial<Record<GammaView, GammaView>> = { "0dte": "0dte_volume" };
+const WEIGHT_STORAGE_KEY = "convexa.gamma-weight.v1";
+
+export function supportsVolumeWeight(tab: GammaView): boolean {
+  return VOLUME_VIEW_BY_TAB[tab] !== undefined;
+}
+
+/** The view every request asks for: the tab itself, or its volume-weighted twin when "Volumen" is on and the tab has one. */
+export function effectiveGammaView(tab: GammaView, weight: GammaWeight): GammaView {
+  return weight === "volume" ? (VOLUME_VIEW_BY_TAB[tab] ?? tab) : tab;
+}
+
+export function readStoredGammaWeight(): GammaWeight {
+  try {
+    return window.localStorage.getItem(WEIGHT_STORAGE_KEY) === "volume" ? "volume" : "oi";
+  } catch {
+    return "oi";
+  }
+}
+
+export function storeGammaWeight(weight: GammaWeight): void {
+  try {
+    window.localStorage.setItem(WEIGHT_STORAGE_KEY, weight);
+  } catch {
+    // Not remembered, still applied.
+  }
+}
 
 // ES / NQ read the levels of SPX / NDX (shifted by the typed opening price), so their tabs show the index's expirations.
 export const GAMMA_SOURCE_SYMBOL_BY_FUTURE: Record<string, string> = { ES: "SPX", NQ: "NDX" };

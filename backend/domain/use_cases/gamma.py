@@ -6,7 +6,7 @@ from dataclasses import replace
 from datetime import date, datetime, timedelta
 from decimal import Decimal
 
-from backend.domain.entities import EXPIRATION_GAMMA_VIEWS, DailyBar, GammaAggregate, GammaView, OptionChain
+from backend.domain.entities import EXPIRATION_GAMMA_VIEWS, VOLUME_GAMMA_VIEWS, DailyBar, GammaAggregate, GammaView, OptionChain
 from backend.domain.ports import IAsyncMarketReadStorage, IStorage
 from backend.domain.use_cases.calculate_atr_range import REQUIRED_DAILY_BARS
 from backend.domain.use_cases.calculate_gamma_aggregate import (
@@ -221,6 +221,13 @@ class CalculateGammaExposureOrchestrator:
                     )
                 except Exception:
                     logger.exception("%s: the %s gamma view failed this cycle", underlying.upper(), view)
+            for view in VOLUME_GAMMA_VIEWS:
+                try:
+                    self._storage.save_gamma_aggregate(
+                        self.build_expiration_view(underlying, chain, daily_bars, view)
+                    )
+                except Exception:
+                    logger.exception("%s: the %s gamma view failed this cycle", underlying.upper(), view)
         return tactical
 
     def build_expiration_view(
@@ -229,11 +236,19 @@ class CalculateGammaExposureOrchestrator:
         """One listed expiration only (see listed_expiration_for_view), built by the same _build_view as the 0-2 DTE view: same
         strike width, walls, flip search and exposures, just fewer contracts. Not persisted here (execute_both and the fast layer
         save it). A chain that lists nothing for that slot returns the honest-empty aggregate."""
-        expiration = listed_expiration_for_view(chain, view)
+        by_volume = view in VOLUME_GAMMA_VIEWS
+        expiration = listed_expiration_for_view(chain, VOLUME_GAMMA_VIEWS.get(view, view))
         if expiration is None:
             return GammaAggregate(symbol=chain.symbol, as_of=chain.as_of, view=view)
         one_expiration = replace(
-            chain, contracts=tuple(contract for contract in chain.contracts if contract.expiration == expiration)
+            chain,
+            contracts=tuple(
+                # A volume view weights every contract by today's traded contracts: the same formulas with the volume in the open interest's place
+                # (so the per-strike "open_interest" of these rows is the traded volume).
+                replace(contract, open_interest=contract.volume) if by_volume else contract
+                for contract in chain.contracts
+                if contract.expiration == expiration
+            ),
         )
         with self._compute_semaphore:
             return self._build_view(underlying, one_expiration, daily_bars, 0, expiration, view)
@@ -650,7 +665,7 @@ def listed_expiration_for_view(chain: OptionChain, view: str) -> date | None:
     """The expiration a per-expiration view reads: the n-th LISTED expiration from today (ET) on, by listed order, not by
     calendar days ("0dte" = today's or the nearest one, "1dte" the next, "2dte" the one after; on a Friday "1dte" is
     Monday's). NVDA / VIX, with no daily listings, therefore read their nearest weeklies instead of an empty view."""
-    position = EXPIRATION_GAMMA_VIEWS.index(view)
+    position = EXPIRATION_GAMMA_VIEWS.index(VOLUME_GAMMA_VIEWS.get(view, view))
     today = chain.as_of.astimezone(EASTERN_TIME).date()
     listed = sorted({contract.expiration for contract in chain.contracts if contract.expiration >= today})
     return listed[position] if len(listed) > position else None

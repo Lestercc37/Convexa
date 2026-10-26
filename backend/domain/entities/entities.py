@@ -395,11 +395,15 @@ class Walls:
         object.__setattr__(self, "symbol", self.symbol.upper())
 
 
-GammaView = Literal["structural", "tactical", "0dte", "1dte", "2dte"]
+GammaView = Literal["structural", "tactical", "0dte", "1dte", "2dte", "0dte_volume"]
 # One listed expiration each (Lester 2026-10-26: dashboard tabs 0DTE | 1DTE | 2DTE | 0-2 DTE): "0dte" = today's expiration or the nearest listed one, "1dte" the next listed one,
 # "2dte" the one after (so on a Friday "1dte" is Monday). Computed every cycle next to "tactical" (0-2 DTE), which stays unchanged.
 EXPIRATION_GAMMA_VIEWS: tuple[str, ...] = ("0dte", "1dte", "2dte")
-GAMMA_VIEWS: tuple[str, ...] = ("structural", "tactical", *EXPIRATION_GAMMA_VIEWS)
+# The same expiration weighted by the contracts TRADED today instead of the open interest (Lester 2026-10-26, "OI | Volumen", GEXBot's "GEX (Volume)"):
+# today's volume sits in the out-of-the-money contracts, calls above the price and puts below, so the profile splits at the price instead of
+# alternating strike by strike the way the open interest does. Maps each volume view to the expiration view it reads.
+VOLUME_GAMMA_VIEWS: dict[str, str] = {"0dte_volume": "0dte"}
+GAMMA_VIEWS: tuple[str, ...] = ("structural", "tactical", *EXPIRATION_GAMMA_VIEWS, *VOLUME_GAMMA_VIEWS)
 
 
 @dataclass(frozen=True, slots=True)

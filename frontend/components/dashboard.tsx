@@ -26,6 +26,11 @@ import {
 import { startChartLifecycleRecorder } from "@/lib/chart-lifecycle";
 import {
   DEFAULT_GAMMA_VIEW,
+  effectiveGammaView,
+  type GammaWeight,
+  readStoredGammaWeight,
+  storeGammaWeight,
+  supportsVolumeWeight,
   GAMMA_SOURCE_SYMBOL_BY_FUTURE,
   GAMMA_VIEW_TABS,
   isExpirationView,
@@ -153,7 +158,11 @@ export function Dashboard() {
   const [view, setView] = useState<"live" | "pre-session" | "scanner">("live");
   // The expiration tabs 0DTE | 1DTE | 2DTE | 0-2 DTE (Lester 2026-10-26; the Structural view was retired 2026-10-16). Opens on 0DTE, then
   // remembers the last tab in this browser. Named gammaView, not view, since that name is already the Live/Pre-Session/Scanner selector above.
-  const [gammaView, setGammaView] = useState<GammaView>(DEFAULT_GAMMA_VIEW);
+  const [gammaTab, setGammaTab] = useState<GammaView>(DEFAULT_GAMMA_VIEW);
+  // "OI | Volumen": weight the 0DTE tab by the open interest (default) or by the contracts traded today (GEXBot's "GEX (Volume)"). 0DTE only for now.
+  const [gammaWeight, setGammaWeight] = useState<GammaWeight>("oi");
+  // What every request asks for: the tab, or its volume-weighted twin.
+  const gammaView = effectiveGammaView(gammaTab, gammaWeight);
   // The listed expirations of the symbol whose levels are shown (SPX / NDX for ES / NQ), for the "vence ..." label next to the tabs.
   const [expirations, setExpirations] = useState<{ symbol: string; dates: string[] }>({ symbol: "", dates: [] });
   const [gamma, setGamma] = useState<GammaResponse | null>(null);
@@ -228,7 +237,8 @@ export function Dashboard() {
 
   useEffect(() => {
     const stored = readStoredGammaView();
-    if (stored) setGammaView(stored);
+    if (stored) setGammaTab(stored);
+    setGammaWeight(readStoredGammaWeight());
   }, []);
 
   const gammaSourceSymbol = GAMMA_SOURCE_SYMBOL_BY_FUTURE[symbol] ?? symbol;
@@ -336,18 +346,27 @@ export function Dashboard() {
     gammaViewRef.current = gammaView;
   }, [gammaView]);
 
-  const selectGammaView = (next: GammaView) => {
+  const applyGammaView = (tab: GammaView, weight: GammaWeight) => {
+    const next = effectiveGammaView(tab, weight);
+    setGammaTab(tab);
+    setGammaWeight(weight);
     if (next === gammaView) return;
     gammaViewRef.current = next;
-    setGammaView(next);
-    storeGammaView(next);
     if (symbol) void refresh(symbol, next);
+  };
+  const selectGammaView = (tab: GammaView) => {
+    storeGammaView(tab);
+    applyGammaView(tab, gammaWeight);
+  };
+  const selectGammaWeight = (weight: GammaWeight) => {
+    storeGammaWeight(weight);
+    applyGammaView(gammaTab, weight);
   };
   const today = todayInNewYork();
   const shownExpiration =
-    expirations.symbol === gammaSourceSymbol ? listedExpirationForView(expirations.dates, gammaView, today) : null;
+    expirations.symbol === gammaSourceSymbol ? listedExpirationForView(expirations.dates, gammaTab, today) : null;
   const expirationLabel = (() => {
-    if (!isExpirationView(gammaView) || expirations.symbol !== gammaSourceSymbol) return null;
+    if (!isExpirationView(gammaTab) || expirations.symbol !== gammaSourceSymbol) return null;
     if (!shownExpiration) return t.dashboard.gammaViewNoExpirationLabel;
     const date = new Intl.DateTimeFormat(language === "es" ? "es-ES" : "en-US", {
       weekday: "short",
@@ -649,13 +668,33 @@ export function Dashboard() {
               key={tab.view}
               type="button"
               className="tv-timeframe"
-              aria-pressed={gammaView === tab.view}
+              aria-pressed={gammaTab === tab.view}
               onClick={() => selectGammaView(tab.view)}
             >
               {tab.label}
             </button>
           ))}
           {expirationLabel && <span className="tv-gamma-view-expiration">{expirationLabel}</span>}
+        </div>
+        <div
+          className="tv-timeframes tv-gamma-weight"
+          role="group"
+          aria-label={t.dashboard.gammaWeightGroupAriaLabel}
+          title={supportsVolumeWeight(gammaTab) ? t.dashboard.gammaWeightNote : t.dashboard.gammaWeightOnly0dteNote}
+        >
+          {(["oi", "volume"] as const).map((weight) => (
+            <button
+              key={weight}
+              type="button"
+              className="tv-timeframe"
+              // On a tab without a volume twin the open interest is what is shown, whatever was chosen on 0DTE.
+              aria-pressed={(supportsVolumeWeight(gammaTab) ? gammaWeight : "oi") === weight}
+              disabled={weight === "volume" && !supportsVolumeWeight(gammaTab)}
+              onClick={() => selectGammaWeight(weight)}
+            >
+              {weight === "oi" ? t.dashboard.gammaWeightOi : t.dashboard.gammaWeightVolume}
+            </button>
+          ))}
         </div>
         <div className="tv-view-toggle" role="group" aria-label={t.dashboard.viewGroupAriaLabel}>
           <button

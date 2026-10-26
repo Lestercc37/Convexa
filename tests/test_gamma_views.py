@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 
@@ -350,3 +351,24 @@ def test_a_missing_expiration_slot_is_an_honest_empty_view() -> None:
 
     second = storage.get_latest_gamma_aggregate("SPY", view="1dte")
     assert second is not None and second.items == ()
+
+
+def test_the_0dte_volume_view_weights_contracts_by_todays_volume_instead_of_open_interest() -> None:
+    """"OI | Volumen" (2026-10-26): the same expiration and formulas, the traded volume in the open interest's place. A strike with big open interest
+    but no trades today weighs nothing in the volume view."""
+    storage = InMemoryStorage()
+    quiet = replace(
+        _contract("SPY260115C00550000", ContractType.CALL, Decimal(550), TODAY_ET, open_interest=5000, gamma="0.02"), volume=0
+    )
+    busy = replace(
+        _contract("SPY260115C00555000", ContractType.CALL, Decimal(555), TODAY_ET, open_interest=10, gamma="0.02"), volume=800
+    )
+    storage.save_chain_snapshot(OptionChain(symbol="SPY", as_of=AS_OF, spot_price=SPOT_PRICE, contracts=(quiet, busy)))
+
+    _orchestrator(storage).execute_both("SPY")
+
+    by_oi = {item.strike: item for item in storage.get_latest_gamma_aggregate("SPY", view="0dte").items}
+    by_volume = {item.strike: item for item in storage.get_latest_gamma_aggregate("SPY", view="0dte_volume").items}
+    assert by_oi[Decimal(550)].call_gamma_exposure > by_oi[Decimal(555)].call_gamma_exposure
+    assert by_volume[Decimal(550)].call_gamma_exposure == 0
+    assert by_volume[Decimal(555)].call_gamma_exposure > 0
