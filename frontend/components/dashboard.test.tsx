@@ -707,6 +707,14 @@ describe("Dashboard", () => {
     );
     expect(within(tabs).getByRole("button", { name: "0-2 DTE" })).toHaveAttribute("aria-pressed", "true");
     expect(window.localStorage.getItem("convexa.gamma-view.v1")).toBe("tactical");
+    // The volume weight exists for 0DTE only.
+    expect(screen.getByRole("button", { name: "Volumen" })).toBeDisabled();
+
+    await user.click(within(tabs).getByRole("button", { name: "0DTE" }));
+    await user.click(screen.getByRole("button", { name: "Volumen" }));
+    await waitFor(() =>
+      expect(apiMocks.getGamma).toHaveBeenLastCalledWith("SPY", "0dte_volume", undefined),
+    );
   });
 
   it("moves Quick Scanner into its own view, following the same toggle pattern as Pre-Sesión (regression)", async () => {

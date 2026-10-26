@@ -41,8 +41,8 @@ logger = logging.getLogger(__name__)
 
 # The first four symbols of the rollout (SPX/NDX/SPY/QQQ); the worker takes the list from settings, this is only the default.
 FAST_GAMMA_DEFAULT_SYMBOLS = ("SPX", "NDX", "SPY", "QQQ")
-# Per-expiration views the fast layer also writes (the default 0DTE tab); the others are read from the cycle's columns.
-FAST_EXPIRATION_VIEWS = ("0dte",)
+# Per-expiration views the fast layer also writes (the default 0DTE tab, by open interest and by today's volume); the others are read from the cycle's columns.
+FAST_EXPIRATION_VIEWS = ("0dte", "0dte_volume")
 # A live price older than this is not a live price: the pass is skipped instead of re-pricing the chain at a stale spot.
 MAX_SPOT_AGE_SECONDS = 30
 # The cycle's chain is re-read from the database this often (one cycle is ~58 s; a fresher chain exists as soon as one lands).

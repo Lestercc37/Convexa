@@ -15,6 +15,11 @@ export type Translations = {
     gammaViewExpiresLabel: string;
     gammaViewNoExpirationLabel: string;
     gammaViewVwapNote: string;
+    gammaWeightGroupAriaLabel: string;
+    gammaWeightOi: string;
+    gammaWeightVolume: string;
+    gammaWeightNote: string;
+    gammaWeightOnly0dteNote: string;
     rangeDay: string;
     rangeWeek: string;
     viewGroupAriaLabel: string;

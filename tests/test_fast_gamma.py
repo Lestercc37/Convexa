@@ -78,9 +78,9 @@ def test_a_pass_writes_per_strike_rows_and_no_aggregate() -> None:
 
     written = layer.run_pass("SPY")
 
-    # The 0-2 DTE rows and the 0DTE tab's rows (the seeded chain lists only today's expiration, so both carry the same three strikes).
-    assert written == 6
-    assert [entry[2] for entry in storage.gamma_fast_items] == ["tactical", "0dte"]
+    # The 0-2 DTE rows and the 0DTE tab's rows by OI and by volume (the seeded chain lists only today's expiration, so all carry the same three strikes).
+    assert written == 9
+    assert [entry[2] for entry in storage.gamma_fast_items] == ["tactical", "0dte", "0dte_volume"]
     for symbol, as_of, view, spot, items in storage.gamma_fast_items:
         assert (symbol, as_of, spot) == ("SPY", NOW_ET, Decimal("551.5"))
         assert sorted(item.strike for item in items) == [Decimal(545), Decimal(550), Decimal(555)]
@@ -128,12 +128,12 @@ def test_an_unmoved_spot_is_skipped_until_the_forced_pass() -> None:
     clock = [0.0]
     layer = _layer(storage, clock, [NOW_ET])
 
-    assert layer.run_pass("SPY") == 6  # 0-2 DTE + 0DTE, three strikes each
+    assert layer.run_pass("SPY") == 9  # 0-2 DTE + 0DTE by OI and by volume, three strikes each
     clock[0] = 10.0
     assert layer.run_pass("SPY") == 0  # same spot, 10 s later: identical rows, nothing written
     clock[0] = 31.0
-    assert layer.run_pass("SPY") == 6  # the clock alone still moves time decay: forced after 30 s
-    assert len(storage.gamma_fast_items) == 4
+    assert layer.run_pass("SPY") == 9  # the clock alone still moves time decay: forced after 30 s
+    assert len(storage.gamma_fast_items) == 6
 
 
 def test_a_contract_without_iv_keeps_its_stored_greeks() -> None:
@@ -142,7 +142,7 @@ def test_a_contract_without_iv_keeps_its_stored_greeks() -> None:
     storage.save_chain_snapshot(OptionChain(symbol="SPY", as_of=AS_OF, spot_price=SPOT_PRICE, contracts=contracts))
     storage.save_market_price(MarketPrice(symbol="SPY", as_of=NOW_ET.astimezone(UTC), price=SPOT_PRICE + 1, volume=1))
 
-    assert _layer(storage, [0.0], [NOW_ET]).run_pass("SPY") == 2  # one strike, 0-2 DTE and 0DTE
+    assert _layer(storage, [0.0], [NOW_ET]).run_pass("SPY") == 3  # one strike: 0-2 DTE, 0DTE, 0DTE by volume
     (item,) = storage.gamma_fast_items[0][4]
     # 0.001 x OI 1000 x 100 x spot^2 x 0.01 = the stored gamma, untouched (the fake calculator's per-contract formula), calls positive and puts negative.
     assert item.call_gamma_exposure > 0 and item.put_gamma_exposure != 0

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { GAMMA_VIEW_TABS, DEFAULT_GAMMA_VIEW, listedExpirationForView, todayInNewYork } from "./gamma-views";
+import { GAMMA_VIEW_TABS, DEFAULT_GAMMA_VIEW, effectiveGammaView, listedExpirationForView, supportsVolumeWeight, todayInNewYork } from "./gamma-views";
 
 describe("gamma view tabs", () => {
   it("opens on 0DTE and keeps the combined view as the fourth tab", () => {
@@ -25,5 +25,12 @@ describe("gamma view tabs", () => {
   it("takes the date in New York, not the browser's", () => {
     // 01:30 UTC on the 27th is still the 26th in New York.
     expect(todayInNewYork(new Date("2026-10-27T01:30:00Z"))).toBe("2026-10-26");
+  });
+
+  it("asks for the volume twin only on the 0DTE tab", () => {
+    expect(effectiveGammaView("0dte", "volume")).toBe("0dte_volume");
+    expect(effectiveGammaView("0dte", "oi")).toBe("0dte");
+    expect(effectiveGammaView("1dte", "volume")).toBe("1dte");
+    expect(supportsVolumeWeight("tactical")).toBe(false);
   });
 });
