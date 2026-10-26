@@ -170,6 +170,21 @@ describe("loadHeatmap: incremental fast polls", () => {
     expect(second.fast).toBe(true);
   });
 
+  it("keeps the day's colour scale of the last full response: a tail's own p98 never changes it (the 'Escala del día' flicker)", async () => {
+    const full = { ...FAST, scale_p98: 9 };
+    const tail = { ...response(10, [{ as_of: "2026-10-19T14:02:13Z", values: [90, 95] }]), scale_p98: 95 };
+    api.getGammaHeatmap.mockImplementation((_symbol: string, options: { source?: string }) => {
+      if (options.source !== "fast") return Promise.resolve({ ...CYCLE, scale_p98: 5 });
+      return Promise.resolve(api.getGammaHeatmap.mock.calls.filter((call) => call[1].source === "fast").length === 1 ? full : tail);
+    });
+    const first = await loadHeatmap("SPY", REQUEST);
+    const second = await loadHeatmap("SPY", REQUEST);
+    const third = await loadHeatmap("SPY", REQUEST);
+    expect(first.data.scale).toBe(9);
+    expect(second.data.scale).toBe(9); // not 95
+    expect(third.data.scale).toBe(9);
+  });
+
   it("unions the strikes of the tail with the ones already held", async () => {
     const tail = response(10, [{ as_of: "2026-10-19T14:02:13Z", values: [20, 21] }], [555, 560]);
     fastOrCycle([FAST, tail]);

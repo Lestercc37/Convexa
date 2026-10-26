@@ -65,7 +65,9 @@ export async function loadHeatmap(symbol: string, request: HeatmapRequest, signa
       );
       if (response.columns.length) {
         const tail = heatmapFromResponse(response);
-        const live = incremental ? prependHistory(held.data, tail) : tail;
+        // The day's colour scale ("Escala del día") comes only from a FULL response: a tail's own p98 (one or two columns, usually the strongest of the day) used to
+        // ratchet it up between full refreshes and the reset every 5 minutes made the map flash brighter (Lester 2026-10-26, SPY after the close).
+        const live = incremental ? { ...prependHistory(held.data, tail), scale: held.data.scale } : tail;
         for (const [otherKey, entry] of fastCache) if (now - entry.fullAt > FAST_CACHE_KEEP_MS) fastCache.delete(otherKey);
         fastCache.set(key, { data: live, fullAt: incremental ? held.fullAt : now });
         return { data: prependHistory(await cycleHistory(key, symbol, request, signal), live), fast: true };
