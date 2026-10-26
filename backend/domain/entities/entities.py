@@ -395,7 +395,11 @@ class Walls:
         object.__setattr__(self, "symbol", self.symbol.upper())
 
 
-GammaView = Literal["structural", "tactical"]
+GammaView = Literal["structural", "tactical", "0dte", "1dte", "2dte"]
+# One listed expiration each (Lester 2026-10-26: dashboard tabs 0DTE | 1DTE | 2DTE | 0-2 DTE): "0dte" = today's expiration or the nearest listed one, "1dte" the next listed one,
+# "2dte" the one after (so on a Friday "1dte" is Monday). Computed every cycle next to "tactical" (0-2 DTE), which stays unchanged.
+EXPIRATION_GAMMA_VIEWS: tuple[str, ...] = ("0dte", "1dte", "2dte")
+GAMMA_VIEWS: tuple[str, ...] = ("structural", "tactical", *EXPIRATION_GAMMA_VIEWS)
 
 
 @dataclass(frozen=True, slots=True)
@@ -468,8 +472,8 @@ class GammaAggregate:
         if not self.symbol or not self.symbol.strip():
             raise InvalidOptionError("gamma aggregate symbol is required")
         object.__setattr__(self, "symbol", self.symbol.upper())
-        if self.view not in ("structural", "tactical"):
-            raise InvalidOptionError("gamma aggregate view must be 'structural' or 'tactical'")
+        if self.view not in GAMMA_VIEWS:
+            raise InvalidOptionError(f"gamma aggregate view must be one of {', '.join(GAMMA_VIEWS)}")
         for name in (
             "total_market_gamma",
             "positive_gamma",

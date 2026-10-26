@@ -145,7 +145,8 @@ export type DerivedMetrics = {
 // on the backend. A symbol can still legitimately have an EMPTY tactical
 // result (items: []), but only when no chain data has been fetched for
 // it at all -- that's the honest result, not a bug.
-export type GammaView = "structural" | "tactical";
+// "0dte" / "1dte" / "2dte": one listed expiration each (the dashboard tabs, 2026-10-26); "tactical" is the combined 0-2 DTE view.
+export type GammaView = "structural" | "tactical" | "0dte" | "1dte" | "2dte";
 
 export type GammaResponse = {
   schema_version: number;

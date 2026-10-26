@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 
@@ -77,11 +78,12 @@ def test_a_pass_writes_per_strike_rows_and_no_aggregate() -> None:
 
     written = layer.run_pass("SPY")
 
-    assert written == 3
-    assert len(storage.gamma_fast_items) == 1
-    symbol, as_of, view, spot, items = storage.gamma_fast_items[0]
-    assert (symbol, as_of, view, spot) == ("SPY", NOW_ET, "tactical", Decimal("551.5"))
-    assert sorted(item.strike for item in items) == [Decimal(545), Decimal(550), Decimal(555)]
+    # The 0-2 DTE rows and the 0DTE tab's rows (the seeded chain lists only today's expiration, so both carry the same three strikes).
+    assert written == 6
+    assert [entry[2] for entry in storage.gamma_fast_items] == ["tactical", "0dte"]
+    for symbol, as_of, view, spot, items in storage.gamma_fast_items:
+        assert (symbol, as_of, spot) == ("SPY", NOW_ET, Decimal("551.5"))
+        assert sorted(item.strike for item in items) == [Decimal(545), Decimal(550), Decimal(555)]
     # The fast layer never creates the parent row the "latest" readers use.
     assert storage.get_latest_gamma_aggregate("SPY", view="tactical") is None
 
@@ -126,12 +128,12 @@ def test_an_unmoved_spot_is_skipped_until_the_forced_pass() -> None:
     clock = [0.0]
     layer = _layer(storage, clock, [NOW_ET])
 
-    assert layer.run_pass("SPY") == 3
+    assert layer.run_pass("SPY") == 6  # 0-2 DTE + 0DTE, three strikes each
     clock[0] = 10.0
     assert layer.run_pass("SPY") == 0  # same spot, 10 s later: identical rows, nothing written
     clock[0] = 31.0
-    assert layer.run_pass("SPY") == 3  # the clock alone still moves time decay: forced after 30 s
-    assert len(storage.gamma_fast_items) == 2
+    assert layer.run_pass("SPY") == 6  # the clock alone still moves time decay: forced after 30 s
+    assert len(storage.gamma_fast_items) == 4
 
 
 def test_a_contract_without_iv_keeps_its_stored_greeks() -> None:
@@ -140,7 +142,7 @@ def test_a_contract_without_iv_keeps_its_stored_greeks() -> None:
     storage.save_chain_snapshot(OptionChain(symbol="SPY", as_of=AS_OF, spot_price=SPOT_PRICE, contracts=contracts))
     storage.save_market_price(MarketPrice(symbol="SPY", as_of=NOW_ET.astimezone(UTC), price=SPOT_PRICE + 1, volume=1))
 
-    assert _layer(storage, [0.0], [NOW_ET]).run_pass("SPY") == 1
+    assert _layer(storage, [0.0], [NOW_ET]).run_pass("SPY") == 2  # one strike, 0-2 DTE and 0DTE
     (item,) = storage.gamma_fast_items[0][4]
     # 0.001 x OI 1000 x 100 x spot^2 x 0.01 = the stored gamma, untouched (the fake calculator's per-contract formula), calls positive and puts negative.
     assert item.call_gamma_exposure > 0 and item.put_gamma_exposure != 0
@@ -167,6 +169,23 @@ def test_the_chain_is_re_read_only_when_a_newer_snapshot_exists() -> None:
     clock[0] = 45.0
     layer.run_pass("SPY")
     assert reads == ["SPY"]  # past it: one read, same as_of, still the cached chain
+
+
+def test_the_0dte_view_reads_only_the_nearest_listed_expiration() -> None:
+    storage = InMemoryStorage()
+    tomorrow = TODAY_ET + timedelta(days=1)
+    today_contracts = tuple(_contract(kind, 550) for kind in (ContractType.CALL, ContractType.PUT))
+    tomorrow_contracts = (replace(_contract(ContractType.CALL, 560), expiration=tomorrow, occ_symbol="SPY260116C00560000"),)
+    storage.save_chain_snapshot(
+        OptionChain(symbol="SPY", as_of=AS_OF, spot_price=SPOT_PRICE, contracts=today_contracts + tomorrow_contracts)
+    )
+    storage.save_market_price(MarketPrice(symbol="SPY", as_of=NOW_ET.astimezone(UTC), price=SPOT_PRICE, volume=1))
+
+    _layer(storage, [0.0], [NOW_ET]).run_pass("SPY")
+
+    by_view = {entry[2]: sorted(item.strike for item in entry[4]) for entry in storage.gamma_fast_items}
+    assert by_view["0dte"] == [Decimal(550)]
+    assert Decimal(560) in by_view["tactical"]
 
 
 def test_heatmap_endpoint_accepts_ten_second_buckets_and_the_fast_source_and_rejects_nonsense() -> None:

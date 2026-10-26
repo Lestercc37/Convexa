@@ -11,6 +11,10 @@ export type Translations = {
     underlyingLabel: string;
     timeframeGroupAriaLabel: string;
     rangeGroupAriaLabel: string;
+    gammaViewGroupAriaLabel: string;
+    gammaViewExpiresLabel: string;
+    gammaViewNoExpirationLabel: string;
+    gammaViewVwapNote: string;
     rangeDay: string;
     rangeWeek: string;
     viewGroupAriaLabel: string;

@@ -24,7 +24,6 @@ from decimal import Decimal
 from backend.domain.entities import (
     ContractType,
     DailyBar,
-    GammaAggregate,
     OptionChain,
     OptionContract,
     OptionGreeks,
@@ -42,6 +41,8 @@ logger = logging.getLogger(__name__)
 
 # The first four symbols of the rollout (SPX/NDX/SPY/QQQ); the worker takes the list from settings, this is only the default.
 FAST_GAMMA_DEFAULT_SYMBOLS = ("SPX", "NDX", "SPY", "QQQ")
+# Per-expiration views the fast layer also writes (the default 0DTE tab); the others are read from the cycle's columns.
+FAST_EXPIRATION_VIEWS = ("0dte",)
 # A live price older than this is not a live price: the pass is skipped instead of re-pricing the chain at a stale spot.
 MAX_SPOT_AGE_SECONDS = 30
 # The cycle's chain is re-read from the database this often (one cycle is ~58 s; a fresher chain exists as soon as one lands).
@@ -118,12 +119,25 @@ class FastGammaLayer:
             and abs(spot - last.spot) <= last.spot * MIN_RELATIVE_SPOT_MOVE
         ):
             return 0
-        aggregate = self._build(symbol, cached, spot, now_et)
+        moved = self._moved_chain(cached, spot, now_et)
+        aggregate = self._orchestrator.build_tactical(symbol, moved, cached.daily_bars)
         if not aggregate.items:
             return 0
         self._storage.save_gamma_fast_items(symbol, now_et, aggregate.view, spot, list(aggregate.items))
+        written = len(aggregate.items)
+        # The 0DTE tab's heatmap from the same re-priced chain (one expiration: a fraction of the 0-2 DTE build's work). 1DTE / 2DTE stay
+        # on the cycle's one-minute columns. A failure here never costs the 0-2 DTE rows already written.
+        for view in FAST_EXPIRATION_VIEWS:
+            try:
+                one = self._orchestrator.build_expiration_view(symbol, moved, cached.daily_bars, view)
+            except Exception:
+                logger.exception("%s: fast %s pass failed", symbol, view)
+                continue
+            if one.items:
+                self._storage.save_gamma_fast_items(symbol, now_et, view, spot, list(one.items))
+                written += len(one.items)
         self._last_pass[symbol] = _LastPass(spot=spot, at=clock)
-        return len(aggregate.items)
+        return written
 
     def _cached_chain(self, symbol: str) -> _CachedChain | None:
         cached = self._cache.get(symbol)
@@ -141,14 +155,13 @@ class FastGammaLayer:
         self._cache[symbol] = cached
         return cached
 
-    def _build(self, symbol: str, cached: _CachedChain, spot: Decimal, now_et: datetime) -> GammaAggregate:
+    def _moved_chain(self, cached: _CachedChain, spot: Decimal, now_et: datetime) -> OptionChain:
         rate = self._risk_free_rate()
         chain = cached.chain
         old_spot = chain.spot_price
         twin_iv = twin_iv_by_contract(chain.contracts, old_spot) if self._itm_iv_from_twin else {}
         contracts = tuple(self._reprice(contract, spot, old_spot, rate, now_et, twin_iv) for contract in chain.contracts)
-        moved = replace(chain, spot_price=spot, contracts=contracts)
-        return self._orchestrator.build_tactical(symbol, moved, cached.daily_bars)
+        return replace(chain, spot_price=spot, contracts=contracts)
 
     def _reprice(
         self,
