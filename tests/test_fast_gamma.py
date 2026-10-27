@@ -188,6 +188,22 @@ def test_the_0dte_view_reads_only_the_nearest_listed_expiration() -> None:
     assert Decimal(560) in by_view["tactical"]
 
 
+def test_the_volume_view_reads_the_streams_running_volume_not_only_the_cycles() -> None:
+    storage = InMemoryStorage()
+    _seed(storage, Decimal("551.5"))
+    # The cycle saw 10 contracts on every contract; the stream has since counted 5,000 on the 555 call only.
+    storage.save_cumulative_volumes({"SPY260115C00555000": 5000})
+
+    _layer(storage, [0.0], [NOW_ET]).run_pass("SPY")
+
+    by_view = {entry[2]: {item.strike: item for item in entry[4]} for entry in storage.gamma_fast_items}
+    volume = by_view["0dte_volume"]
+    oi = by_view["0dte"]
+    # By open interest the three strikes weigh alike; by volume the 555 call now dominates the others.
+    assert volume[Decimal(555)].call_gamma_exposure > 100 * volume[Decimal(545)].call_gamma_exposure
+    assert oi[Decimal(555)].call_gamma_exposure < 100 * oi[Decimal(545)].call_gamma_exposure
+
+
 def test_heatmap_endpoint_accepts_ten_second_buckets_and_the_fast_source_and_rejects_nonsense() -> None:
     with TestClient(app) as client:
         ok = client.get("/api/v1/gamma/SPX/heatmap", params={"bucket_seconds": 10, "source": "fast"})
