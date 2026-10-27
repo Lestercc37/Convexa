@@ -122,6 +122,7 @@ from backend.domain.underlyings import ACTIVE_UNDERLYINGS
 from backend.domain.use_cases.large_prints import LargePrintRecorder
 from backend.domain.use_cases.market_hours import EASTERN_TIME, is_market_open
 from backend.domain.use_cases.minute_flow import MINUTE_FLOW_SYMBOLS, MinuteFlowRecorder
+from backend.domain.use_cases.stream_vwap import StreamVwap
 from backend.domain.use_cases.stream_underlying_price import (
     StreamUnderlyingPriceUseCase,
     sets_last_price,
@@ -152,6 +153,7 @@ PRICE_WRITE_CONCURRENCY = 4
 QUOTE_REFRESH_SECONDS = 1.0
 
 FRAME_MIX_LOG_INTERVAL_SECONDS = 60
+STREAM_VWAP_LOG_INTERVAL_SECONDS = 60
 
 # option_quote_minutes (migration 0040): the flush runs this long after each minute boundary so the last quotes of
 # the minute are in; one INFO line with the rows written every 15 minutes.
@@ -201,6 +203,7 @@ class _ProcessorState:
         self._minute_quotes_date: date | None = None
         self.large_prints_enabled = True
         self.large_prints = LargePrintRecorder()
+        self.stream_vwap = StreamVwap()
         self.minute_flow_enabled = False
         self.minute_flow = MinuteFlowRecorder()
         self._pending_prices: dict[str, UnderlyingTradeEvent] = {}
@@ -368,6 +371,13 @@ def _handle_raw_frame(state: _ProcessorState, raw: str) -> None:
                     # symbol (ProcessorState.schedule_price_write) so a
                     # tick burst can't pile up unbounded writes.
                     state.schedule_price_write(parsed_underlying.event)
+                    # Shadow per-trade VWAP (use_cases/stream_vwap.py): logged once a minute, read by nothing yet.
+                    state.stream_vwap.observe(
+                        parsed_underlying.event.symbol,
+                        parsed_underlying.event.price,
+                        parsed_underlying.event.size,
+                        parsed_underlying.exchange_ts,
+                    )
                     if state.large_prints_enabled:
                         state.large_prints.observe(parsed_underlying.event, parsed_underlying.exchange_ts)
     except Exception:
@@ -550,6 +560,19 @@ async def _log_frame_mix_periodically(state: _ProcessorState) -> None:
         )
 
 
+async def _log_stream_vwap_periodically(state: _ProcessorState) -> None:
+    """One INFO line a minute with the shadow per-trade VWAP of every streamed underlying (compared offline with the dashboard's anchored VWAP)."""
+    while True:
+        await asyncio.sleep(STREAM_VWAP_LOG_INTERVAL_SECONDS)
+        try:
+            summary = state.stream_vwap.summary()
+        except Exception:
+            logger.exception("Stream processor worker: stream VWAP summary failed")
+            continue
+        if summary:
+            logger.info("Stream processor stream VWAP (shadow): %s", summary)
+
+
 async def _export_volume_periodically(container, state: _ProcessorState) -> None:
     """This process's own half of what StreamStateExporter already does
     for worker.py's in-process fallback path -- same cadence, same
@@ -605,6 +628,7 @@ async def run() -> None:
     await _resume_cumulative_volume(container, state)
     export_task = asyncio.create_task(_export_volume_periodically(container, state))
     frame_mix_task = asyncio.create_task(_log_frame_mix_periodically(state))
+    stream_vwap_task = asyncio.create_task(_log_stream_vwap_periodically(state))
     state.minute_quotes_enabled = container.settings.option_quote_minutes_enabled
     minute_quotes_task = (
         asyncio.create_task(_record_option_quote_minutes_periodically(container, state))
@@ -649,6 +673,7 @@ async def run() -> None:
         await relay.run(on_raw_frame=lambda raw: _handle_raw_frame(state, raw))
     finally:
         frame_mix_task.cancel()
+        stream_vwap_task.cancel()
         if minute_quotes_task is not None:
             minute_quotes_task.cancel()
         if large_prints_task is not None:
