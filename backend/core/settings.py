@@ -30,7 +30,8 @@ class Settings(BaseSettings):
     # gamma / vanna / charm at the live spot and writes only gamma_fast_items. OFF by default; QLL_FAST_GAMMA_ENABLED=true and a start of the worker turns it on,
     # and the reverse turns it off, without reverting any code. Needs migration 0047.
     fast_gamma_enabled: bool = Field(default=False)
-    fast_gamma_symbols: str = Field(default="SPX,NDX,SPY,QQQ")
+    # IWM added 2026-10-26 (Lester: the 0DTE volume view lagged a cycle on it; 11 strikes, negligible cost).
+    fast_gamma_symbols: str = Field(default="SPX,NDX,SPY,QQQ,IWM")
     fast_gamma_interval_seconds: float = Field(default=10.0, ge=2.0)
     # "mock" (default, no external dependency) or "thetadata" (real Theta
     # Terminal v3, local REST + WebSocket) — switchable without a code
