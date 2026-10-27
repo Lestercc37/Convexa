@@ -240,16 +240,19 @@ class CalculateGammaExposureOrchestrator:
         expiration = listed_expiration_for_view(chain, VOLUME_GAMMA_VIEWS.get(view, view))
         if expiration is None:
             return GammaAggregate(symbol=chain.symbol, as_of=chain.as_of, view=view)
-        one_expiration = replace(
-            chain,
-            contracts=tuple(
-                # A volume view weights every contract by today's traded contracts: the same formulas with the volume in the open interest's place
-                # (so the per-strike "open_interest" of these rows is the traded volume).
-                replace(contract, open_interest=contract.volume) if by_volume else contract
-                for contract in chain.contracts
-                if contract.expiration == expiration
-            ),
-        )
+        contracts = tuple(contract for contract in chain.contracts if contract.expiration == expiration)
+        if by_volume:
+            # A contract that entered the subscription band late has a live counter short by what traded before it was subscribed (2026-10-27:
+            # SPXW 7820C 2,278 counted vs 6,417 on ThetaData). The correction passes (volume_correction_pass.py) store ThetaData's day volume per
+            # contract; this view weighs TOTALS, so it takes max(counter, correction) exactly like the /chain reply does.
+            corrections = self._volume_corrections([contract.occ_symbol for contract in contracts])
+            # A volume view weights every contract by today's traded contracts: the same formulas with the volume in the open interest's place
+            # (so the per-strike "open_interest" of these rows is the traded volume).
+            contracts = tuple(
+                replace(contract, open_interest=max(contract.volume, corrections.get(contract.occ_symbol, 0)))
+                for contract in contracts
+            )
+        one_expiration = replace(chain, contracts=contracts)
         with self._compute_semaphore:
             return self._build_view(underlying, one_expiration, daily_bars, 0, expiration, view)
 
@@ -264,6 +267,16 @@ class CalculateGammaExposureOrchestrator:
             return self._build_view(
                 underlying, chain, daily_bars, TACTICAL_WINDOW_DAYS, anchor, "tactical"
             )
+
+    def _volume_corrections(self, occ_symbols: list[str]) -> dict[str, int]:
+        """ThetaData's day volume per contract from the last correction pass; empty (counters only) when the read fails."""
+        if not occ_symbols:
+            return {}
+        try:
+            return self._storage.get_volume_corrections(occ_symbols)
+        except Exception:
+            logger.exception("volume corrections unavailable, the volume view uses the live counters only")
+            return {}
 
     def _fetch_chain(self, underlying: str) -> OptionChain:
         chain = self._storage.get_latest_chain_snapshot(underlying)
