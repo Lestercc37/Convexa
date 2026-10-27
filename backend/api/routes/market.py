@@ -17,6 +17,7 @@ from backend.api.serializers import (
     price_history_response,
     vwap_history_response,
 )
+from backend.api.response_cache import TtlSingleFlight
 from backend.core.container import Container
 from backend.domain.use_cases.read_models import MAX_SESSIONS_1M
 from backend.domain.use_cases import (
@@ -27,6 +28,17 @@ from backend.domain.use_cases import (
 )
 
 router = APIRouter(tags=["market"])
+
+# One answer per symbol for a few seconds, shared by every window and user (see response_cache.py). The page polls it every 30 s and the price itself
+# arrives by the stream, so 3 s of staleness is invisible.
+MARKET_CACHE_SECONDS = 3.0
+# Held on the app next to its container: a new container (an app restart, each test client's lifespan) starts with an empty cache.
+def _market_cache(request: Request, container: Container) -> TtlSingleFlight[MarketSnapshotResponse]:
+    held = getattr(request.app.state, "market_cache", None)
+    if held is None or held[0] is not container:
+        held = (container, TtlSingleFlight(MARKET_CACHE_SECONDS))
+        request.app.state.market_cache = held
+    return held[1]
 
 
 @router.get(
@@ -44,8 +56,12 @@ async def get_market_snapshot(symbol: str, request: Request) -> MarketSnapshotRe
     # even though it never itself calls the data provider. See
     # AsyncPostgreSQLStorage's own docstring.
     container: Container = request.app.state.container
-    snapshot = await build_market_snapshot_async(container.async_market_storage, symbol)
-    return MarketSnapshotResponse.model_validate(market_response(snapshot))
+
+    async def build() -> MarketSnapshotResponse:
+        snapshot = await build_market_snapshot_async(container.async_market_storage, symbol)
+        return MarketSnapshotResponse.model_validate(market_response(snapshot))
+
+    return await _market_cache(request, container).get(symbol.upper(), build)
 
 
 @router.get(
