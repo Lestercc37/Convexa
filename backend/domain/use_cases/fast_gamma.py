@@ -22,6 +22,7 @@ from datetime import date, datetime
 from decimal import Decimal
 
 from backend.domain.entities import (
+    VOLUME_GAMMA_VIEWS,
     ContractType,
     DailyBar,
     OptionChain,
@@ -34,6 +35,7 @@ from backend.domain.use_cases.calculate_bsm_greeks import calculate_bsm_greeks
 from backend.domain.use_cases.gamma import (
     TACTICAL_ENABLED_SYMBOLS,
     CalculateGammaExposureOrchestrator,
+    listed_expiration_for_view,
 )
 from backend.domain.use_cases.market_hours import EASTERN_TIME
 
@@ -129,7 +131,8 @@ class FastGammaLayer:
         # on the cycle's one-minute columns. A failure here never costs the 0-2 DTE rows already written.
         for view in FAST_EXPIRATION_VIEWS:
             try:
-                one = self._orchestrator.build_expiration_view(symbol, moved, cached.daily_bars, view)
+                source = self._with_live_volume(moved) if view in VOLUME_GAMMA_VIEWS else moved
+                one = self._orchestrator.build_expiration_view(symbol, source, cached.daily_bars, view)
             except Exception:
                 logger.exception("%s: fast %s pass failed", symbol, view)
                 continue
@@ -154,6 +157,32 @@ class FastGammaLayer:
         cached = _CachedChain(chain=chain, daily_bars=daily_bars, loaded_at=clock)
         self._cache[symbol] = cached
         return cached
+
+    def _with_live_volume(self, chain: OptionChain) -> OptionChain:
+        """The cached chain's volume is the one the last REST cycle saw (up to ~1.5 min old by the time it is re-read). The stream processor
+        exports every contract's running volume every 15 s (cumulative_volume), so the volume views read it here on every pass: the volume
+        weight lags ~15-25 s instead of a cycle. Only the 0DTE expiration's contracts are read (one bulk query); a contract the stream does
+        not follow keeps the cycle's number, and a stored number never lowers the cycle's (max)."""
+        expiration = listed_expiration_for_view(chain, "0dte")
+        occ_symbols = [contract.occ_symbol for contract in chain.contracts if contract.expiration == expiration]
+        if not occ_symbols:
+            return chain
+        try:
+            live = self._storage.get_cumulative_volumes(occ_symbols)
+        except Exception:
+            logger.exception("%s: live volume read failed, the cycle's volume is used", chain.symbol)
+            return chain
+        if not live:
+            return chain
+        return replace(
+            chain,
+            contracts=tuple(
+                replace(contract, volume=max(contract.volume, live.get(contract.occ_symbol, 0)))
+                if contract.expiration == expiration
+                else contract
+                for contract in chain.contracts
+            ),
+        )
 
     def _moved_chain(self, cached: _CachedChain, spot: Decimal, now_et: datetime) -> OptionChain:
         rate = self._risk_free_rate()
