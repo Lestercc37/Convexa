@@ -372,3 +372,22 @@ def test_the_0dte_volume_view_weights_contracts_by_todays_volume_instead_of_open
     assert by_oi[Decimal(550)].call_gamma_exposure > by_oi[Decimal(555)].call_gamma_exposure
     assert by_volume[Decimal(550)].call_gamma_exposure == 0
     assert by_volume[Decimal(555)].call_gamma_exposure > 0
+
+
+def test_the_volume_view_raises_a_late_counter_to_the_stored_correction() -> None:
+    """A contract subscribed late counts only what traded after; the correction pass's ThetaData volume (when higher) is what the volume view weighs."""
+    storage = InMemoryStorage()
+    late = replace(
+        _contract("SPY260115C00555000", ContractType.CALL, Decimal(555), TODAY_ET, open_interest=10, gamma="0.02"), volume=100
+    )
+    early = replace(
+        _contract("SPY260115C00550000", ContractType.CALL, Decimal(550), TODAY_ET, open_interest=10, gamma="0.02"), volume=500
+    )
+    storage.save_chain_snapshot(OptionChain(symbol="SPY", as_of=AS_OF, spot_price=SPOT_PRICE, contracts=(late, early)))
+    storage.save_volume_corrections({"SPY260115C00555000": 900, "SPY260115C00550000": 400})
+
+    _orchestrator(storage).execute_both("SPY")
+
+    by_strike = {item.strike: item for item in storage.get_latest_gamma_aggregate("SPY", view="0dte_volume").items}
+    assert by_strike[Decimal(555)].open_interest == 900  # raised to ThetaData's day volume
+    assert by_strike[Decimal(550)].open_interest == 500  # a lower correction never lowers the counter
