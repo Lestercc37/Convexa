@@ -785,3 +785,9 @@ button, select { font: inherit; }
   .tv-topbar { flex-wrap: wrap; height: auto; }
   .tv-price-readout { order: 3; width: 100%; }
 }
+
+/* The dashboard's error screen (app/error.tsx): the crash is kept in this browser and the page can be retried without a reload. */
+.dashboard-crash { display: flex; flex-direction: column; gap: 12px; max-width: 640px; margin: 80px auto; padding: 0 16px; color: var(--tv-text); }
+.dashboard-crash-message { white-space: pre-wrap; font-size: 0.8rem; color: var(--tv-text-dim); background: var(--tv-panel-raised); padding: 10px; border-radius: 6px; }
+.dashboard-crash-actions { display: flex; gap: 8px; }
+.dashboard-crash-actions button { padding: 6px 14px; border-radius: 6px; border: 1px solid var(--tv-border, #333); background: var(--tv-panel-raised); color: var(--tv-text); cursor: pointer; }

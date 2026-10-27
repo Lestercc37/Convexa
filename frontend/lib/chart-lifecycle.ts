@@ -87,6 +87,9 @@ export function startChartLifecycleRecorder(): () => void {
   const onPageShow = (event: PageTransitionEvent) => recordChartEvent("pageshow", { fromBackForwardCache: event.persisted });
   const onOnline = () => recordChartEvent("network", { online: true });
   const onOffline = () => recordChartEvent("network", { online: false });
+  // Uncaught errors too (2026-10-27, the dashboard dropping after adding EMAs): only the first 160 characters of the message, so a crash can be matched to what preceded it.
+  const onError = (event: ErrorEvent) => recordChartEvent("window-error", { message: String(event.message ?? "").slice(0, 160) });
+  window.addEventListener("error", onError);
   document.addEventListener("visibilitychange", onVisibility);
   window.addEventListener("pageshow", onPageShow);
   window.addEventListener("online", onOnline);
@@ -99,5 +102,6 @@ export function startChartLifecycleRecorder(): () => void {
     window.removeEventListener("pageshow", onPageShow);
     window.removeEventListener("online", onOnline);
     window.removeEventListener("offline", onOffline);
+    window.removeEventListener("error", onError);
   };
 }
