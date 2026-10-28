@@ -31,7 +31,7 @@ SUMMARY_EVERY_SECONDS = 300
 
 async def run() -> None:
     container = build_container()
-    configure_logging(container.settings, log_file="logs/fast_gamma_worker.log")
+    configure_logging(container.settings, log_file=container.settings.fast_gamma_log_file or "logs/fast_gamma_worker.log")
     settings = container.settings
     logger.info("Starting %s fast gamma worker", settings.app_name)
     if not settings.fast_gamma_enabled:

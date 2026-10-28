@@ -33,6 +33,8 @@ class Settings(BaseSettings):
     # IWM added 2026-10-26 (Lester: the 0DTE volume view lagged a cycle on it; 11 strikes, negligible cost).
     fast_gamma_symbols: str = Field(default="SPX,NDX,SPY,QQQ,IWM")
     fast_gamma_interval_seconds: float = Field(default=10.0, ge=2.0)
+    # One log file per instance when the layer runs as several services (2026-10-27: SPX | NDX | SPY,QQQ,IWM, one core each); empty = the default name.
+    fast_gamma_log_file: str = Field(default="")
     # "mock" (default, no external dependency) or "thetadata" (real Theta
     # Terminal v3, local REST + WebSocket) — switchable without a code
     # change specifically so a real-data incident can be diagnosed by
