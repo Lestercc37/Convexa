@@ -18,7 +18,9 @@ const HISTORY_REFRESH_MS = 60_000;
 const FAST_FULL_REFRESH_MS = 5 * 60_000;
 const FAST_CACHE_KEEP_MS = 12 * 60 * 60_000;
 
-export const HEATMAP_FAST_POLLING_INTERVAL_MS = 10_000;
+// 2 s since 2026-10-27: the fast layer runs as three processes writing every 2 s. Measured after the close (docs/hm_heatmap_incremental_cost.py): an
+// incremental poll costs 0-16 ms of API CPU and 0-4 KB (SPX / NDX / SPY), a full one 0.4-1.6 s and 1-2.8 MB, and the full re-sync stays at one every 5 minutes.
+export const HEATMAP_FAST_POLLING_INTERVAL_MS = 2_000;
 
 type HeatmapRequest = { view: GammaView; metric: GammaHeatmapMetric; start: Date };
 export type LoadedHeatmap = { data: HeatmapData; fast: boolean };
