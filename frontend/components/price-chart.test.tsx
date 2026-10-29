@@ -2176,3 +2176,13 @@ describe("cappedRange", () => {
     expect(cappedRange({ from: 0, to: 5 }, 1000, 1000)).toBeNull(); // no candle area left
   });
 });
+
+describe("guardedSetData", () => {
+  it("records a library error instead of throwing it into React", async () => {
+    const { guardedSetData } = await import("./price-chart");
+    const failing = { setData: () => { throw new Error("Value is null"); } };
+    expect(guardedSetData(failing, [1], "ema-8")).toBe(false);
+    const ok = { setData: () => undefined };
+    expect(guardedSetData(ok, [1], "vwap")).toBe(true);
+  });
+});

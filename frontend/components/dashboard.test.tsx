@@ -518,10 +518,13 @@ describe("Dashboard", () => {
     await screen.findByLabelText("Chart de velas para SPY");
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
 
-    apiMocks.getMarket.mockRejectedValueOnce(new ApiError(500));
+    // Every /market call fails for one full-refresh period (the 10 s market-only polls swallow their errors; the 30 s refresh reports it).
+    const working = apiMocks.getMarket.getMockImplementation();
+    apiMocks.getMarket.mockRejectedValue(new ApiError(500));
     await vi.advanceTimersByTimeAsync(POLLING_INTERVAL_MS);
 
     expect(await screen.findByRole("alert")).toBeInTheDocument();
+    apiMocks.getMarket.mockImplementation(working!);
     expect(screen.getByLabelText("Chart de velas para SPY")).toBeInTheDocument();
     expect(screen.getByRole("group", { name: "Marco temporal" })).toBeInTheDocument();
 
