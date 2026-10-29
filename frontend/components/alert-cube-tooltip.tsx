@@ -59,7 +59,7 @@ export function AlertCubeTooltip({
       </div>
       {tradedAt !== null && <div className="alert-cube-tooltip-dim">{t.cubeIssuedLine(issuedAt)}</div>}
       <div>
-        <strong style={{ color: sideColor(cube.side) }}>{t.cubeSides[cube.side]}</strong> · {t.cubeRight[cube.right]} {cube.strike} (
+        <strong style={{ color: cube.kind === "clear" ? sideColor(cube.side) : "#cfd5dc" }}>{cube.kind === "clear" ? t.cubeSides[cube.side] : cube.kind === "package" ? t.cubeKindPackage : t.cubeKindBig}</strong> · {t.cubeRight[cube.right]} {cube.strike} (
         {t.cubeZones[cube.zone]}
         {alert.delta != null ? `, delta ${alert.delta.toFixed(2)}` : ""})
       </div>

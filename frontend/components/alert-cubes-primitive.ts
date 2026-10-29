@@ -59,11 +59,26 @@ class AlertCubesRenderer implements IPrimitivePaneRenderer {
         const height = Math.round(cube.size * scope.verticalPixelRatio);
         context.save();
         context.globalAlpha = inside ? 1 : OUTSIDE_ALPHA;
-        context.fillStyle = CUBE_COLORS[cube.side];
-        context.fillRect(left, top, width, height);
-        context.strokeStyle = this.source.hoveredId === cube.id ? "#FFFFFF" : "#131722";
-        context.lineWidth = this.source.hoveredId === cube.id ? 2 : 1;
-        context.strokeRect(left + 0.5, top + 0.5, width - 1, height - 1);
+        const hovered = this.source.hoveredId === cube.id;
+        if (cube.kind === "clear") {
+          context.fillStyle = CUBE_COLORS[cube.side];
+          context.fillRect(left, top, width, height);
+          context.strokeStyle = hovered ? "#FFFFFF" : "#131722";
+          context.lineWidth = hovered ? 2 : 1;
+          context.strokeRect(left + 0.5, top + 0.5, width - 1, height - 1);
+        } else {
+          // Neutral circles, never green / red: a big trade is a filled light-grey disc, a multi-leg package a light-grey ring.
+          const radius = width / 2;
+          context.beginPath();
+          context.arc(left + radius, top + radius, Math.max(1, radius - 0.5), 0, Math.PI * 2);
+          if (cube.kind === "big") {
+            context.fillStyle = "#cfd5dc";
+            context.fill();
+          }
+          context.strokeStyle = hovered ? "#FFFFFF" : "#cfd5dc";
+          context.lineWidth = (hovered ? 2 : 1.5) * scope.horizontalPixelRatio;
+          context.stroke();
+        }
         context.restore();
       }
     });

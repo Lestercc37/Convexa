@@ -113,6 +113,10 @@ export type Translations = {
     alertCubesLabel: string;
     alertCubesMinAriaLabel: string;
     alertCubesFarLabel: string;
+    bigTradesLabel: string;
+    bigTradesTitle: string;
+    packagesLabel: string;
+    packagesTitle: string;
     alertCubesNetLabel: string;
     alertCubesNetTitle: string;
     alertCubesMinTitle: (source: "custom" | "auto" | "default", value: number) => string;
@@ -121,6 +125,8 @@ export type Translations = {
     alertCubesHalf: string;
     alertCubesDouble: string;
     cubeTypes: { UNUSUAL: string; WHALE: string; SUSTAINED_FLOW: string };
+    cubeKindPackage: string;
+    cubeKindBig: string;
     cubeSides: { buy: string; sell: string; mixed: string; none: string };
     cubeRight: { C: string; P: string };
     cubeZones: { ITM: string; ATM: string; OTM: string; FAR: string };

@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import type { WhaleAlert } from "@/lib/types";
 import {
+  DEFAULT_CUBE_FILTER,
+  cubeKind,
   buildCubes,
   conditionCategory,
   conditionShares,
@@ -139,14 +141,16 @@ describe("net-sized cubes", () => {
     const net = buildCubes([oneSided, balanced], { minDeq: 200, showFar: false, sizing: "net" });
     expect(net.map((cube) => [cube.strike, cube.deq, cube.netDeq, cube.size, cube.side])).toEqual([[7720, 700, 560, 9, "buy"]]);
     // gross (the old sizing, and the default of buildCubes) draws both, the balanced one with no clear side
-    const gross = buildCubes([oneSided, balanced], { minDeq: 200, showFar: false, sizing: "gross" });
+    const gross = buildCubes([oneSided, balanced], { minDeq: 200, showFar: false, sizing: "gross", kinds: { clear: true, big: true, package: true } });
     expect(gross.map((cube) => [cube.strike, cube.size, cube.side])).toEqual([[7720, 12, "buy"], [7725, 12, "mixed"]]);
-    expect(buildCubes([oneSided, balanced]).length).toBe(2);
+    expect(buildCubes([oneSided, balanced], { ...DEFAULT_CUBE_FILTER, kinds: { clear: true, big: true, package: true } }).length).toBe(2);
+    // By default only the clear-side square is drawn: the balanced alert belongs to the "big trades" layer.
+    expect(buildCubes([oneSided, balanced]).length).toBe(1);
   });
 
   it("still draws an alert without a quote at its gross size, as no clear side", () => {
     const noQuote = alert({ delta: 0.5, contracts: 1000, quote_unavailable: true, estimated_buy_volume: 500, estimated_sell_volume: 500 });
-    const [cube] = buildCubes([noQuote], { minDeq: 200, showFar: false, sizing: "net" });
+    const [cube] = buildCubes([noQuote], { minDeq: 200, showFar: false, sizing: "net", kinds: { clear: true, big: true, package: true } });
     expect(cube).toMatchObject({ deq: 500, netDeq: 500, side: "mixed" });
   });
 });
@@ -160,5 +164,23 @@ describe("cubeSizePx relative to the minimum in use", () => {
   it("buildCubes sizes its cubes against the filter's own minimum", () => {
     const [cube] = buildCubes([alert({ delta: 0.5, contracts: 100, moneyness: "ATM" })], { minDeq: 20, showFar: false }); // 50 delta contracts = 2.5x the minimum
     expect(cube.size).toBe(9);
+  });
+});
+
+describe("cubeKind", () => {
+  const base = { estimated_buy_volume: 80, estimated_sell_volume: 20, quote_unavailable: false };
+  it("is a clear-side square for simple / sweep flow with a side", () => {
+    expect(cubeKind({ ...base, condition_premium: { "18": 900, "95": 100 } })).toBe("clear");
+  });
+  it("is a package when multi-leg legs carry most of the premium", () => {
+    expect(cubeKind({ ...base, condition_premium: { "18": 300, "131": 700 } })).toBe("package");
+  });
+  it("is a big trade when the side is not readable", () => {
+    expect(cubeKind({ ...base, estimated_buy_volume: 50, estimated_sell_volume: 50, condition_premium: { "18": 1000 } })).toBe("big");
+    expect(cubeKind({ ...base, quote_unavailable: true, condition_premium: null })).toBe("big");
+    expect(cubeKind({ ...base, condition_premium: { "126": 800, "18": 200 } })).toBe("big");
+  });
+  it("only clear-side squares are built unless the other layers are asked for", () => {
+    expect(cubeKind({ ...base, condition_premium: undefined })).toBe("clear");
   });
 });

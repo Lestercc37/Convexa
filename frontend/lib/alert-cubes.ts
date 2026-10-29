@@ -6,6 +6,13 @@ import type { WhaleAlert } from "@/lib/types";
 // part), color is the estimated side, and only the tooltip carries text. Pure functions here; the drawing is alert-cubes-primitive.ts.
 
 export type CubeSide = "buy" | "sell" | "mixed";
+/**
+ * Three layers (Lester 2026-10-26): "clear" = the alert's flow has a readable side (simple / sweep trades, signed by the quote rule) -> colored square,
+ * on by default; "package" = mostly multi-leg legs (codes 130-144), whose side and net bet one leg cannot tell -> neutral ring, own layer, off by
+ * default; "big" = a large trade without a readable side (no quote, balanced, auction / cross / floor prints) -> neutral circle, own layer, off by
+ * default. Packages and big trades never add to the buy or sell side.
+ */
+export type CubeKind = "clear" | "package" | "big";
 export type CubeZone = "ITM" | "ATM" | "OTM" | "FAR";
 
 export type AlertCube = {
@@ -21,6 +28,7 @@ export type AlertCube = {
   /** Side length in CSS pixels (6 / 9 / 12), from the net or the gross size depending on the filter's sizing. */
   size: number;
   side: CubeSide;
+  kind: CubeKind;
   zone: CubeZone;
   alert: WhaleAlert;
 };
@@ -39,6 +47,8 @@ export type CubeFilter = {
   showFar: boolean;
   /** Gross when absent (the behavior before the net option). */
   sizing?: CubeSizing;
+  /** Layers to draw; only the clear-side squares when absent. */
+  kinds?: Partial<Record<CubeKind, boolean>>;
 };
 
 export const DEFAULT_CUBE_FILTER: CubeFilter = { minDeq: 200, showFar: false };
@@ -77,6 +87,16 @@ export function cubeSide(alert: Pick<WhaleAlert, "estimated_buy_volume" | "estim
   return "mixed";
 }
 
+/** Which layer an alert belongs to (see CubeKind): mostly multi-leg premium = package; a buy / sell side read from simple or sweep trades = clear; anything else = big. */
+export function cubeKind(alert: Pick<WhaleAlert, "estimated_buy_volume" | "estimated_sell_volume" | "quote_unavailable" | "condition_premium">): CubeKind {
+  const shares = conditionShares(alert.condition_premium);
+  const share = (category: ConditionCategory) => shares?.find((entry) => entry.category === category)?.percent ?? 0;
+  if (shares && share("multileg") >= 50) return "package";
+  if (cubeSide(alert) === "mixed") return "big";
+  if (shares && share("simple") + share("sweep") < 50) return "big";
+  return "clear";
+}
+
 // OCC symbol {root}{YYMMDD}{C|P}{8-digit strike in thousandths}.
 export function occStrike(occSymbol: string): number | null {
   const digits = occSymbol.slice(-8);
@@ -95,9 +115,12 @@ export function buildCubes(alerts: WhaleAlert[], filter: CubeFilter = DEFAULT_CU
     const strike = occStrike(alert.contract);
     const side = parseContractSide(alert.contract);
     if (strike === null || side === null) continue;
+    const kind = cubeKind(alert);
+    if (!(filter.kinds ?? { clear: true })[kind]) continue;
     const deq = Math.round(alert.contracts * alert.delta);
     const netDeq = netDeltaContracts(alert) ?? deq;
-    const sizedBy = filter.sizing === "net" ? netDeq : deq;
+    // A package or a big trade has no measured net side: it is sized by its gross delta (contracts x |delta|).
+    const sizedBy = kind === "clear" && filter.sizing === "net" ? netDeq : deq;
     if (sizedBy < filter.minDeq) continue;
     if (alert.moneyness === "FAR" && !filter.showFar) continue;
     const time = Math.floor(Date.parse(alert.timestamp) / 1000);
@@ -111,6 +134,7 @@ export function buildCubes(alerts: WhaleAlert[], filter: CubeFilter = DEFAULT_CU
       netDeq,
       size: cubeSizePx(sizedBy, filter.minDeq),
       side: cubeSide(alert),
+      kind,
       zone: alert.moneyness,
       alert,
     });

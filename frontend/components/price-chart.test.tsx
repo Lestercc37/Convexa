@@ -984,6 +984,8 @@ describe("PriceChart", () => {
     expect(screen.queryByLabelText("Tamaño mínimo de las alertas (contratos-delta)")).not.toBeInTheDocument();
 
     await user.click(screen.getByLabelText("Alertas"));
+    // The drawn alert is 97 % multi-leg: it belongs to the "Paquetes" layer, off by default (2026-10-29).
+    await user.click(screen.getByLabelText("Paquetes"));
 
     // The GEX histogram primitive is attached by default now, so pick the cubes one by its shape.
     const primitive = chartMocks.attachPrimitive.mock.calls.map((call) => call[0]).find((candidate) => "cubes" in candidate);
@@ -996,7 +998,7 @@ describe("PriceChart", () => {
     const hoveredId = primitive.cubes[0].id;
     act(() => onCrosshairMove({ hoveredObjectId: hoveredId, point: { x: 120, y: 80 } }));
     const tooltip = await screen.findByRole("tooltip");
-    expect(tooltip).toHaveTextContent("VENTA");
+    expect(tooltip).toHaveTextContent("Paquete multi-leg (lado desconocido)");
     expect(tooltip).toHaveTextContent("Call 540 (ITM, delta 0.84)");
     expect(tooltip).toHaveTextContent("Tamaño: 444 contratos-delta · prima $1.55M · ×2");
     expect(tooltip).toHaveTextContent("Condición: multi-leg 97 %"); // simple (3 %) is under the 10 % shown

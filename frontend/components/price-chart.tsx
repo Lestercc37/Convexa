@@ -598,12 +598,21 @@ export function PriceChart({
   const cubeMin = effectiveCubeMin(symbol, customCubeMins, cubeSizing === "net" ? suggestedCubeMins.net : suggestedCubeMins.gross);
   const cubeMinDeq = cubeMin.value;
   const [cubeShowFar, setCubeShowFar] = useState(DEFAULT_CUBE_FILTER.showFar);
+  // The neutral layers (lib/alert-cubes.ts CubeKind), off by default: big trades without a readable side and multi-leg packages.
+  const [showBigTrades, setShowBigTrades] = useState(false);
+  const [showPackages, setShowPackages] = useState(false);
   const [cubeAlerts, setCubeAlerts] = useState<WhaleAlert[]>([]);
   const [hoveredCube, setHoveredCube] = useState<{ id: string; x: number; y: number } | null>(null);
   const cubesPrimitiveRef = useRef<AlertCubesPrimitive | null>(null);
   const cubes = useMemo(
-    () => buildCubes(cubeAlerts, { minDeq: cubeMinDeq, showFar: cubeShowFar, sizing: cubeSizing }),
-    [cubeAlerts, cubeMinDeq, cubeShowFar, cubeSizing],
+    () =>
+      buildCubes(cubeAlerts, {
+        minDeq: cubeMinDeq,
+        showFar: cubeShowFar,
+        sizing: cubeSizing,
+        kinds: { clear: true, big: showBigTrades, package: showPackages },
+      }),
+    [cubeAlerts, cubeMinDeq, cubeShowFar, cubeSizing, showBigTrades, showPackages],
   );
   // Gamma heatmap behind the candles (off by default): strike x time matrix read from /gamma/{symbol}/heatmap.
   const [showHeatmap, setShowHeatmap] = useState(false);
@@ -1846,6 +1855,14 @@ export function PriceChart({
                     onChange={(event) => setCubeShowFar(event.target.checked)}
                   />
                   {t.priceChart.alertCubesFarLabel}
+                </label>
+                <label className="chart-toggle" title={t.priceChart.bigTradesTitle}>
+                  <input type="checkbox" checked={showBigTrades} onChange={(event) => setShowBigTrades(event.target.checked)} />
+                  {t.priceChart.bigTradesLabel}
+                </label>
+                <label className="chart-toggle" title={t.priceChart.packagesTitle}>
+                  <input type="checkbox" checked={showPackages} onChange={(event) => setShowPackages(event.target.checked)} />
+                  {t.priceChart.packagesLabel}
                 </label>
                 <label className="chart-toggle" title={t.priceChart.alertCubesNetTitle}>
                   <input
