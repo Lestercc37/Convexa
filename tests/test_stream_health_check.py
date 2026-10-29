@@ -293,3 +293,23 @@ class TestVolumeCorrectionOneShot:
     def test_it_never_touches_the_other_alert_state(self) -> None:
         _, state = shc.decide_one_shot_notice(self.FAILED, {"alerting_names": ["services"]})
         assert state["alerting_names"] == ["services"]
+
+
+def test_rediscovery_heartbeat_alarm() -> None:
+    from datetime import datetime as _dt
+
+    from backend.scripts.stream_health_check import check_rediscovery_heartbeat, last_rediscovery_heartbeat
+
+    log = (
+        "2026-10-29 10:00:01,1 INFO [x] Contract rediscovery alive: pass 1100, 640 contracts registered\n"
+        "2026-10-29 10:10:02,1 INFO [x] Contract rediscovery alive: pass 1110, 641 contracts registered\n"
+        "2026-10-29 10:12:00,1 INFO [x] something else\n"
+    )
+    last = last_rediscovery_heartbeat(log)
+    assert last == _dt(2026, 10, 29, 10, 10, 2)
+    assert check_rediscovery_heartbeat(last, _dt(2026, 10, 29, 10, 20, 0), True, 50).ok
+    stale = check_rediscovery_heartbeat(last, _dt(2026, 10, 29, 10, 30, 0), True, 60)
+    assert not stale.ok and "silent for 20 min" in stale.detail
+    assert check_rediscovery_heartbeat(None, _dt(2026, 10, 29, 9, 35), True, 5).ok  # opening grace
+    assert check_rediscovery_heartbeat(None, _dt(2026, 10, 29, 20, 0), False, 600).ok  # market closed
+    assert not check_rediscovery_heartbeat(None, _dt(2026, 10, 29, 11, 0), True, 90).ok
