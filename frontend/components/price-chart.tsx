@@ -339,11 +339,27 @@ type CandleSeriesData = ReturnType<typeof withSessionOpenAnchor>;
  * came back null the data is set once more. Nothing to repair on an empty series (no range is expected then).
  */
 export function setSeriesData(chart: IChartApi | null, series: ISeriesApi<"Candlestick">, data: CandleSeriesData): void {
-  series.setData(data);
+  if (!guardedSetData(series, data, "candles")) return;
   if (!chart || data.length === 0) return;
   if (chart.timeScale().getVisibleLogicalRange() === null) {
     recordChartEvent("range-null-resync", { bars: data.length });
+    guardedSetData(series, data, "candles-resync");
+  }
+}
+
+/**
+ * series.setData() that can never take the page down. 2026-10-28 09:39 and 09:41 (Lester's browser, crash log convexa.crashes.v1): 30 s after a symbol switch
+ * with EMAs on, the first poll's re-feed of the candles made lightweight-charts throw "Value is null" inside its line renderer, synchronously, inside a React
+ * effect, so the error boundary replaced the whole dashboard. The library's internal state is rebuilt by the next setData (every tick or poll), so a failed
+ * call is recorded in the chart lifecycle log and skipped instead of propagating. Returns whether the data was set.
+ */
+export function guardedSetData<T>(series: { setData: (data: T[]) => void }, data: T[], where: string): boolean {
+  try {
     series.setData(data);
+    return true;
+  } catch (error) {
+    recordChartEvent("series-error", { where, message: String((error as Error)?.message ?? error).slice(0, 120) });
+    return false;
   }
 }
 
@@ -1082,7 +1098,13 @@ export function PriceChart({
       if (!line) continue;
       const { values, warm } = emaValues(seed, closes, ema.period);
       if (!warm) converging.add(ema.id);
-      line.setData(candles.map((candle, index) => ({ time: candle.time as UTCTimestamp, value: values[index] })));
+      guardedSetData(
+        line,
+        candles
+          .map((candle, index) => ({ time: candle.time as UTCTimestamp, value: values[index] }))
+          .filter((point) => Number.isFinite(point.value)),
+        `ema-${ema.period}`,
+      );
     }
     setConvergingEmas((previous) => (previous.size === converging.size && [...converging].every((id) => previous.has(id)) ? previous : converging));
   }, [candles, emas, emaSeed, emaStructure, symbol, timeframe]);
@@ -1501,7 +1523,8 @@ export function PriceChart({
       // artifact), collapse to the exact same whole-second bucket once
       // floored to UTCTimestamp -- lightweight-charts requires strictly
       // ascending, unique-per-point time and throws otherwise.
-      line.setData(
+      guardedSetData(
+        line,
         dedupeAscendingByTime(
           history
             // Do NOT filter on item.has_data here: every /gamma/{symbol}/history row comes back with has_data=false because
@@ -1515,6 +1538,7 @@ export function PriceChart({
               value: item[level.field] as number,
             })),
         ),
+        `history-${level.field}`,
       );
       return line;
     });
@@ -1546,13 +1570,15 @@ export function PriceChart({
     // most recent ~15-60 minutes of an otherwise-complete day. Downsampled
     // here, not upstream in dashboard.tsx, so this component can't
     // regress this again regardless of what a future caller passes it.
-    line.setData(
+    guardedSetData(
+      line,
       dedupeAscendingByTime(
         aggregateVwapPoints(vwapPoints, timeframe).map((point) => ({
           time: Math.floor(Date.parse(point.timestamp) / 1000) as UTCTimestamp,
           value: point.value,
         })),
       ),
+      "vwap",
     );
     return () => {
       if (chartRef.current !== chart) return;

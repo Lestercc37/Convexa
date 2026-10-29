@@ -49,7 +49,7 @@ import {
   connectMarketPriceStream,
   type MarketPriceStreamStatus,
 } from "@/lib/market-price-stream";
-import { POLLING_INTERVAL_MS } from "@/lib/polling";
+import { MARKET_POLLING_INTERVAL_MS, POLLING_INTERVAL_MS } from "@/lib/polling";
 import type { GammaResponse, GammaView, MarketResponse, Underlying } from "@/lib/types";
 import { AlertsPanel } from "./alerts-panel";
 import { DealersPanel } from "./derived-metrics-bar";
@@ -273,15 +273,9 @@ export function Dashboard() {
   // gamma, which is what actually made toggling the view feel like a
   // full symbol switch (confirmed live, 2026-09-25, right after this
   // feature shipped).
-  const refresh = useCallback(async (activeSymbol: string, view: GammaView, signal?: AbortSignal) => {
-    if (!activeSymbol) return;
-    try {
-      const [gammaData, marketData] = await Promise.all([
-        getGamma(activeSymbol, view, signal),
-        getMarket(activeSymbol, signal),
-      ]);
-      // A poll that left before a tab switch must not put the previous tab's levels back on screen.
-      if (view === gammaViewRef.current) setGamma(gammaData);
+  // The market snapshot's price point and anchored VWAP point, shared by the full refresh (every 30 s, with gamma) and the market-only poll (every
+  // 10 s, Lester 2026-10-28: the VWAP line moved only every 30 s; /market is cached server-side for 3 s, so the extra polls are cheap).
+  const applyMarket = useCallback((marketData: MarketResponse) => {
       setMarket(marketData);
       // The chart is meant to show only the most recent regular
       // 09:30-16:00 ET session -- confirmed live, 2026-09: the backend
@@ -327,13 +321,25 @@ export function Dashboard() {
             : [...current, { timestamp: marketData.as_of, value }],
         );
       }
+  }, []);
+
+  const refresh = useCallback(async (activeSymbol: string, view: GammaView, signal?: AbortSignal) => {
+    if (!activeSymbol) return;
+    try {
+      const [gammaData, marketData] = await Promise.all([
+        getGamma(activeSymbol, view, signal),
+        getMarket(activeSymbol, signal),
+      ]);
+      // A poll that left before a tab switch must not put the previous tab's levels back on screen.
+      if (view === gammaViewRef.current) setGamma(gammaData);
+      applyMarket(marketData);
       setError(null);
     } catch (reason: unknown) {
       if (!signal?.aborted) {
         setError(reason);
       }
     }
-  }, []);
+  }, [applyMarket]);
 
   // Lets the poll/interval below always read the *current* gammaView at
   // call time without needing it in their own dependency arrays (which
@@ -466,6 +472,7 @@ export function Dashboard() {
     if (!symbol) return;
     const controller = new AbortController();
     let interval: number | undefined;
+    let marketInterval: number | undefined;
 
     const seedThenPoll = async () => {
       await seedPriceAndVwap(symbol, controller.signal);
@@ -490,14 +497,24 @@ export function Dashboard() {
         () => void refresh(symbol, gammaViewRef.current, controller.signal),
         POLLING_INTERVAL_MS,
       );
+      marketInterval = window.setInterval(() => {
+        getMarket(symbol, controller.signal)
+          .then((marketData) => {
+            if (!controller.signal.aborted) applyMarket(marketData);
+          })
+          .catch(() => {
+            // The 30 s full refresh reports errors; a missed 10 s market poll just waits for the next one.
+          });
+      }, MARKET_POLLING_INTERVAL_MS);
     };
     void seedThenPoll();
 
     return () => {
       controller.abort();
       if (interval !== undefined) window.clearInterval(interval);
+      if (marketInterval !== undefined) window.clearInterval(marketInterval);
     };
-  }, [refresh, seedPriceAndVwap, symbol]);
+  }, [applyMarket, refresh, seedPriceAndVwap, symbol]);
 
   // Semana: the candles of the last 5 trading dates come ready-made from the API (cached there for 30 s), so they are re-read every minute
   // and never accumulated from ticks. Day mode does not run any of this.
