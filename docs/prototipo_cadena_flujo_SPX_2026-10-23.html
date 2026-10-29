@@ -221,7 +221,7 @@ footer.note{ font-size:11.5px; color:var(--muted-2); text-align:center; padding-
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Manrope:wght@500;700;800&family=JetBrains+Mono:wght@500;700&display=swap">
 
 <div class="wrap">
-  <div class="sim-banner"><span class="sim-dot"></span><span><b>Prototipo con datos reales del viernes 2026-10-23 (SPX).</b> Flujo = operaciones simples de 0DTE (SPXW) firmadas contra su bid/ask, en contratos-delta; las de paquetes multi-leg van aparte. GEX y niveles = los de Convexa (vista táctica 0-2 DTE). Mueve el Replay o pulsa ▶ para ver el día.</span></div>
+  <div class="sim-banner"><span class="sim-dot"></span><span><b>Prototipo con datos reales del 2026-10-23 (SPX).</b> Flujo = operaciones simples de 0DTE (SPXW) firmadas contra su bid/ask, en contratos-delta; las de paquetes multi-leg van aparte. GEX y niveles = los de Convexa (vista táctica 0-2 DTE). Mueve el Replay o pulsa ▶ para ver el día.</span></div>
   <div class="head">
     <div class="head-left">
       <div class="magnet-badge">🧲</div>
@@ -284,7 +284,7 @@ function alertsUpTo(m, T) {
 function render() {
   const T = Math.max(1, Number(document.getElementById("thr").value) || 200);
   const spot = D.spot[minute], lv = D.levels[minute];
-  const atm = Math.round(spot / 5) * 5, idx = S.indexOf(atm);
+  const idx = S.reduce((best, k, i) => Math.abs(k - spot) < Math.abs(S[best] - spot) ? i : best, 0), atm = S[idx];
   const rows = []; for (let j = 14; j >= -14; j--) { const i = idx + j; if (i >= 0 && i < S.length) rows.push(i); }
   const W = [5, 15, 30, 60].map(w => win(cum, minute, w));
   const ml15 = win(mlCum, minute, 15), C15 = win(cumC, minute, 15), P15 = win(cumP, minute, 15);
