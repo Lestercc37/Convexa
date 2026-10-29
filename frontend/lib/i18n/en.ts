@@ -14,6 +14,8 @@ export const en: Translations = {
     timeframeGroupAriaLabel: "Timeframe",
     rangeGroupAriaLabel: "Chart range",
     gammaViewGroupAriaLabel: "Option expiration",
+    chartSelfHealLabel: "The chart failed several times in a row.",
+    chartSelfHealRetry: "Reload the chart",
     gammaViewExpiresLabel: "expires",
     gammaViewNoExpirationLabel: "no listed expiration",
     gammaViewVwapNote: "Everything that comes from options (levels, regime, profile, heatmap) follows this tab. VWAP and Anchored VWAP do not change: they come from the underlying's price and volume.",

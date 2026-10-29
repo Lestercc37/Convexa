@@ -791,3 +791,6 @@ button, select { font: inherit; }
 .dashboard-crash-message { white-space: pre-wrap; font-size: 0.8rem; color: var(--tv-text-dim); background: var(--tv-panel-raised); padding: 10px; border-radius: 6px; }
 .dashboard-crash-actions { display: flex; gap: 8px; }
 .dashboard-crash-actions button { padding: 6px 14px; border-radius: 6px; border: 1px solid var(--tv-border, #333); background: var(--tv-panel-raised); color: var(--tv-text); cursor: pointer; }
+
+.chart-self-heal-notice { padding: 16px; color: var(--tv-text-dim); }
+.chart-self-heal-notice button { margin-left: 8px; }

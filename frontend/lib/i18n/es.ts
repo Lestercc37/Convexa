@@ -14,6 +14,8 @@ export const es: Translations = {
     timeframeGroupAriaLabel: "Marco temporal",
     rangeGroupAriaLabel: "Rango del gráfico",
     gammaViewGroupAriaLabel: "Vencimiento de las opciones",
+    chartSelfHealLabel: "El gráfico falló varias veces seguidas.",
+    chartSelfHealRetry: "Volver a cargar el gráfico",
     gammaViewExpiresLabel: "vence",
     gammaViewNoExpirationLabel: "sin vencimiento listado",
     gammaViewVwapNote: "Todo lo que sale de las opciones (niveles, régimen, perfil, heatmap) sigue esta pestaña. El VWAP y el VWAP anclado no cambian: salen del precio y el volumen del subyacente.",

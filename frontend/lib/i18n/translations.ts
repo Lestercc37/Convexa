@@ -12,6 +12,8 @@ export type Translations = {
     timeframeGroupAriaLabel: string;
     rangeGroupAriaLabel: string;
     gammaViewGroupAriaLabel: string;
+    chartSelfHealLabel: string;
+    chartSelfHealRetry: string;
     gammaViewExpiresLabel: string;
     gammaViewNoExpirationLabel: string;
     gammaViewVwapNote: string;

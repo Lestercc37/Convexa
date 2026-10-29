@@ -56,6 +56,7 @@ import { DealersPanel } from "./derived-metrics-bar";
 import { EnginesGuidePanel } from "./engines-guide-panel";
 import { FutureOpeningPriceControl } from "./future-opening-price-control";
 import { PreSessionPanel } from "./pre-session-panel";
+import { ChartErrorBoundary } from "./chart-error-boundary";
 import { PriceChart } from "./price-chart";
 import { QuickScreener } from "./quick-screener";
 
@@ -797,23 +798,29 @@ export function Dashboard() {
             <div className="tv-center">
               {view === "live" ? (
                 <>
-                  <PriceChart
-                    key={`price-chart-${symbol}-${shownTimeframe}-${isWeek ? "week" : "day"}`}
-                    symbol={symbol}
-                    candles={displayedCandles}
-                    gamma={gamma}
-                    gammaView={gammaView}
-                    // VWAP restarts every session and the ATR / Expected Move bands are today's: none of them is drawn over a week.
-                    vwapPoints={isWeek ? [] : vwapPoints}
-                    vwapNotApplicable={isWeek ? true : vwapNotApplicable}
-                    vwapProxySymbol={vwapProxySymbol}
-                    atrRange={isWeek ? undefined : market.atr_range}
-                    expectedMove={isWeek ? undefined : market.expected_move}
-                    timeframe={shownTimeframe}
-                    // The countdown belongs to the candle being formed: the week view has daily candles.
-                    candleCountdown={!isWeek}
-                    streamStatus={streamStatus}
-                  />
+                  <ChartErrorBoundary
+                    key={`chart-boundary-${symbol}-${shownTimeframe}-${isWeek ? "week" : "day"}`}
+                    label={t.dashboard.chartSelfHealLabel}
+                    retryLabel={t.dashboard.chartSelfHealRetry}
+                  >
+                    <PriceChart
+                      key={`price-chart-${symbol}-${shownTimeframe}-${isWeek ? "week" : "day"}`}
+                      symbol={symbol}
+                      candles={displayedCandles}
+                      gamma={gamma}
+                      gammaView={gammaView}
+                      // VWAP restarts every session and the ATR / Expected Move bands are today's: none of them is drawn over a week.
+                      vwapPoints={isWeek ? [] : vwapPoints}
+                      vwapNotApplicable={isWeek ? true : vwapNotApplicable}
+                      vwapProxySymbol={vwapProxySymbol}
+                      atrRange={isWeek ? undefined : market.atr_range}
+                      expectedMove={isWeek ? undefined : market.expected_move}
+                      timeframe={shownTimeframe}
+                      // The countdown belongs to the candle being formed: the week view has daily candles.
+                      candleCountdown={!isWeek}
+                      streamStatus={streamStatus}
+                    />
+                  </ChartErrorBoundary>
                   {dealersDock}
                 </>
               ) : view === "pre-session" ? (
