@@ -16,6 +16,6 @@ npm test                                           # helper tests (node --test)
 npm run dist                                       # unsigned Windows installer in release/
 ```
 
-Icon: build/icon.ico, drawn by build/make_icon.py from the approved logo (convexa_logo_v5.svg, icon-only variant).
+Icon: build/icon.ico, made by build/make_icon.py from the isotipo (isotipo_transparente.png, 2026-08-03 = frontend/public/logo-watermark.png).
 
 Not yet: data hub (one request per symbol shared by all windows), synced crosshair, faint candles in layer windows, workspaces, auto-update, signing, macOS build.
