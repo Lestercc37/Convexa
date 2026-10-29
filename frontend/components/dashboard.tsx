@@ -57,6 +57,7 @@ import { EnginesGuidePanel } from "./engines-guide-panel";
 import { FutureOpeningPriceControl } from "./future-opening-price-control";
 import { PreSessionPanel } from "./pre-session-panel";
 import { ChartErrorBoundary } from "./chart-error-boundary";
+import { layerPreset, type ChartRouteState } from "@/lib/view-route";
 import { PriceChart } from "./price-chart";
 import { QuickScreener } from "./quick-screener";
 
@@ -140,7 +141,19 @@ const PRICE_FORMAT = new Intl.NumberFormat("en-US", {
   maximumFractionDigits: 2,
 });
 
-export function Dashboard() {
+type DashboardProps = {
+  // "chart" = the /vista/grafico route (desktop app windows): the chart alone, no alerts column, no dealers cards, Live only. "full" = the web dashboard as it is.
+  mode?: "full" | "chart";
+  // The address of a /vista/grafico window: its starting symbol / timeframe / range / tab and its one layer (none = plain chart).
+  route?: ChartRouteState;
+  // Called when the viewer changes the symbol, timeframe, range or tab, so the route can keep its address current (the app opens layer windows from it).
+  onRouteChange?: (state: ChartRouteState) => void;
+};
+
+export function Dashboard({ mode = "full", route, onRouteChange }: DashboardProps = {}) {
+  const isChartOnly = mode === "chart";
+  // The address the window opened with; only its starting values are used (later changes go the other way, through onRouteChange).
+  const [initialRoute] = useState(route);
   const { language, setLanguage, t } = useLanguage();
   const router = useRouter();
   // `storage` is undefined during server rendering (and the very first
@@ -179,9 +192,9 @@ export function Dashboard() {
   // request failed.
   const [error, setError] = useState<unknown>(null);
   const [showEnginesGuide, setShowEnginesGuide] = useState(false);
-  const [timeframe, setTimeframe] = useState<Timeframe>("1m");
+  const [timeframe, setTimeframe] = useState<Timeframe>(route?.timeframe ?? "1m");
   // Day (default) or Semana: the last 5 trading dates as server-aggregated candles. Day mode is untouched by it.
-  const [chartRange, setChartRange] = useState<"day" | "week">("day");
+  const [chartRange, setChartRange] = useState<"day" | "week">(route?.range ?? "day");
   // Keyed by symbol and timeframe so a response (or a leftover) for another one is never shown.
   const [weekData, setWeekData] = useState<{ key: string; candles: MinuteCandle[] }>({ key: "", candles: [] });
   const candles = useMemo(() => aggregateMinuteCandles(pricePoints), [pricePoints]);
@@ -211,6 +224,8 @@ export function Dashboard() {
         setUnderlyings(items);
         setSymbol((current) => {
           if (current) return current;
+          const routeSymbol = initialRoute?.symbol;
+          if (routeSymbol && items.some((item) => item.symbol === routeSymbol)) return routeSymbol;
           const stored = window.localStorage.getItem(LAST_SYMBOL_STORAGE_KEY);
           const isStoredStillActive = stored && items.some((item) => item.symbol === stored);
           // A fresh load opens on SPX (the first symbol alphabetically is now ES, a
@@ -229,18 +244,24 @@ export function Dashboard() {
         }
       });
     return () => controller.abort();
-  }, []);
+  }, [initialRoute]);
 
   useEffect(() => {
     if (!symbol) return;
     window.localStorage.setItem(LAST_SYMBOL_STORAGE_KEY, symbol);
   }, [symbol]);
 
+  // Keep a /vista/grafico window's address in step with what it shows (the desktop app reads it to open layer windows on the same symbol).
   useEffect(() => {
-    const stored = readStoredGammaView();
+    if (!onRouteChange || !symbol) return;
+    onRouteChange({ symbol, timeframe, range: chartRange, gammaTab, layer: initialRoute?.layer ?? null });
+  }, [onRouteChange, symbol, timeframe, chartRange, gammaTab, initialRoute]);
+
+  useEffect(() => {
+    const stored = initialRoute?.gammaTab ?? readStoredGammaView();
     if (stored) setGammaTab(stored);
     setGammaWeight(readStoredGammaWeight());
-  }, []);
+  }, [initialRoute]);
 
   const gammaSourceSymbol = GAMMA_SOURCE_SYMBOL_BY_FUTURE[symbol] ?? symbol;
   useEffect(() => {
@@ -714,7 +735,7 @@ export function Dashboard() {
             </button>
           ))}
         </div>
-        <div className="tv-view-toggle" role="group" aria-label={t.dashboard.viewGroupAriaLabel}>
+        {!isChartOnly && <div className="tv-view-toggle" role="group" aria-label={t.dashboard.viewGroupAriaLabel}>
           <button
             type="button"
             aria-pressed={view === "live"}
@@ -736,7 +757,7 @@ export function Dashboard() {
           >
             {t.dashboard.scannerButton}
           </button>
-        </div>
+        </div>}
         <div className="tv-topbar-right">
           <SessionClock />
           <button
@@ -819,9 +840,10 @@ export function Dashboard() {
                       // The countdown belongs to the candle being formed: the week view has daily candles.
                       candleCountdown={!isWeek}
                       streamStatus={streamStatus}
+                      layers={isChartOnly ? layerPreset(initialRoute?.layer ?? null) : undefined}
                     />
                   </ChartErrorBoundary>
-                  {dealersDock}
+                  {!isChartOnly && dealersDock}
                 </>
               ) : view === "pre-session" ? (
                 <PreSessionPanel
@@ -842,6 +864,11 @@ export function Dashboard() {
           // overridden by the existing @media stacking rule, and dragging
           // to resize isn't a meaningful gesture on a touch-sized screen
           // anyway. See useIsNarrowLayout above.
+          // A /vista/grafico window is the chart alone: no alerts column (the alerts get their own window).
+          if (isChartOnly) {
+            return <div className="tv-body">{centerContent}</div>;
+          }
+
           if (isNarrowLayout) {
             return (
               <div className="tv-body">

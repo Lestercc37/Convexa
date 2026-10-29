@@ -676,6 +676,19 @@ describe("PriceChart", () => {
     expect(chartMocks.attachedCountdowns).toHaveLength(0);
   });
 
+  it("a layer preset (/vista/grafico) starts with only that layer on: plain = no profile, no Smile, no flow, no cubes", () => {
+    renderWithLanguage(
+      <PriceChart
+        symbol="SPY"
+        candles={candlesWithRange}
+        gamma={gamma}
+        layers={{ profile: false, smile: false, flow: false, cubes: false, heatmap: null }}
+      />,
+    );
+    expect(screen.getByLabelText("Perfil GEX")).not.toBeChecked();
+    expect(chartMocks.attachPrimitive).not.toHaveBeenCalled();
+  });
+
   it("attaches the live profile (AHORA line + one bar per strike) by default, fed by the gamma profile, and detaches it when the box is unchecked", async () => {
     const user = userEvent.setup();
     renderWithLanguage(<PriceChart symbol="SPY" candles={candlesWithRange} gamma={gamma} gammaView="tactical" />);

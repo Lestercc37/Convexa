@@ -20,13 +20,16 @@ export function AuthGate({ children }: { children: ReactNode }) {
       .then(() => setStatus("authenticated"))
       .catch((reason: unknown) => {
         if (controller.signal.aborted) return;
+        // A /vista/... window (desktop app) comes back to its own view after the login, not to the full dashboard.
+        const here = `${window.location.pathname}${window.location.search}`;
+        const target = here.startsWith("/vista/") ? `/login?next=${encodeURIComponent(here)}` : "/login";
         if (reason instanceof ApiError && reason.status === 401) {
-          router.replace("/login");
+          router.replace(target);
           return;
         }
         // Any other failure (network blip, 500) -- still send to login
         // rather than getting stuck on a blank "checking" screen forever.
-        router.replace("/login");
+        router.replace(target);
       });
     return () => controller.abort();
   }, [router]);
