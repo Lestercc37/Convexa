@@ -385,6 +385,40 @@ class MinuteFlowResponse(BaseModel):
     minutes: list[MinuteFlowPointResponse]
 
 
+class StrikeFlowWindowsResponse(BaseModel):
+    m5: Number = Field(description="Last 5 finished minutes.")
+    m15: Number
+    m30: Number
+    m60: Number
+
+
+class StrikeFlowRowResponse(BaseModel):
+    strike: Number
+    net: StrikeFlowWindowsResponse = Field(description="Calls + puts, delta-equivalent contracts; positive = bullish pressure (calls bought or puts sold).")
+    calls: StrikeFlowWindowsResponse
+    puts: StrikeFlowWindowsResponse
+    net_day: Number = Field(description="Since 09:30 ET.")
+    packages_15m: int = Field(description="Multi-leg contracts (OPRA 130-144) in the last 15 minutes: shown apart, they carry no side.")
+    contracts_signed_day: int
+    contracts_package_day: int
+    contracts_other_day: int
+
+
+class StrikeFlowResponse(BaseModel):
+    """The flow chain view: per strike, the signed option flow of the last 5 / 15 / 30 / 60 finished minutes and of the day (table minute_strike_flow, written by the stream
+    processor). An ESTIMATE of customer flow from the aggressor side of simple trades, not inventory. ES/NQ read SPX/NDX. Strikes without trades are absent."""
+
+    schema_version: int = Field(examples=[1])
+    symbol: str = Field(examples=["SPX"])
+    as_of: str = Field(description="End of the windows: the start of the current (unfinished) minute, ISO 8601 UTC.")
+    session_start: str
+    expiration_mode: str = Field(examples=["0dte"])
+    expirations: list[str]
+    net_day: Number
+    signed_share_day: Number | None = Field(description="Share (0-1) of the day's contracts that carry a side; null when nothing traded.")
+    strikes: list[StrikeFlowRowResponse]
+
+
 class GammaHeatmapResponse(BaseModel):
     """Strike x time matrix of one stored per-strike figure (gamma_aggregate_items), binned by `bucket_seconds`; each column is
     the last stored snapshot of its bucket. Read-only: nothing is calculated here. `scale_p98` is the 98th percentile of

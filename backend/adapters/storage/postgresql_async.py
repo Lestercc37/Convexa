@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 
 from sqlalchemy import text
@@ -24,6 +24,7 @@ from backend.domain.entities import (
     MarketPrice,
     MinuteOptionFlow,
     MinuteStrikeFlow,
+    StrikeFlowSummary,
     OptionChain,
     OptionContract,
     OptionQuoteMinute,
@@ -870,6 +871,77 @@ class AsyncPostgreSQLStorage:
                         for row in batch
                     ],
                 )
+
+    async def get_strike_flow_expirations(self, underlying: str, start: datetime, end: datetime) -> list[date]:
+        """The expirations with per-strike flow in [start, end); a missing table (before migration 0050) or any read error returns []."""
+        try:
+            async with self.session_factory() as session:
+                rows = (
+                    await session.execute(
+                        text("SELECT DISTINCT expiration FROM minute_strike_flow WHERE symbol = :symbol AND minute >= :start AND minute < :end ORDER BY 1"),
+                        {"symbol": underlying.upper(), "start": start, "end": end},
+                    )
+                ).all()
+        except Exception:
+            logger.exception("Reading the strike flow expirations failed; serving none")
+            return []
+        return [row[0] for row in rows]
+
+    async def get_strike_flow_summary(
+        self, underlying: str, start: datetime, end: datetime, expirations: list[date] | None
+    ) -> list[StrikeFlowSummary]:
+        """minute_strike_flow of [start, end) summed per strike and right, with the 5 / 15 / 30 / 60-minute windows ending at `end`, in ONE grouped query (the primary key
+        (symbol, minute, ...) serves the range). Read errors return [] (the view then shows no flow)."""
+        try:
+            async with self.session_factory() as session:
+                rows = (
+                    await session.execute(
+                        text(
+                            """
+                            SELECT strike, option_right,
+                                   COALESCE(SUM(delta_flow) FILTER (WHERE minute >= :w5), 0),
+                                   COALESCE(SUM(delta_flow) FILTER (WHERE minute >= :w15), 0),
+                                   COALESCE(SUM(delta_flow) FILTER (WHERE minute >= :w30), 0),
+                                   COALESCE(SUM(delta_flow) FILTER (WHERE minute >= :w60), 0),
+                                   SUM(delta_flow),
+                                   COALESCE(SUM(contracts_package) FILTER (WHERE minute >= :w15), 0),
+                                   SUM(contracts_signed), SUM(contracts_package), SUM(contracts_other)
+                            FROM minute_strike_flow
+                            WHERE symbol = :symbol AND minute >= :start AND minute < :end
+                              AND (CAST(:all_expirations AS boolean) OR expiration = ANY(:expirations))
+                            GROUP BY strike, option_right
+                            ORDER BY strike, option_right
+                            """
+                        ),
+                        {
+                            "symbol": underlying.upper(),
+                            "start": start,
+                            "end": end,
+                            "w5": end - timedelta(minutes=5),
+                            "w15": end - timedelta(minutes=15),
+                            "w30": end - timedelta(minutes=30),
+                            "w60": end - timedelta(minutes=60),
+                            "all_expirations": expirations is None,
+                            "expirations": expirations or [],
+                        },
+                    )
+                ).all()
+        except Exception:
+            logger.exception("Reading the strike flow failed; serving none")
+            return []
+        return [
+            StrikeFlowSummary(
+                strike=float(row[0]),
+                option_right=str(row[1]),
+                flows={5: float(row[2]), 15: float(row[3]), 30: float(row[4]), 60: float(row[5])},
+                flow_day=float(row[6]),
+                packages_15=int(row[7]),
+                contracts_signed_day=int(row[8]),
+                contracts_package_day=int(row[9]),
+                contracts_other_day=int(row[10]),
+            )
+            for row in rows
+        ]
 
     async def get_minute_option_flow(self, underlying: str, start: datetime, end: datetime) -> list[MinuteOptionFlow]:
         """The minutes of one underlying in [start, end), the roots (SPX + SPXW, NDX + NDXP) summed per minute; a missing table or any read error returns [] so the chart simply shows no flow."""

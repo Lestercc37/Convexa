@@ -907,6 +907,20 @@ class MinuteStrikeFlow:
 
 
 @dataclass(frozen=True, slots=True)
+class StrikeFlowSummary:
+    """minute_strike_flow summed for one strike and right over a session up to a minute: `flows` = window minutes (5 / 15 / 30 / 60) -> delta flow, plus the day's totals."""
+
+    strike: float
+    option_right: str
+    flows: dict[int, float]
+    flow_day: float
+    packages_15: int
+    contracts_signed_day: int
+    contracts_package_day: int
+    contracts_other_day: int
+
+
+@dataclass(frozen=True, slots=True)
 class OptionQuoteMinute:
     """The last bid/ask of one option contract in one ET minute in which it changed (see migration 0040).
     `minute` is the START of the minute; a minute without a row still holds the previous row's quote."""
