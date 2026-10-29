@@ -82,6 +82,11 @@ AUTO_RESTART_MAX_PER_DAY = 3
 AUTO_RESTART_SERVICE = "ConvexaWorker"
 SERVICES = ("ConvexaWorker", "ConvexaStreamProcessor", "ConvexaWhaleAlerts", "ConvexaThetaTerminal")
 VOLUME_CORRECTION_LOG = "volume_correction_pass.log"
+# The worker logs "Contract rediscovery alive" every 10 passes of its 60 s rediscovery loop (PR #343); on 2026-10-23 that loop died silently at
+# 09:31 and the worker kept streaming yesterday's contracts until a manual restart. More than this many minutes without the line during the
+# session (after the opening grace) = the loop is dead again.
+REDISCOVERY_HEARTBEAT_MAX_MINUTES = 15
+REDISCOVERY_HEARTBEAT = "Contract rediscovery alive"
 VOLUME_CORRECTION_MAX_AGE_HOURS = 6
 LOG_TAIL_BYTES = 512 * 1024
 _LOG_TIME = re.compile(r"^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}),\d+ ")
@@ -142,6 +147,27 @@ def count_recent_reconnects(log_text: str, now_local: datetime, window_minutes: 
         if match and datetime.strptime(match.group(1), "%Y-%m-%d %H:%M:%S") >= cutoff:  # noqa: DTZ007 -- worker.log stamps are naive local time
             count += 1
     return count
+
+
+def last_rediscovery_heartbeat(log_text: str) -> datetime | None:
+    """Naive local time of the newest 'Contract rediscovery alive' line, or None when the text has none."""
+    for line in reversed(log_text.splitlines()):
+        if REDISCOVERY_HEARTBEAT in line:
+            match = _LOG_TIME.match(line)
+            if match:
+                return datetime.strptime(match.group(1), "%Y-%m-%d %H:%M:%S")  # noqa: DTZ007 -- worker.log stamps are naive local time
+    return None
+
+
+def check_rediscovery_heartbeat(last: datetime | None, now_local: datetime, market_open: bool, minutes_open: float) -> Check:
+    if not market_open or minutes_open < GRACE_AFTER_OPEN_MINUTES:
+        return Check("rediscovery", True, "market closed or opening grace")
+    if last is None:
+        return Check("rediscovery", False, "no 'Contract rediscovery alive' line in the worker log")
+    age = (now_local - last).total_seconds() / 60
+    if age > REDISCOVERY_HEARTBEAT_MAX_MINUTES:
+        return Check("rediscovery", False, f"contract rediscovery silent for {age:.0f} min (worker may be streaming stale contracts)")
+    return Check("rediscovery", True, f"last heartbeat {age:.0f} min ago")
 
 
 def check_reconnect_loop(reconnects: int) -> Check:
@@ -387,6 +413,12 @@ def run_once(logs_dir: Path, state_path: Path, toast_task: str | None = None, au
             )
         ),
         check_contract_count(registered_contracts_from_logs(logs_dir)),
+        check_rediscovery_heartbeat(
+            last_rediscovery_heartbeat(read_log_text(logs_dir / "worker.log", max_bytes=4 * 1024 * 1024)),
+            datetime.now(),  # noqa: DTZ005 -- compared against naive local log stamps
+            market_open,
+            minutes_since_open(now),
+        ),
         check_volume_correction(
             read_log_tail(logs_dir / VOLUME_CORRECTION_LOG),
             datetime.now(),  # noqa: DTZ005 -- compared against naive local log stamps
