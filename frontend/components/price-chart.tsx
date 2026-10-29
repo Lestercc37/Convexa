@@ -16,6 +16,7 @@ import {
   type IChartApi,
   type IPriceLine,
   type ISeriesApi,
+  type LineWidth,
   type UTCTimestamp,
 } from "lightweight-charts";
 import { getAlerts, getGammaHistory, getGammaProfile, getMinuteFlow, getOptionChain, getOptionChainExpirations, getPriceCandles, getCubeMinimums } from "@/lib/api";
@@ -1071,7 +1072,7 @@ export function PriceChart({
   // at the time of each candle ON SCREEN: points of the warm-up sessions would widen the shared time scale and break fitContent (the VWAP lesson of 2026-09-18).
   const emaStructure = emas
     .filter((ema) => ema.visible)
-    .map((ema) => `${ema.id}:${ema.color}`)
+    .map((ema) => `${ema.id}:${ema.color}:${ema.width ?? 1}`)
     .join("|");
   useEffect(() => {
     const chart = chartRef.current;
@@ -1081,7 +1082,7 @@ export function PriceChart({
       if (!ema.visible) continue;
       series.set(
         ema.id,
-        chart.addSeries(LineSeries, { color: ema.color, lineWidth: 1, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false }),
+        chart.addSeries(LineSeries, { color: ema.color, lineWidth: (ema.width ?? 1) as LineWidth, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false }),
       );
     }
     emaSeriesRef.current = series;

@@ -1,6 +1,8 @@
 // Exponential moving averages on the price chart (2026-10-22, Lester): any period, a colour per line, nothing fixed, so a new period never needs a deploy.
 
-export type EmaConfig = { id: string; period: number; color: string; visible: boolean };
+// `width` (Lester 2026-10-22, item 8b): line thickness in pixels, chosen per line (fina 1 / normal 2 / gruesa 3 / muy gruesa 4); absent in lists saved before it existed = 1.
+export type EmaConfig = { id: string; period: number; color: string; visible: boolean; width?: number };
+export const EMA_WIDTHS = [1, 2, 3, 4] as const;
 
 export const EMA_MIN_PERIOD = 1;
 export const EMA_MAX_PERIOD = 1000;

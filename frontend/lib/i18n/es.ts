@@ -117,6 +117,8 @@ export const es: Translations = {
     emaEmpty: "Sin medias: escribe un período y agrégalo.",
     emaShow: (period) => `Mostrar EMA ${period}`,
     emaColor: (period) => `Color de la EMA ${period}`,
+    emaWidth: (period) => `Grosor de la EMA ${period}`,
+    emaWidthOption: (width) => ["Fina", "Normal", "Gruesa", "Muy gruesa"][width - 1] ?? String(width),
     emaRemove: (period) => `Quitar EMA ${period}`,
     emaInvalid: (min, max) => `Escribe un número entero entre ${min} y ${max}.`,
     emaDuplicate: "Esa EMA ya está en la lista.",

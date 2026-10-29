@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 
-import { addEma, EMA_MAX_LINES, EMA_MAX_PERIOD, EMA_MIN_PERIOD, type EmaConfig } from "@/lib/ema";
+import { EMA_WIDTHS, addEma, EMA_MAX_LINES, EMA_MAX_PERIOD, EMA_MIN_PERIOD, type EmaConfig } from "@/lib/ema";
 import { useLanguage } from "@/lib/i18n/language-context";
 
 type EmaMenuProps = {
@@ -117,6 +117,18 @@ export function EmaMenu({ emas, convergingIds, onChange }: EmaMenuProps) {
                     aria-label={labels.emaColor(ema.period)}
                     onChange={(event) => onChange(emas.map((item) => (item.id === ema.id ? { ...item, color: event.target.value } : item)))}
                   />
+                  <select
+                    className="ema-menu-width"
+                    value={ema.width ?? 1}
+                    aria-label={labels.emaWidth(ema.period)}
+                    onChange={(event) => onChange(emas.map((item) => (item.id === ema.id ? { ...item, width: Number(event.target.value) } : item)))}
+                  >
+                    {EMA_WIDTHS.map((width) => (
+                      <option key={width} value={width}>
+                        {labels.emaWidthOption(width)}
+                      </option>
+                    ))}
+                  </select>
                   <button
                     type="button"
                     className="ema-menu-remove"
