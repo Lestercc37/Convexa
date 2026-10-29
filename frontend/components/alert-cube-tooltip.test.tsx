@@ -24,7 +24,7 @@ function cubeFor(overrides: Partial<WhaleAlert> = {}): AlertCube {
     contracts: 100,
     ...overrides,
   };
-  return { id: "x", time: Math.floor(Date.parse(ISSUED) / 1000), strike: 7720, right: "C", deq: 50, netDeq: 50, size: 9, side: "buy", zone: "ATM", alert };
+  return { id: "x", time: Math.floor(Date.parse(ISSUED) / 1000), strike: 7720, right: "C", deq: 50, netDeq: 50, size: 9, side: "buy", kind: "clear", zone: "ATM", alert };
 }
 
 function renderTooltip(cube: AlertCube) {
