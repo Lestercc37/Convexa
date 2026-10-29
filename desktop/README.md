@@ -13,7 +13,9 @@ npm install
 npm start                                          # against https://dashboard.convexatrading.com
 CONVEXA_APP_URL=http://localhost:3000 npm start    # against a local frontend (a branch not deployed yet)
 npm test                                           # helper tests (node --test)
-npm run dist                                       # unsigned Windows installer in dist/
+npm run dist                                       # unsigned Windows installer in release/
 ```
+
+Icon: build/icon.ico, drawn by build/make_icon.py from the approved logo (convexa_logo_v5.svg, icon-only variant).
 
 Not yet: data hub (one request per symbol shared by all windows), synced crosshair, faint candles in layer windows, workspaces, auto-update, signing, macOS build.

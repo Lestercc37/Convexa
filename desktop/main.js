@@ -50,6 +50,7 @@ function createWindow(key, title, url) {
     ...bounds,
     title,
     backgroundColor: "#000000",
+    icon: path.join(__dirname, "build", "icon.ico"),
     autoHideMenuBar: false,
     webPreferences: {
       partition: PARTITION,
