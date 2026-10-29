@@ -104,6 +104,8 @@ export type Translations = {
     emaEmpty: string;
     emaShow: (period: number) => string;
     emaColor: (period: number) => string;
+    emaWidth: (period: number) => string;
+    emaWidthOption: (width: number) => string;
     emaRemove: (period: number) => string;
     emaInvalid: (min: number, max: number) => string;
     emaDuplicate: string;

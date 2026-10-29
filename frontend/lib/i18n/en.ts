@@ -117,6 +117,8 @@ export const en: Translations = {
     emaEmpty: "No averages yet: type a period and add it.",
     emaShow: (period) => `Show EMA ${period}`,
     emaColor: (period) => `Colour of EMA ${period}`,
+    emaWidth: (period) => `Thickness of EMA ${period}`,
+    emaWidthOption: (width) => ["Thin", "Normal", "Thick", "Extra thick"][width - 1] ?? String(width),
     emaRemove: (period) => `Remove EMA ${period}`,
     emaInvalid: (min, max) => `Type a whole number between ${min} and ${max}.`,
     emaDuplicate: "That EMA is already in the list.",
