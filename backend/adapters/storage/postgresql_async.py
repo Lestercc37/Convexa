@@ -23,6 +23,7 @@ from backend.domain.entities import (
     LargeTradePrint,
     MarketPrice,
     MinuteOptionFlow,
+    MinuteStrikeFlow,
     OptionChain,
     OptionContract,
     OptionQuoteMinute,
@@ -824,6 +825,47 @@ class AsyncPostgreSQLStorage:
                             "trades_no": row.trades_unclassified,
                             "contracts_ok": row.contracts_classified,
                             "contracts_all": row.contracts_total,
+                        }
+                        for row in batch
+                    ],
+                )
+
+    async def save_minute_strike_flow(self, rows: list[MinuteStrikeFlow]) -> None:
+        """Adds the per-strike minutes the stream processor accumulated (migration 0050); a cell that already has a row (a late trade after its flush) is ADDED to, never replaced; one
+        transaction per batch."""
+        if not rows:
+            return
+        statement = text(
+            """
+            INSERT INTO minute_strike_flow (minute, symbol, expiration, strike, option_right, delta_flow, contracts_signed, contracts_package, contracts_other, buy_premium, sell_premium)
+            VALUES (:minute, :symbol, :expiration, :strike, :right, :flow, :signed, :package, :other, :buy, :sell)
+            ON CONFLICT (symbol, minute, expiration, strike, option_right) DO UPDATE SET
+                delta_flow = minute_strike_flow.delta_flow + EXCLUDED.delta_flow,
+                contracts_signed = minute_strike_flow.contracts_signed + EXCLUDED.contracts_signed,
+                contracts_package = minute_strike_flow.contracts_package + EXCLUDED.contracts_package,
+                contracts_other = minute_strike_flow.contracts_other + EXCLUDED.contracts_other,
+                buy_premium = minute_strike_flow.buy_premium + EXCLUDED.buy_premium,
+                sell_premium = minute_strike_flow.sell_premium + EXCLUDED.sell_premium
+            """
+        )
+        for start in range(0, len(rows), MINUTE_OPTION_FLOW_BATCH):
+            batch = rows[start : start + MINUTE_OPTION_FLOW_BATCH]
+            async with self.session_factory.begin() as session:
+                await session.execute(
+                    statement,
+                    [
+                        {
+                            "minute": row.minute,
+                            "symbol": row.symbol,
+                            "expiration": row.expiration,
+                            "strike": row.strike,
+                            "right": row.option_right,
+                            "flow": row.delta_flow,
+                            "signed": row.contracts_signed,
+                            "package": row.contracts_package,
+                            "other": row.contracts_other,
+                            "buy": row.buy_premium,
+                            "sell": row.sell_premium,
                         }
                         for row in batch
                     ],

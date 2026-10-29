@@ -888,6 +888,25 @@ class MinuteOptionFlow:
 
 
 @dataclass(frozen=True, slots=True)
+class MinuteStrikeFlow:
+    """The option flow of one strike and right in one ET minute (table minute_strike_flow, migration 0050). `minute` is the START of the minute. `delta_flow` is in delta-equivalent
+    contracts, buying a call +, selling a call -, buying a put -, selling a put + (positive = bullish). The three contract counts add up to the cell's volume: signed (carry a side),
+    package (multi-leg legs, 130-144) and other (inside the spread, no quote / delta, auctions, crosses...)."""
+
+    minute: datetime
+    symbol: str
+    expiration: date
+    strike: float
+    option_right: str
+    delta_flow: float
+    contracts_signed: int
+    contracts_package: int
+    contracts_other: int
+    buy_premium: float
+    sell_premium: float
+
+
+@dataclass(frozen=True, slots=True)
 class OptionQuoteMinute:
     """The last bid/ask of one option contract in one ET minute in which it changed (see migration 0040).
     `minute` is the START of the minute; a minute without a row still holds the previous row's quote."""

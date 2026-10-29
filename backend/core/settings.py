@@ -67,6 +67,9 @@ class Settings(BaseSettings):
     # latest chain snapshot. QLL_MINUTE_OPTION_FLOW_ENABLED=false and a restart of ConvexaStreamProcessor switches it off without reverting any code.
     minute_option_flow_enabled: bool = Field(default=True)
     minute_option_flow_symbols: str = Field(default="SPX,NDX,SPY,QQQ,IWM,NVDA")
+    # The same flow kept per strike too (minute_strike_flow, migration 0050; the flow chain view, docs/diseno-cadena-flujo-2026-10-25.txt), for the same symbols. OFF until the migration is
+    # applied: QLL_MINUTE_STRIKE_FLOW_ENABLED=true and a restart of ConvexaStreamProcessor switch it on.
+    minute_strike_flow_enabled: bool = Field(default=False)
     # Audit sample of the minute flow, OFF by default: QLL_MINUTE_FLOW_AUDIT_SYMBOLS=SPY,SPX and QLL_MINUTE_FLOW_AUDIT_WINDOW=10:15-10:18 (ET, end exclusive) keep every option trade of those
     # underlyings inside the window, with the bid/ask used and the outcome, in logs/minute_flow_audit_YYYY-MM-DD.ndjson, to check the panel trade by trade.
     minute_flow_audit_symbols: str = Field(default="")

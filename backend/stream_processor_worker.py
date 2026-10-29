@@ -467,8 +467,9 @@ def _append_minute_flow_audit(rows: list[dict]) -> None:
 
 async def _flush_minute_flow_periodically(container, state: _ProcessorState) -> None:
     """At every minute boundary (+ a few seconds) writes the signed delta flow of the minutes that ended to minute_option_flow. Never raises: a failed write puts its minutes back for the
-    next flush (bounded, see MinuteFlowRecorder), it must not take the stream processor down."""
-    written = 0
+    next flush (bounded, see MinuteFlowRecorder), it must not take the stream processor down. With the per-strike flow on (QLL_MINUTE_STRIKE_FLOW_ENABLED) the same flush also writes
+    minute_strike_flow."""
+    written = strikes_written = 0
     last_log = time.monotonic()
     while True:
         now = datetime.now(EASTERN_TIME)
@@ -491,13 +492,25 @@ async def _flush_minute_flow_periodically(container, state: _ProcessorState) -> 
             except Exception:
                 state.minute_flow.put_back(rows)
                 logger.exception("Stream processor worker: writing %d minute-flow rows failed, they stay queued", len(rows))
+        strike_rows = state.minute_flow.take_strikes_before(time.time() - MINUTE_FLOW_FLUSH_DELAY_SECONDS + 1.0)
+        if strike_rows:
+            try:
+                await container.async_market_storage.save_minute_strike_flow(strike_rows)
+                strikes_written += len(strike_rows)
+            except asyncio.CancelledError:
+                state.minute_flow.put_back_strikes(strike_rows)
+                raise
+            except Exception:
+                state.minute_flow.put_back_strikes(strike_rows)
+                logger.exception("Stream processor worker: writing %d minute-strike-flow rows failed, they stay queued", len(strike_rows))
         if time.monotonic() - last_log >= MINUTE_FLOW_LOG_EVERY_SECONDS:
             logger.info(
-                "Stream processor worker: minute_option_flow wrote %d rows in the last %.0f min",
+                "Stream processor worker: minute_option_flow wrote %d rows, minute_strike_flow %d rows in the last %.0f min",
                 written,
+                strikes_written,
                 (time.monotonic() - last_log) / 60,
             )
-            written = 0
+            written = strikes_written = 0
             last_log = time.monotonic()
 
 
@@ -648,6 +661,8 @@ async def run() -> None:
         audited = frozenset(s.strip().upper() for s in container.settings.minute_flow_audit_symbols.split(",") if s.strip())
         if audited and container.settings.minute_flow_audit_window:
             state.minute_flow.set_audit(audited, container.settings.minute_flow_audit_window)
+        if container.settings.minute_strike_flow_enabled:
+            state.minute_flow.enable_strikes()
     minute_flow_tasks = (
         [
             asyncio.create_task(_refresh_minute_flow_deltas_periodically(container, state)),
