@@ -1,0 +1,30 @@
+{
+  "name": "convexa-desktop",
+  "productName": "Convexa",
+  "version": "0.1.0",
+  "description": "Convexa desktop app: the dashboard's per-view routes in their own windows (main = plain chart, one window per layer).",
+  "main": "main.js",
+  "private": true,
+  "scripts": {
+    "start": "electron .",
+    "test": "node --test",
+    "dist": "electron-builder --win nsis"
+  },
+  "devDependencies": {
+    "electron": "38.2.2",
+    "electron-builder": "26.0.12"
+  },
+  "build": {
+    "appId": "com.convexatrading.desktop",
+    "productName": "Convexa",
+    "files": ["main.js", "windows.js", "package.json"],
+    "directories": { "output": "dist" },
+    "win": { "target": "nsis", "signAndEditExecutable": false },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "artifactName": "Convexa-Setup-${version}.${ext}"
+    }
+  }
+}
