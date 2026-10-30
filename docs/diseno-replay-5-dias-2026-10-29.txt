@@ -25,6 +25,13 @@ Solo diseño y medición. No se instaló nada.
 - Debajo, una línea fina con el recorrido del día: arrastrarla salta a cualquier minuto.
 - x1 = un minuto de mercado por segundo; x10 = diez. Una sesión completa en x10 dura 39 s.
 
+4b. EL DÍA DE HOY, MIENTRAS EL MERCADO SIGUE ABIERTO (pedido de Lester, 2026-10-30)
+- Caso: llega al gráfico a las 12:00 y quiere ver lo que pasó desde las 09:30 sin perder el día en vivo.
+- El selector de días tiene como primera opción "Hoy (en vivo)". Al elegirla, la repetición arranca en las 09:30 de hoy con los datos guardados hasta este minuto (velas, niveles por ciclo, heatmap; los ciclos se guardan durante todo el día, no hace falta nada nuevo).
+- Se puede ir atrás y adelante con el reproductor. Cuando la repetición alcanza la hora actual, se pega al tiempo real y sigue en vivo sola (las velas, niveles y heatmap nuevos siguen entrando).
+- Botón "Ir a en vivo": salta directo al minuto actual desde cualquier punto. Mientras se mira el pasado, una etiqueta "Repetición 10:42 · en vivo 12:07" deja claro que no es el precio actual.
+- Mientras se repasa la mañana, los datos nuevos se siguen pidiendo en segundo plano (cada 10 s, como la vista en vivo), así que al volver a "en vivo" no falta nada.
+
 5. ES / NQ
 - Hoy el heatmap de ES/NQ solo existe para la fecha actual (se arma con el ancla del día). En la repetición se usan SPX/NDX desplazados con el ancla guardada de ESE día (future_price_anchors); si ese día no tiene ancla, se muestra el índice tal cual y se avisa.
 
