@@ -676,6 +676,19 @@ describe("PriceChart", () => {
     expect(chartMocks.attachedCountdowns).toHaveLength(0);
   });
 
+  it("the v2 variant groups the same controls in the Niveles / Gamma / Flujo / Dibujo menus", async () => {
+    const user = userEvent.setup();
+    renderWithLanguage(<PriceChart symbol="SPY" candles={candlesWithRange} gamma={gamma} variant="v2" />);
+    expect(screen.queryByLabelText("Perfil GEX")).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /Gamma/ }));
+    const profile = screen.getByLabelText("Perfil GEX");
+    expect(profile).toBeChecked();
+    await user.click(profile);
+    expect(screen.getByLabelText("Perfil GEX")).not.toBeChecked();
+    await user.click(screen.getByRole("button", { name: /Niveles/ }));
+    expect(screen.getByLabelText("Rango ATR")).toBeInTheDocument();
+  });
+
   it("a layer preset (/vista/grafico) starts with only that layer on: plain = no profile, no Smile, no flow, no cubes", () => {
     renderWithLanguage(
       <PriceChart

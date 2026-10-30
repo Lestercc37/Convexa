@@ -260,6 +260,25 @@ export type Translations = {
       actions: string;
     };
   };
+  appV2: {
+    windowsMenu: string;
+    openApart: string;
+    windowsNote: string;
+    reduceMotion: string;
+    guideTitle: string;
+    logoutTitle: string;
+    chartTitle: string;
+    levelsMenu: string;
+    gammaMenu: string;
+    flowMenu: string;
+    drawMenu: string;
+    movingAverages: string;
+    heatmapGroup: string;
+    cubesGroup: string;
+    popOutTitle: string;
+    live: string;
+    layers: Record<string, string>;
+  };
   enginesGuide: {
     eyebrow: string;
     title: string;

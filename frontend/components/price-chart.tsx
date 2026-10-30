@@ -58,6 +58,7 @@ import {
 import { LIVE_LEVELS_POLLING_INTERVAL_MS, POLLING_INTERVAL_MS } from "@/lib/polling";
 import { currentExpirations, smilePointsFromChain } from "@/lib/volatility-smile-data";
 import type { ChartLayerPreset } from "@/lib/view-route";
+import { V2Dropdown } from "./v2-dropdown";
 
 type PriceChartProps = {
   symbol: string;
@@ -75,6 +76,9 @@ type PriceChartProps = {
   streamStatus?: MarketPriceStreamStatus;
   // Which layers start on (the /vista/grafico route: a plain chart, or one layer per desktop-app window). Absent = the dashboard's defaults.
   layers?: ChartLayerPreset;
+  // "v2" = the desktop app's look (docs/maqueta_app_escritorio_v2_2026-10-27.html): a window head and the Niveles / Gamma / Flujo / Dibujo menus instead of the
+  // row of checkboxes. The controls and their state are the same; only where they are drawn changes. The web dashboard keeps "classic".
+  variant?: "classic" | "v2";
 };
 
 type GammaLevel = {
@@ -507,6 +511,7 @@ export function PriceChart({
   candleCountdown = true,
   streamStatus = "connected",
   layers,
+  variant = "classic",
 }: PriceChartProps) {
   const { t } = useLanguage();
   const containerRef = useRef<HTMLDivElement>(null);
@@ -1655,8 +1660,205 @@ export function PriceChart({
     };
   }, [candleCountdown, timeframe, symbol]);
 
+  // ---- v2 (desktop app): window head + the four menus of the mockup. Same state and setters as the classic controls below.
+  const levelsCount = [!vwapNotApplicable && showVwap, showAtr, showExpectedMove].filter(Boolean).length + emas.filter((ema) => ema.visible).length;
+  const gammaCount = [showProfile, showProfile && showSmile, showHeatmap].filter(Boolean).length;
+  const flowCount = [showFlow, showAlertCubes].filter(Boolean).length;
+  const v2Head = (
+    <>
+      <div className="v2-win-head">
+        <b id="price-chart-title">
+          {symbol} · {t.appV2.chartTitle}
+        </b>
+        <span className="num">{t.priceChart.timeframeLabels[timeframe]}</span>
+        {gammaView !== "structural" && !gamma.has_data && <span className="no-tactical-data-notice">{t.dashboard.noTacticalDataLabel}</span>}
+        <button
+          type="button"
+          className="v2-ibtn v2-pop"
+          title={t.appV2.popOutTitle}
+          aria-label={t.appV2.popOutTitle}
+          onClick={() => window.open(window.location.href, `convexa-chart-${Date.now()}`)}
+        >
+          ⧉
+        </button>
+      </div>
+      <div className="v2-toolbar">
+        <V2Dropdown label={t.appV2.levelsMenu} count={levelsCount}>
+          <div className="v2-menu-row v2-seg" role="group" aria-label={t.priceChart.levelModeAriaLabel}>
+            <button type="button" aria-pressed={levelMode === "static"} onClick={() => setLevelMode("static")}>
+              {t.priceChart.staticButton}
+            </button>
+            <button type="button" aria-pressed={levelMode === "historical"} onClick={() => setLevelMode("historical")}>
+              {t.priceChart.historicalButton}
+            </button>
+          </div>
+          <label title={vwapNotApplicable ? t.priceChart.vwapNotApplicableLabel : undefined}>
+            <input type="checkbox" checked={!vwapNotApplicable && showVwap} disabled={vwapNotApplicable} onChange={(event) => setShowVwap(event.target.checked)} />
+            {vwapNotApplicable ? t.priceChart.vwapNotApplicableLabel : vwapProxySymbol ? t.priceChart.vwapProxyLabel(vwapProxySymbol) : t.priceChart.vwapAnchoredLabel}
+          </label>
+          <label>
+            <input type="checkbox" checked={showAtr} onChange={(event) => setShowAtr(event.target.checked)} />
+            {t.priceChart.atrRangeLabel}
+          </label>
+          <label>
+            <input type="checkbox" checked={showExpectedMove} onChange={(event) => setShowExpectedMove(event.target.checked)} />
+            {t.priceChart.expectedMoveRangeLabel}
+          </label>
+          <h4>{t.appV2.movingAverages}</h4>
+          <div className="v2-menu-row">
+            <EmaMenu emas={emas} convergingIds={convergingEmas} onChange={setEmas} />
+          </div>
+        </V2Dropdown>
+        <V2Dropdown label={t.appV2.gammaMenu} count={gammaCount}>
+          <label>
+            <input type="checkbox" checked={showProfile} onChange={(event) => setShowProfile(event.target.checked)} />
+            {t.priceChart.gexHistogramLabel}
+          </label>
+          {showProfile && (
+            <label>
+              <input type="checkbox" checked={showSmile} onChange={(event) => setShowSmile(event.target.checked)} />
+              {t.priceChart.smileLabel}
+            </label>
+          )}
+          {showProfile && showSmile && smileExpirations.length > 1 && (
+            <div className="v2-menu-row">
+              <select
+                className="v2-sel"
+                aria-label={t.priceChart.smileExpirationAriaLabel}
+                value={smileExpiration}
+                onChange={(event) => setSmileChoice({ symbol, date: event.target.value })}
+              >
+                <option value="">{t.priceChart.smileExpirationNearest}</option>
+                {smileExpirations.map((date) => (
+                  <option key={date} value={date}>
+                    {date}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+          <h4>{t.appV2.heatmapGroup}</h4>
+          <label>
+            <input type="checkbox" checked={showHeatmap} onChange={(event) => setShowHeatmap(event.target.checked)} />
+            {t.priceChart.heatmapLabel}
+          </label>
+          {showHeatmap && (
+            <>
+              <div className="v2-menu-row v2-seg" role="group" aria-label={t.priceChart.heatmapMetricAriaLabel}>
+                {HEATMAP_METRIC_TABS.map((tab) => (
+                  <button
+                    key={tab.metric}
+                    type="button"
+                    aria-pressed={!sidesOn && heatmapMetric === tab.metric}
+                    onClick={() => {
+                      setHeatmapMetric(tab.metric);
+                      setSideLayers({ calls: false, puts: false });
+                    }}
+                  >
+                    {t.priceChart[tab.labelKey]}
+                  </button>
+                ))}
+              </div>
+              <label title={t.priceChart.heatmapDayScaleTitle}>
+                <input type="checkbox" checked={dayScale} onChange={(event) => setDayScale(event.target.checked)} />
+                {t.priceChart.heatmapDayScaleLabel}
+              </label>
+              <label title={t.priceChart.heatmapSidesTitle}>
+                <input type="checkbox" checked={sideLayers.calls} onChange={(event) => setSideLayers((current) => ({ ...current, calls: event.target.checked }))} />
+                {t.priceChart.heatmapSideCalls}
+              </label>
+              <label title={t.priceChart.heatmapSidesTitle}>
+                <input type="checkbox" checked={sideLayers.puts} onChange={(event) => setSideLayers((current) => ({ ...current, puts: event.target.checked }))} />
+                {t.priceChart.heatmapSidePuts}
+              </label>
+            </>
+          )}
+        </V2Dropdown>
+        <V2Dropdown label={t.appV2.flowMenu} count={flowCount}>
+          <label title={t.priceChart.flowTitle}>
+            <input type="checkbox" checked={showFlow} onChange={(event) => setShowFlow(event.target.checked)} />
+            {t.priceChart.flowLabel}
+          </label>
+          <h4>{t.appV2.cubesGroup}</h4>
+          <label>
+            <input type="checkbox" checked={showAlertCubes} onChange={(event) => setShowAlertCubes(event.target.checked)} />
+            {t.priceChart.alertCubesLabel}
+          </label>
+          {showAlertCubes && (
+            <>
+              <div className="v2-menu-row">
+                <span className="cube-min">
+                  <span className="cube-min-prefix" aria-hidden="true">
+                    {"≥"}
+                  </span>
+                  <input
+                    type="text"
+                    inputMode="numeric"
+                    className="cube-min-input num"
+                    aria-label={t.priceChart.alertCubesMinAriaLabel}
+                    title={t.priceChart.alertCubesMinTitle(cubeMin.source, cubeMinDeq)}
+                    maxLength={9}
+                    value={cubeMinDraft && cubeMinDraft.symbol === symbol ? cubeMinDraft.text : String(cubeMinDeq)}
+                    onChange={(event) => setCubeMinDraft({ symbol, text: event.target.value })}
+                    onBlur={commitCubeMinDraft}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter") commitCubeMinDraft();
+                      if (event.key === "Escape") setCubeMinDraft(null);
+                    }}
+                  />
+                  <button type="button" className="cube-min-button" onClick={() => setCubeMinFor(Math.max(1, Math.round(cubeMinDeq / 2)))}>
+                    {t.priceChart.alertCubesHalf}
+                  </button>
+                  <button type="button" className="cube-min-button" onClick={() => setCubeMinFor(Math.min(CUBE_MIN_LIMIT, cubeMinDeq * 2))}>
+                    {t.priceChart.alertCubesDouble}
+                  </button>
+                  {cubeMin.source === "custom" && (
+                    <button type="button" className="cube-min-button" title={t.priceChart.alertCubesAutoTitle} onClick={() => setCubeMinFor(null)}>
+                      {t.priceChart.alertCubesAuto}
+                    </button>
+                  )}
+                </span>
+              </div>
+              <label>
+                <input type="checkbox" checked={cubeShowFar} onChange={(event) => setCubeShowFar(event.target.checked)} />
+                {t.priceChart.alertCubesFarLabel}
+              </label>
+              <label title={t.priceChart.bigTradesTitle}>
+                <input type="checkbox" checked={showBigTrades} onChange={(event) => setShowBigTrades(event.target.checked)} />
+                {t.priceChart.bigTradesLabel}
+              </label>
+              <label title={t.priceChart.packagesTitle}>
+                <input type="checkbox" checked={showPackages} onChange={(event) => setShowPackages(event.target.checked)} />
+                {t.priceChart.packagesLabel}
+              </label>
+              <label title={t.priceChart.alertCubesNetTitle}>
+                <input type="checkbox" checked={cubeSizing === "net"} onChange={(event) => setCubeSizing(event.target.checked ? "net" : "gross")} />
+                {t.priceChart.alertCubesNetLabel}
+              </label>
+            </>
+          )}
+        </V2Dropdown>
+        <V2Dropdown label={t.appV2.drawMenu}>
+          <div className="v2-menu-row v2-seg" role="group" aria-label={t.priceChart.drawingToolsAriaLabel}>
+            <button type="button" aria-pressed={drawMode} onClick={() => setDrawMode((current) => !current)}>
+              {t.priceChart.trendlineButton}
+            </button>
+            <button type="button" disabled={!trendline} onClick={() => setTrendline(null)}>
+              {t.priceChart.clearTrendlineButton}
+            </button>
+          </div>
+        </V2Dropdown>
+        <span className="v2-live">{t.appV2.live}</span>
+        {streamStatus === "fallback" && (
+          <span className="stream-fallback-indicator" role="status" title={t.priceChart.streamFallbackLabel} aria-label={t.priceChart.streamFallbackLabel} />
+        )}
+      </div>
+    </>
+  );
+
   return (
     <section className="panel price-chart-panel" aria-labelledby="price-chart-title">
+      {variant === "v2" ? v2Head : (
       <div className="panel-heading">
         <div>
           <p className="eyebrow">{t.priceChart.eyebrow}</p>
@@ -1913,6 +2115,7 @@ export function PriceChart({
           )}
         </div>
       </div>
+      )}
       {showFlow && openingFlow && (
         <div className="opening-flow-strip" role="status" title={t.priceChart.openingFlowHint}>
           <strong>{t.priceChart.openingFlowLabel}</strong>
