@@ -69,6 +69,13 @@ function createWindow(key, title, url) {
     }
   });
   win.webContents.setWindowOpenHandler(({ url: target }) => {
+    // The page's "Ventanas -> abrir aparte" and the chart's ⧉ (frontend PR #368) call window.open on our own /vista/grafico: open the app's own window instead.
+    if (isOwnOrigin(BASE, target) && new URL(target).pathname === "/vista/grafico") {
+      const layer = LAYERS.find((entry) => entry.id === new URL(target).searchParams.get("capa"));
+      if (layer) openLayerWindow(layer);
+      else openExtraChartWindow(target);
+      return { action: "deny" };
+    }
     if (target.startsWith("https://") && !isOwnOrigin(BASE, target)) void shell.openExternal(target);
     return { action: "deny" };
   });
@@ -112,6 +119,13 @@ function openLayerWindow(layer) {
   const win = createWindow(`layer:${layer.id}`, `Convexa — ${layer.label}`, layerUrl(BASE, mainUrl, layer.id));
   layerWindows.set(layer.id, win);
   win.on("closed", () => layerWindows.delete(layer.id));
+}
+
+let extraCharts = 0;
+function openExtraChartWindow(url) {
+  // A second plain chart (the ⧉ of the chart head), e.g. another symbol on another screen. Its size is remembered per slot (chart-2, chart-3, ...).
+  extraCharts += 1;
+  createWindow(`chart-${extraCharts + 1}`, "Convexa", url);
 }
 
 function buildMenu() {
