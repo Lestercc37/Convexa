@@ -633,6 +633,16 @@ describe("Dashboard", () => {
     );
   });
 
+  it("chart mode has the app's tabs 0DTE / 1DTE / 90 días (no 0-2 DTE), and a saved web-only tab falls back to 0DTE", async () => {
+    window.localStorage.setItem("convexa.gamma-view.v1", "tactical");
+    renderWithLanguage(<Dashboard mode="chart" route={{ symbol: "SPY", timeframe: null, range: null, gammaTab: null, layer: null }} onRouteChange={vi.fn()} />);
+    await screen.findByLabelText("Chart de velas para SPY");
+    const group = screen.getByRole("group", { name: "Vencimiento de las opciones" });
+    expect(within(group).getAllByRole("button").map((button) => button.textContent)).toEqual(["0DTE", "1DTE", "90 días"]);
+    expect(within(group).getByRole("button", { name: "0DTE" })).toHaveAttribute("aria-pressed", "true");
+    window.localStorage.removeItem("convexa.gamma-view.v1");
+  });
+
   it("chart mode wears the v2 bar: Ventanas opens a layer in its own window, Reducir movimiento is remembered", async () => {
     const user = userEvent.setup();
     const open = vi.spyOn(window, "open").mockImplementation(() => null);

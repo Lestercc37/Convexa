@@ -314,10 +314,10 @@ def test_execute_both_rebuilds_tactical_every_call_and_never_writes_structural()
 
 
 
-def test_execute_both_also_saves_one_view_per_listed_expiration_and_leaves_tactical_unchanged() -> None:
-    """The dashboard tabs 0DTE | 1DTE | 2DTE (2026-10-26): each reads ONE listed expiration, by listed order, while the 0-2 DTE
-    (tactical) aggregate is built exactly as before. Today's, tomorrow's and a listing 5 days out (the third LISTED one, outside
-    0-2 calendar days, like Thursday -> Monday)."""
+def test_execute_both_also_saves_one_view_per_listed_expiration_and_tactical_takes_the_first_three_listed() -> None:
+    """The dashboard tabs 0DTE | 1DTE | 2DTE (2026-10-26): each reads ONE listed expiration, by listed order. Since 2026-10-30 the 0-2 DTE
+    (tactical) aggregate takes the same first THREE LISTED expirations (it used to count 2 calendar days, so a listing 5 days out, like
+    Thursday -> Monday, was left out). Today's, tomorrow's and a listing 5 days out."""
     storage = InMemoryStorage()
     in_five_days = TODAY_ET + timedelta(days=5)
     tomorrow = TODAY_ET + timedelta(days=1)
@@ -331,7 +331,7 @@ def test_execute_both_also_saves_one_view_per_listed_expiration_and_leaves_tacti
 
     tactical = _orchestrator(storage).execute_both("SPY")
 
-    assert {item.strike for item in tactical.items} == {Decimal(550), Decimal(552)}
+    assert {item.strike for item in tactical.items} == {Decimal(548), Decimal(550), Decimal(552)}
     strikes = {}
     for view in ("0dte", "1dte", "2dte"):
         saved = storage.get_latest_gamma_aggregate("SPY", view=view)
@@ -391,3 +391,24 @@ def test_the_volume_view_raises_a_late_counter_to_the_stored_correction() -> Non
     by_strike = {item.strike: item for item in storage.get_latest_gamma_aggregate("SPY", view="0dte_volume").items}
     assert by_strike[Decimal(555)].open_interest == 900  # raised to ThetaData's day volume
     assert by_strike[Decimal(550)].open_interest == 500  # a lower correction never lowers the counter
+
+
+def test_the_90_day_view_leaves_out_the_0dte_and_1dte_expirations_and_anything_past_90_days() -> None:
+    """Lester 2026-10-30: the 90-day tab = every listed expiration AFTER the 0DTE and 1DTE ones, up to 90 days ("deja fuera 0dte y 1dte")."""
+    storage = InMemoryStorage()
+    contracts = (
+        _contract("SPY260115C00550000", ContractType.CALL, Decimal(550), TODAY_ET, open_interest=100, gamma="0.02"),
+        _contract("SPY260116C00552000", ContractType.CALL, Decimal(552), TODAY_ET + timedelta(days=1), open_interest=100, gamma="0.01"),
+        _contract("SPY260130C00560000", ContractType.CALL, Decimal(560), TODAY_ET + timedelta(days=15), open_interest=500, gamma="0.01"),
+        _contract("SPY260130P00540000", ContractType.PUT, Decimal(540), TODAY_ET + timedelta(days=15), open_interest=300, gamma="0.01"),
+        _contract("SPY260601C00600000", ContractType.CALL, Decimal(600), TODAY_ET + timedelta(days=140), open_interest=900, gamma="0.01"),
+    )
+    chain = OptionChain(symbol="SPY", as_of=AS_OF, spot_price=SPOT_PRICE, contracts=contracts)
+
+    view = _orchestrator(storage).build_long_view("SPY", chain, [])
+
+    assert view.view == "90d"
+    assert {item.strike for item in view.items} <= {Decimal(540), Decimal(560)}
+    assert Decimal(550) not in {item.strike for item in view.items} and Decimal(552) not in {item.strike for item in view.items}
+    empty = _orchestrator(storage).build_long_view("SPY", OptionChain(symbol="SPY", as_of=AS_OF, spot_price=SPOT_PRICE, contracts=contracts[:2]), [])
+    assert empty.view == "90d" and not empty.items

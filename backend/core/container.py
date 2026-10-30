@@ -253,6 +253,7 @@ def build_container() -> Container:
         whale_alerts_engine=whale_alerts_engine,
         gamma_exposure_orchestrator=calculate_gamma_exposure_orchestrator,
         derived_metrics_use_case=calculate_derived_metrics_use_case,
+        long_view_enabled=settings.gamma_long_view_enabled,
     )
     authenticate_user_use_case = AuthenticateUserUseCase(storage=storage)
     accept_invite_use_case = AcceptInviteUseCase(storage=storage)
