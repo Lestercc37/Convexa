@@ -5,6 +5,7 @@ from fastapi import APIRouter, Depends
 from backend.api.deps import require_admin, require_session, require_session_ws
 from backend.api.routes.alerts import router as alerts_router
 from backend.api.routes.auth import router as auth_router
+from backend.api.routes.ema_alerts import router as ema_alerts_router
 from backend.api.routes.futures import router as futures_router
 from backend.api.routes.health import router as health_router
 from backend.api.routes.internal import router as internal_router
@@ -45,6 +46,10 @@ def api_router() -> APIRouter:
     )
     router.include_router(
         alerts_router, prefix="/api/v1", dependencies=[Depends(require_session)]
+    )
+    # Each user's own EMA cross alerts and Telegram link (its routes also read the session for the user id).
+    router.include_router(
+        ema_alerts_router, prefix="/api/v1", dependencies=[Depends(require_session)]
     )
     # Carries a PUT route gated with require_admin directly on that
     # route's own decorator (see futures.py), same as

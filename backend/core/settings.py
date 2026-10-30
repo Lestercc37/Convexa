@@ -4,7 +4,7 @@ import secrets
 from functools import lru_cache
 from typing import Literal
 
-from pydantic import AliasChoices, Field
+from pydantic import AliasChoices, Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -70,6 +70,10 @@ class Settings(BaseSettings):
     # The same flow kept per strike too (minute_strike_flow, migration 0050; the flow chain view, docs/diseno-cadena-flujo-2026-10-25.txt), for the same symbols. OFF until the migration is
     # applied: QLL_MINUTE_STRIKE_FLOW_ENABLED=true and a restart of ConvexaStreamProcessor switch it on.
     minute_strike_flow_enabled: bool = Field(default=False)
+    # EMA cross alerts by Telegram (migration 0051, backend/ema_alerts_worker.py). The token is written into the server's .env by Lester himself
+    # (QLL_TELEGRAM_BOT_TOKEN); it is a SecretStr so it never shows in a repr or a log.
+    telegram_bot_token: SecretStr | None = Field(default=None)
+    telegram_bot_username: str = Field(default="convexa_alertas_bot")
     # Audit sample of the minute flow, OFF by default: QLL_MINUTE_FLOW_AUDIT_SYMBOLS=SPY,SPX and QLL_MINUTE_FLOW_AUDIT_WINDOW=10:15-10:18 (ET, end exclusive) keep every option trade of those
     # underlyings inside the window, with the bid/ask used and the outcome, in logs/minute_flow_audit_YYYY-MM-DD.ndjson, to check the panel trade by trade.
     minute_flow_audit_symbols: str = Field(default="")
