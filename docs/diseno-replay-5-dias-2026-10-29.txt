@@ -1,0 +1,39 @@
+DISEÑO: REPETICIÓN DE 5 DÍAS (PRE-SESIÓN), FASE 1 — 2026-10-29
+Solo diseño y medición. No se instaló nada.
+
+1. QUÉ SE PIDIÓ
+- Ver otra vez cualquiera de las últimas 5 sesiones: velas, niveles como estaban en cada momento y el heatmap, con reproducir / pausa / paso / velocidad x1 a x10 (Lester 2026-10-21, 10-23 y 10-26: "el heatmap desde la primera versión").
+- Por día de sesión, no por vencimiento (decidido el 10-23).
+- Por el cambio de rumbo del 10-29 (el dashboard web queda congelado), va como una VISTA PROPIA de la app de escritorio: /vista/replay?simbolo=SPX&dia=2026-10-23. En el navegador también funciona.
+
+2. DATOS QUE YA EXISTEN (no hay que guardar nada nuevo)
+- Velas: market_snapshots, GET /market/{symbol}/candles (5m a 1h; 1m se agrega en la fase 1, el SQL ya acepta cualquier tamaño).
+- Niveles por ciclo: gamma_aggregates, vista táctica, 22 sesiones desde el 09-25 (ciclo mediano ~1,6 min).
+- Heatmap: gamma_aggregate_items, GET /gamma/{symbol}/heatmap con start/end (hasta 5 días por pedido).
+- Alertas: whale_alerts desde el 09-04 (fase 2).
+
+3. MEDIDO HOY (servidor, las 5 sesiones del 10-23 al 10-29, gamma neta, vista táctica)
+- SPX: 73 strikes x 967 columnas (cubetas de 2 min) = 1,07 MB, 0,6 s. Con 1 min: 2,05 MB, 1,1 s.
+- NDX: 302 strikes x 967 columnas = 4,18 MB, 2,6 s. Con 1 min: 4,65 MB, 2,8 s.
+- QQQ: 61 x 959 = 0,89 MB, 0,5 s.
+- Conclusión: se pide UN DÍA a la vez (una quinta parte: NDX ~0,9 MB, ~0,6 s), no los 5 juntos; al cambiar de día se pide el siguiente. Cubeta de 2 min (el ciclo guardado es de ~1,6 min: con 1 min la mitad de las columnas de NDX quedan vacías).
+- Lo que no medí: el dibujo en el navegador (pintar 300 x 195 celdas por día es lo mismo que el heatmap en vivo de hoy, que ya funciona).
+
+4. CÓMO SE VE
+- Arriba: símbolo, selector de día (las 5 sesiones con datos), temporalidad de velas (1m / 5m), botones ▶ / ❚❚ / paso atrás / paso adelante, velocidad x1 x2 x5 x10, la hora mostrada.
+- El gráfico: velas hasta la hora elegida (las siguientes no se ven), heatmap hasta esa hora, líneas de niveles con el valor que tenían en ese momento (Call Wall, Put Wall, ABS, Flip) y el VWAP anclado del día.
+- Debajo, una línea fina con el recorrido del día: arrastrarla salta a cualquier minuto.
+- x1 = un minuto de mercado por segundo; x10 = diez. Una sesión completa en x10 dura 39 s.
+
+5. ES / NQ
+- Hoy el heatmap de ES/NQ solo existe para la fecha actual (se arma con el ancla del día). En la repetición se usan SPX/NDX desplazados con el ancla guardada de ESE día (future_price_anchors); si ese día no tiene ancla, se muestra el índice tal cual y se avisa.
+
+6. CONSTRUCCIÓN
+- Fase 1 (1,5-2 días): endpoint /replay/{symbol}/day?dia= que devuelve velas 1m/5m + niveles por ciclo del día (un solo pedido); la vista /vista/replay con el reproductor; el heatmap con el endpoint actual (start/end del día, cubeta 2 min). Entra en la app como ventana propia (menú "Repetición").
+- Fase 2: alertas y cubos hasta la hora elegida; flujo por minuto; cadena de flujo del día (cuando exista minute_strike_flow).
+- Fase 3 (opcional): exportar a video.
+
+7. LO QUE NO PUDE VERIFICAR
+- El costo de dibujo en el navegador con la repetición a x10 (se mide con la fase 1).
+- Que todas las 22 sesiones tengan los niveles completos desde las 09:30 (21 de 22 lo tenían el 10-26).
+- Anclas de ES/NQ guardadas para días pasados: no revisé cuántas hay.
