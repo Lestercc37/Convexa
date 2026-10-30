@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 
 from backend.domain.entities import (
@@ -13,6 +13,7 @@ from backend.domain.entities import (
     MarketPrice,
     MinuteOptionFlow,
     MinuteStrikeFlow,
+    StrikeFlowSummary,
     OptionChain,
     OptionQuoteMinute,
     PriceCandle,
@@ -71,6 +72,31 @@ class SyncStorageAsyncReadAdapter:
 
     async def save_minute_strike_flow(self, rows: list[MinuteStrikeFlow]) -> None:
         self.minute_strike_flow.extend(rows)
+
+    async def get_strike_flow_expirations(self, underlying: str, start: datetime, end: datetime) -> list[date]:
+        return sorted({row.expiration for row in self.minute_strike_flow if row.symbol == underlying.upper() and start <= row.minute < end})
+
+    async def get_strike_flow_summary(
+        self, underlying: str, start: datetime, end: datetime, expirations: list[date] | None
+    ) -> list[StrikeFlowSummary]:
+        cells: dict[tuple[float, str], list] = {}
+        for row in self.minute_strike_flow:
+            if row.symbol != underlying.upper() or not (start <= row.minute < end) or (expirations is not None and row.expiration not in expirations):
+                continue
+            cell = cells.setdefault((row.strike, row.option_right), [{5: 0.0, 15: 0.0, 30: 0.0, 60: 0.0}, 0.0, 0, 0, 0, 0])
+            for window in (5, 15, 30, 60):
+                if row.minute >= end - timedelta(minutes=window):
+                    cell[0][window] += row.delta_flow
+            if row.minute >= end - timedelta(minutes=15):
+                cell[2] += row.contracts_package
+            cell[1] += row.delta_flow
+            cell[3] += row.contracts_signed
+            cell[4] += row.contracts_package
+            cell[5] += row.contracts_other
+        return [
+            StrikeFlowSummary(strike=k[0], option_right=k[1], flows=v[0], flow_day=v[1], packages_15=v[2], contracts_signed_day=v[3], contracts_package_day=v[4], contracts_other_day=v[5])
+            for k, v in sorted(cells.items())
+        ]
 
     async def get_minute_option_flow(self, underlying: str, start: datetime, end: datetime) -> list[MinuteOptionFlow]:
         return sorted(

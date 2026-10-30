@@ -16,8 +16,8 @@ from backend.domain.entities import (
     Greeks,
     MarketPrice,
     MarketSnapshot,
-    MinuteOptionFlow,
     MaxPain,
+    MinuteOptionFlow,
     OptionChain,
     OptionContract,
     PriceCandle,
@@ -26,6 +26,7 @@ from backend.domain.entities import (
 )
 from backend.domain.use_cases.errors import QllError
 from backend.domain.use_cases.flow import SymbolFlowPressure
+from backend.domain.use_cases.strike_flow import StrikeFlowChain
 
 
 def underlyings_response(items: list[Underlying]) -> dict[str, Any]:
@@ -268,6 +269,41 @@ def minute_flow_response(symbol: str, minutes: list[MinuteOptionFlow]) -> dict[s
                 "classified_share": None if row.contracts_total <= 0 else round(row.contracts_classified / row.contracts_total, 3),
             }
             for row in minutes
+        ],
+    }
+
+
+def strike_flow_response(chain: StrikeFlowChain, expiration_mode: str) -> dict[str, Any]:
+    def windows(values: dict[int, float]) -> dict[str, float]:
+        return {f"m{window}": round(values[window], 2) for window in (5, 15, 30, 60)}
+
+    share = chain.signed_share_day
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "symbol": chain.symbol.upper(),
+        "as_of": _dt(chain.as_of.astimezone(timezone.utc)),
+        "session_start": _dt(chain.session_start.astimezone(timezone.utc)),
+        "expiration_mode": expiration_mode,
+        "flow_source": chain.flow_source or chain.symbol.upper(),
+        "price_ratio": None if chain.price_ratio is None else round(chain.price_ratio, 6),
+        "price_offset": round(chain.price_offset, 2),
+        "expirations": [day.isoformat() for day in chain.expirations],
+        "net_day": round(chain.net_day, 2),
+        "signed_share_day": None if share is None else round(share, 3),
+        "strikes": [
+            {
+                "strike": row.strike,
+                "price": None if chain.price_of(row.strike) is None else round(chain.price_of(row.strike), 2),
+                "net": windows(row.net),
+                "calls": windows(row.calls),
+                "puts": windows(row.puts),
+                "net_day": round(row.net_day, 2),
+                "packages_15m": row.packages_15,
+                "contracts_signed_day": row.contracts_signed_day,
+                "contracts_package_day": row.contracts_package_day,
+                "contracts_other_day": row.contracts_other_day,
+            }
+            for row in chain.rows
         ],
     }
 
