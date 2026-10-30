@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import date, datetime, timedelta, timezone
 from typing import Literal
 
@@ -49,7 +50,13 @@ from backend.domain.use_cases import (
 )
 from backend.domain.use_cases.futures_proxy import proxy_symbol_for
 from backend.domain.use_cases.market_hours import EASTERN_TIME
-from backend.domain.use_cases.strike_flow import build_chain, pick_expirations, session_bounds
+from backend.domain.use_cases.strike_flow import (
+    build_chain,
+    flow_source_for,
+    pick_expirations,
+    price_mapping,
+    session_bounds,
+)
 from backend.domain.use_cases.volume_corrections import apply_volume_corrections
 
 router = APIRouter(tags=["options"])
@@ -267,7 +274,8 @@ async def minute_flow(
     summary="Signed option flow per strike: last 5 / 15 / 30 / 60 minutes and the day",
     description=(
         "Reads minute_strike_flow (written by the stream processor with the same rule as /flow/{symbol}/minutes), summed per strike in one query. Only finished minutes: the windows "
-        "end at the start of the minute of `at` (default now, capped at 16:00 ET); the day starts 09:30 ET. `expiration`: 0dte (default), 0-2dte or all. ES/NQ read SPX/NDX. "
+        "end at the start of the minute of `at` (default now, capped at 16:00 ET); the day starts 09:30 ET. `expiration`: 0dte (default), 0-2dte or all. ES reads SPX; NQ reads "
+        "QQQ's flow by default (NDX's 0DTE flow is mostly multi-leg packages), `flow_source` picks another one; every strike also gets `price` in the requested symbol's units. "
         "Before migration 0050 is applied, or with the per-strike flow switched off, the list is simply empty."
     ),
 )
@@ -276,9 +284,10 @@ async def strike_flow(
     request: Request,
     at: datetime | None = None,
     expiration: str = Query(default="0dte", pattern="^(0dte|0-2dte|all)$"),
+    flow_source: str | None = Query(default=None, pattern="^[A-Za-z]{1,6}$"),
 ) -> StrikeFlowResponse:
     container: Container = request.app.state.container
-    reading = (proxy_symbol_for(symbol) or symbol).upper()
+    reading = flow_source_for(symbol, flow_source)
     at = at or datetime.now(timezone.utc)
     if at.tzinfo is None:
         raise HTTPException(status_code=422, detail="at must include a timezone (e.g. ...Z)")
@@ -288,6 +297,8 @@ async def strike_flow(
     expirations = pick_expirations(expiration, traded, start.date())
     summaries = await storage.get_strike_flow_summary(reading, start, end, expirations) if end > start and expirations != [] else []
     chain = build_chain(symbol, end, start, expirations if expirations is not None else traded, summaries)
+    ratio, offset = await price_mapping(storage, symbol, reading, at)
+    chain = replace(chain, flow_source=reading, price_ratio=ratio, price_offset=offset)
     return StrikeFlowResponse.model_validate(strike_flow_response(chain, expiration))
 
 

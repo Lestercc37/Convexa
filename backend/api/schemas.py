@@ -393,7 +393,8 @@ class StrikeFlowWindowsResponse(BaseModel):
 
 
 class StrikeFlowRowResponse(BaseModel):
-    strike: Number
+    strike: Number = Field(description="The strike of the flow source's options (QQQ strikes when NQ reads QQQ).")
+    price: Number | None = Field(description="That strike in the requested symbol's own price units (strike x price ratio + the future's offset); null when a price is missing.")
     net: StrikeFlowWindowsResponse = Field(description="Calls + puts, delta-equivalent contracts; positive = bullish pressure (calls bought or puts sold).")
     calls: StrikeFlowWindowsResponse
     puts: StrikeFlowWindowsResponse
@@ -413,6 +414,9 @@ class StrikeFlowResponse(BaseModel):
     as_of: str = Field(description="End of the windows: the start of the current (unfinished) minute, ISO 8601 UTC.")
     session_start: str
     expiration_mode: str = Field(examples=["0dte"])
+    flow_source: str = Field(description="Whose options flow is shown (NQ -> QQQ by default).", examples=["QQQ"])
+    price_ratio: Number | None = Field(description="Level symbol price / flow source price at `at` (1 for the symbol's own flow).")
+    price_offset: Number = Field(description="The future's offset over its index (NQ - NDX from today's typed anchor); 0 otherwise.")
     expirations: list[str]
     net_day: Number
     signed_share_day: Number | None = Field(description="Share (0-1) of the day's contracts that carry a side; null when nothing traded.")

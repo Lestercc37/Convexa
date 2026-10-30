@@ -189,3 +189,58 @@ def test_the_strikes_endpoint_is_empty_before_the_open_and_reads_ndx_for_nq() ->
         nq = client.get("/api/v1/flow/NQ/strikes?at=2026-10-19T15:00:00Z").json()
     assert early["strikes"] == [] and early["signed_share_day"] is None
     assert nq["symbol"] == "NQ" and nq["strikes"] == []
+
+
+def test_nq_reads_qqq_flow_by_default_and_maps_each_strike_to_nq_price_units() -> None:
+    from decimal import Decimal
+
+    from fastapi.testclient import TestClient
+
+    from backend.domain.entities import MarketPrice, MinuteStrikeFlow
+    from backend.main import app
+
+    end = datetime(2026, 10, 19, 15, 0, tzinfo=UTC)
+    cell = MinuteStrikeFlow(
+        minute=end - timedelta(minutes=2),
+        symbol="QQQ",
+        expiration=date(2026, 10, 19),
+        strike=720.0,
+        option_right="C",
+        delta_flow=40.0,
+        contracts_signed=10,
+        contracts_package=0,
+        contracts_other=0,
+        buy_premium=0.0,
+        sell_premium=0.0,
+    )
+    with TestClient(app) as client:
+        storage = client.app.state.container.async_market_storage
+        storage.minute_strike_flow.append(cell)
+        sync = storage._storage
+        sync.save_market_price(
+            MarketPrice(
+                symbol="NDX", as_of=end - timedelta(minutes=1), price=Decimal("29000"), volume=0
+            )
+        )
+        sync.save_market_price(
+            MarketPrice(
+                symbol="QQQ", as_of=end - timedelta(minutes=1), price=Decimal("725"), volume=0
+            )
+        )
+        nq = client.get("/api/v1/flow/NQ/strikes?at=2026-10-19T15:00:30Z").json()
+        ndx_own = client.get(
+            "/api/v1/flow/NQ/strikes?at=2026-10-19T15:00:30Z&flow_source=NDX"
+        ).json()
+        storage.minute_strike_flow.clear()
+
+    assert nq["flow_source"] == "QQQ" and nq["price_ratio"] == 40.0
+    (row,) = nq["strikes"]
+    assert (
+        row["strike"] == 720.0 and row["price"] == 28_800.0
+    )  # 720 x 29000 / 725, no NQ anchor typed -> offset 0
+    assert row["net"]["m5"] == 40.0
+    assert (
+        ndx_own["flow_source"] == "NDX"
+        and ndx_own["price_ratio"] == 1.0
+        and ndx_own["strikes"] == []
+    )

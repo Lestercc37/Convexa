@@ -284,12 +284,16 @@ def strike_flow_response(chain: StrikeFlowChain, expiration_mode: str) -> dict[s
         "as_of": _dt(chain.as_of.astimezone(timezone.utc)),
         "session_start": _dt(chain.session_start.astimezone(timezone.utc)),
         "expiration_mode": expiration_mode,
+        "flow_source": chain.flow_source or chain.symbol.upper(),
+        "price_ratio": None if chain.price_ratio is None else round(chain.price_ratio, 6),
+        "price_offset": round(chain.price_offset, 2),
         "expirations": [day.isoformat() for day in chain.expirations],
         "net_day": round(chain.net_day, 2),
         "signed_share_day": None if share is None else round(share, 3),
         "strikes": [
             {
                 "strike": row.strike,
+                "price": None if chain.price_of(row.strike) is None else round(chain.price_of(row.strike), 2),
                 "net": windows(row.net),
                 "calls": windows(row.calls),
                 "puts": windows(row.puts),
