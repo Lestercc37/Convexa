@@ -57,7 +57,8 @@ import { EnginesGuidePanel } from "./engines-guide-panel";
 import { FutureOpeningPriceControl } from "./future-opening-price-control";
 import { PreSessionPanel } from "./pre-session-panel";
 import { ChartErrorBoundary } from "./chart-error-boundary";
-import { layerPreset, type ChartRouteState } from "@/lib/view-route";
+import { CHART_LAYERS, chartRouteQuery, layerPreset, type ChartRouteState } from "@/lib/view-route";
+import { V2Dropdown } from "./v2-dropdown";
 import { PriceChart } from "./price-chart";
 import { QuickScreener } from "./quick-screener";
 
@@ -107,6 +108,8 @@ const NOOP_LAYOUT_STORAGE: Pick<Storage, "getItem" | "setItem"> = {
 // good enough for now since each teammate always uses their own
 // machine/browser profile.
 const LAST_SYMBOL_STORAGE_KEY = "convexa:last-symbol";
+// v2 "Reducir movimiento" (desktop app windows).
+const REDUCE_MOTION_STORAGE_KEY = "convexa.reduceMotion";
 
 // Same breakpoint the existing @media (max-width: 960px) rule already
 // uses to stack .tv-body into a column on narrow viewports.
@@ -590,8 +593,163 @@ export function Dashboard({ mode = "full", route, onRouteChange }: DashboardProp
     return disconnect;
   }, [symbol]);
 
+  // v2 (desktop app windows): "Reducir movimiento", remembered in this browser / app.
+  const [reduceMotion, setReduceMotion] = useState(false);
+  useEffect(() => {
+    try {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- reads the saved choice once after mount (localStorage does not exist on the server)
+      setReduceMotion(window.localStorage.getItem(REDUCE_MOTION_STORAGE_KEY) === "1");
+    } catch {
+      // storage blocked: motion stays on
+    }
+  }, []);
+  const toggleReduceMotion = (on: boolean) => {
+    setReduceMotion(on);
+    try {
+      window.localStorage.setItem(REDUCE_MOTION_STORAGE_KEY, on ? "1" : "0");
+    } catch {
+      // storage blocked: the choice lasts for this window only
+    }
+  };
+  const selectSymbol = (next: string) => {
+    setGamma(null);
+    setMarket(null);
+    setPricePoints([]);
+    setVwapPoints([]);
+    setVwapNotApplicable(false);
+    setVwapProxySymbol(null);
+    setSymbol(next);
+  };
+  // "Ventanas -> abrir aparte": the layer's own /vista/grafico window on this symbol / timeframe / range / tab. The desktop app catches the window.open and opens
+  // its layer window (desktop/main.js); a browser opens a tab or a window.
+  const openLayerWindow = (layer: (typeof CHART_LAYERS)[number]) => {
+    const query = chartRouteQuery({ symbol, timeframe, range: chartRange, gammaTab, layer });
+    window.open(`/vista/grafico?${query}`, `convexa-${layer}`);
+  };
+
+  const v2Header = (
+    <header className="v2-bar">
+      <div className="v2-brand">
+        <Image src="/logo-header.png" alt="Convexa — Volatility Exposure Edge" width={140} height={62} priority />
+      </div>
+      <div className="v2-row">
+        <label>
+          <span className="sr-only">{t.dashboard.underlyingLabel}</span>
+          <select className="v2-sel" value={symbol} onChange={(event) => selectSymbol(event.target.value)} disabled={!underlyings.length}>
+            {underlyings.map((item) => (
+              <option key={item.symbol} value={item.symbol}>
+                {item.symbol}
+              </option>
+            ))}
+          </select>
+        </label>
+        {isFutureSymbol && (
+          <FutureOpeningPriceControl
+            key={`future-opening-price-v2-${symbol}`}
+            symbol={symbol}
+            onSaved={() => {
+              void seedPriceAndVwap(symbol);
+              void refresh(symbol, gammaViewRef.current);
+            }}
+          />
+        )}
+        {market && <strong className="v2-price num">{PRICE_FORMAT.format(market.price)}</strong>}
+        {market && latestCandle && (
+          <span className="v2-ohlc num">
+            O {PRICE_FORMAT.format(latestCandle.open)} H {PRICE_FORMAT.format(latestCandle.high)} L {PRICE_FORMAT.format(latestCandle.low)} C{" "}
+            {PRICE_FORMAT.format(latestCandle.close)}
+          </span>
+        )}
+        <div className="v2-seg" role="group" aria-label={t.dashboard.timeframeGroupAriaLabel}>
+          {(isWeek ? WEEK_TIMEFRAMES : TIMEFRAMES).map((option) => (
+            <button key={option} type="button" aria-pressed={shownTimeframe === option} onClick={() => setTimeframe(option)}>
+              {option}
+            </button>
+          ))}
+        </div>
+        {!isFutureSymbol && (
+          <div className="v2-seg" role="group" aria-label={t.dashboard.rangeGroupAriaLabel}>
+            {(["day", "week"] as const).map((option) => (
+              <button key={option} type="button" aria-pressed={chartRange === option} onClick={() => setChartRange(option)}>
+                {option === "day" ? t.dashboard.rangeDay : t.dashboard.rangeWeek}
+              </button>
+            ))}
+          </div>
+        )}
+        <div className="v2-seg" role="group" aria-label={t.dashboard.gammaViewGroupAriaLabel} title={t.dashboard.gammaViewVwapNote}>
+          {GAMMA_VIEW_TABS.map((tab) => (
+            <button key={tab.view} type="button" aria-pressed={gammaTab === tab.view} onClick={() => selectGammaView(tab.view)}>
+              {tab.label}
+            </button>
+          ))}
+        </div>
+        {expirationLabel && <span className="v2-expiration">{expirationLabel}</span>}
+        <div
+          className="v2-seg"
+          role="group"
+          aria-label={t.dashboard.gammaWeightGroupAriaLabel}
+          title={supportsVolumeWeight(gammaTab) ? t.dashboard.gammaWeightNote : t.dashboard.gammaWeightOnly0dteNote}
+        >
+          {(["oi", "volume"] as const).map((weight) => (
+            <button
+              key={weight}
+              type="button"
+              aria-pressed={(supportsVolumeWeight(gammaTab) ? gammaWeight : "oi") === weight}
+              disabled={weight === "volume" && !supportsVolumeWeight(gammaTab)}
+              onClick={() => selectGammaWeight(weight)}
+            >
+              {weight === "oi" ? t.dashboard.gammaWeightOi : t.dashboard.gammaWeightVolume}
+            </button>
+          ))}
+        </div>
+        {gamma && <RegimeCompactBadge gamma={gamma} />}
+        {market && <ExpectedMoveCompactBadge expectedMove={market.expected_move} />}
+      </div>
+      <div className="v2-row">
+        <span className="v2-clock num">
+          <SessionClock />
+        </span>
+        <div className="v2-seg" role="group" aria-label={t.common.languageSwitcherAriaLabel}>
+          {(["es", "en"] as Language[]).map((option) => (
+            <button key={option} type="button" aria-pressed={language === option} onClick={() => setLanguage(option)}>
+              {option.toUpperCase()}
+            </button>
+          ))}
+        </div>
+        <V2Dropdown label={t.appV2.windowsMenu} className="v2-ws">
+          {CHART_LAYERS.map((layer) => (
+            <button key={layer} type="button" onClick={() => openLayerWindow(layer)}>
+              {t.appV2.layers[layer] ?? layer}
+              <span>⧉ {t.appV2.openApart}</span>
+            </button>
+          ))}
+          <p>{t.appV2.windowsNote}</p>
+        </V2Dropdown>
+        <button type="button" className="v2-ibtn" title={t.appV2.guideTitle} aria-label={t.enginesGuide.triggerAriaLabel} onClick={() => setShowEnginesGuide(true)}>
+          ?
+        </button>
+        <button
+          type="button"
+          className="v2-ibtn"
+          title={t.appV2.logoutTitle}
+          aria-label={t.dashboard.logoutButton}
+          onClick={() => {
+            void logout().finally(() => router.replace("/login"));
+          }}
+        >
+          ⏻
+        </button>
+        <label className="v2-switch">
+          <input type="checkbox" checked={reduceMotion} onChange={(event) => toggleReduceMotion(event.target.checked)} />
+          {t.appV2.reduceMotion}
+        </label>
+      </div>
+    </header>
+  );
+
   return (
-    <main className="tv-shell">
+    <main className={`tv-shell${reduceMotion ? " reduce-motion" : ""}`}>
+      {isChartOnly ? v2Header : (
       <header className="tv-topbar">
         <div className="tv-topbar-left">
           <Image
@@ -779,6 +937,7 @@ export function Dashboard({ mode = "full", route, onRouteChange }: DashboardProp
           </button>
         </div>
       </header>
+      )}
 
       {showEnginesGuide && (
         <EnginesGuidePanel onClose={() => setShowEnginesGuide(false)} />
@@ -841,6 +1000,7 @@ export function Dashboard({ mode = "full", route, onRouteChange }: DashboardProp
                       candleCountdown={!isWeek}
                       streamStatus={streamStatus}
                       layers={isChartOnly ? layerPreset(initialRoute?.layer ?? null) : undefined}
+                      variant={isChartOnly ? "v2" : "classic"}
                     />
                   </ChartErrorBoundary>
                   {!isChartOnly && dealersDock}

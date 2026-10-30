@@ -633,6 +633,27 @@ describe("Dashboard", () => {
     );
   });
 
+  it("chart mode wears the v2 bar: Ventanas opens a layer in its own window, Reducir movimiento is remembered", async () => {
+    const user = userEvent.setup();
+    const open = vi.spyOn(window, "open").mockImplementation(() => null);
+    const { container } = renderWithLanguage(
+      <Dashboard mode="chart" route={{ symbol: "SPY", timeframe: "1m", range: null, gammaTab: null, layer: null }} onRouteChange={vi.fn()} />,
+    );
+    await screen.findByLabelText("Chart de velas para SPY");
+    expect(container.querySelector(".v2-bar")).toBeInTheDocument();
+    expect(container.querySelector(".tv-topbar")).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: /Ventanas/ }));
+    await user.click(screen.getByRole("button", { name: /Heatmap Delta/ }));
+    expect(open).toHaveBeenCalledWith(expect.stringContaining("/vista/grafico?simbolo=SPY&tf=1m&rango=dia"), "convexa-heatmap-delta");
+    expect(open.mock.calls[0][0]).toContain("capa=heatmap-delta");
+
+    await user.click(screen.getByLabelText("Reducir movimiento"));
+    expect(container.querySelector(".tv-shell")).toHaveClass("reduce-motion");
+    expect(window.localStorage.getItem("convexa.reduceMotion")).toBe("1");
+    open.mockRestore();
+  });
+
   it("labels the VWAP overlay with its proxy symbol when the backend approximates it from a correlated ETF (regression)", async () => {
     // SPX/NDX have no volume of their own, so the backend approximates
     // their VWAP from a correlated ETF (VWAP_PROXY_SYMBOL_BY_INDEX,
