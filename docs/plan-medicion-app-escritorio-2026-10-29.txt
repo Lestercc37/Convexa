@@ -1,0 +1,23 @@
+PLAN DE MEDICIÓN — APP DE ESCRITORIO, PRIMER PROTOTIPO (2026-10-29)
+
+Qué se compara: 4 ventanas de la app contra 4 pestañas de Edge en la PC de Lester, con el mercado abierto, misma página y mismos datos.
+
+Cuándo: un día de mercado, de 10:15 a 10:45 ET (después de la apertura y lejos de 09:38-09:46). Nunca antes de que #361 esté desplegado.
+
+Montaje (igual en los dos casos):
+- Ventana 1: /vista/grafico?simbolo=SPX&tf=1m          (gráfico limpio)
+- Ventana 2: /vista/grafico?simbolo=SPX&tf=1m&capa=heatmap-gamma
+- Ventana 3: /vista/grafico?simbolo=NDX&tf=1m          (gráfico limpio)
+- Ventana 4: /vista/grafico?simbolo=NDX&tf=1m&capa=heatmap-gamma
+En la app: ventanas 1 y 2 desde el menú Capas; la 3 y la 4 se abren igual cambiando el símbolo a NDX.
+
+Medidas (cada una 10 minutos, con el Administrador de tareas y un script que lee los procesos cada 10 s):
+1. Memoria total: suma de los procesos de Edge (solo esas 4 pestañas, en un perfil aparte sin extensiones) contra la suma de los procesos de Convexa.
+2. CPU media y máxima de esos mismos procesos.
+3. Peticiones por minuto a la API por ventana (registro del servidor, por IP de la PC de Lester).
+4. Tiempo hasta ver las 4 ventanas con datos al abrir (reloj en mano).
+5. Si el gráfico se ve y responde igual (zoom, desplazamiento, cruz) que en Edge.
+
+Regla para seguir (sección 12 del diseño): si las 4 ventanas de la app no gastan más memoria ni CPU que las 4 pestañas de Edge (con un margen del 10 %), se sigue con el paso 3 (espacios de trabajo y monitores) y el paso 4 (centro de datos). Si gastan más, se mide de nuevo con una sola ventana para separar el costo fijo de Electron del costo por ventana.
+
+Lo que esta medición no prueba todavía: el ahorro del centro de datos (paso 4). Hoy cada ventana pide sus propios datos, igual que cada pestaña de Edge.
