@@ -180,9 +180,8 @@ class CalculateGammaExposureOrchestrator:
         daily_bars = self._storage.get_daily_bars(underlying, REQUIRED_DAILY_BARS)
         anchor = chain.as_of.astimezone(EASTERN_TIME).date()
         with self._compute_semaphore:
-            result = self._build_view(
-                underlying, chain, daily_bars, TACTICAL_WINDOW_DAYS, anchor, "tactical"
-            )
+            listed_chain, window = _first_listed(chain, anchor, TACTICAL_LISTED_EXPIRATIONS)
+            result = self._build_view(underlying, listed_chain, daily_bars, window, anchor, "tactical")
         self._storage.save_gamma_aggregate(result)
         return result
 
@@ -207,9 +206,8 @@ class CalculateGammaExposureOrchestrator:
         else:
             daily_bars = self._storage.get_daily_bars(underlying, REQUIRED_DAILY_BARS)
             with self._compute_semaphore:
-                tactical = self._build_view(
-                    underlying, chain, daily_bars, TACTICAL_WINDOW_DAYS, anchor, "tactical"
-                )
+                listed_chain, window = _first_listed(chain, anchor, TACTICAL_LISTED_EXPIRATIONS)
+                tactical = self._build_view(underlying, listed_chain, daily_bars, window, anchor, "tactical")
         self._storage.save_gamma_aggregate(tactical)
         if underlying.upper() in TACTICAL_ENABLED_SYMBOLS:
             # The per-expiration views (0DTE / 1DTE / 2DTE tabs) after the 0-2 DTE one, each on its own: a failure here never
@@ -229,6 +227,19 @@ class CalculateGammaExposureOrchestrator:
                 except Exception:
                     logger.exception("%s: the %s gamma view failed this cycle", underlying.upper(), view)
         return tactical
+
+    def build_long_view(self, underlying: str, chain: OptionChain, daily_bars: list[DailyBar]) -> GammaAggregate:
+        """The 90-day view (docs/diseno-vistas-0dte-1dte-90d-2026-10-30.txt, Lester 2026-10-30): every LISTED expiration AFTER the 0DTE and 1DTE ones, up to
+        LONG_VIEW_DAYS, so the three tabs never overlap ("deja fuera 0dte y 1dte"). `chain` comes from the provider's max_dte fetch (the cycle's chain only
+        reaches 14 days). Not persisted here."""
+        today = chain.as_of.astimezone(EASTERN_TIME).date()
+        listed = sorted({contract.expiration for contract in chain.contracts if contract.expiration >= today})
+        keep = {expiration for expiration in listed[2:] if (expiration - today).days <= LONG_VIEW_DAYS}
+        if not keep:
+            return GammaAggregate(symbol=chain.symbol, as_of=chain.as_of, view="90d")
+        long_chain = replace(chain, contracts=tuple(contract for contract in chain.contracts if contract.expiration in keep))
+        with self._compute_semaphore:
+            return self._build_view(underlying, long_chain, daily_bars, LONG_VIEW_DAYS, today, "90d")
 
     def build_expiration_view(
         self, underlying: str, chain: OptionChain, daily_bars: list[DailyBar], view: str
@@ -264,9 +275,8 @@ class CalculateGammaExposureOrchestrator:
         per-strike rows itself; going through here keeps one definition of "which contracts, which strikes, which width" for both paths."""
         anchor = chain.as_of.astimezone(EASTERN_TIME).date()
         with self._compute_semaphore:
-            return self._build_view(
-                underlying, chain, daily_bars, TACTICAL_WINDOW_DAYS, anchor, "tactical"
-            )
+            listed_chain, window = _first_listed(chain, anchor, TACTICAL_LISTED_EXPIRATIONS)
+            return self._build_view(underlying, listed_chain, daily_bars, window, anchor, "tactical")
 
     def _volume_corrections(self, occ_symbols: list[str]) -> dict[str, int]:
         """ThetaData's day volume per contract from the last correction pass; empty (counters only) when the read fails."""
@@ -632,6 +642,32 @@ def _structural_window_days(symbol: str) -> int:
 # TACTICAL_FALLBACK_WINDOW_DAYS just below for what happens when this
 # anchor lands on nothing.
 TACTICAL_WINDOW_DAYS = 2
+
+# Fixed 2026-10-30 (docs/hm_tactical_window_compare.py): the window above counted CALENDAR days, so on Fridays the 0-2 DTE view held only the
+# 0DTE (no listings on Saturday / Sunday) and on Thursdays two expirations; in 96 Thursday / Friday rebuilds the Call Wall changed 19 times, the
+# Flip 67, the ABS 5 (Monday-Wednesday: no change). The tactical view now takes the first TACTICAL_LISTED_EXPIRATIONS LISTED expirations from
+# today, the same listed order as the 0DTE / 1DTE / 2DTE tabs; TACTICAL_WINDOW_DAYS only remains as the minimum window.
+TACTICAL_LISTED_EXPIRATIONS = 3
+# The 90-day view (build_long_view): listed expirations after the 0DTE and 1DTE ones, up to this many days.
+LONG_VIEW_DAYS = 90
+
+
+# ...but never further than this: a symbol with sparse listings (weeklies only: NVDA, DIA, VIX) must not pull expirations weeks away into a
+# "0-2 DTE" view. A Friday's Monday and Tuesday are 3 and 4 days out.
+TACTICAL_LISTED_MAX_DAYS = 7
+
+
+def _first_listed(chain: OptionChain, today: date, count: int) -> tuple[OptionChain, int]:
+    """`chain` cut to its first `count` LISTED expirations from `today` within TACTICAL_LISTED_MAX_DAYS, and the window (days) that keeps exactly
+    them in _build_view. Nothing listed in that range -> the chain unchanged (the tactical fallback of _build_view applies, as before)."""
+    listed = sorted(
+        {contract.expiration for contract in chain.contracts if today <= contract.expiration <= today + timedelta(days=TACTICAL_LISTED_MAX_DAYS)}
+    )[:count]
+    if not listed:
+        return chain, TACTICAL_WINDOW_DAYS
+    keep = set(listed)
+    window = max(TACTICAL_WINDOW_DAYS, (listed[-1] - today).days)
+    return replace(chain, contracts=tuple(contract for contract in chain.contracts if contract.expiration in keep)), window
 
 # The user's own intended scope for Tactical, never actually enforced in
 # code until now: indices, the four liquid ETFs, and NVDA -- confirmed

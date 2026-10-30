@@ -9,6 +9,15 @@ export const GAMMA_VIEW_TABS: readonly { view: GammaView; label: string }[] = [
   { view: "tactical", label: "0-2 DTE" },
 ];
 
+// The desktop app's tabs (Lester 2026-10-30, docs/diseno-vistas-0dte-1dte-90d-2026-10-30.txt): today's expiration, the next LISTED one, and the
+// 90-day structural map built from every listed expiration AFTER those two, up to 90 days (no overlap between tabs). The web dashboard (frozen) keeps
+// GAMMA_VIEW_TABS above; the 0-2 DTE view is still computed (corrected to 3 listed expirations) for the studies.
+export const APP_GAMMA_VIEW_TABS: readonly { view: GammaView; label: string }[] = [
+  { view: "0dte", label: "0DTE" },
+  { view: "1dte", label: "1DTE" },
+  { view: "90d", label: "90 días" },
+];
+
 export const DEFAULT_GAMMA_VIEW: GammaView = "0dte";
 
 const EXPIRATION_POSITION: Partial<Record<GammaView, number>> = { "0dte": 0, "1dte": 1, "2dte": 2, "0dte_volume": 0 };
@@ -66,10 +75,10 @@ export function listedExpirationForView(expirations: readonly string[], view: Ga
   return listed[position] ?? null;
 }
 
-export function readStoredGammaView(): GammaView | null {
+export function readStoredGammaView(tabs: readonly { view: GammaView }[] = GAMMA_VIEW_TABS): GammaView | null {
   try {
     const stored = window.localStorage.getItem(STORAGE_KEY);
-    return GAMMA_VIEW_TABS.some((tab) => tab.view === stored) ? (stored as GammaView) : null;
+    return tabs.some((tab) => tab.view === stored) ? (stored as GammaView) : null;
   } catch {
     return null;
   }

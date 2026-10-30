@@ -22,7 +22,7 @@ from backend.domain.entities import (
 class MockDataProvider:
     """Deterministic IDataProvider adapter for tests and local development."""
 
-    def get_option_chain(self, underlying: str, expiration: date | None = None) -> OptionChain:
+    def get_option_chain(self, underlying: str, expiration: date | None = None, max_dte: int | None = None) -> OptionChain:
         symbol = underlying.upper()
         as_of = datetime(2026, 1, 15, 14, 30, tzinfo=timezone.utc)
         exp = expiration or date(2026, 2, 20)

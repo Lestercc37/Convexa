@@ -2,11 +2,12 @@ from __future__ import annotations
 
 import logging
 import time
-from datetime import timedelta
 from dataclasses import dataclass
+from datetime import timedelta
 
 from backend.domain.entities import DerivedMetrics, GammaAggregate, MarketPrice, OptionChain
 from backend.domain.ports import IDataProvider, IStorage
+from backend.domain.use_cases.calculate_atr_range import REQUIRED_DAILY_BARS
 from backend.domain.use_cases.calculate_derived_metrics import (
     CalculateDerivedMetricsUseCase,
     capture_daily_gamma_reference,
@@ -15,7 +16,10 @@ from backend.domain.use_cases.cumulative_volume import (
     merge_cumulative_volume as _merge_cumulative_volume,
 )
 from backend.domain.use_cases.flow import WhaleAlertsEngine
-from backend.domain.use_cases.gamma import CalculateGammaExposureOrchestrator
+from backend.domain.use_cases.gamma import (
+    TACTICAL_ENABLED_SYMBOLS,
+    CalculateGammaExposureOrchestrator,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -60,6 +64,11 @@ class RefreshUnderlyingSnapshotUseCase:
     whale_alerts_engine: WhaleAlertsEngine
     gamma_exposure_orchestrator: CalculateGammaExposureOrchestrator
     derived_metrics_use_case: CalculateDerivedMetricsUseCase
+    # QLL_GAMMA_LONG_VIEW_ENABLED (settings): the 90-day view's extra fetch every 15 min; off = the cycle is exactly as before.
+    long_view_enabled: bool = True
+
+    def _refresh_long_view(self, symbol: str) -> None:
+        _refresh_long_view_impl(self, symbol)
 
     def execute(self, symbol: str) -> tuple[GammaAggregate, DerivedMetrics]:
         chain = self.market_data_provider.get_option_chain(symbol)
@@ -117,6 +126,8 @@ class RefreshUnderlyingSnapshotUseCase:
         capture_daily_gamma_reference(self.storage, aggregate, market)
         capture_seconds = time.monotonic() - capture_started_at
 
+        self._refresh_long_view(symbol)
+
         derived_started_at = time.monotonic()
         derived_metrics = self.derived_metrics_use_case.execute(symbol)
         derived_seconds = time.monotonic() - derived_started_at
@@ -135,3 +146,35 @@ class RefreshUnderlyingSnapshotUseCase:
                 symbol, compute_seconds, gamma_seconds, capture_seconds, derived_seconds,
             )
         return aggregate, derived_metrics
+
+
+# The 90-day gamma view (docs/diseno-vistas-0dte-1dte-90d-2026-10-30.txt): its own wildcard fetch with max_dte=90 (probe 2026-10-30: SPXW 0.7 s,
+# 4.4 MB, 10,748 contracts), every LONG_VIEW_REFRESH_SECONDS per symbol, not every cycle: the far expirations barely move in minutes. Only the
+# aggregate and its per-strike rows are stored (view '90d'), never the 90-day chain itself (it would add ~1.5 M snapshot rows a day).
+LONG_VIEW_REFRESH_SECONDS = 15 * 60
+LONG_VIEW_MAX_DTE = 90
+_long_view_refreshed_at: dict[str, float] = {}
+
+
+def _long_view_due(symbol: str, now: float) -> bool:
+    last = _long_view_refreshed_at.get(symbol)
+    return last is None or now - last >= LONG_VIEW_REFRESH_SECONDS
+
+
+def _refresh_long_view_impl(use_case: "RefreshUnderlyingSnapshotUseCase", symbol: str) -> None:
+    upper = symbol.upper()
+    if upper not in TACTICAL_ENABLED_SYMBOLS or not use_case.long_view_enabled:
+        return
+    now = time.monotonic()
+    if not _long_view_due(upper, now):
+        return
+    _long_view_refreshed_at[upper] = now  # a failure waits for the next slot too: never a retry storm against ThetaData
+    try:
+        started = time.monotonic()
+        chain = use_case.market_data_provider.get_option_chain(upper, max_dte=LONG_VIEW_MAX_DTE)
+        daily_bars = use_case.storage.get_daily_bars(upper, REQUIRED_DAILY_BARS)
+        aggregate = use_case.gamma_exposure_orchestrator.build_long_view(upper, chain, daily_bars)
+        use_case.storage.save_gamma_aggregate(aggregate)
+        logger.info("%s: 90-day gamma view refreshed in %.1fs (%d contracts)", upper, time.monotonic() - started, len(chain.contracts))
+    except Exception:
+        logger.exception("%s: the 90-day gamma view failed this time; next try in %d min", upper, LONG_VIEW_REFRESH_SECONDS // 60)

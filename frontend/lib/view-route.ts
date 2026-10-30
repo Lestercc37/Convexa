@@ -1,6 +1,6 @@
 import type { Timeframe } from "./candles";
 import type { GammaHeatmapMetric, GammaView } from "./types";
-import { GAMMA_VIEW_TABS } from "./gamma-views";
+import { APP_GAMMA_VIEW_TABS, GAMMA_VIEW_TABS } from "./gamma-views";
 
 /**
  * One route per view (desktop app design, docs/diseno-app-escritorio-2026-10-26.txt section 5): /vista/grafico carries everything a window needs
@@ -64,7 +64,7 @@ export function parseChartRoute(params: URLSearchParams): ChartRouteState {
     symbol: symbol && /^[A-Z0-9.^/]{1,12}$/.test(symbol) ? symbol : null,
     timeframe: TIMEFRAMES.includes(tf as Timeframe) ? (tf as Timeframe) : null,
     range: range === "dia" ? "day" : range === "semana" ? "week" : null,
-    gammaTab: GAMMA_VIEW_TABS.some((tab) => tab.view === dte) ? (dte as GammaView) : null,
+    gammaTab: [...GAMMA_VIEW_TABS, ...APP_GAMMA_VIEW_TABS].some((tab) => tab.view === dte) ? (dte as GammaView) : null,
     layer: CHART_LAYERS.includes(layer as ChartLayer) ? (layer as ChartLayer) : null,
   };
 }
