@@ -8,7 +8,7 @@ Solo diseño. No se pidió nada a ThetaData ni se cambió nada.
 2. LAS TRES PESTAÑAS
 - 0DTE: el vencimiento de hoy, como ahora (con OI | Volumen).
 - 1DTE: el siguiente vencimiento LISTADO (el viernes es el del lunes), como ahora.
-- 90 DÍAS: todos los vencimientos listados desde hoy hasta 90 días. Es el mapa "estructural": las paredes grandes de los vencimientos mensuales y trimestrales, que se mueven poco durante el día.
+- 90 DÍAS: los vencimientos listados DESPUÉS del 1DTE y hasta 90 días; NO incluye el 0DTE ni el 1DTE (Lester 2026-10-30: "deja fuera 0dte y 1dte"). Así las tres pestañas no se pisan: cada vencimiento aparece en una sola. Es el mapa "estructural": las paredes de los vencimientos semanales, mensuales y trimestrales, sin el ruido del día (si se sumara el 0DTE, su gamma enorme mandaría y la pestaña se parecería al 0DTE).
 - Se quitan las pestañas 2DTE y 0-2 DTE.
 - Los niveles de cada pestaña son los de siempre: ABS (|calls| + |puts|), Call Wall y Put Wall (gamma neta), Gamma Flip (búsqueda amplia), régimen y Net GEX.
 
@@ -25,13 +25,13 @@ Solo diseño. No se pidió nada a ThetaData ni se cambió nada.
 
 5. LO QUE HAY QUE CUIDAR
 - ABS PROTEGIDO: el ABS que usamos en los estudios y que Lester considera su mejor nivel es el de 0-2 DTE. Propuesta: seguir CALCULÁNDOLO por detrás (sin pestaña) 4 semanas, corregido para contar 3 vencimientos listados, para no perder la continuidad y comparar contra 0DTE y 90 días con la regla de reacción del precio. Quitarlo del todo solo con su sí.
-- Gamma de 90 días: la gamma se concentra en lo que vence pronto, así que el agregado de 90 días puede parecerse mucho al de 0DTE los días con mucho 0DTE. Hay que medirlo: si el ABS de 90 días coincide casi siempre con el de 0DTE, la pestaña aporta poco y conviene mostrarla ponderada (por ejemplo, sin el 0DTE).
+- Gamma de 90 días: al dejar fuera 0DTE y 1DTE, la pestaña refleja solo los vencimientos siguientes. Dentro de ella todavía pesan más los más cercanos (el 2DTE y la semana siguiente); hay que medir si sus niveles se distinguen de los de 1DTE.
 - Heatmap de 90 días: con una foto cada 15 minutos, el heatmap de esa pestaña es más grueso (columnas de 15 min).
 - Las pantallas que hoy leen "tactical" (heatmap, perfil, historial, estudios, capa rápida, app) pasan a leer '0dte' por defecto; hay que revisar cada una.
 
 6. ORDEN DE TRABAJO (cada paso con su sí)
 1. Una consulta de prueba a ThetaData con max_dte=90 para SPX, fuera de horario: contratos, vencimientos, segundos y MB. Necesita el sí de Lester (pedido nuevo).
-2. Medir con esa foto: el ABS, las paredes y el Flip de 90 días contra 0DTE (¿aportan algo distinto?).
+2. Medir con esa foto: el ABS, las paredes y el Flip de 90 días (sin 0DTE ni 1DTE) contra los de 0DTE y 1DTE (¿aportan algo distinto?).
 3. Si sirve: el pedido lento cada 15 min + la vista '90d' en el scheduler (PR, pruebas, despliegue después del cierre).
 4. Pestañas 0DTE | 1DTE | 90 DÍAS en la app (y en el dashboard web solo si Lester lo pide, porque está congelado).
 5. El 0-2 DTE corregido sigue calculándose por detrás 4 semanas; después Lester decide.
