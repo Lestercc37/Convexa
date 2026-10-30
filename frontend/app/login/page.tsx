@@ -19,7 +19,9 @@ export default function LoginPage() {
     setError(null);
     try {
       await login(username, password);
-      router.replace("/");
+      // Back to the /vista/... window that sent us here (desktop app); only our own view routes are accepted, never an outside address.
+      const next = new URLSearchParams(window.location.search).get("next");
+      router.replace(next && /^\/vista\/[a-z]+(\?[^\s]*)?$/.test(next) ? next : "/");
     } catch (reason: unknown) {
       setError(
         reason instanceof ApiError && reason.status === 401

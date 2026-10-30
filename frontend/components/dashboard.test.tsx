@@ -604,6 +604,35 @@ describe("Dashboard", () => {
     await screen.findByLabelText("Chart de velas para SPX");
   });
 
+  it("chart mode (/vista/grafico): opens on the address's symbol and timeframe, shows the chart alone and reports what it shows", async () => {
+    window.localStorage.setItem("convexa:last-symbol", "SPY");
+    apiMocks.getUnderlyings.mockResolvedValueOnce({
+      schema_version: 1,
+      underlyings: [
+        { symbol: "SPX", kind: "index", is_priority: true },
+        { symbol: "QQQ", kind: "equity", is_priority: true },
+        { symbol: "SPY", kind: "equity", is_priority: true },
+      ],
+    });
+    const onRouteChange = vi.fn();
+
+    const { container } = renderWithLanguage(
+      <Dashboard
+        mode="chart"
+        route={{ symbol: "QQQ", timeframe: "5m", range: null, gammaTab: null, layer: "heatmap-delta" }}
+        onRouteChange={onRouteChange}
+      />,
+    );
+
+    await screen.findByLabelText("Chart de velas para QQQ");
+    expect(container.querySelector(".tv-alerts-sidebar")).not.toBeInTheDocument();
+    expect(container.querySelector(".tv-view-toggle")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "5m" })).toHaveAttribute("aria-pressed", "true");
+    await waitFor(() =>
+      expect(onRouteChange).toHaveBeenLastCalledWith(expect.objectContaining({ symbol: "QQQ", timeframe: "5m", range: "day", layer: "heatmap-delta" })),
+    );
+  });
+
   it("labels the VWAP overlay with its proxy symbol when the backend approximates it from a correlated ETF (regression)", async () => {
     // SPX/NDX have no volume of their own, so the backend approximates
     // their VWAP from a correlated ETF (VWAP_PROXY_SYMBOL_BY_INDEX,
