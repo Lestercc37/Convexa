@@ -1,10 +1,13 @@
 "use client";
 
 import { useEffect, useId, useRef, useState, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 
 /**
  * A v2 dropdown (docs/maqueta_app_escritorio_v2_2026-10-27.html: "Ventanas" in the top bar, Niveles / Gamma / Flujo / Dibujo on the chart): a button with an optional count,
- * and a panel fixed under it (fixed, so a toolbar that scrolls sideways never clips it). Closes on a click outside, on Escape and when the window scrolls or resizes.
+ * and a panel fixed under it. The panel is rendered in document.body (a portal): the bar's rows have a fade mask and sideways scrolling, and a mask hides
+ * everything drawn inside its element, so a "Ventanas" panel drawn inside the second row was invisible and the button seemed to do nothing (Lester
+ * 2026-10-30). Closes on a click outside, on Escape and when the window resizes.
  */
 export function V2Dropdown({
   label,
@@ -61,11 +64,14 @@ export function V2Dropdown({
         {count !== undefined && <span className="v2-cnt">{count}</span>}
         {count === undefined && <span aria-hidden="true"> ▾</span>}
       </button>
-      {open && (
-        <div ref={menuRef} id={menuId} className="v2-menu" role="group" style={place}>
-          {children}
-        </div>
-      )}
+      {open &&
+        createPortal(
+          // Inside .app-v2 styling scope: the portal target carries the class so the menu keeps the v2 look and fonts.
+          <div ref={menuRef} id={menuId} className={`v2-menu app-v2-portal ${className ?? ""}`} role="group" style={place}>
+            {children}
+          </div>,
+          document.querySelector(".app-v2") ?? document.body,
+        )}
     </div>
   );
 }
