@@ -15,7 +15,9 @@ export function redirectToLoginOnUnauthorized(apiPath: string): void {
   if (typeof window === "undefined" || redirecting || isExpectedUnauthorized(apiPath)) return;
   if (PUBLIC_PATH_PREFIXES.some((prefix) => window.location.pathname.startsWith(prefix))) return;
   redirecting = true;
-  window.location.replace("/login");
+  // A /vista/... window (desktop app) comes back to its own view after the login.
+  const here = `${window.location.pathname}${window.location.search}`;
+  window.location.replace(here.startsWith("/vista/") ? `/login?next=${encodeURIComponent(here)}` : "/login");
 }
 
 // Test hook: the module keeps "already redirecting" for the life of the page, which is what production wants.

@@ -33,6 +33,22 @@ describe("AuthGate", () => {
     expect(replace).not.toHaveBeenCalled();
   });
 
+  it("sends the desktop app from the web dashboard (/) to its chart view", async () => {
+    getMeMock.mockResolvedValue({ username: "lester", is_admin: true });
+    const agent = vi.spyOn(navigator, "userAgent", "get").mockReturnValue("Mozilla/5.0 Chrome/140.0 Electron/38.0.0 Safari/537.36");
+    window.history.replaceState(null, "", "/");
+
+    render(
+      <AuthGate>
+        <p>protected content</p>
+      </AuthGate>,
+    );
+
+    await waitFor(() => expect(replace).toHaveBeenCalledWith("/vista/grafico"));
+    expect(screen.queryByText("protected content")).not.toBeInTheDocument();
+    agent.mockRestore();
+  });
+
   it("redirects to /login and never renders children when there is no session", async () => {
     getMeMock.mockRejectedValue(new ApiError(401));
 

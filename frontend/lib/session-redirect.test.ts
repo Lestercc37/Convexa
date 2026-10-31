@@ -27,6 +27,18 @@ describe("redirectToLoginOnUnauthorized", () => {
     expect(replace).toHaveBeenCalledWith("/login");
   });
 
+  it("brings a /vista window (desktop app) back to its own view after the login", async () => {
+    vi.stubGlobal("location", { pathname: "/vista/grafico", search: "?simbolo=NQ", replace });
+    Object.defineProperty(window, "location", {
+      value: { pathname: "/vista/grafico", search: "?simbolo=NQ", replace },
+      writable: true,
+      configurable: true,
+    });
+    const { redirectToLoginOnUnauthorized } = await import("./session-redirect");
+    redirectToLoginOnUnauthorized("/gamma/NQ");
+    expect(replace).toHaveBeenCalledWith(`/login?next=${encodeURIComponent("/vista/grafico?simbolo=NQ")}`);
+  });
+
   it("does nothing on the login and signup pages", async () => {
     const { redirectToLoginOnUnauthorized } = await import("./session-redirect");
     stubLocation("/login");

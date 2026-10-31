@@ -3,6 +3,7 @@
 import { useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import { ApiError, login } from "@/lib/api";
+import { DESKTOP_HOME, isDesktopApp } from "@/lib/desktop-app";
 import { useLanguage } from "@/lib/i18n/language-context";
 
 export default function LoginPage() {
@@ -21,7 +22,8 @@ export default function LoginPage() {
       await login(username, password);
       // Back to the /vista/... window that sent us here (desktop app); only our own view routes are accepted, never an outside address.
       const next = new URLSearchParams(window.location.search).get("next");
-      router.replace(next && /^\/vista\/[a-z]+(\?[^\s]*)?$/.test(next) ? next : "/");
+      // In the desktop app a login without "next" (first login, after "Cerrar sesión") still lands on the app's chart, never on the web dashboard.
+      router.replace(next && /^\/vista\/[a-z]+(\?[^\s]*)?$/.test(next) ? next : isDesktopApp() ? DESKTOP_HOME : "/");
     } catch (reason: unknown) {
       setError(
         reason instanceof ApiError && reason.status === 401
