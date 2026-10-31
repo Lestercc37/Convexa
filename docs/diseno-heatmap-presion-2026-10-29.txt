@@ -1,0 +1,56 @@
+DISEÑO: HEATMAP DE PRESIÓN (app de escritorio)
+Escrito el 2026-10-30. Solo diseño: nada implementado. Pedido por Lester el 2026-10-29 (idea, refinamiento estilo Bookmap y alcance a todas las capas).
+
+1. QUÉ SE QUIERE
+- Que el heatmap muestre SOLO lo importante, como Bookmap muestra solo las órdenes grandes: un fondo tranquilo y, encima, los pocos niveles donde está entrando dinero de opciones AHORA.
+- Que cada nivel "viva": si el precio lo rechaza, sigue dibujándose; si lo cruza, se corta y deja un hueco.
+- La misma gramática para TODAS las capas: Gamma, Abs., Total, Delta, Vanna, Charm, Calls y Puts. Una sola implementación; la capa solo cambia los números de entrada.
+- Solo en la app de escritorio. El heatmap de hoy no se toca.
+
+2. FONDO
+- Azul de Prusia (familia #003153), hecho de baldosas cuadradas tenues (una por strike × columna de tiempo), apenas más claras u oscuras según el valor de la capa. Sin otros colores cuando no pasa nada.
+- Nunca blanco: más intensidad = color más profundo (verde, rojo o azul más saturado), no más claro.
+
+3. CAPA FIJA DESDE LAS 09:30 (niveles de la pestaña elegida: 0DTE / 1DTE / 90 días)
+- Call Wall: banda verde lisa. Put Wall: banda roja lisa. ABS: banda azul (más profunda cuanto más fuerte). Gamma Flip: línea con tinte propio (ámbar #f3c969, como en la app).
+- La intensidad de estas bandas sigue la gamma en vivo (capa rápida de 2 s).
+- Regla de color única para todas las capas: valor positivo = verde, negativo = rojo, ABS (siempre positivo, |calls| + |puts|) = azul.
+
+4. CAPA EN VIVO: PRESIÓN DEL FLUJO
+- Fuente: minute_strike_flow (desde el 10-30; relleno de 22 sesiones de NDX/IWM). Flujo con lado por strike: calls compradas o puts vendidas = presión alcista (verde); puts compradas o calls vendidas = presión bajista (rojo). Los paquetes multi-leg NO pintan: se muestran aparte (anillo neutro).
+- Para NQ, el flujo es el de QQQ llevado a precios de NQ (decidido el 10-30: en NDX casi todo son paquetes).
+- Presión de un strike = flujo neto de los últimos 15 minutos con decaimiento (vida media 15 minutos, ajustable).
+- Solo se destacan los N niveles con más presión a la vez. Propuesta: N = 6 (3 arriba y 3 abajo del precio), más las 4 bandas fijas. El resto queda azul de fondo.
+- Umbral para "destacarse": presión ≥ el percentil 90 de la sesión de ese símbolo (calibrado con las 22 sesiones).
+
+5. VIDA DE UN NIVEL (común a todas las capas)
+- Toque: el precio llega a menos de medio escalón de strike del nivel.
+- Rechazo: después del toque, el precio se queda ≥ 5 minutos cerca y luego se aleja ≥ 0,25 Z (Z = (S − K) / (S · σ · √T)). El nivel recibe la marca "soporte" o "resistencia" en ese momento y SIGUE DIBUJÁNDOSE hacia la derecha.
+- Cruce: el precio lo atraviesa ≥ 0,25 Z y se queda del otro lado ≥ 5 minutos. El nivel se CORTA ahí y deja un HUECO visible desde ese momento. Un nuevo toque después del cruce mantiene el hueco: el nivel solo vuelve si entra dinero nuevo y lo reconstruye (vuelve a superar el umbral de presión).
+- Estela: la presión que el precio dejó atrás se va apagando (misma vida media de 15 minutos), para que el mapa no se llene de ruido viejo.
+- Las marcas se ponen DESPUÉS del rebote o del cruce: describen, no predicen (salvo que la validación demuestre otra cosa).
+
+6. BURBUJAS
+- Alertas de compra / venta en el strike y el minuto donde ocurrieron: verde (compra con lado claro), rojo (venta), neutro para operaciones grandes sin lado y paquetes (como los cubos de hoy). Tamaño por contratos-delta.
+
+7. CADA CAPA (qué es "pared" y qué la ilumina)
+- Gamma: paredes = gamma neta máxima positiva (verde) y más negativa (roja). La ilumina el flujo con lado del strike.
+- Abs.: pared = mayor |calls| + |puts| (azul). La ilumina el flujo total (sin signo) del strike.
+- Total: paredes = mayor gamma total por lado. Igual que Gamma.
+- Delta: paredes = mayor exposición delta positiva y negativa. La ilumina el flujo con lado en contratos-delta.
+- Vanna y Charm: paredes = mayor positivo y más negativo de cada una. Las ilumina el mismo flujo con lado (la vanna y el charm cambian con la IV y el tiempo; el flujo indica dónde entra el dinero).
+- Calls: pared = mayor exposición de calls (verde); la ilumina el flujo de calls. Puts: pared = mayor exposición de puts (roja); la ilumina el flujo de puts.
+- Las reglas de toque, rechazo, cruce, hueco y estela son las MISMAS en todas las capas.
+
+8. UMBRALES PROPUESTOS (todos ajustables)
+- Medio escalón de strike para el toque; 5 minutos de permanencia; 0,25 Z para rechazo y para cruce; vida media de 15 minutos; N = 6 niveles en vivo; percentil 90 para destacarse.
+
+9. VALIDACIÓN ANTES DE CONSTRUIR (22 sesiones guardadas, solo lectura)
+- Repetición de las 22 sesiones de SPX, SPY, QQQ, NDX e IWM con las reglas de arriba.
+- Se mide: cuántas marcas por día (objetivo: legible, menos de ~15 por símbolo); qué tan seguido una marca "soporte" / "resistencia" se mantuvo en los 30 minutos siguientes frente a strikes al azar a la misma distancia en Z; cuántos cruces y huecos.
+- Si las marcas no superan al azar, se dejan como descripción visual y se dice así en la pantalla.
+
+10. LO QUE NO SE PUDO VERIFICAR
+- Cómo se ve con datos reales (falta el prototipo).
+- Si 0,25 Z y 5 minutos separan bien los rebotes del ruido en todos los símbolos.
+- El costo de dibujar las baldosas con 2 s de refresco en NDX (≈300 strikes).
