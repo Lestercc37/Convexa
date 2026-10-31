@@ -48,11 +48,29 @@
   padding: 10px 12px 12px;
   box-sizing: border-box;
 }
+/* Every box between the window and the chart may shrink (min-width: 0). Without it the chart kept its old pixel width when the window was narrowed
+   and its right side (price axis, GEX profile) was cut off (Lester 2026-10-30). */
+.app-v2 .tv-shell {
+  grid-template-columns: minmax(0, 1fr);
+}
+.app-v2 .tv-shell > *,
+.app-v2 .tv-body,
+.app-v2 .tv-center,
+.app-v2 .price-chart-panel,
+.app-v2 .price-chart-frame,
+.app-v2 .price-chart {
+  min-width: 0;
+  max-width: 100%;
+}
 .app-v2 .tv-body {
+  display: flex;
+  flex-direction: column;
   min-height: 0;
+  overflow: hidden;
   background: transparent;
 }
 .app-v2 .tv-center {
+  flex: 1 1 auto;
   min-height: 0;
   background: transparent;
 }
@@ -60,7 +78,9 @@
 /* Top bar: big logo on the left spanning both rows. */
 .v2-bar {
   display: grid;
-  grid-template-columns: auto 1fr;
+  /* minmax(0, 1fr), not 1fr: a row with many controls must scroll inside the bar, not widen the whole page (that cut off the chart's right
+     side - price axis, GEX profile - in narrowed windows, Lester 2026-10-30). */
+  grid-template-columns: auto minmax(0, 1fr);
   align-items: center;
   gap: 4px 14px;
   min-width: 0;
@@ -152,9 +172,13 @@
   color: var(--v2-dim);
   font-size: 11px;
 }
+/* The listed expiration of the selected tab, readable (it was the faint grey and barely visible, Lester 2026-10-30). */
 .v2-expiration {
-  color: var(--v2-faint);
-  font-size: 10.5px;
+  padding: 3px 8px;
+  border: 1px solid var(--v2-line-strong);
+  border-radius: 999px;
+  color: var(--v2-text);
+  font: 600 11px var(--font-v2-mono), "JetBrains Mono", monospace;
 }
 .v2-clock {
   color: var(--v2-dim);
@@ -410,4 +434,18 @@
   .v2-switch {
     display: none;
   }
+}
+
+/* The EMA settings inside the Niveles menu: drawn in place, inside the menu, instead of a floating panel anchored to the right of its small button
+   (it opened past the left edge of the screen, Lester 2026-10-30). */
+.v2-menu .ema-menu {
+  width: 100%;
+}
+.v2-menu .ema-menu-panel {
+  position: static;
+  min-width: 0;
+  margin-top: 6px;
+  border-color: var(--v2-line);
+  background: transparent;
+  box-shadow: none;
 }
