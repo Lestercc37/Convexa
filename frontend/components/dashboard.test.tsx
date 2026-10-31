@@ -642,6 +642,10 @@ describe("Dashboard", () => {
     await screen.findByLabelText("Chart de velas para SPY");
     expect(container.querySelector(".v2-bar")).toBeInTheDocument();
     expect(container.querySelector(".tv-topbar")).not.toBeInTheDocument();
+    // The regime / expected-move pills lead the SECOND row, so a narrowed window never scrolls them out of sight.
+    const rows = container.querySelectorAll(".v2-bar .v2-row");
+    expect(rows[1].querySelector(".regime-badge-compact")).toBeInTheDocument();
+    expect(rows[0].querySelector(".regime-badge-compact")).not.toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: /Ventanas/ }));
     await user.click(screen.getByRole("button", { name: /Heatmap Delta/ }));

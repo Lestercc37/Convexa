@@ -702,10 +702,12 @@ export function Dashboard({ mode = "full", route, onRouteChange }: DashboardProp
             </button>
           ))}
         </div>
-        {gamma && <RegimeCompactBadge gamma={gamma} />}
-        {market && <ExpectedMoveCompactBadge expectedMove={market.expected_move} />}
       </div>
       <div className="v2-row">
+        {/* The regime and expected-move pills lead the second row: at the end of the first one they scrolled out of sight once the window was
+            narrowed (Lester 2026-10-30). */}
+        {gamma && <RegimeCompactBadge gamma={gamma} />}
+        {market && <ExpectedMoveCompactBadge expectedMove={market.expected_move} />}
         <span className="v2-clock num">
           <SessionClock />
         </span>
