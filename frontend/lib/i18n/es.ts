@@ -303,6 +303,8 @@ export const es: Translations = {
   },
   appV2: {
     windowsMenu: "Ventanas",
+    alertsWindow: "Alertas",
+    dealersWindow: "Dealers",
     openApart: "abrir aparte",
     windowsNote: "Cada capa se abre en su propia ventana, que sigue al símbolo y la temporalidad de esta. Se puede llevar a otra pantalla.",
     reduceMotion: "Reducir movimiento",

@@ -449,3 +449,24 @@
   background: transparent;
   box-shadow: none;
 }
+
+/* Panel windows (Alertas, Dealers) of the desktop app. */
+.v2-panel-window {
+  grid-template-rows: auto 1fr;
+}
+.v2-panel-window > .v2-win-head {
+  border: 1px solid var(--v2-line);
+  border-radius: 12px;
+  background: var(--v2-panel);
+}
+.v2-panel-body {
+  min-height: 0;
+  overflow-y: auto;
+  border: 1px solid var(--v2-line);
+  border-radius: 12px;
+  background: var(--v2-panel);
+  padding: 8px;
+}
+.v2-panel-note {
+  color: var(--v2-dim);
+}

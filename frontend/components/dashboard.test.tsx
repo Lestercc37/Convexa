@@ -651,6 +651,9 @@ describe("Dashboard", () => {
     await user.click(screen.getByRole("button", { name: /Heatmap Delta/ }));
     expect(open).toHaveBeenCalledWith(expect.stringContaining("/vista/grafico?simbolo=SPY&tf=1m&rango=dia"), "convexa-heatmap-delta");
     expect(open.mock.calls[0][0]).toContain("capa=heatmap-delta");
+    // The menu is still open after the first choice.
+    await user.click(screen.getByRole("button", { name: /Dealers/ }));
+    expect(open).toHaveBeenLastCalledWith("/vista/dealers?simbolo=SPY", "convexa-dealers");
 
     await user.click(screen.getByLabelText("Reducir movimiento"));
     expect(container.querySelector(".tv-shell")).toHaveClass("reduce-motion");

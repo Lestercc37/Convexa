@@ -76,6 +76,12 @@ function createWindow(key, title, url) {
       else openExtraChartWindow(target);
       return { action: "deny" };
     }
+    // Panel windows from "Ventanas" (Alertas, Dealers): one window per panel, focused if already open.
+    const panel = isOwnOrigin(BASE, target) ? PANEL_TITLES[new URL(target).pathname] : undefined;
+    if (panel) {
+      openPanelWindow(new URL(target).pathname, panel, target);
+      return { action: "deny" };
+    }
     if (target.startsWith("https://") && !isOwnOrigin(BASE, target)) void shell.openExternal(target);
     return { action: "deny" };
   });
@@ -119,6 +125,21 @@ function openLayerWindow(layer) {
   const win = createWindow(`layer:${layer.id}`, `Convexa — ${layer.label}`, layerUrl(BASE, mainUrl, layer.id));
   layerWindows.set(layer.id, win);
   win.on("closed", () => layerWindows.delete(layer.id));
+}
+
+const PANEL_TITLES = { "/vista/alertas": "Convexa — Alertas", "/vista/dealers": "Convexa — Dealers" };
+const panelWindows = new Map();
+function openPanelWindow(path, title, url) {
+  const existing = panelWindows.get(path);
+  if (existing && !existing.isDestroyed()) {
+    void existing.loadURL(url);
+    existing.show();
+    existing.focus();
+    return;
+  }
+  const win = createWindow(`panel:${path}`, title, url);
+  panelWindows.set(path, win);
+  win.on("closed", () => panelWindows.delete(path));
 }
 
 let extraCharts = 0;

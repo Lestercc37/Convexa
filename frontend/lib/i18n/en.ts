@@ -302,6 +302,8 @@ export const en: Translations = {
   },
   appV2: {
     windowsMenu: "Windows",
+    alertsWindow: "Alerts",
+    dealersWindow: "Dealers",
     openApart: "open apart",
     windowsNote: "Each layer opens in its own window, following this window's symbol and timeframe. It can go to another screen.",
     reduceMotion: "Reduce motion",

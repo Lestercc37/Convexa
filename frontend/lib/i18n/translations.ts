@@ -262,6 +262,8 @@ export type Translations = {
   };
   appV2: {
     windowsMenu: string;
+    alertsWindow: string;
+    dealersWindow: string;
     openApart: string;
     windowsNote: string;
     reduceMotion: string;
