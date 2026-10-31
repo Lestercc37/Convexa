@@ -1,0 +1,42 @@
+DISEÑO: PESTAÑAS 0DTE · 1DTE · 90 DÍAS (2026-10-30)
+Solo diseño. No se pidió nada a ThetaData ni se cambió nada.
+
+1. QUÉ SE PIDE (Lester, 2026-10-30)
+- Dejar solo tres pestañas de gamma: 0DTE, 1DTE y un agregado de 90 días.
+- Motivo: el 0-2 DTE cuenta 2 días de CALENDARIO, así que los viernes es igual a 0DTE y los jueves suma solo 2 vencimientos (medido hoy: en 96 recálculos de jueves y viernes cambió el ABS 5 veces, la Call Wall 19, la Put Wall 8 y el Flip 67; de lunes a miércoles no cambia nada).
+
+2. LAS TRES PESTAÑAS
+- 0DTE: el vencimiento de hoy, como ahora (con OI | Volumen).
+- 1DTE: el siguiente vencimiento LISTADO (el viernes es el del lunes), como ahora.
+- 90 DÍAS: los vencimientos listados DESPUÉS del 1DTE y hasta 90 días; NO incluye el 0DTE ni el 1DTE (Lester 2026-10-30: "deja fuera 0dte y 1dte"). Así las tres pestañas no se pisan: cada vencimiento aparece en una sola. Es el mapa "estructural": las paredes de los vencimientos semanales, mensuales y trimestrales, sin el ruido del día (si se sumara el 0DTE, su gamma enorme mandaría y la pestaña se parecería al 0DTE).
+- Se quitan las pestañas 2DTE y 0-2 DTE.
+- Los niveles de cada pestaña son los de siempre: ABS (|calls| + |puts|), Call Wall y Put Wall (gamma neta), Gamma Flip (búsqueda amplia), régimen y Net GEX.
+
+3. DATOS: QUÉ HAY Y QUÉ FALTA
+- Hoy el scheduler pide a ThetaData solo los vencimientos de los próximos 14 días (WILDCARD_MAX_DTE = 14 en provider.py). Revisado hoy: SPX, NDX, SPY y QQQ tienen 11 vencimientos guardados, hasta el 13 de noviembre.
+- Para 90 días hay que pedir más lejos. Antecedente: hasta el 15 de octubre el pedido traía TODOS los vencimientos (SPX: 56, hasta 2031) y una prueba con max_dte=45 respondió en 0,8 s (29 vencimientos de SPXW). Con max_dte=90 calculo de 50 a 60 vencimientos para SPX/NDX/SPY/QQQ (vencimientos diarios) y unas 4 a 5 veces los contratos de hoy (SPX: de ~2.400 a ~10.000-12.000).
+
+4. CÓMO SE PIDE SIN CARGAR EL SISTEMA
+- Un pedido aparte, "lento", cada 15 minutos (no en cada ciclo de ~1,6 min): un solo pedido por símbolo con max_dte=90. Los vencimientos lejanos cambian muy poco en minutos (el OI es del día; la IV y la gamma lejana se mueven despacio).
+- El ciclo normal sigue igual (14 días) para 0DTE y 1DTE y la capa rápida de 2 s.
+- Lo pedido para 90 días NO se guarda contrato por contrato (sería ~1,5 millones de filas más por día). Se calcula el agregado y se guardan solo los niveles y el perfil por strike (gamma_aggregates / gamma_aggregate_items con view = '90d'): unas 26 fotos por día y símbolo, pocos MB.
+- Respeta el límite de pedidos simultáneos de ThetaData (los 8 cupos compartidos) y no corre mientras haya una descarga histórica.
+- Capa rápida (2 s): no hace falta para 90 días; la gamma lejana casi no cambia en segundos.
+
+5. LO QUE HAY QUE CUIDAR
+- ABS PROTEGIDO: el ABS que usamos en los estudios y que Lester considera su mejor nivel es el de 0-2 DTE. Propuesta: seguir CALCULÁNDOLO por detrás (sin pestaña) 4 semanas, corregido para contar 3 vencimientos listados, para no perder la continuidad y comparar contra 0DTE y 90 días con la regla de reacción del precio. Quitarlo del todo solo con su sí.
+- Gamma de 90 días: al dejar fuera 0DTE y 1DTE, la pestaña refleja solo los vencimientos siguientes. Dentro de ella todavía pesan más los más cercanos (el 2DTE y la semana siguiente); hay que medir si sus niveles se distinguen de los de 1DTE.
+- Heatmap de 90 días: con una foto cada 15 minutos, el heatmap de esa pestaña es más grueso (columnas de 15 min).
+- Las pantallas que hoy leen "tactical" (heatmap, perfil, historial, estudios, capa rápida, app) pasan a leer '0dte' por defecto; hay que revisar cada una.
+
+6. ORDEN DE TRABAJO (cada paso con su sí)
+1. Una consulta de prueba a ThetaData con max_dte=90 para SPX, fuera de horario: contratos, vencimientos, segundos y MB. Necesita el sí de Lester (pedido nuevo).
+2. Medir con esa foto: el ABS, las paredes y el Flip de 90 días (sin 0DTE ni 1DTE) contra los de 0DTE y 1DTE (¿aportan algo distinto?).
+3. Si sirve: el pedido lento cada 15 min + la vista '90d' en el scheduler (PR, pruebas, despliegue después del cierre).
+4. Pestañas 0DTE | 1DTE | 90 DÍAS en la app (y en el dashboard web solo si Lester lo pide, porque está congelado).
+5. El 0-2 DTE corregido sigue calculándose por detrás 4 semanas; después Lester decide.
+
+7. LO QUE NO PUDE VERIFICAR
+- Cuántos contratos y cuánto tarda de verdad el pedido a 90 días (requiere la consulta de prueba).
+- Si el agregado de 90 días da niveles distintos y útiles frente a 0DTE.
+- Si alguna pantalla depende de "tactical" de forma que no vi en esta revisión.
