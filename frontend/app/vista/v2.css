@@ -330,7 +330,7 @@
 .v2-menu legend {
   display: none;
 }
-.v2-ws button {
+.v2-menu.v2-ws button {
   display: flex;
   justify-content: space-between;
   align-items: center;
@@ -344,13 +344,13 @@
   font: 600 12px var(--font-v2-ui), Manrope, sans-serif;
   cursor: pointer;
 }
-.v2-ws button:hover {
+.v2-menu.v2-ws button:hover {
   background: rgba(255, 255, 255, 0.05);
 }
-.v2-ws button span {
+.v2-menu.v2-ws button span {
   color: var(--v2-accent);
 }
-.v2-ws p {
+.v2-menu.v2-ws p {
   margin: 8px 6px 2px;
   color: var(--v2-faint);
   font-size: 11px;
