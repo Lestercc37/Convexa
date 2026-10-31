@@ -3,6 +3,7 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import { ApiError, getMe } from "@/lib/api";
+import { DESKTOP_HOME, isDesktopApp } from "@/lib/desktop-app";
 
 // Wraps the dashboard route only (app/page.tsx) -- /login itself is a
 // separate, ungated route, so there's no path-based branching needed
@@ -17,7 +18,14 @@ export function AuthGate({ children }: { children: ReactNode }) {
   useEffect(() => {
     const controller = new AbortController();
     getMe(controller.signal)
-      .then(() => setStatus("authenticated"))
+      .then(() => {
+        // The desktop app never shows the web dashboard: if a window lands on "/" (signup, an old link), it goes to the app's chart.
+        if (window.location.pathname === "/" && isDesktopApp()) {
+          router.replace(DESKTOP_HOME);
+          return;
+        }
+        setStatus("authenticated");
+      })
       .catch((reason: unknown) => {
         if (controller.signal.aborted) return;
         // A /vista/... window (desktop app) comes back to its own view after the login, not to the full dashboard.
