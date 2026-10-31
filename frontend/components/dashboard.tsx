@@ -725,6 +725,12 @@ export function Dashboard({ mode = "full", route, onRouteChange }: DashboardProp
               <span>⧉ {t.appV2.openApart}</span>
             </button>
           ))}
+          {(["alertas", "dealers"] as const).map((panel) => (
+            <button key={panel} type="button" onClick={() => window.open(`/vista/${panel}?simbolo=${encodeURIComponent(symbol)}`, `convexa-${panel}`)}>
+              {panel === "alertas" ? t.appV2.alertsWindow : t.appV2.dealersWindow}
+              <span>⧉ {t.appV2.openApart}</span>
+            </button>
+          ))}
           <p>{t.appV2.windowsNote}</p>
         </V2Dropdown>
         <button type="button" className="v2-ibtn" title={t.appV2.guideTitle} aria-label={t.enginesGuide.triggerAriaLabel} onClick={() => setShowEnginesGuide(true)}>
