@@ -1,0 +1,77 @@
+DISEÑO: CADENA DE FLUJO POR STRIKE (a partir del gex-flow.html de Lester)
+Domingo 2026-10-25. Solo diseño: no se instaló nada.
+Prototipo con datos reales del viernes 10-23: docs/prototipo_cadena_flujo_SPX_2026-10-23.html
+
+1. QUÉ SE QUIERE
+- La tabla de strikes de su script (columnas de 5, 15, 30 y 60 minutos, fila del spot, marcas de niveles, imán y replay).
+- Que las columnas muestren FLUJO REAL que entra a cada strike, no el cambio del GEX calculado con el interés abierto. Medido el 10-24: ese interés no cambia durante el día, así que su cambio solo refleja precio y tiempo.
+- Que sirva también de alerta cuando un strike recibe mucho flujo en poco tiempo.
+- Será una ventana de la app de escritorio y una pestaña del dashboard.
+
+2. NÚMEROS DEL VIERNES 10-23 (SPX, solo 0DTE, operaciones reales descargadas)
+- 1.341.096 operaciones, 3,14 millones de contratos.
+- Con lado claro (operaciones simples firmadas contra su bid/ask): 1.705.903 contratos, el 54 %.
+- Paquetes multi-leg: 1.180.233 contratos, el 38 %. Se muestran APARTE, nunca como "sin lado".
+- Otras condiciones (subastas, cruces, etc.): 254.757 contratos, el 8 %.
+- Flujo neto del día: −8.245 contratos-delta, presión bajista.
+- El flujo neto por strike en 5 minutos es chico. En 99 de cada 100 casos queda por debajo de 167 contratos-delta, y en 999 de cada 1.000 por debajo de 322.
+- Cada fila muestra alrededor de 29 strikes (14 arriba y 14 abajo del spot), como en su script.
+
+3. DE DÓNDE SALE CADA COLUMNA
+Hoy no se guarda flujo por strike: minute_option_flow es por símbolo, option_quote_minutes guarda bid/ask y whale_alerts solo guarda las alertas. Hace falta una tabla nueva:
+- minute_strike_flow: una fila por minuto, símbolo, vencimiento, strike y call/put.
+  - Campos: flujo con lado en contratos-delta (call compra +, call venta −, put compra −, put venta +), contratos con lado, contratos en paquetes, otros contratos y prima de compra/venta.
+  - La escribe el stream processor, que YA clasifica cada operación para el panel de Flujo; solo se agrega un nivel más de detalle.
+  - Tamaño: el viernes, el 0DTE de SPX tuvo 37.790 celdas con operaciones. Con todos los símbolos y vencimientos del stream calculo de 120.000 a 200.000 filas por día, unos 20-30 MB por día. Guardando 30 días, menos de 1 GB. Hay 192 GB libres.
+  - Es una tabla nueva, así que necesita el "sí" de Lester.
+- GEX actual: el GEX por strike que Convexa ya guarda (gamma_aggregate_items, vista táctica; cada 10 s en la capa rápida).
+- Niveles: los de Convexa, NO los que calculaba su script dentro de los 29 strikes visibles:
+  - ABS Gamma (call + put en valor absoluto; nivel protegido);
+  - Call Wall y Put Wall (selección por gamma neta);
+  - Gamma Flip (búsqueda amplia).
+- Se quitan del script "Régimen VOL", "ABS VOL" y "Hedge impact", porque en su versión eran fórmulas inventadas.
+
+4. CÓMO SE VE (el prototipo)
+- Su mismo estilo: su CSS, Manrope y JetBrains Mono, fondo oscuro.
+- Columnas: Strike | GEX actual | Flujo 5M | Flujo 15M | Flujo 30M | Flujo 60M | Paquetes 15M | Nivel.
+- Cada celda de flujo lleva una barra y el número en contratos-delta. Verde es presión alcista (compra de calls o venta de puts) y rojo, bajista.
+- Al pasar el mouse sobre una fila se ve la parte de calls y la de puts por separado.
+- El 🧲 marca el strike que más flujo neto recibió en esa ventana.
+- Cabecera: flujo neto del día, porcentaje con lado, alertas del día y el umbral, que se puede editar.
+- Replay del día: control deslizante y botón ▶. Sirve para la repetición de 5 días de la app.
+- El flujo cuenta desde las 09:30, no desde las 09:45.
+- Vencimiento: 0DTE (por defecto), 0-2 DTE o todos los del stream.
+- Símbolos: todos los de Convexa, NDX/NQ siempre en la lista. NQ y ES se muestran con el flujo de NDX y SPX.
+
+5. ALERTAS
+- Regla: un strike alerta cuando su flujo neto de los últimos 5 minutos cruza el umbral, al alza o a la baja. Es una alerta por cruce, y vuelve a armarse cuando baja del umbral.
+- Calibración del viernes en SPX:
+  - umbral 100 → 171 alertas al día;
+  - 150 → 77;
+  - 200 → 37 (8 alcistas y 29 bajistas);
+  - 250 → 15;
+  - 300 → 7.
+- Umbral automático por símbolo, como el mínimo de los cubos: el que deje unas 30-40 alertas por sesión, recalculado con las últimas 5 sesiones. En SPX sería 200. Cada uno puede escribir el suyo.
+- Lo que se ve el viernes: con 200, 25 de las 37 alertas caen después de las 14:00, y la mediana está a 3 puntos del spot. Con un umbral fijo, la tarde del 0DTE y los strikes del dinero dominan. Mejora posible, a probar con 20 sesiones: umbral según la hora del día. Queda abierto.
+- Diferencia con Whale Alerts: Whale Alerts mira cada contrato por separado y la prima bruta (compra + venta) de cada minuto. Esta alerta mira el strike completo (calls y puts juntos), solo el flujo NETO con lado, en 5 minutos móviles, y deja fuera los paquetes multi-leg.
+- Entrega: en el dashboard o la app, y en el teléfono por Telegram (aprobado hoy para los cruces de EMA). Usa el mismo canal y la misma configuración.
+- Es contexto, no pronóstico: las pruebas anteriores no mostraron que las alertas anticipen el precio.
+
+6. COSTO
+- Por consulta: 29 strikes × 6 números ≈ 5 KB. Si se pide solo lo nuevo desde la última consulta (como hace hoy el heatmap con #334), es todavía menos.
+- En el servidor: una consulta sobre los últimos 60 minutos de un símbolo con índice; estimo menos de 20 ms. No está medido porque la tabla no existe todavía.
+- Cada 10-15 segundos con la capa rápida, o cada 60 s. En la app de escritorio la pide el centro de datos una sola vez por símbolo, para todas las ventanas.
+
+7. ORDEN DE CONSTRUCCIÓN (PR pequeños, cada uno con el "sí" de Lester, fuera del horario de mercado)
+1. Tabla minute_strike_flow y escritura en el stream processor. Desde ese día se empieza a guardar. 1 día.
+2. Endpoint /flow/{symbol}/strikes con ventanas de 5/15/30/60, los paquetes aparte y consultas incrementales. 1 día.
+3. Vista en el dashboard y ventana de la app, con su diseño. 2 días.
+4. Alertas por strike con umbral automático y Telegram, compartiendo base con las alertas de EMA. 1,5 días.
+Total: unos 5-6 días.
+
+8. LO QUE NO PUDE VERIFICAR
+- NDX: no hay operaciones por strike de NDX guardadas ni descargadas, así que el prototipo es solo de SPX. NDX existirá desde el día en que se instale la tabla.
+- La delta de cada operación es la de la última foto de la cadena (con hasta 1 minuto de antigüedad), no la del instante exacto.
+- El lado se calculó con el bid/ask que trae cada operación descargada. En vivo, el processor usa la última cotización del stream, que puede diferir un poco.
+- El costo real del endpoint, porque la tabla no existe todavía.
+- Si estas alertas le dan ventaja a la operativa: no se probó. Por ahora son contexto.
