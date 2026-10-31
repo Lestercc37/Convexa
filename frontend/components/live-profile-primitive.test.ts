@@ -57,7 +57,9 @@ describe("profileWidthCssPx", () => {
   });
 
   it("is zero on a pane too narrow to hold the history and the column", () => {
-    expect(profileWidthCssPx(519)).toBe(0);
+    expect(profileWidthCssPx(519)).toBe(110); // narrow windows keep a 110 px column (2026-10-30)
+    expect(profileWidthCssPx(600)).toBe(120);
+    expect(profileWidthCssPx(359)).toBe(0);
     expect(profileWidthCssPx(0)).toBe(0);
     expect(profileWidthCssPx(Number.NaN)).toBe(0);
   });
@@ -126,7 +128,7 @@ describe("LiveProfilePrimitive bars", () => {
     const { primitive } = attached();
     primitive.setBars(BARS);
     const narrow = fakeContext();
-    drawView(primitive, 0, narrow.context, 400);
+    drawView(primitive, 0, narrow.context, 300);
     expect(narrow.ops).toHaveLength(0);
     const empty = attached();
     const none = fakeContext();
@@ -204,7 +206,7 @@ describe("LiveProfilePrimitive overlay (line of time and smile)", () => {
     const { primitive } = attached();
     primitive.setSmile([{ strike: 100, iv: 0.2, type: "call" }]);
     const { context, ops } = fakeContext();
-    drawView(primitive, 1, context, 400);
+    drawView(primitive, 1, context, 300);
     expect(ops).toHaveLength(0);
   });
 

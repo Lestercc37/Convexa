@@ -48,7 +48,12 @@ export function smileDotX(iv: number, low: number, high: number, paneWidthCssPx:
   return left + share * Math.max(0, right - left);
 }
 
-const COLUMN_MIN_PANE_WIDTH_CSS_PX = 520;
+// Below this pane width the column is hidden (the candles need the room). Was 520 until 2026-10-30: Lester's narrowed app windows lost the profile and
+// it only came back near full monitor width; the v2 mockup keeps a 110 px column down to small screens.
+const COLUMN_MIN_PANE_WIDTH_CSS_PX = 360;
+// Under this pane width the column may be as narrow as COLUMN_MIN_NARROW_CSS_PX (the mockup's 110 px at <= 1100 px windows).
+const COLUMN_NARROW_PANE_WIDTH_CSS_PX = 700;
+const COLUMN_MIN_NARROW_CSS_PX = 110;
 const COLUMN_WIDTH_FRACTION = 0.2;
 const COLUMN_MIN_CSS_PX = 150;
 const COLUMN_MAX_CSS_PX = 320;
@@ -109,7 +114,8 @@ export function profileBarsFromHeatmap(data: HeatmapData): ProfileBar[] {
  */
 export function profileWidthCssPx(paneWidthCssPx: number): number {
   if (!(paneWidthCssPx >= COLUMN_MIN_PANE_WIDTH_CSS_PX)) return 0;
-  return Math.min(COLUMN_MAX_CSS_PX, Math.max(COLUMN_MIN_CSS_PX, Math.round(paneWidthCssPx * COLUMN_WIDTH_FRACTION)));
+  const minimum = paneWidthCssPx < COLUMN_NARROW_PANE_WIDTH_CSS_PX ? COLUMN_MIN_NARROW_CSS_PX : COLUMN_MIN_CSS_PX;
+  return Math.min(COLUMN_MAX_CSS_PX, Math.max(minimum, Math.round(paneWidthCssPx * COLUMN_WIDTH_FRACTION)));
 }
 
 function p98(values: number[]): number | null {
