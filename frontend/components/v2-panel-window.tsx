@@ -10,7 +10,9 @@ import type { Underlying } from "@/lib/types";
  * A desktop-app window for one panel (Dealers, Alertas), opened from "Ventanas" (Lester 2026-10-30: the main window stays a plain chart, each panel lives
  * in its own window). The symbol is in the address (?simbolo=SPX) and can be changed here; the window keeps the v2 look of /vista.
  */
-function PanelWindowInner({ title, children }: { title: string; children: (symbol: string) => ReactNode }) {
+// Exported for /vista/grafico?panel=... (already inside its own AuthGate and Suspense): the installed desktop app opens any
+// /vista/grafico address as a window, so the newer panels reach older installs through that route too.
+export function PanelWindowInner({ title, children }: { title: string; children: (symbol: string) => ReactNode }) {
   const params = useSearchParams();
   const router = useRouter();
   const pathname = usePathname();
@@ -35,7 +37,12 @@ function PanelWindowInner({ title, children }: { title: string; children: (symbo
           className="v2-sel"
           aria-label="Símbolo"
           value={symbol}
-          onChange={(event) => router.replace(`${pathname}?simbolo=${encodeURIComponent(event.target.value)}`, { scroll: false })}
+          onChange={(event) => {
+            // Keep the rest of the address (e.g. ?panel=cadena when the window is /vista/grafico?panel=...).
+            const next = new URLSearchParams(params.toString());
+            next.set("simbolo", event.target.value);
+            router.replace(`${pathname}?${next.toString()}`, { scroll: false });
+          }}
         >
           {(underlyings.length ? underlyings.map((item) => item.symbol) : [symbol]).map((item) => (
             <option key={item} value={item}>

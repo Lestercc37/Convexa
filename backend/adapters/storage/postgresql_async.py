@@ -770,6 +770,75 @@ class AsyncPostgreSQLStorage:
                     ],
                 )
 
+    async def get_option_quote_symbols(self, occ_prefix: str, start: datetime, end: datetime) -> list[str]:
+        """The contracts recorded in option_quote_minutes in [start, end) whose OCC symbol starts with `occ_prefix` (e.g. SPXW261030): a range
+        scan of the primary key (time, occ_symbol) over one session. A read error returns [] so the contract chart simply shows nothing."""
+        if not occ_prefix.isalnum():
+            return []
+        try:
+            async with self.session_factory() as session:
+                rows = (
+                    await session.execute(
+                        text(
+                            """
+                            SELECT DISTINCT occ_symbol FROM option_quote_minutes
+                            WHERE time >= :start AND time < :end AND occ_symbol LIKE :pattern
+                            """
+                        ),
+                        {"start": start, "end": end, "pattern": f"{occ_prefix}%"},
+                    )
+                ).all()
+        except Exception:
+            logger.exception("Reading the recorded option contracts failed; serving none")
+            return []
+        return sorted(str(row[0]) for row in rows)
+
+    async def get_option_quote_minutes(self, occ_symbols: list[str], start: datetime, end: datetime) -> list[OptionQuoteMinute]:
+        """The recorded minutes of these contracts in [start, end), oldest first (index occ_symbol, time). A read error returns []."""
+        if not occ_symbols:
+            return []
+        try:
+            async with self.session_factory() as session:
+                rows = (
+                    await session.execute(
+                        text(
+                            """
+                            SELECT time, occ_symbol, bid, ask, quote_time FROM option_quote_minutes
+                            WHERE occ_symbol = ANY(:symbols) AND time >= :start AND time < :end
+                            ORDER BY time
+                            """
+                        ),
+                        {"symbols": list(occ_symbols), "start": start, "end": end},
+                    )
+                ).all()
+        except Exception:
+            logger.exception("Reading the option quote minutes failed; serving none")
+            return []
+        return [OptionQuoteMinute(row[0], str(row[1]), Decimal(row[2]), Decimal(row[3]), row[4]) for row in rows]
+
+    async def get_last_option_quotes(self, occ_symbols: list[str], start: datetime, end: datetime) -> dict[str, OptionQuoteMinute]:
+        """The last recorded minute of each contract in [start, end) (one indexed lookup per contract). A read error returns {}."""
+        if not occ_symbols:
+            return {}
+        try:
+            async with self.session_factory() as session:
+                rows = (
+                    await session.execute(
+                        text(
+                            """
+                            SELECT DISTINCT ON (occ_symbol) time, occ_symbol, bid, ask, quote_time FROM option_quote_minutes
+                            WHERE occ_symbol = ANY(:symbols) AND time >= :start AND time < :end
+                            ORDER BY occ_symbol, time DESC
+                            """
+                        ),
+                        {"symbols": list(occ_symbols), "start": start, "end": end},
+                    )
+                ).all()
+        except Exception:
+            logger.exception("Reading the last option quotes failed; serving none")
+            return {}
+        return {str(row[1]): OptionQuoteMinute(row[0], str(row[1]), Decimal(row[2]), Decimal(row[3]), row[4]) for row in rows}
+
     async def get_volume_corrections(self, occ_symbols: list[str]) -> dict[str, int]:
         """The corrections of the CURRENT trade date for these contracts (migration 0044); a missing table or any read error returns {} so the
         /chain reply keeps the live counters instead of failing."""

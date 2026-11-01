@@ -1,5 +1,6 @@
 import type {
   ChainExpirationsResponse,
+  ContractChartResponse,
   FutureOpeningPriceResponse,
   GammaAggregateResponse,
   GammaHeatmapMetric,
@@ -17,6 +18,7 @@ import type {
   ScreenerPresetSettings,
   ScreenerPresetSettingsListResponse,
   ScreenerPresetSettingsUpdate,
+  StrikeFlowResponse,
   UnderlyingsResponse,
   VwapHistoryResponse,
   CubeMinimumsResponse,
@@ -177,6 +179,26 @@ export function getMinuteFlow(symbol: string, options: { start?: Date }, signal?
   if (options.start) params.set("start", options.start.toISOString());
   const query = params.toString() ? `?${params.toString()}` : "";
   return getJson<MinuteFlowResponse>(`/flow/${encodeURIComponent(symbol)}/minutes${query}`, signal);
+}
+
+export function getStrikeFlow(
+  symbol: string,
+  options: { at?: Date; expiration?: StrikeFlowResponse["expiration_mode"] },
+  signal?: AbortSignal,
+) {
+  const params = new URLSearchParams();
+  if (options.at) params.set("at", options.at.toISOString());
+  if (options.expiration) params.set("expiration", options.expiration);
+  const query = params.toString() ? `?${params.toString()}` : "";
+  return getJson<StrikeFlowResponse>(`/flow/${encodeURIComponent(symbol)}/strikes${query}`, signal);
+}
+
+export function getContractChart(symbol: string, options: { date?: string; strike?: number }, signal?: AbortSignal) {
+  const params = new URLSearchParams();
+  if (options.date) params.set("date", options.date);
+  if (options.strike) params.set("strike", String(options.strike));
+  const query = params.toString() ? `?${params.toString()}` : "";
+  return getJson<ContractChartResponse>(`/contracts/${encodeURIComponent(symbol)}/minutes${query}`, signal);
 }
 
 export function getGammaHeatmap(

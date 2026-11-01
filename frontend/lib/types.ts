@@ -238,6 +238,53 @@ export type GammaHeatmapMetric = "gamma" | "absolute_gamma" | "delta" | "vanna" 
 // GET /gamma/{symbol}/heatmap: a strike x time matrix of one stored per-strike figure. `values` of each column are aligned to
 // `strikes`; null = no stored value (delta is null for rows written before it was stored, never 0).
 // GET /flow/{symbol}/minutes: the signed option delta flow per ET minute (an estimate of customer flow from simple trades classified against the bid/ask; delta-equivalent contracts).
+// GET /flow/{symbol}/strikes: the flow chain (minute_strike_flow). Delta-equivalent contracts; positive = bullish (calls bought or puts sold).
+export type StrikeFlowWindows = { m5: number; m15: number; m30: number; m60: number };
+
+export type StrikeFlowRow = {
+  strike: number;
+  // The strike in the requested symbol's own price units (NQ reads QQQ's strikes); null when a price is missing.
+  price: number | null;
+  net: StrikeFlowWindows;
+  calls: StrikeFlowWindows;
+  puts: StrikeFlowWindows;
+  net_day: number;
+  packages_15m: number;
+  contracts_signed_day: number;
+  contracts_package_day: number;
+  contracts_other_day: number;
+};
+
+export type StrikeFlowResponse = {
+  schema_version: number;
+  symbol: string;
+  as_of: string;
+  session_start: string;
+  expiration_mode: "0dte" | "0-2dte" | "all";
+  flow_source: string;
+  price_ratio: number | null;
+  price_offset: number;
+  expirations: string[];
+  net_day: number;
+  signed_share_day: number | null;
+  strikes: StrikeFlowRow[];
+};
+
+// GET /contracts/{symbol}/minutes: Call | Put of one 0DTE strike, dollars per contract since the first minute.
+export type ContractPoint = { time: string; bid: number; ask: number; mid: number; pnl: number };
+export type ContractSeries = { occ_symbol: string; right: "C" | "P"; points: ContractPoint[] };
+export type ContractChartResponse = {
+  schema_version: number;
+  symbol: string;
+  root: string;
+  session_date: string;
+  expiration: string;
+  strikes: number[];
+  strike: number | null;
+  call: ContractSeries | null;
+  put: ContractSeries | null;
+};
+
 export type MinuteFlowResponse = {
   schema_version: number;
   symbol: string;

@@ -69,6 +69,12 @@ function createWindow(key, title, url) {
     }
   });
   win.webContents.setWindowOpenHandler(({ url: target }) => {
+    // Panels opened through /vista/grafico?panel=... (flow chain, Call | Put; frontend 2026-11-01): one titled window per panel.
+    const panelParam = isOwnOrigin(BASE, target) && new URL(target).pathname === "/vista/grafico" ? new URL(target).searchParams.get("panel") : null;
+    if (panelParam && PANEL_PARAM_TITLES[panelParam]) {
+      openPanelWindow(`/vista/grafico?panel=${panelParam}`, PANEL_PARAM_TITLES[panelParam], target);
+      return { action: "deny" };
+    }
     // The page's "Ventanas -> abrir aparte" and the chart's ⧉ (frontend PR #368) call window.open on our own /vista/grafico: open the app's own window instead.
     if (isOwnOrigin(BASE, target) && new URL(target).pathname === "/vista/grafico") {
       const layer = LAYERS.find((entry) => entry.id === new URL(target).searchParams.get("capa"));
@@ -127,7 +133,13 @@ function openLayerWindow(layer) {
   win.on("closed", () => layerWindows.delete(layer.id));
 }
 
-const PANEL_TITLES = { "/vista/alertas": "Convexa — Alertas", "/vista/dealers": "Convexa — Dealers" };
+const PANEL_TITLES = {
+  "/vista/alertas": "Convexa — Alertas",
+  "/vista/dealers": "Convexa — Dealers",
+  "/vista/cadena": "Convexa — Cadena de flujo",
+  "/vista/contrato": "Convexa — Contratos Call | Put",
+};
+const PANEL_PARAM_TITLES = { cadena: "Convexa — Cadena de flujo", contrato: "Convexa — Contratos Call | Put" };
 const panelWindows = new Map();
 function openPanelWindow(path, title, url) {
   const existing = panelWindows.get(path);

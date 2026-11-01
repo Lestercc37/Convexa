@@ -61,6 +61,19 @@ class SyncStorageAsyncReadAdapter:
         # No table behind the in-memory/sqlite storages: kept in memory so tests can read it back.
         self.option_quote_minutes.extend(rows)
 
+    async def get_option_quote_symbols(self, occ_prefix: str, start: datetime, end: datetime) -> list[str]:
+        return sorted({row.occ_symbol for row in self.option_quote_minutes if row.occ_symbol.startswith(occ_prefix) and start <= row.minute < end})
+
+    async def get_option_quote_minutes(self, occ_symbols: list[str], start: datetime, end: datetime) -> list[OptionQuoteMinute]:
+        wanted = set(occ_symbols)
+        return sorted((row for row in self.option_quote_minutes if row.occ_symbol in wanted and start <= row.minute < end), key=lambda row: row.minute)
+
+    async def get_last_option_quotes(self, occ_symbols: list[str], start: datetime, end: datetime) -> dict[str, OptionQuoteMinute]:
+        last: dict[str, OptionQuoteMinute] = {}
+        for row in await self.get_option_quote_minutes(occ_symbols, start, end):
+            last[row.occ_symbol] = row
+        return last
+
     async def get_volume_corrections(self, occ_symbols: list[str]) -> dict[str, int]:
         return self._storage.get_volume_corrections(occ_symbols)
 
