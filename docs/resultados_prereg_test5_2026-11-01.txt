@@ -1,0 +1,349 @@
+... SPX loaded
+... NDX loaded
+... SPY loaded
+... QQQ loaded
+... IWM loaded
+
+PRUEBA 5 (d) DEL PREREGISTRO: EL FLIP SE ACERCA Y, AL CAMBIAR DE SIGNO, EL PRECIO VA HACIA AHÍ — corrida 2026-11-01, solo lectura
+==============================================================================================================
+DESVÍOS Y ACLARACIONES (2026-11-01, escritos antes de leer los resultados):
+ D1. "15 minutos antes" = el ciclo táctico más cercano a 15 min antes, entre 13 y 17 min (los ciclos llegan ~1 por minuto, no exacto).
+ D2. Régimen = gamma_aggregates.net_gamma de la vista táctica (la ventana amplia, la misma del badge de régimen). Cambio de signo = signo
+     distinto al ciclo anterior (ciclos con 0 o nulo no cuentan).
+ D3. Z = |precio − Flip| / (precio · σ · √T): σ = IV ATM del vencimiento más cercano en la primera foto de cadena con IV de 09:33-10:00;
+     T del vencimiento a la hora del ciclo (con el piso de 1 hora de ThetaData).
+ D4. Solo cambios de signo entre 09:45 y 15:30: antes de 09:45 no hay 15 min de historia para el acercamiento; después de 15:30 no cabe la
+     ventana de 30 min. Un evento por cambio de signo (si hubo varios acercamientos antes, cuenta una vez).
+ D5. Acierto = el precio se movió en la dirección predicha (variación 0 = no acierto). "Movimiento a favor" en Z del momento del cambio.
+ D6. Intervalo binomial exacto (Clopper-Pearson, 95 %). El criterio se aplica por separado a 15 y a 30 min, con todos los símbolos juntos
+     (el preregistro dice "al menos 30 eventos en total"); por símbolo se informa como detalle.
+ D7. Base (1): el mismo minuto del día en las OTRAS sesiones del símbolo, a ≥ 30 min de cualquier evento de esa sesión, con la
+     misma dirección predicha. Base (2): cambios de signo sin acercamiento en los 10 min previos.
+ D8. "Flip quieto cruzado por el precio": el Flip se movió menos de 1 escalón de strike entre el inicio del acercamiento y el cambio de
+     signo, y el precio quedó del otro lado del Flip.
+
+DÍAS EXCLUIDOS:
+  SPX 2026-09-25: max gap prices 0.5 min, cycles 30.0 min (09:30-10:00)
+  SPX 2026-09-28: no strike step or no ATM IV 09:33-10:00
+  NDX 2026-09-25: max gap prices 0.5 min, cycles 30.0 min (09:30-10:00)
+  NDX 2026-09-28: no strike step or no ATM IV 09:33-10:00
+  SPY 2026-09-25: max gap prices 0.2 min, cycles 30.0 min (09:30-10:00)
+  SPY 2026-09-28: no strike step or no ATM IV 09:33-10:00
+  QQQ 2026-09-25: max gap prices 0.3 min, cycles 30.0 min (09:30-10:00)
+  QQQ 2026-09-28: no strike step or no ATM IV 09:33-10:00
+  IWM 2026-09-25: max gap prices 0.3 min, cycles 30.0 min (09:30-10:00)
+  IWM 2026-09-28: no strike step or no ATM IV 09:33-10:00
+
+SESIONES USADAS: 120 (SPX 24, NDX 24, SPY 24, QQQ 24, IWM 24)
+
+EVENTOS (acercamiento + cambio de signo en ≤ 10 min):
+  IWM 2026-10-02 09:55 acercamiento 09:55 régimen → − | 15 min +0.57 30 min +0.70 pts | flip quieto cruzado: sí
+  IWM 2026-10-02 09:58 acercamiento 09:58 régimen → + | 15 min +0.37 30 min +0.76 pts | flip quieto cruzado: no
+  IWM 2026-10-02 10:00 acercamiento 10:00 régimen → − | 15 min +0.60 30 min +0.54 pts | flip quieto cruzado: sí
+  IWM 2026-10-02 10:02 acercamiento 10:00 régimen → + | 15 min +0.39 30 min +0.15 pts | flip quieto cruzado: sí
+  IWM 2026-10-06 10:21 acercamiento 10:17 régimen → − | 15 min +0.02 30 min +0.18 pts | flip quieto cruzado: sí
+  IWM 2026-10-06 10:23 acercamiento 10:23 régimen → + | 15 min -0.42 30 min -0.02 pts | flip quieto cruzado: sí
+  IWM 2026-10-06 10:27 acercamiento 10:23 régimen → − | 15 min -0.08 30 min +0.52 pts | flip quieto cruzado: sí
+  IWM 2026-10-06 10:55 acercamiento 10:55 régimen → + | 15 min +0.39 30 min +0.68 pts | flip quieto cruzado: no
+  IWM 2026-10-06 12:10 acercamiento 12:06 régimen → − | 15 min -0.05 30 min -0.05 pts | flip quieto cruzado: sí
+  IWM 2026-10-06 12:13 acercamiento 12:06 régimen → + | 15 min -0.41 30 min -0.38 pts | flip quieto cruzado: sí
+  IWM 2026-10-09 14:51 acercamiento 14:49 régimen → + | 15 min -0.45 30 min -0.56 pts | flip quieto cruzado: sí
+  IWM 2026-10-09 15:05 acercamiento 15:02 régimen → − | 15 min -0.18 30 min -0.30 pts | flip quieto cruzado: no
+  IWM 2026-10-09 15:08 acercamiento 15:08 régimen → + | 15 min -0.17 30 min -0.33 pts | flip quieto cruzado: sí
+  IWM 2026-10-09 15:10 acercamiento 15:08 régimen → − | 15 min -0.19 30 min -0.30 pts | flip quieto cruzado: sí
+  IWM 2026-10-09 15:11 acercamiento 15:11 régimen → + | 15 min -0.26 30 min -0.23 pts | flip quieto cruzado: sí
+  IWM 2026-10-09 15:13 acercamiento 15:11 régimen → − | 15 min -0.60 30 min -0.19 pts | flip quieto cruzado: sí
+  IWM 2026-10-21 15:03 acercamiento 14:58 régimen → − | 15 min +0.69 30 min +1.13 pts | flip quieto cruzado: no
+  IWM 2026-10-21 15:07 acercamiento 14:58 régimen → + | 15 min +0.32 30 min +0.64 pts | flip quieto cruzado: sí
+  IWM 2026-10-22 10:01 acercamiento 10:01 régimen → + | 15 min -1.18 30 min -2.18 pts | flip quieto cruzado: no
+  IWM 2026-10-22 10:04 acercamiento 10:01 régimen → − | 15 min -0.53 30 min -1.88 pts | flip quieto cruzado: no
+  NDX 2026-10-01 11:16 acercamiento 11:07 régimen → + | 15 min -8.56 30 min -59.58 pts | flip quieto cruzado: no
+  NDX 2026-10-01 11:35 acercamiento 11:25 régimen → − | 15 min +14.37 30 min +52.38 pts | flip quieto cruzado: no
+  NDX 2026-10-01 11:58 acercamiento 11:58 régimen → + | 15 min +7.61 30 min +24.49 pts | flip quieto cruzado: no
+  NDX 2026-10-01 12:01 acercamiento 11:58 régimen → − | 15 min -8.60 30 min +5.91 pts | flip quieto cruzado: sí
+  NDX 2026-10-01 12:03 acercamiento 12:03 régimen → + | 15 min +18.02 30 min -3.71 pts | flip quieto cruzado: no
+  NDX 2026-10-01 12:14 acercamiento 12:14 régimen → − | 15 min +16.35 30 min +36.13 pts | flip quieto cruzado: no
+  NDX 2026-10-01 12:17 acercamiento 12:17 régimen → + | 15 min +2.34 30 min +30.46 pts | flip quieto cruzado: no
+  NDX 2026-10-01 12:55 acercamiento 12:55 régimen → − | 15 min +50.90 30 min +195.50 pts | flip quieto cruzado: no
+  NDX 2026-10-01 13:02 acercamiento 12:59 régimen → + | 15 min +74.13 30 min +235.04 pts | flip quieto cruzado: no
+  NDX 2026-10-07 09:58 acercamiento 09:58 régimen → + | 15 min -33.63 30 min +7.88 pts | flip quieto cruzado: no
+  NDX 2026-10-07 10:01 acercamiento 10:01 régimen → − | 15 min -12.27 30 min +29.43 pts | flip quieto cruzado: no
+  NDX 2026-10-07 10:20 acercamiento 10:11 régimen → + | 15 min -11.07 30 min -19.12 pts | flip quieto cruzado: no
+  NDX 2026-10-07 10:51 acercamiento 10:50 régimen → − | 15 min +24.11 30 min +47.67 pts | flip quieto cruzado: no
+  NDX 2026-10-07 10:59 acercamiento 10:56 régimen → + | 15 min +42.29 30 min +27.06 pts | flip quieto cruzado: no
+  NDX 2026-10-07 11:04 acercamiento 10:56 régimen → − | 15 min +42.46 30 min +48.68 pts | flip quieto cruzado: no
+  NDX 2026-10-07 11:06 acercamiento 10:56 régimen → + | 15 min +41.26 30 min +62.72 pts | flip quieto cruzado: no
+  NDX 2026-10-08 10:20 acercamiento 10:18 régimen → + | 15 min +44.00 30 min -11.11 pts | flip quieto cruzado: no
+  NDX 2026-10-08 12:19 acercamiento 12:19 régimen → − | 15 min +4.40 30 min -152.15 pts | flip quieto cruzado: no
+  NDX 2026-10-09 10:57 acercamiento 10:54 régimen → + | 15 min -42.94 30 min -22.62 pts | flip quieto cruzado: no
+  NDX 2026-10-09 11:01 acercamiento 10:54 régimen → − | 15 min -34.09 30 min -33.92 pts | flip quieto cruzado: no
+  NDX 2026-10-09 11:05 acercamiento 11:05 régimen → + | 15 min -18.36 30 min -48.17 pts | flip quieto cruzado: no
+  NDX 2026-10-09 11:07 acercamiento 11:07 régimen → − | 15 min +12.19 30 min -14.45 pts | flip quieto cruzado: no
+  NDX 2026-10-09 11:51 acercamiento 11:51 régimen → + | 15 min +5.69 30 min +3.81 pts | flip quieto cruzado: no
+  NDX 2026-10-09 12:00 acercamiento 12:00 régimen → − | 15 min +42.79 30 min +50.18 pts | flip quieto cruzado: no
+  NDX 2026-10-09 12:05 acercamiento 12:05 régimen → + | 15 min +6.02 30 min +3.55 pts | flip quieto cruzado: no
+  NDX 2026-10-09 12:43 acercamiento 12:40 régimen → − | 15 min +21.83 30 min +8.74 pts | flip quieto cruzado: no
+  NDX 2026-10-09 12:44 acercamiento 12:40 régimen → + | 15 min +6.24 30 min -3.47 pts | flip quieto cruzado: no
+  NDX 2026-10-09 13:09 acercamiento 13:08 régimen → − | 15 min +0.45 30 min +5.66 pts | flip quieto cruzado: no
+  NDX 2026-10-09 13:12 acercamiento 13:08 régimen → + | 15 min +10.08 30 min +10.79 pts | flip quieto cruzado: no
+  NDX 2026-10-09 13:19 acercamiento 13:17 régimen → − | 15 min +13.27 30 min +24.11 pts | flip quieto cruzado: sí
+  NDX 2026-10-09 13:20 acercamiento 13:17 régimen → + | 15 min +5.32 30 min +19.77 pts | flip quieto cruzado: sí
+  NDX 2026-10-09 13:33 acercamiento 13:31 régimen → − | 15 min +11.58 30 min +7.54 pts | flip quieto cruzado: no
+  NDX 2026-10-09 13:34 acercamiento 13:34 régimen → + | 15 min +12.64 30 min +4.22 pts | flip quieto cruzado: no
+  NDX 2026-10-19 10:21 acercamiento 10:18 régimen → + | 15 min -57.52 30 min -24.87 pts | flip quieto cruzado: no
+  NDX 2026-10-19 10:22 acercamiento 10:18 régimen → − | 15 min -65.06 30 min -20.63 pts | flip quieto cruzado: no
+  NDX 2026-10-19 10:46 acercamiento 10:44 régimen → + | 15 min -3.53 30 min +38.96 pts | flip quieto cruzado: no
+  NDX 2026-10-19 10:47 acercamiento 10:44 régimen → − | 15 min -7.68 30 min +33.01 pts | flip quieto cruzado: no
+  NDX 2026-10-19 10:48 acercamiento 10:44 régimen → + | 15 min +8.62 30 min +34.59 pts | flip quieto cruzado: no
+  NDX 2026-10-19 10:49 acercamiento 10:49 régimen → − | 15 min +31.18 30 min +76.47 pts | flip quieto cruzado: no
+  NDX 2026-10-19 10:51 acercamiento 10:49 régimen → + | 15 min +70.25 30 min +86.77 pts | flip quieto cruzado: no
+  NDX 2026-10-19 10:52 acercamiento 10:52 régimen → − | 15 min +62.69 30 min +83.54 pts | flip quieto cruzado: no
+  NDX 2026-10-19 10:54 acercamiento 10:53 régimen → + | 15 min +41.48 30 min +101.25 pts | flip quieto cruzado: no
+  NDX 2026-10-19 11:01 acercamiento 11:01 régimen → − | 15 min +48.08 30 min +103.49 pts | flip quieto cruzado: no
+  NDX 2026-10-19 11:02 acercamiento 11:01 régimen → + | 15 min +22.81 30 min +70.93 pts | flip quieto cruzado: no
+  NDX 2026-10-19 11:03 acercamiento 11:01 régimen → − | 15 min +28.19 30 min +72.67 pts | flip quieto cruzado: no
+  NDX 2026-10-19 11:04 acercamiento 11:04 régimen → + | 15 min +37.50 30 min +86.38 pts | flip quieto cruzado: no
+  NDX 2026-10-19 12:54 acercamiento 12:54 régimen → − | 15 min -28.63 30 min -30.08 pts | flip quieto cruzado: no
+  NDX 2026-10-19 12:55 acercamiento 12:54 régimen → + | 15 min -35.76 30 min -38.97 pts | flip quieto cruzado: no
+  NDX 2026-10-19 12:58 acercamiento 12:58 régimen → − | 15 min -11.03 30 min -0.79 pts | flip quieto cruzado: no
+  NDX 2026-10-19 13:00 acercamiento 12:58 régimen → + | 15 min -12.38 30 min -11.16 pts | flip quieto cruzado: no
+  NDX 2026-10-19 13:02 acercamiento 12:58 régimen → − | 15 min +16.29 30 min -2.76 pts | flip quieto cruzado: no
+  NDX 2026-10-19 13:03 acercamiento 12:58 régimen → + | 15 min +10.41 30 min -10.99 pts | flip quieto cruzado: no
+  NDX 2026-10-19 13:08 acercamiento 13:06 régimen → − | 15 min -12.73 30 min -13.19 pts | flip quieto cruzado: sí
+  NDX 2026-10-19 13:10 acercamiento 13:06 régimen → + | 15 min -2.75 30 min -7.95 pts | flip quieto cruzado: sí
+  NDX 2026-10-19 13:12 acercamiento 13:06 régimen → − | 15 min +6.87 30 min -25.70 pts | flip quieto cruzado: sí
+  NDX 2026-10-19 13:13 acercamiento 13:06 régimen → + | 15 min +10.50 30 min -13.95 pts | flip quieto cruzado: sí
+  NDX 2026-10-19 13:20 acercamiento 13:18 régimen → − | 15 min +1.77 30 min -27.68 pts | flip quieto cruzado: no
+  NDX 2026-10-19 13:21 acercamiento 13:18 régimen → + | 15 min -13.33 30 min -40.37 pts | flip quieto cruzado: no
+  NDX 2026-10-19 13:24 acercamiento 13:18 régimen → − | 15 min +0.08 30 min -26.28 pts | flip quieto cruzado: no
+  NDX 2026-10-19 13:26 acercamiento 13:18 régimen → + | 15 min -25.75 30 min -40.70 pts | flip quieto cruzado: no
+  NDX 2026-10-19 15:22 acercamiento 15:22 régimen → + | 15 min +41.94 30 min -70.28 pts | flip quieto cruzado: no
+  NDX 2026-10-19 15:26 acercamiento 15:26 régimen → − | 15 min +17.24 30 min -75.31 pts | flip quieto cruzado: sí
+  NDX 2026-10-20 10:18 acercamiento 10:18 régimen → + | 15 min +62.62 30 min +72.35 pts | flip quieto cruzado: no
+  NDX 2026-10-20 10:19 acercamiento 10:18 régimen → − | 15 min +53.55 30 min +59.17 pts | flip quieto cruzado: no
+  NDX 2026-10-20 10:20 acercamiento 10:18 régimen → + | 15 min +45.59 30 min +59.95 pts | flip quieto cruzado: no
+  NDX 2026-10-20 10:21 acercamiento 10:21 régimen → − | 15 min +53.25 30 min +59.16 pts | flip quieto cruzado: no
+  NDX 2026-10-20 10:25 acercamiento 10:25 régimen → + | 15 min +46.51 30 min +72.15 pts | flip quieto cruzado: no
+  NDX 2026-10-20 11:13 acercamiento 11:12 régimen → − | 15 min +26.19 30 min +43.70 pts | flip quieto cruzado: no
+  NDX 2026-10-20 11:17 acercamiento 11:14 régimen → + | 15 min -50.75 30 min -45.69 pts | flip quieto cruzado: no
+  NDX 2026-10-20 11:22 acercamiento 11:19 régimen → − | 15 min -44.93 30 min -21.13 pts | flip quieto cruzado: no
+  NDX 2026-10-20 11:56 acercamiento 11:56 régimen → − | 15 min -28.50 30 min -44.31 pts | flip quieto cruzado: no
+  NDX 2026-10-20 11:58 acercamiento 11:58 régimen → + | 15 min -42.05 30 min -36.56 pts | flip quieto cruzado: no
+  NDX 2026-10-20 12:02 acercamiento 12:02 régimen → − | 15 min -46.80 30 min -20.36 pts | flip quieto cruzado: no
+  NDX 2026-10-20 12:37 acercamiento 12:35 régimen → + | 15 min -49.78 30 min -65.83 pts | flip quieto cruzado: no
+  NDX 2026-10-20 12:38 acercamiento 12:35 régimen → − | 15 min -73.09 30 min -73.06 pts | flip quieto cruzado: no
+  NDX 2026-10-20 13:54 acercamiento 13:54 régimen → + | 15 min -13.70 30 min -38.63 pts | flip quieto cruzado: no
+  NDX 2026-10-20 13:55 acercamiento 13:55 régimen → − | 15 min -7.94 30 min -36.26 pts | flip quieto cruzado: sí
+  NDX 2026-10-26 10:08 acercamiento 10:03 régimen → − | 15 min +168.09 30 min +172.40 pts | flip quieto cruzado: no
+  NDX 2026-10-26 10:09 acercamiento 10:09 régimen → + | 15 min +146.24 30 min +173.18 pts | flip quieto cruzado: no
+  QQQ 2026-10-01 09:51 acercamiento 09:51 régimen → − | 15 min -2.82 30 min -2.47 pts | flip quieto cruzado: no
+  QQQ 2026-10-01 09:53 acercamiento 09:53 régimen → + | 15 min -2.81 30 min -4.60 pts | flip quieto cruzado: sí
+  QQQ 2026-10-01 10:00 acercamiento 10:00 régimen → − | 15 min -1.84 30 min -2.26 pts | flip quieto cruzado: sí
+  QQQ 2026-10-01 13:25 acercamiento 13:25 régimen → + | 15 min +0.97 30 min +0.80 pts | flip quieto cruzado: no
+  QQQ 2026-10-01 14:04 acercamiento 14:04 régimen → − | 15 min -0.19 30 min +1.03 pts | flip quieto cruzado: no
+  QQQ 2026-10-01 14:23 acercamiento 14:23 régimen → + | 15 min +0.82 30 min +1.16 pts | flip quieto cruzado: no
+  QQQ 2026-10-19 10:03 acercamiento 10:03 régimen → − | 15 min +4.37 30 min +2.50 pts | flip quieto cruzado: no
+  QQQ 2026-10-19 10:06 acercamiento 10:05 régimen → + | 15 min +3.06 30 min +2.21 pts | flip quieto cruzado: no
+  QQQ 2026-10-20 10:27 acercamiento 10:27 régimen → + | 15 min +0.30 30 min +1.06 pts | flip quieto cruzado: sí
+  QQQ 2026-10-20 10:33 acercamiento 10:33 régimen → − | 15 min +0.49 30 min +0.61 pts | flip quieto cruzado: sí
+  QQQ 2026-10-20 10:34 acercamiento 10:34 régimen → + | 15 min -0.08 30 min +0.45 pts | flip quieto cruzado: sí
+  QQQ 2026-10-20 10:36 acercamiento 10:36 régimen → − | 15 min +0.59 30 min +0.71 pts | flip quieto cruzado: sí
+  QQQ 2026-10-20 10:39 acercamiento 10:38 régimen → + | 15 min +0.59 30 min +0.57 pts | flip quieto cruzado: sí
+  QQQ 2026-10-20 10:49 acercamiento 10:49 régimen → − | 15 min +0.41 30 min -1.12 pts | flip quieto cruzado: no
+  QQQ 2026-10-20 10:50 acercamiento 10:49 régimen → + | 15 min +0.33 30 min -1.33 pts | flip quieto cruzado: no
+  QQQ 2026-10-20 10:51 acercamiento 10:49 régimen → − | 15 min +0.55 30 min -1.09 pts | flip quieto cruzado: no
+  QQQ 2026-10-20 10:52 acercamiento 10:49 régimen → + | 15 min -0.24 30 min -2.30 pts | flip quieto cruzado: no
+  QQQ 2026-10-20 11:11 acercamiento 11:11 régimen → − | 15 min -1.58 30 min -2.08 pts | flip quieto cruzado: no
+  QQQ 2026-10-21 09:48 acercamiento 09:45 régimen → + | 15 min +0.36 30 min -2.10 pts | flip quieto cruzado: no
+  QQQ 2026-10-21 09:53 acercamiento 09:45 régimen → − | 15 min +0.30 30 min +0.38 pts | flip quieto cruzado: no
+  QQQ 2026-10-21 10:28 acercamiento 10:22 régimen → + | 15 min -0.09 30 min +1.06 pts | flip quieto cruzado: no
+  QQQ 2026-10-21 10:29 acercamiento 10:22 régimen → − | 15 min +0.96 30 min +1.83 pts | flip quieto cruzado: no
+  QQQ 2026-10-21 10:31 acercamiento 10:22 régimen → + | 15 min +0.29 30 min +1.41 pts | flip quieto cruzado: no
+  QQQ 2026-10-26 09:57 acercamiento 09:57 régimen → − | 15 min +1.10 30 min +2.30 pts | flip quieto cruzado: no
+  QQQ 2026-10-26 10:10 acercamiento 10:09 régimen → + | 15 min +1.95 30 min +3.09 pts | flip quieto cruzado: no
+  QQQ 2026-10-28 15:02 acercamiento 14:56 régimen → + | 15 min -1.56 30 min -1.17 pts | flip quieto cruzado: no
+  QQQ 2026-10-28 15:03 acercamiento 14:56 régimen → − | 15 min -1.50 30 min -0.27 pts | flip quieto cruzado: no
+  QQQ 2026-10-28 15:04 acercamiento 14:56 régimen → + | 15 min -2.13 30 min -1.50 pts | flip quieto cruzado: no
+  QQQ 2026-10-28 15:20 acercamiento 15:18 régimen → + | 15 min -0.02 30 min +1.57 pts | flip quieto cruzado: no
+  QQQ 2026-10-28 15:22 acercamiento 15:18 régimen → − | 15 min -0.33 30 min +2.02 pts | flip quieto cruzado: no
+  SPX 2026-10-07 09:45 acercamiento 09:45 régimen → + | 15 min +0.68 30 min -2.67 pts | flip quieto cruzado: no
+  SPX 2026-10-07 09:47 acercamiento 09:47 régimen → − | 15 min +0.38 30 min +2.08 pts | flip quieto cruzado: no
+  SPX 2026-10-07 09:52 acercamiento 09:52 régimen → + | 15 min -2.09 30 min +2.65 pts | flip quieto cruzado: no
+  SPX 2026-10-07 10:01 acercamiento 10:01 régimen → − | 15 min -2.30 30 min +0.14 pts | flip quieto cruzado: no
+  SPX 2026-10-07 10:23 acercamiento 10:23 régimen → − | 15 min -1.51 30 min -10.28 pts | flip quieto cruzado: sí
+  SPX 2026-10-07 10:25 acercamiento 10:23 régimen → + | 15 min -2.90 30 min -9.83 pts | flip quieto cruzado: sí
+  SPX 2026-10-07 10:28 acercamiento 10:23 régimen → − | 15 min -0.32 30 min -1.68 pts | flip quieto cruzado: no
+  SPX 2026-10-07 10:33 acercamiento 10:31 régimen → + | 15 min -7.84 30 min -7.18 pts | flip quieto cruzado: sí
+  SPX 2026-10-07 10:34 acercamiento 10:34 régimen → − | 15 min -6.72 30 min -5.64 pts | flip quieto cruzado: sí
+  SPX 2026-10-07 11:13 acercamiento 11:12 régimen → + | 15 min -4.33 30 min +6.69 pts | flip quieto cruzado: no
+  SPX 2026-10-07 11:21 acercamiento 11:21 régimen → − | 15 min +7.95 30 min +18.27 pts | flip quieto cruzado: no
+  SPX 2026-10-07 11:32 acercamiento 11:29 régimen → + | 15 min +10.45 30 min +8.35 pts | flip quieto cruzado: no
+  SPX 2026-10-08 09:52 acercamiento 09:47 régimen → + | 15 min +3.06 30 min +5.16 pts | flip quieto cruzado: no
+  SPX 2026-10-08 09:55 acercamiento 09:47 régimen → − | 15 min +7.96 30 min +12.59 pts | flip quieto cruzado: no
+  SPX 2026-10-08 09:57 acercamiento 09:47 régimen → + | 15 min +6.11 30 min +8.40 pts | flip quieto cruzado: no
+  SPX 2026-10-08 10:54 acercamiento 10:49 régimen → − | 15 min +2.98 30 min -7.17 pts | flip quieto cruzado: no
+  SPX 2026-10-08 12:18 acercamiento 12:16 régimen → + | 15 min -7.60 30 min -24.47 pts | flip quieto cruzado: no
+  SPX 2026-10-14 09:54 acercamiento 09:51 régimen → − | 15 min -15.09 30 min -17.95 pts | flip quieto cruzado: no
+  SPX 2026-10-15 13:42 acercamiento 13:42 régimen → + | 15 min -4.16 30 min -18.62 pts | flip quieto cruzado: no
+  SPX 2026-10-15 13:44 acercamiento 13:44 régimen → − | 15 min -1.62 30 min -18.58 pts | flip quieto cruzado: no
+  SPX 2026-10-15 15:12 acercamiento 15:12 régimen → + | 15 min +8.58 30 min +4.56 pts | flip quieto cruzado: no
+  SPX 2026-10-16 09:53 acercamiento 09:48 régimen → + | 15 min -4.71 30 min -0.05 pts | flip quieto cruzado: no
+  SPX 2026-10-16 09:56 acercamiento 09:56 régimen → − | 15 min -11.28 30 min -6.33 pts | flip quieto cruzado: no
+  SPX 2026-10-16 09:57 acercamiento 09:56 régimen → + | 15 min -5.66 30 min -5.74 pts | flip quieto cruzado: no
+  SPX 2026-10-16 10:02 acercamiento 09:56 régimen → − | 15 min -4.17 30 min -4.98 pts | flip quieto cruzado: no
+  SPX 2026-10-16 10:05 acercamiento 09:56 régimen → + | 15 min -3.70 30 min +0.13 pts | flip quieto cruzado: no
+  SPX 2026-10-16 10:22 acercamiento 10:22 régimen → + | 15 min +2.22 30 min +5.39 pts | flip quieto cruzado: no
+  SPX 2026-10-16 10:27 acercamiento 10:23 régimen → − | 15 min +7.29 30 min +4.73 pts | flip quieto cruzado: no
+  SPX 2026-10-16 10:33 acercamiento 10:23 régimen → + | 15 min +10.64 30 min -3.10 pts | flip quieto cruzado: no
+  SPX 2026-10-16 10:38 acercamiento 10:38 régimen → − | 15 min -0.73 30 min -16.89 pts | flip quieto cruzado: no
+  SPX 2026-10-16 10:47 acercamiento 10:46 régimen → + | 15 min -16.13 30 min -26.34 pts | flip quieto cruzado: no
+  SPX 2026-10-16 10:51 acercamiento 10:51 régimen → − | 15 min -18.79 30 min -27.73 pts | flip quieto cruzado: sí
+  SPX 2026-10-16 10:54 acercamiento 10:52 régimen → + | 15 min -13.57 30 min -21.68 pts | flip quieto cruzado: no
+  SPX 2026-10-16 11:02 acercamiento 10:52 régimen → − | 15 min -11.71 30 min -16.55 pts | flip quieto cruzado: no
+  SPX 2026-10-20 10:21 acercamiento 10:21 régimen → + | 15 min +10.44 30 min +13.54 pts | flip quieto cruzado: sí
+  SPX 2026-10-20 11:13 acercamiento 11:13 régimen → − | 15 min +5.28 30 min +11.24 pts | flip quieto cruzado: sí
+  SPX 2026-10-20 11:19 acercamiento 11:19 régimen → + | 15 min -12.27 30 min -3.93 pts | flip quieto cruzado: no
+  SPX 2026-10-20 11:22 acercamiento 11:22 régimen → − | 15 min -6.77 30 min -3.14 pts | flip quieto cruzado: no
+  SPX 2026-10-20 11:42 acercamiento 11:40 régimen → + | 15 min -0.18 30 min -6.18 pts | flip quieto cruzado: no
+  SPX 2026-10-20 11:44 acercamiento 11:40 régimen → − | 15 min +3.40 30 min -2.88 pts | flip quieto cruzado: no
+  SPX 2026-10-20 11:54 acercamiento 11:53 régimen → + | 15 min -3.55 30 min -12.27 pts | flip quieto cruzado: sí
+  SPX 2026-10-20 11:56 acercamiento 11:53 régimen → − | 15 min -5.81 30 min -9.43 pts | flip quieto cruzado: sí
+  SPX 2026-10-20 11:57 acercamiento 11:53 régimen → + | 15 min -6.42 30 min -4.65 pts | flip quieto cruzado: sí
+  SPX 2026-10-20 12:02 acercamiento 11:53 régimen → − | 15 min -7.37 30 min -3.15 pts | flip quieto cruzado: sí
+  SPX 2026-10-20 12:06 acercamiento 12:04 régimen → + | 15 min -10.07 30 min -0.69 pts | flip quieto cruzado: no
+  SPX 2026-10-20 12:08 acercamiento 12:04 régimen → − | 15 min -9.63 30 min +2.01 pts | flip quieto cruzado: no
+  SPX 2026-10-20 12:35 acercamiento 12:35 régimen → + | 15 min -1.77 30 min -7.48 pts | flip quieto cruzado: sí
+  SPX 2026-10-20 12:39 acercamiento 12:39 régimen → − | 15 min -11.20 30 min -9.45 pts | flip quieto cruzado: sí
+  SPX 2026-10-20 12:41 acercamiento 12:40 régimen → + | 15 min -9.76 30 min -8.53 pts | flip quieto cruzado: sí
+  SPX 2026-10-20 12:43 acercamiento 12:40 régimen → − | 15 min -8.27 30 min -8.19 pts | flip quieto cruzado: sí
+  SPX 2026-10-20 12:48 acercamiento 12:44 régimen → + | 15 min -7.90 30 min -7.34 pts | flip quieto cruzado: sí
+  SPX 2026-10-20 12:49 acercamiento 12:44 régimen → − | 15 min -7.57 30 min -5.69 pts | flip quieto cruzado: sí
+  SPX 2026-10-20 13:22 acercamiento 13:22 régimen → + | 15 min +0.61 30 min +1.30 pts | flip quieto cruzado: sí
+  SPX 2026-10-20 13:29 acercamiento 13:29 régimen → − | 15 min +2.89 30 min +1.95 pts | flip quieto cruzado: sí
+  SPX 2026-10-20 13:30 acercamiento 13:29 régimen → + | 15 min +1.09 30 min +1.19 pts | flip quieto cruzado: sí
+  SPX 2026-10-20 14:06 acercamiento 14:06 régimen → − | 15 min +0.17 30 min -5.99 pts | flip quieto cruzado: no
+  SPX 2026-10-20 14:08 acercamiento 14:07 régimen → + | 15 min -2.02 30 min -8.93 pts | flip quieto cruzado: no
+  SPX 2026-10-20 14:25 acercamiento 14:25 régimen → − | 15 min -5.79 30 min -1.68 pts | flip quieto cruzado: no
+  SPX 2026-10-20 14:28 acercamiento 14:28 régimen → + | 15 min -10.53 30 min -3.45 pts | flip quieto cruzado: sí
+  SPX 2026-10-20 14:30 acercamiento 14:30 régimen → − | 15 min -10.29 30 min -4.42 pts | flip quieto cruzado: sí
+  SPX 2026-10-20 14:31 acercamiento 14:31 régimen → + | 15 min -7.07 30 min -3.38 pts | flip quieto cruzado: sí
+  SPX 2026-10-20 14:32 acercamiento 14:32 régimen → − | 15 min -4.60 30 min -2.02 pts | flip quieto cruzado: sí
+  SPX 2026-10-21 09:46 acercamiento 09:45 régimen → + | 15 min -4.07 30 min -19.63 pts | flip quieto cruzado: no
+  SPX 2026-10-21 10:04 acercamiento 10:04 régimen → − | 15 min -11.78 30 min -1.93 pts | flip quieto cruzado: sí
+  SPX 2026-10-21 10:44 acercamiento 10:42 régimen → + | 15 min +7.44 30 min +10.39 pts | flip quieto cruzado: sí
+  SPX 2026-10-27 09:47 acercamiento 09:47 régimen → − | 15 min -18.15 30 min -20.72 pts | flip quieto cruzado: sí
+  SPX 2026-10-27 10:34 acercamiento 10:34 régimen → + | 15 min +3.76 30 min +17.27 pts | flip quieto cruzado: no
+  SPX 2026-10-27 10:35 acercamiento 10:35 régimen → − | 15 min +6.80 30 min +18.66 pts | flip quieto cruzado: no
+  SPX 2026-10-27 10:36 acercamiento 10:36 régimen → + | 15 min +3.50 30 min +15.34 pts | flip quieto cruzado: no
+  SPX 2026-10-27 10:37 acercamiento 10:37 régimen → − | 15 min +6.58 30 min +15.41 pts | flip quieto cruzado: no
+  SPX 2026-10-27 10:40 acercamiento 10:40 régimen → + | 15 min +9.27 30 min +11.93 pts | flip quieto cruzado: no
+  SPX 2026-10-27 10:42 acercamiento 10:42 régimen → − | 15 min +11.40 30 min +15.96 pts | flip quieto cruzado: no
+  SPX 2026-10-27 10:45 acercamiento 10:45 régimen → + | 15 min +15.46 30 min +18.05 pts | flip quieto cruzado: sí
+  SPY 2026-10-01 13:43 acercamiento 13:36 régimen → + | 15 min -1.33 30 min -1.38 pts | flip quieto cruzado: no
+  SPY 2026-10-01 14:36 acercamiento 14:31 régimen → + | 15 min -0.59 30 min -0.41 pts | flip quieto cruzado: no
+  SPY 2026-10-01 14:38 acercamiento 14:31 régimen → − | 15 min +0.03 30 min -0.08 pts | flip quieto cruzado: sí
+  SPY 2026-10-08 12:17 acercamiento 12:17 régimen → + | 15 min -1.02 30 min -2.53 pts | flip quieto cruzado: no
+  SPY 2026-10-12 15:17 acercamiento 15:09 régimen → − | 15 min +0.22 30 min +0.63 pts | flip quieto cruzado: no
+  SPY 2026-10-12 15:20 acercamiento 15:20 régimen → − | 15 min +0.46 30 min +0.48 pts | flip quieto cruzado: sí
+  SPY 2026-10-12 15:25 acercamiento 15:22 régimen → + | 15 min +0.50 30 min +0.56 pts | flip quieto cruzado: no
+  SPY 2026-10-12 15:26 acercamiento 15:22 régimen → − | 15 min +0.55 30 min +0.54 pts | flip quieto cruzado: no
+  SPY 2026-10-13 12:02 acercamiento 12:02 régimen → + | 15 min +0.10 30 min +0.68 pts | flip quieto cruzado: no
+  SPY 2026-10-13 13:50 acercamiento 13:49 régimen → − | 15 min +0.20 30 min +0.76 pts | flip quieto cruzado: no
+  SPY 2026-10-15 14:04 acercamiento 14:04 régimen → − | 15 min -0.41 30 min -0.38 pts | flip quieto cruzado: no
+  SPY 2026-10-19 09:45 acercamiento 09:45 régimen → − | 15 min -0.40 30 min +1.56 pts | flip quieto cruzado: no
+  SPY 2026-10-19 10:13 acercamiento 10:13 régimen → + | 15 min +0.92 30 min +0.31 pts | flip quieto cruzado: sí
+  SPY 2026-10-19 13:41 acercamiento 13:40 régimen → − | 15 min +0.00 30 min +0.58 pts | flip quieto cruzado: sí
+  SPY 2026-10-19 13:43 acercamiento 13:42 régimen → + | 15 min -0.24 30 min +0.11 pts | flip quieto cruzado: no
+  SPY 2026-10-19 13:46 acercamiento 13:46 régimen → − | 15 min +0.25 30 min +0.62 pts | flip quieto cruzado: sí
+  SPY 2026-10-19 13:57 acercamiento 13:57 régimen → + | 15 min +0.37 30 min -0.04 pts | flip quieto cruzado: no
+  SPY 2026-10-19 14:04 acercamiento 14:04 régimen → − | 15 min +0.72 30 min -0.18 pts | flip quieto cruzado: no
+  SPY 2026-10-19 14:06 acercamiento 14:04 régimen → + | 15 min +0.27 30 min -0.44 pts | flip quieto cruzado: sí
+  SPY 2026-10-19 14:34 acercamiento 14:34 régimen → − | 15 min +0.50 30 min +0.80 pts | flip quieto cruzado: sí
+  SPY 2026-10-19 14:37 acercamiento 14:37 régimen → + | 15 min +0.20 30 min +0.52 pts | flip quieto cruzado: no
+  SPY 2026-10-20 09:59 acercamiento 09:59 régimen → + | 15 min +0.95 30 min +3.65 pts | flip quieto cruzado: sí
+  SPY 2026-10-20 10:00 acercamiento 10:00 régimen → − | 15 min +1.74 30 min +4.51 pts | flip quieto cruzado: sí
+  SPY 2026-10-20 10:01 acercamiento 10:01 régimen → + | 15 min +1.39 30 min +3.77 pts | flip quieto cruzado: sí
+  SPY 2026-10-21 09:45 acercamiento 09:45 régimen → + | 15 min +0.37 30 min -1.38 pts | flip quieto cruzado: no
+  SPY 2026-10-21 10:05 acercamiento 10:05 régimen → − | 15 min -0.62 30 min +0.42 pts | flip quieto cruzado: sí
+  SPY 2026-10-21 10:33 acercamiento 10:31 régimen → + | 15 min +0.69 30 min +1.06 pts | flip quieto cruzado: no
+  SPY 2026-10-21 10:36 acercamiento 10:36 régimen → − | 15 min +1.18 30 min +1.08 pts | flip quieto cruzado: no
+  SPY 2026-10-21 10:44 acercamiento 10:41 régimen → + | 15 min +0.82 30 min +1.23 pts | flip quieto cruzado: sí
+  SPY 2026-10-26 10:53 acercamiento 10:49 régimen → + | 15 min +0.36 30 min +0.46 pts | flip quieto cruzado: no
+  SPY 2026-10-26 11:50 acercamiento 11:50 régimen → − | 15 min -0.81 30 min -0.30 pts | flip quieto cruzado: no
+  SPY 2026-10-26 13:01 acercamiento 13:01 régimen → + | 15 min +0.33 30 min -0.44 pts | flip quieto cruzado: sí
+  SPY 2026-10-26 13:12 acercamiento 13:12 régimen → − | 15 min +0.07 30 min -1.03 pts | flip quieto cruzado: sí
+  SPY 2026-10-26 13:13 acercamiento 13:13 régimen → + | 15 min +0.02 30 min -1.00 pts | flip quieto cruzado: sí
+  SPY 2026-10-26 13:29 acercamiento 13:29 régimen → + | 15 min -0.77 30 min +0.17 pts | flip quieto cruzado: no
+  SPY 2026-10-26 13:30 acercamiento 13:30 régimen → − | 15 min -0.35 30 min +0.35 pts | flip quieto cruzado: sí
+  SPY 2026-10-26 13:31 acercamiento 13:31 régimen → + | 15 min -0.74 30 min +0.51 pts | flip quieto cruzado: sí
+  SPY 2026-10-26 13:32 acercamiento 13:32 régimen → − | 15 min -1.16 30 min -0.07 pts | flip quieto cruzado: no
+  SPY 2026-10-26 13:36 acercamiento 13:36 régimen → + | 15 min -0.69 30 min +0.33 pts | flip quieto cruzado: sí
+  SPY 2026-10-26 13:42 acercamiento 13:39 régimen → − | 15 min +1.02 30 min +1.11 pts | flip quieto cruzado: sí
+  SPY 2026-10-26 13:45 acercamiento 13:39 régimen → + | 15 min +1.18 30 min +0.64 pts | flip quieto cruzado: sí
+  SPY 2026-10-26 13:47 acercamiento 13:39 régimen → − | 15 min +1.22 30 min +0.98 pts | flip quieto cruzado: sí
+  SPY 2026-10-26 14:05 acercamiento 14:05 régimen → − | 15 min +0.13 30 min -0.19 pts | flip quieto cruzado: sí
+  SPY 2026-10-26 14:06 acercamiento 14:06 régimen → + | 15 min +0.02 30 min -0.35 pts | flip quieto cruzado: sí
+  SPY 2026-10-26 14:11 acercamiento 14:10 régimen → − | 15 min -0.46 30 min -0.61 pts | flip quieto cruzado: no
+  SPY 2026-10-26 14:12 acercamiento 14:10 régimen → + | 15 min -0.32 30 min -0.37 pts | flip quieto cruzado: no
+  SPY 2026-10-26 14:21 acercamiento 14:16 régimen → − | 15 min -0.30 30 min -0.61 pts | flip quieto cruzado: no
+  SPY 2026-10-26 14:23 acercamiento 14:23 régimen → + | 15 min -0.30 30 min -0.52 pts | flip quieto cruzado: no
+  SPY 2026-10-26 14:24 acercamiento 14:24 régimen → − | 15 min -0.17 30 min -0.37 pts | flip quieto cruzado: sí
+  SPY 2026-10-26 14:25 acercamiento 14:24 régimen → + | 15 min +0.12 30 min -0.33 pts | flip quieto cruzado: sí
+  SPY 2026-10-26 14:37 acercamiento 14:31 régimen → − | 15 min -0.09 30 min -0.57 pts | flip quieto cruzado: no
+  SPY 2026-10-26 14:38 acercamiento 14:31 régimen → + | 15 min -0.20 30 min -0.41 pts | flip quieto cruzado: no
+  SPY 2026-10-26 15:20 acercamiento 15:20 régimen → − | 15 min -0.00 30 min -0.59 pts | flip quieto cruzado: sí
+  SPY 2026-10-26 15:23 acercamiento 15:23 régimen → + | 15 min +0.19 30 min -0.47 pts | flip quieto cruzado: no
+  SPY 2026-10-26 15:25 acercamiento 15:25 régimen → − | 15 min +0.02 30 min -0.57 pts | flip quieto cruzado: no
+  SPY 2026-10-26 15:26 acercamiento 15:26 régimen → + | 15 min +0.12 30 min -0.31 pts | flip quieto cruzado: no
+  SPY 2026-10-27 09:45 acercamiento 09:44 régimen → + | 15 min -1.70 30 min -2.01 pts | flip quieto cruzado: sí
+  SPY 2026-10-27 09:46 acercamiento 09:44 régimen → − | 15 min -1.79 30 min -1.81 pts | flip quieto cruzado: no
+  SPY 2026-10-27 10:52 acercamiento 10:47 régimen → + | 15 min +0.94 30 min +1.63 pts | flip quieto cruzado: sí
+  SPY 2026-10-28 09:46 acercamiento 09:46 régimen → − | 15 min -0.22 30 min +0.56 pts | flip quieto cruzado: no
+  SPY 2026-10-28 09:58 acercamiento 09:53 régimen → + | 15 min +0.39 30 min +0.37 pts | flip quieto cruzado: no
+  SPY 2026-10-28 10:00 acercamiento 09:53 régimen → − | 15 min +0.44 30 min +0.50 pts | flip quieto cruzado: no
+  SPY 2026-10-28 14:09 acercamiento 14:08 régimen → + | 15 min -0.26 30 min +1.33 pts | flip quieto cruzado: no
+  SPY 2026-10-28 14:14 acercamiento 14:08 régimen → − | 15 min +0.54 30 min +2.60 pts | flip quieto cruzado: no
+  SPY 2026-10-28 14:26 acercamiento 14:18 régimen → + | 15 min +2.18 30 min +0.01 pts | flip quieto cruzado: no
+  SPY 2026-10-28 15:14 acercamiento 15:13 régimen → + | 15 min -0.09 30 min +0.61 pts | flip quieto cruzado: no
+  SPY 2026-10-28 15:17 acercamiento 15:17 régimen → − | 15 min +0.76 30 min +1.51 pts | flip quieto cruzado: no
+  SPY 2026-10-28 15:19 acercamiento 15:18 régimen → + | 15 min +0.41 30 min +1.19 pts | flip quieto cruzado: no
+
+RESULTADO (acierto = el precio va en la dirección del nuevo régimen)
+
+  Horizonte 15 min
+   SPX   eventos  73 aciertos  38 =  52.1 % IC [ 40.0,  63.9] a favor +0.029 Z | base (1) mismos minutos  49.5 % (n=1423) | base (2) cambios sin acercamiento  41.7 % (n=24) a favor +0.005 Z
+   NDX   eventos  79 aciertos  38 =  48.1 % IC [ 36.7,  59.6] a favor +0.001 Z | base (1) mismos minutos  49.8 % (n=1557) | base (2) cambios sin acercamiento  33.3 % (n=9) a favor -0.119 Z
+   SPY   eventos  68 aciertos  36 =  52.9 % IC [ 40.4,  65.2] a favor -0.011 Z | base (1) mismos minutos  48.7 % (n=1329) | base (2) cambios sin acercamiento  59.1 % (n=44) a favor +0.053 Z
+   QQQ   eventos  30 aciertos  15 =  50.0 % IC [ 31.3,  68.7] a favor +0.007 Z | base (1) mismos minutos  49.4 % (n=629) | base (2) cambios sin acercamiento  43.6 % (n=39) a favor -0.034 Z
+   IWM   eventos  20 aciertos  10 =  50.0 % IC [ 27.2,  72.8] a favor -0.052 Z | base (1) mismos minutos  50.2 % (n=434) | base (2) cambios sin acercamiento  53.3 % (n=30) a favor -0.002 Z
+   TODOS eventos 270 aciertos 137 =  50.7 % IC [ 44.6,  56.9] a favor +0.002 Z | base (1) mismos minutos  49.5 % (n=5372) | base (2) cambios sin acercamiento  49.3 % (n=146) a favor +0.000 Z
+  => 15 min: NO SE ACEPTA: 50.7 % con IC [44.6, 56.9] (pide ≥ 60 % y el IC sin el 50 %)
+
+  Horizonte 30 min
+   SPX   eventos  73 aciertos  40 =  54.8 % IC [ 42.7,  66.5] a favor +0.015 Z | base (1) mismos minutos  50.4 % (n=1423) | base (2) cambios sin acercamiento  54.2 % (n=24) a favor +0.027 Z
+   NDX   eventos  79 aciertos  38 =  48.1 % IC [ 36.7,  59.6] a favor +0.003 Z | base (1) mismos minutos  50.2 % (n=1557) | base (2) cambios sin acercamiento  44.4 % (n=9) a favor -0.163 Z
+   SPY   eventos  68 aciertos  34 =  50.0 % IC [ 37.6,  62.4] a favor -0.044 Z | base (1) mismos minutos  50.4 % (n=1329) | base (2) cambios sin acercamiento  47.7 % (n=44) a favor +0.025 Z
+   QQQ   eventos  30 aciertos  16 =  53.3 % IC [ 34.3,  71.7] a favor -0.018 Z | base (1) mismos minutos  51.8 % (n=629) | base (2) cambios sin acercamiento  46.2 % (n=39) a favor -0.053 Z
+   IWM   eventos  20 aciertos   9 =  45.0 % IC [ 23.1,  68.5] a favor -0.078 Z | base (1) mismos minutos  52.5 % (n=434) | base (2) cambios sin acercamiento  46.7 % (n=30) a favor -0.021 Z
+   TODOS eventos 270 aciertos 137 =  50.7 % IC [ 44.6,  56.9] a favor -0.014 Z | base (1) mismos minutos  50.7 % (n=5372) | base (2) cambios sin acercamiento  47.9 % (n=146) a favor -0.016 Z
+  => 30 min: NO SE ACEPTA: 50.7 % con IC [44.6, 56.9] (pide ≥ 60 % y el IC sin el 50 %)
+
+CAMBIOS DE SIGNO QUE FUERON SOLO EL PRECIO CRUZANDO UN FLIP QUIETO: 86 de 270 eventos
+   15 min, flip quieto cruzado : 46/86 aciertos = 53.5 %
+   15 min, flip que se movió   : 91/184 aciertos = 49.5 %
+   30 min, flip quieto cruzado : 44/86 aciertos = 51.2 %
+   30 min, flip que se movió   : 93/184 aciertos = 50.5 %
+
+Total de cambios de signo 09:45-15:30: 416 (con acercamiento 270, sin acercamiento 146)
+Antecedente: las pruebas de adelanto del Flip del 10-16 (4, 5 y 6) no encontraron adelanto. Solo lectura; nada se vuelve alerta sin otro sí de Lester.
+
+##############################################################################################################
+NOTAS ANOTADAS DESPUÉS DE LA CORRIDA (2026-11-01, al leer la salida; no cambian ningún número de arriba)
+ E1. Días: 09-25 fuera (primer ciclo táctico ~10:00, hueco de 30 min) y 09-28 fuera (sin IV ATM utilizable de 09:33 a 10:00), igual que en
+     las pruebas 1-4. Quedan 24 sesiones por símbolo, 120 en total.
+ E2. Veredicto preregistrado: 270 eventos (≥ 30, el criterio se puede evaluar). Aciertos 50,7 % a 15 min y 50,7 % a 30 min, IC [44,6; 56,9]:
+     NO SE ACEPTA. Es lo mismo que tirar una moneda; las dos bases dan ~49-51 %.
+ E3. Lectura: 270 de los 416 cambios de signo (65 %) llegan con "acercamiento". Es casi automático: el régimen cambia de signo cuando el precio
+     está pegado al Flip, así que el Flip "se acerca" antes de casi todo cambio. 86 de los 270 (32 %) fueron solo el precio cruzando un Flip
+     quieto; esos aciertan 53,5 % a 15 min (no distinto de 50 %).
+ E4. Coincide con el antecedente del 10-16 (pruebas 4, 5 y 6 sin adelanto del Flip).

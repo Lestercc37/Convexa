@@ -1,0 +1,228 @@
+INFORME: NIVELES DE LA APERTURA Y EL FLIP — LAS 5 PRUEBAS PREREGISTRADAS
+Convexa, 2026-11-01. Solo lectura. Preregistro: docs/preregistro_nivel_apertura_2026-10-29.txt (reglas escritas antes de ver los datos).
+Resultados completos: docs/resultados_prereg_test1_2026-10-31.txt, docs/resultados_prereg_tests2-4_2026-10-31.txt,
+docs/resultados_prereg_test5_2026-11-01.txt. Scripts: docs/hm_prereg_test1..5_*.py.
+
+======================================================================================================================
+RESUMEN EN 5 LÍNEAS
+ 1. Prueba 1 (niveles más brillantes de las 09:35 como salida): NO ÚTIL en ninguna capa ni símbolo (0 de 5 en las 4 capas).
+ 2. Prueba 2 (paredes juntas = día estrecho): SIN CONCLUSIÓN. En SPX y NDX nunca hubo paredes juntas; solo 9 días en total.
+ 3. Prueba 3 (paredes tal como son vs forzadas a cada lado): las de hoy son algo mejores como salida (+3 a +6 puntos de toque);
+    para rebotar, iguales. El preregistro no fija umbral: sin cambio recomendado.
+ 4. Prueba 4 (cambio de ABS = el precio va ahí): en la vista táctica, efecto pequeño o nulo (+3 puntos, roza cero); los cambios que
+    no se revierten en 5 min sí muestran +6 puntos (exploratorio). Las vistas 0DTE dan +10 a +14 pero con solo 4 días.
+ 5. Prueba 5 (el Flip se acerca y cambia de signo → el precio va hacia ahí): NO SE ACEPTA. 50,7 % de aciertos en 270 eventos = moneda.
+
+MUESTRA (todas las pruebas): SPX, NDX, SPY, QQQ, IWM; sesiones tácticas guardadas del 09-25 al 10-30.
+ - 09-25 queda fuera en todas (el primer ciclo táctico llegó ~10:00: hueco de 30 min, regla de exclusión del preregistro).
+ - 09-28 queda fuera en las pruebas 1, 3, 4 y 5 (la cadena guardada de 09:33-10:00 no tenía IV ATM; sin IV no hay Z).
+ - Quedan 24 sesiones por símbolo (25 en la prueba 2, que no usa Z).
+
+======================================================================================================================
+PRUEBA 1 — LOS STRIKES MÁS BRILLANTES DE LAS 09:35 COMO PUNTO DE SALIDA
+Regla de aceptación: el nivel más brillante supera a strikes al azar del mismo día, lado y grupo de Z por ≥ 10 puntos de tasa de toque,
+con IC (bootstrap por día, 1.000) que no cruce cero, en ≥ 3 de 5 símbolos.
+
+VEREDICTO: NO ÚTIL — delta 0/5, ABS 0/5, calls 0/5, puts 0/5.
+
+Diferencia 1º de brillo − base al azar (misma Z), en puntos porcentuales:
+              delta              ABS                calls               puts
+   SPX   −3,3 [−11,0; +5,1]   +6,1 [−6,4; +18,1]   +5,5 [−5,3; +17,8]   +5,6 [−4,4; +17,0]
+   NDX   +4,1 [−0,9; +9,9]    +1,6 [−5,3; +8,0]    +4,9 [−0,1; +10,6]   −0,3 [−6,2; +5,1]
+   SPY   +3,3 [−7,4; +14,8]   −8,7 [−28,6; +8,0]   −16,7 [−31,6; −4,8]  +11,1 [−9,5; +29,4]
+   QQQ   +1,5 [−7,2; +9,5]    −4,4 [−16,3; +7,9]   −2,4 [−12,5; +7,7]   +0,4 [−11,9; +12,8]
+   IWM   sin conclusión: solo 2 a 9 pares por capa (IWM guarda ~9-11 strikes en la ventana)
+
+La trampa a primera vista: los brillantes se tocan 65-77 % de las veces y el resto 23-41 %, pero es porque están más cerca del precio
+(|Z| media 0,46-1,04 contra 1,15-1,70). A la misma distancia, el brillo no agrega nada.
+
+Como objetivo de salida (entrada a las 09:35 en la dirección del nivel, las 4 capas juntas):
+   símbolo  1º brillo: acierto / minutos (mediana)    base al azar (resto)    EMC / EMP         objetivos fijos
+   SPX      62,0 % / 30 min                            32,9 %                  29,2 % / 29,2 %   10 pts 91,7 % · 20 pts 64,6 % · 30 pts 45,8 %
+   NDX      62,5 % / 26 min                            34,4 %                  33,3 % / 29,2 %   50 pts 89,6 % · 100 pts 75,0 % · 150 pts 45,8 %
+   SPY      69,3 % / 15 min                            30,4 %                  33,3 % / 41,7 %   $1 91,7 % · $2 70,8 % · $3 52,1 %
+   QQQ      67,2 % / 29 min                            38,8 %                  37,5 % / 50,0 %   $1 95,8 % · $2 91,7 % · $3 72,9 %
+   IWM      64,6 % / 24 min                            27,3 %                  45,8 % / 37,5 %   $1 66,7 % · $2 39,6 % · $3 20,8 %
+   (De nuevo: el 1º de brillo gana por estar más cerca, no por brillar.)
+
+Por grupo de Z (todas las capas y símbolos), toque en el día:
+   |Z|        1º brillo        base al azar     EMC/EMP          fijos
+   < 0,5      85,0 % (468)     86,9 % (3.491)   —                84,5 % (362)
+   0,5-1      56,2 % (283)     45,1 % (3.781)   51,2 % (82)      58,0 % (276)
+   1-1,5      39,3 % (145)     19,9 % (4.046)   29,8 % (151)     27,6 % (58)
+   > 1,5      17,2 % (64)      7,8 % (6.318)    14,3 % (7)       20,8 % (24)
+   Nota: en |Z| 0,5-1,5 el 1º de brillo parece mejor, pero esta tabla mezcla días y lados. La comparación justa (mismo día, lado y grupo)
+   es la de arriba y no pasa la regla.
+
+TABLA TIPO PRONÓSTICO DEL TIEMPO — probabilidad de tocar el nivel ANTES de cada hora (todas las capas y símbolos)
+   celda                      n     10:00  10:30  11:00  12:00  13:00  14:00  15:00  16:00
+   1º arriba |Z|<0,5         214     57%    73%    77%    80%    82%    86%    86%    86%
+   1º arriba |Z| 0,5-1       147     10%    19%    28%    46%    50%    55%    58%    58%
+   1º arriba |Z| 1-1,5        89      0%     6%    10%    20%    20%    25%    33%    35%
+   1º arriba |Z|>1,5          30      0%     3%     7%     7%     7%     7%     7%    10%
+   1º abajo  |Z|<0,5         254     64%    76%    76%    80%    82%    82%    83%    84%
+   1º abajo  |Z| 0,5-1       136     15%    32%    36%    44%    50%    52%    52%    54%
+   1º abajo  |Z| 1-1,5        56      0%     9%    14%    23%    43%    45%    45%    46%
+   1º abajo  |Z|>1,5          34      0%     0%     0%    12%    12%    21%    21%    24%
+   resto arriba |Z|<0,5     1779     68%    80%    82%    86%    86%    88%    91%    91%
+   resto arriba |Z| 0,5-1   1853      5%    18%    32%    46%    50%    52%    53%    55%
+   resto arriba |Z| 1-1,5   2018      0%     5%     5%    10%    11%    13%    14%    17%
+   resto arriba |Z|>1,5     3202      0%     0%     1%     1%     1%     1%     2%     2%
+   resto abajo  |Z|<0,5     1712     64%    73%    74%    77%    81%    81%    82%    83%
+   resto abajo  |Z| 0,5-1   1928      5%    13%    16%    25%    29%    33%    34%    36%
+   resto abajo  |Z| 1-1,5   2028      0%     0%     1%     6%    15%    17%    21%    23%
+   resto abajo  |Z|>1,5     3116      0%     0%     0%     1%     3%    10%    12%    13%
+   (2º y 3º de brillo: en el archivo de resultados, sección 5.)
+   Cómo leerla: un nivel a |Z| 0,5-1 por encima del precio a las 09:35 se toca antes del cierre ~55-62 % de las veces, sea brillante o no.
+   Mitad de los toques de los niveles cercanos ocurren antes de las 10:00.
+
+CALIBRACIÓN (pronóstico calculado sin el día que se prueba):
+   pronóstico     n       dijo     pasó
+     0-10 %     3.480     2,8 %    6,5 %
+    10-20 %     5.396    15,2 %   16,9 %
+    20-30 %     2.129    23,5 %   13,4 %   ← sobreestima
+    30-40 %     2.158    35,9 %   36,4 %
+    40-50 %       135    43,6 %   32,6 %   (celda chica)
+    50-60 %     2.426    54,8 %   56,7 %
+    60-70 %       164    61,7 %   31,1 %   (celda chica)
+    80-90 %     2.485    83,9 %   84,3 %
+    90-100 %    2.143    91,3 %   90,8 %
+   Error de Brier: con el brillo 0,1473; solo con la distancia Z 0,1448 (más bajo = mejor). El brillo no mejora el pronóstico.
+   La tabla sirve como pronóstico por DISTANCIA (está bien calibrada en la mayoría de los tramos), no por brillo.
+
+Banda oscura (gamma neta cerca de cero) como zona de rebote, frente a bandas del mismo ancho:
+   SPX −15,9 pp [−29,8; −1,8] (rebota MENOS) · NDX −1,0 · SPY +7,1 · QQQ +22,0 [+2,5; +39,3] · IWM +8,5 · todos juntos +2,4 [−4,7; +10,0].
+   Sin regla general: QQQ y SPX se contradicen.
+
+Control: el delta reconstruido (días 09-29 a 10-16, sin delta guardado) coincide con el guardado en 295 de 300 strikes (98 %).
+
+======================================================================================================================
+PRUEBA 2 — "PAREDES JUNTAS = DÍA ESTRECHO"
+Condición (medida solo hasta las 10:30): Call Wall y Put Wall a ≤ 2 escalones de strike en ≥ 25 % de los ciclos. Resultado: solo después
+de las 10:30. El preregistro no fija umbral de aceptación.
+
+VEREDICTO: SIN CONCLUSIÓN.
+   - SPX (escalón 5) y NDX (escalón 10): las paredes NUNCA estuvieron juntas en ningún día (0 de 25).
+   - SPY 2 días, QQQ 1 día, IWM 6 días: 9 días en total, muy pocos.
+   Rango después de las 10:30 (en ATR), días juntas vs separadas:
+     SPY 0,54 vs 1,05 (−0,51) · QQQ 0,45 vs 1,23 (−0,78) · IWM 1,86 vs 0,93 (+0,93, al revés) · todos 1,41 vs 0,93.
+   % del tiempo cerca del punto medio de las paredes: 65 % vs 20 % (todos), pero en parte es mecánico: si las paredes están juntas,
+   su punto medio queda al lado del precio.
+   Variante "juntas a las 10:30": 8 días; rango 0,71 vs 0,98 ATR (IC cruza cero).
+   El primer vistazo del 10-27 (SPY 4,47 vs 8,35) no se pudo confirmar con más días.
+
+======================================================================================================================
+PRUEBA 3 — PAREDES TAL COMO SON vs FORZADAS A CADA LADO DEL PRECIO (el ABS no se tocó)
+El preregistro no fija umbral de aceptación; compara (1) contra (2).
+
+VEREDICTO: las paredes de hoy NO son peores; como salida son un poco mejores. Sin cambio recomendado.
+   - Coinciden en el 62-91 % de los ciclos. La pared guardada queda del lado "equivocado" del precio 10-40 % del tiempo
+     (SPX Call 13,6 % / Put 10,6 %; NDX 26,3 / 23,8 %; SPY 12,8 / 16,7 %; QQQ 18,6 / 28,1 %; IWM 10,1 / 39,9 %).
+   - Como objetivo de salida desde las 09:35 (toque en el día), todos los símbolos:
+       Call: guardada 39,0 % vs forzada 35,6 % → +3,4 pp [+0,8; +6,8]
+       Put:  guardada 49,2 % vs forzada 43,3 % → +5,8 pp [+1,7; +10,0]
+   - Rebote ≥ 0,15 % después de tocar (todo el día): Call 45,3 % vs 47,1 % (−0,1 pp por día, IC cruza cero);
+     Put 47,8 % vs 52,6 % (−6,1 pp, IC [−12,8; +1,4]). QQQ Call la excepción: +13,5 pp [+0,2; +28,2].
+
+======================================================================================================================
+PRUEBA 4 — "CAMBIO DE ABS = EL PRECIO VA AHÍ"
+Evento: el ABS guardado pasa a otro strike a ≥ 1 escalón del precio. ¿Lo toca en 15 / 30 min? Base: niveles a la misma Z y del mismo
+lado en horas al azar. El preregistro no fija umbral de aceptación.
+
+VEREDICTO: táctica, efecto pequeño o nulo; 0DTE, pista positiva con muy pocos días.
+   Vista táctica (1.088 eventos, 24 días), tocado en 15 min / 30 min vs base:
+     SPX  11,9 / 18,4 % vs 10,6 / 17,8 %   (+1,4 / +0,7)
+     NDX  33,6 / 39,0 % vs 26,7 / 34,7 %   (+6,9 [+2,0; +12,3] / +4,3)
+     SPY   5,7 / 10,9 % vs  6,6 / 13,0 %   (−0,9 / −2,2)
+     QQQ  14,1 / 18,9 % vs 10,1 / 18,6 %   (+4,0 / +0,4)
+     IWM   7,8 / 12,9 % vs  2,8 /  5,2 %   (+5,0 / +7,7)
+     todos 16,0 / 21,5 % vs 12,8 / 19,8 %  (+3,2 [−0,2; +6,5] / +1,7 [−2,5; +5,9])
+   El ABS táctico se revierte al strike anterior en ≤ 5 min en ~54 % de los cambios ("parpadeo").
+   Solo cambios que NO se revierten (exploratorio, no estaba en el preregistro): +6,1 pp [+2,6; +9,8] a 15 min, +5,3 [+1,5; +9,4] a 30 min.
+   Vistas 0dte (220 eventos) y 0dte_volume (170), solo 4 días: +10,0 / +11,4 pp y +6,0 / +6,8 pp. Pista, no resultado.
+   SPX 0dte, ABS nuevo ABAJO: 40,5 / 51,4 % vs 16,7 / 24,5 % (+24 / +27 pp, 37 eventos, 3 días).
+
+======================================================================================================================
+PRUEBA 5 — EL FLIP SE ACERCA Y, AL CAMBIAR DE SIGNO, EL PRECIO VA HACIA AHÍ
+Regla: ≥ 60 % de aciertos con ≥ 30 eventos e IC binomial 95 % sin el 50 %.
+
+VEREDICTO: NO SE ACEPTA (270 eventos; 50,7 % a 15 min y 50,7 % a 30 min, IC [44,6; 56,9]).
+   Por símbolo, 15 min: SPX 52,1 % (73) · NDX 48,1 % (79) · SPY 52,9 % (68) · QQQ 50,0 % (30) · IWM 50,0 % (20).
+   Por símbolo, 30 min: SPX 54,8 % · NDX 48,1 % · SPY 50,0 % · QQQ 53,3 % · IWM 45,0 %.
+   Bases: mismos minutos sin evento 49,5 / 50,7 %; cambios de signo sin acercamiento 49,3 / 47,9 %.
+   86 de 270 (32 %) fueron solo el precio cruzando un Flip quieto; aciertan 53,5 % (15 min), tampoco distinto de 50 %.
+   Por qué en la pantalla parece cierto: 270 de los 416 cambios de signo (65 %) llegan con "acercamiento". Es casi automático: el régimen
+   cambia de signo justo cuando el precio está pegado al Flip. Lo que pasa después no tiene dirección.
+   Coincide con las pruebas de adelanto del Flip del 10-16 (sin adelanto).
+
+======================================================================================================================
+QUÉ SIGNIFICA PARA OPERAR
+ - Objetivos de salida: elegir el strike por BRILLO no da ventaja sobre cualquier strike a la misma distancia. Lo que sí sirve es la
+   distancia en Z: la tabla tipo pronóstico (sección prueba 1) dice cuán probable es tocar un nivel según qué tan lejos está y a qué hora.
+   Ejemplo: un nivel a |Z| 0,5-1 tiene ~55-60 % de tocarse en el día y ~10-15 % antes de las 10:00.
+ - Objetivos fijos simples rinden igual: SPX 20 pts ~65 %, NDX 100 pts ~75 %, SPY/QQQ $2 ~71-92 % en el día.
+ - EMC/EMP como objetivo: se tocan ~30-50 % de los días, tarde (mediana ~1,5-3 h).
+ - Paredes: las de hoy están bien; forzarlas a cada lado no mejora nada.
+ - ABS: cuando cambia y se QUEDA (no parpadea), el precio llega algo más seguido (+5-6 pp). Vale seguir mirándolo en 0DTE con más días.
+ - Flip: que el Flip se acerque y cambie el régimen NO dice hacia dónde va el precio. No usarlo como señal de dirección.
+ - Nada de esto se convierte en alerta o señal sin otro sí de Lester.
+
+======================================================================================================================
+TODOS LOS DESVÍOS
+Prueba 1 (escritos antes de leer: D1-D9; después: D10-D13)
+ D1  Delta por strike guardado solo desde el 10-19; del 09-29 al 10-16 se reconstruyó de la foto de cadena (delta × OI, vencimientos de hoy
+     a hoy+2). Coincide 98 % con lo guardado.
+ D2  Ventana ±1,25 ATR cortada a los strikes que guardó la vista táctica (IWM ~11).
+ D3  σ de Z = IV ATM del vencimiento más cercano (0DTE) de la foto de las 09:35.
+ D4  Base (a) = todos los demás strikes de la capa, mismo día, lado y grupo de Z (equivale a infinitos sorteos).
+ D5  Criterio evaluado por capa.
+ D6  Calibración dejando un día fuera; Brier comparado con un pronóstico solo por Z.
+ D7  EMC/EMP recalculados con las funciones del pill en vivo sobre la foto de las 09:35.
+ D8  Vistas 0dte / 0dte_volume no analizadas aparte (4 días).
+ D9  Banda oscura = pares de strikes vecinos con cambio de signo de la gamma neta; comparación con pares sin cambio de signo.
+ D10 09-28 excluido por falta de IV, no por huecos.
+ D11 IWM: muy pocos pares para la base (a) → sin conclusión.
+ D12 La tabla de toque cruda engaña (distancia); vale la comparación por grupo de Z.
+ D13 Tramos de calibración 20-30 / 40-50 / 60-70 % fallan; el brillo no mejora el Brier.
+Prueba 2 (antes: D1-D5; después: E1-E3)
+ D1  Escalón = salto más común entre strikes guardados a ±0,5 ATR del precio a las 09:35.
+ D2  "25 % de la sesión" medido sobre los ciclos 09:30-10:30; variante "juntas a las 10:30"; pared nula = no juntas.
+ D3  Punto medio de las paredes vigentes en cada lectura (variante: congelado a las 10:30).
+ D4  Rango en puntos y en ATR; comparaciones en ATR.
+ D5  Exclusión solo por huecos.
+ E1  09-25 fuera por hueco (en las pruebas 3-4 también 09-28 por IV).
+ E2  SPX/NDX sin días "juntas" → sin conclusión; 9 días en total.
+ E3  El % cerca del medio es en parte mecánico.
+Prueba 3 (antes: D1-D5; después: E4)
+ D1  Forzadas rearmadas de los items guardados del mismo ciclo.
+ D2  σ de la primera foto con IV de 09:33-10:00.
+ D3  Paredes del lado "equivocado" evaluadas igual, como objetivo en su dirección.
+ D4  Reacción por tramo de pared; primer toque que llega desde afuera; 30 min.
+ D5  Sin base al azar (el preregistro compara 1 vs 2).
+ E4  Sin umbral preregistrado; IC [0; 0] donde coinciden todos los días.
+Prueba 4 (antes: D1-D6; después: E5-E6)
+ D1  Evento = cualquier cambio de strike del ABS (también volver al anterior); se informa el parpadeo.
+ D2  Solo eventos 09:31-15:30 (para que quepan 30 min).
+ D3  Mismo escalón para las vistas 0dte.
+ D4  Z con σ del día y T a la hora del evento.
+ D5  Base: 40 sorteos por evento a la misma Z y lado, en horas al azar del mismo símbolo y vista.
+ D6  Vistas 0dte con 5 días guardados (4 con eventos).
+ E5  "Sin parpadeo" programado antes de correr pero fuera del preregistro: exploratorio.
+ E6  Descartados 802 cambios a < 1 escalón y 470 fuera de horario.
+Prueba 5 (antes: D1-D8; después: E1-E4)
+ D1  "15 min antes" = ciclo más cercano entre 13 y 17 min antes.
+ D2  Régimen = net_gamma táctico de ventana amplia (el del badge); 0 o nulo no cuentan.
+ D3  Z con σ del día y T a la hora del ciclo.
+ D4  Solo cambios de signo 09:45-15:30; uno por evento.
+ D5  Variación 0 = no acierto; movimiento a favor en Z.
+ D6  IC binomial exacto (Clopper-Pearson); criterio con todos los símbolos juntos.
+ D7  Base (1) mismo minuto en otras sesiones a ≥ 30 min de eventos; base (2) cambios sin acercamiento.
+ D8  "Flip quieto" = se movió < 1 escalón y el precio quedó del otro lado.
+ E1-E4 días excluidos, veredicto, el "acercamiento automático", coincidencia con el 10-16.
+
+======================================================================================================================
+LO QUE NO SE PUDO VERIFICAR
+ - Precios erróneos aislados (spikes) que podrían contar como toques falsos: no revisados uno por uno (antes se vio 1 en 780 min de SPY).
+ - Vistas 0DTE: solo 4-5 días; sus intervalos no son fiables.
+ - Los ciclos llegan ~1 por minuto, no exactos: "15 min" y "10 min" tienen ±1-2 min de margen.
+ - Segunda versión de la prueba 1 (con flujo con lado por strike, minute_strike_flow) queda pendiente: ese dato existe desde el 10-30.
