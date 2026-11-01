@@ -73,6 +73,13 @@ class AcceptInviteUseCase:
         if invite is None or not invite.is_valid:
             return None
         password_hash, salt = hash_password(password)
+        if invite.purpose == "reset":
+            # A password-reset link (backend/scripts/create_password_reset.py): new password on the existing account, admin flag unchanged.
+            user = self.storage.update_user_password(invite.username, password_hash, salt)
+            if user is None:
+                return None
+            self.storage.mark_invite_used(token)
+            return user
         user = self.storage.create_user(
             username=invite.username,
             password_hash=password_hash,

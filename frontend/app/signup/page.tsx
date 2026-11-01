@@ -3,6 +3,8 @@
 import { Suspense, useEffect, useState, type FormEvent } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { acceptInvite, ApiError, getInvitePreview } from "@/lib/api";
+import { DESKTOP_HOME, isDesktopApp } from "@/lib/desktop-app";
+import { rememberUsername } from "@/lib/remembered-username";
 import { useLanguage } from "@/lib/i18n/language-context";
 
 function SignupForm() {
@@ -13,6 +15,8 @@ function SignupForm() {
 
   const [status, setStatus] = useState<"loading" | "ready" | "invalid">("loading");
   const [username, setUsername] = useState("");
+  // A reset link (backend/scripts/create_password_reset.py) sets a new password on an existing account instead of creating one.
+  const [isReset, setIsReset] = useState(false);
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -27,6 +31,7 @@ function SignupForm() {
     getInvitePreview(token, controller.signal)
       .then((preview) => {
         setUsername(preview.username);
+        setIsReset(preview.purpose === "reset");
         setStatus("ready");
       })
       .catch(() => {
@@ -49,7 +54,8 @@ function SignupForm() {
     setSubmitting(true);
     try {
       await acceptInvite(token, password);
-      router.replace("/");
+      rememberUsername(username);
+      router.replace(isDesktopApp() ? DESKTOP_HOME : "/");
     } catch (reason: unknown) {
       setError(
         reason instanceof ApiError && reason.status === 404
@@ -81,11 +87,12 @@ function SignupForm() {
     <main className="login-page">
       <form className="login-form" onSubmit={handleSubmit}>
         <h1 className="login-title">{t.signup.title}</h1>
-        <p className="login-field">{t.signup.creatingAccountFor(username)}</p>
+        <p className="login-field">{isReset ? t.signup.resettingPasswordFor(username) : t.signup.creatingAccountFor(username)}</p>
         <label className="login-field">
-          {t.signup.passwordLabel}
+          {isReset ? t.signup.newPasswordLabel : t.signup.passwordLabel}
           <input
             type="password"
+            autoComplete="new-password"
             value={password}
             onChange={(event) => setPassword(event.target.value)}
             autoFocus
@@ -103,7 +110,7 @@ function SignupForm() {
         </label>
         {error && <p className="login-error">{error}</p>}
         <button type="submit" className="login-submit" disabled={submitting}>
-          {t.signup.submitButton}
+          {isReset ? t.signup.resetSubmitButton : t.signup.submitButton}
         </button>
       </form>
     </main>

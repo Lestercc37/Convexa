@@ -86,4 +86,20 @@ describe("SignupPage", () => {
     expect(acceptInviteMock).toHaveBeenCalledWith("abc123", "password123");
     await waitFor(() => expect(replace).toHaveBeenCalledWith("/"));
   });
+
+  it("words a reset link as a new password for the existing account", async () => {
+    getInvitePreviewMock.mockResolvedValue({ username: "gabriel95", purpose: "reset" });
+    acceptInviteMock.mockResolvedValue({ username: "gabriel95", is_admin: false });
+    const user = userEvent.setup();
+    renderWithLanguage(<SignupPage />);
+
+    await screen.findByText("Nueva contraseña para: gabriel95");
+    await user.type(screen.getByLabelText("Nueva contraseña"), "password123");
+    await user.type(screen.getByLabelText("Confirmar contraseña"), "password123");
+    await user.click(screen.getByRole("button", { name: "Guardar contraseña" }));
+
+    expect(acceptInviteMock).toHaveBeenCalledWith("abc123", "password123");
+    await waitFor(() => expect(replace).toHaveBeenCalledWith("/"));
+    expect(window.localStorage.getItem("convexa.rememberedUsername")).toBe("gabriel95");
+  });
 });

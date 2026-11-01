@@ -233,16 +233,39 @@ class PostgreSQLStorage:
                 created_at=row["created_at"],
             )
 
+    def update_user_password(self, username: str, password_hash: str, salt: str) -> User | None:
+        with self.session_factory.begin() as session:
+            row = session.execute(
+                text(
+                    """
+                    UPDATE users SET password_hash = :password_hash, salt = :salt
+                    WHERE username = :username
+                    RETURNING id, username, password_hash, salt, is_admin, created_at
+                    """
+                ),
+                {"username": username.strip().lower(), "password_hash": password_hash, "salt": salt},
+            ).mappings().first()
+            if row is None:
+                return None
+            return User(
+                id=int(row["id"]),
+                username=str(row["username"]),
+                password_hash=str(row["password_hash"]),
+                salt=str(row["salt"]),
+                is_admin=bool(row["is_admin"]),
+                created_at=row["created_at"],
+            )
+
     def create_invite(
-        self, token: str, username: str, is_admin: bool, expires_at: datetime
+        self, token: str, username: str, is_admin: bool, expires_at: datetime, purpose: str = "signup"
     ) -> Invite:
         with self.session_factory.begin() as session:
             row = session.execute(
                 text(
                     """
-                    INSERT INTO invites (token, username, is_admin, expires_at)
-                    VALUES (:token, :username, :is_admin, :expires_at)
-                    RETURNING id, token, username, is_admin, created_at, expires_at, used_at
+                    INSERT INTO invites (token, username, is_admin, expires_at, purpose)
+                    VALUES (:token, :username, :is_admin, :expires_at, :purpose)
+                    RETURNING id, token, username, is_admin, created_at, expires_at, used_at, purpose
                     """
                 ),
                 {
@@ -250,6 +273,7 @@ class PostgreSQLStorage:
                     "username": username.strip().lower(),
                     "is_admin": is_admin,
                     "expires_at": expires_at,
+                    "purpose": purpose,
                 },
             ).mappings().first()
             assert row is not None  # RETURNING always yields the inserted row
@@ -260,7 +284,7 @@ class PostgreSQLStorage:
             row = session.execute(
                 text(
                     """
-                    SELECT id, token, username, is_admin, created_at, expires_at, used_at
+                    SELECT id, token, username, is_admin, created_at, expires_at, used_at, purpose
                     FROM invites
                     WHERE token = :token
                     """
@@ -279,6 +303,7 @@ class PostgreSQLStorage:
             created_at=row["created_at"],
             expires_at=row["expires_at"],
             used_at=row["used_at"],
+            purpose=str(row["purpose"]),
         )
 
     def mark_invite_used(self, token: str) -> None:

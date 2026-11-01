@@ -117,7 +117,7 @@ export function getMe(signal?: AbortSignal) {
 }
 
 export function getInvitePreview(token: string, signal?: AbortSignal) {
-  return getJson<{ username: string }>(`/auth/invites/${encodeURIComponent(token)}`, signal);
+  return getJson<{ username: string; purpose?: "signup" | "reset" }>(`/auth/invites/${encodeURIComponent(token)}`, signal);
 }
 
 export function acceptInvite(token: string, password: string, signal?: AbortSignal) {

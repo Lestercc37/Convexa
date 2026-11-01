@@ -19,6 +19,7 @@ vi.mock("@/lib/api", async () => {
 beforeEach(() => {
   replace.mockClear();
   loginMock.mockReset();
+  window.localStorage.clear();
 });
 
 describe("LoginPage", () => {
@@ -46,6 +47,35 @@ describe("LoginPage", () => {
 
     expect(await screen.findByText("Usuario o contraseña incorrectos")).toBeInTheDocument();
     expect(replace).not.toHaveBeenCalled();
+  });
+
+  it("remembers the username after a login and fills it in next time", async () => {
+    loginMock.mockResolvedValue({ username: "gabriel95", is_admin: false });
+    const user = userEvent.setup();
+    const first = renderWithLanguage(<LoginPage />);
+    await user.type(screen.getByLabelText("Usuario"), "gabriel95");
+    await user.type(screen.getByLabelText("Contraseña"), "a password");
+    await user.click(screen.getByRole("button", { name: "Entrar" }));
+    await waitFor(() => expect(replace).toHaveBeenCalled());
+    first.unmount();
+
+    renderWithLanguage(<LoginPage />);
+    expect(screen.getByLabelText("Usuario")).toHaveValue("gabriel95");
+    expect(screen.getByLabelText("Contraseña")).toHaveFocus();
+    // Only the username is ever kept, never the password.
+    expect(JSON.stringify(window.localStorage)).not.toContain("a password");
+  });
+
+  it("forgets the username when 'Recordar usuario' is unticked", async () => {
+    window.localStorage.setItem("convexa.rememberedUsername", "gabriel95");
+    loginMock.mockResolvedValue({ username: "gabriel95", is_admin: false });
+    const user = userEvent.setup();
+    renderWithLanguage(<LoginPage />);
+    await user.click(screen.getByLabelText("Recordar usuario"));
+    await user.type(screen.getByLabelText("Contraseña"), "a password");
+    await user.click(screen.getByRole("button", { name: "Entrar" }));
+    await waitFor(() => expect(replace).toHaveBeenCalled());
+    expect(window.localStorage.getItem("convexa.rememberedUsername")).toBeNull();
   });
 
   it("shows a generic error message on a non-401 failure", async () => {
