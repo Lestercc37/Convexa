@@ -731,6 +731,17 @@ export function Dashboard({ mode = "full", route, onRouteChange }: DashboardProp
               <span>⧉ {t.appV2.openApart}</span>
             </button>
           ))}
+          {/* Through /vista/grafico?panel=...: the installed desktop app (Oct 30 build) opens any /vista/grafico address as its own window. */}
+          {(["cadena", "contrato"] as const).map((panel) => (
+            <button
+              key={panel}
+              type="button"
+              onClick={() => window.open(`/vista/grafico?panel=${panel}&simbolo=${encodeURIComponent(symbol)}`, `convexa-${panel}`)}
+            >
+              {panel === "cadena" ? t.appV2.flowChainWindow : t.appV2.contractWindow}
+              <span>⧉ {t.appV2.openApart}</span>
+            </button>
+          ))}
           <p>{t.appV2.windowsNote}</p>
         </V2Dropdown>
         <button type="button" className="v2-ibtn" title={t.appV2.guideTitle} aria-label={t.enginesGuide.triggerAriaLabel} onClick={() => setShowEnginesGuide(true)}>

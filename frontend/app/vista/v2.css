@@ -470,3 +470,177 @@
 .v2-panel-note {
   color: var(--v2-dim);
 }
+
+/* Flow chain and Call | Put windows (Lester 2026-11-01). */
+.v2-up {
+  color: var(--v2-green);
+}
+.v2-down {
+  color: var(--v2-red);
+}
+.v2-dim {
+  color: var(--v2-dim);
+}
+.v2-chain,
+.v2-contract {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  height: 100%;
+  min-height: 0;
+}
+.v2-chain-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 12px;
+}
+.v2-chain-replay {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 12px;
+}
+.v2-chain-replay input[type="range"] {
+  flex: 1;
+  min-width: 0;
+  accent-color: var(--v2-accent);
+}
+.v2-chain-replay button {
+  border: 1px solid var(--v2-line);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--v2-dim);
+  padding: 2px 10px;
+  cursor: pointer;
+}
+.v2-chain-replay button.on {
+  color: var(--v2-text);
+  border-color: var(--v2-accent);
+}
+.v2-chain-scroll {
+  min-height: 0;
+  overflow: auto;
+}
+.v2-chain-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+.v2-chain-table th {
+  position: sticky;
+  top: 0;
+  background: var(--v2-panel-solid);
+  color: var(--v2-dim);
+  font-weight: 500;
+  text-align: right;
+  padding: 4px 6px;
+  border-bottom: 1px solid var(--v2-line);
+}
+.v2-chain-table th:first-child,
+.v2-chain-table td:first-child {
+  text-align: left;
+}
+.v2-chain-table td {
+  padding: 3px 6px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.03);
+  text-align: right;
+  white-space: nowrap;
+}
+.v2-chain-strike small {
+  color: var(--v2-faint);
+}
+.v2-chain-cell {
+  position: relative;
+  min-width: 64px;
+}
+.v2-chain-bar {
+  position: absolute;
+  top: 3px;
+  bottom: 3px;
+  right: 0;
+  border-radius: 2px;
+  opacity: 0.32;
+}
+.v2-chain-bar.up {
+  background: var(--v2-green);
+}
+.v2-chain-bar.down {
+  background: var(--v2-red);
+}
+.v2-chain-num {
+  position: relative;
+}
+.v2-chain-pkg {
+  color: var(--v2-dim);
+}
+.v2-chain-spot td {
+  text-align: center !important;
+  color: var(--v2-accent);
+  border-top: 1px solid var(--v2-accent);
+  border-bottom: 1px solid var(--v2-accent);
+  font-weight: 600;
+}
+.v2-chain-level {
+  text-align: left !important;
+}
+.v2-chain-tag {
+  display: inline-block;
+  margin-right: 4px;
+  padding: 0 5px;
+  border-radius: 4px;
+  font-size: 10px;
+  border: 1px solid var(--v2-line-strong);
+}
+.v2-chain-tag.abs {
+  color: var(--v2-abs);
+  border-color: var(--v2-abs);
+}
+.v2-chain-tag.cw {
+  color: var(--v2-green);
+  border-color: var(--v2-green);
+}
+.v2-chain-tag.pw {
+  color: var(--v2-red);
+  border-color: var(--v2-red);
+}
+.v2-chain-tag.flip {
+  color: var(--v2-flip);
+  border-color: var(--v2-flip);
+}
+.v2-chain-hint {
+  margin: 0;
+  color: var(--v2-faint);
+  font-size: 11px;
+}
+.v2-contract-pair {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 8px;
+}
+.v2-contract-pane {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 260px;
+  border: 1px solid var(--v2-line);
+  border-radius: 10px;
+  padding: 6px;
+}
+.v2-contract-pane header {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 12px;
+}
+.v2-contract-chart {
+  flex: 1;
+  min-height: 220px;
+}

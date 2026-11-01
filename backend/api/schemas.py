@@ -423,6 +423,35 @@ class StrikeFlowResponse(BaseModel):
     strikes: list[StrikeFlowRowResponse]
 
 
+class ContractPointResponse(BaseModel):
+    time: str = Field(description="Start of the ET minute, ISO 8601 UTC.")
+    bid: Number
+    ask: Number
+    mid: Number
+    pnl: Number = Field(description="Dollars per contract since the first minute of the series: (mid - first mid) x 100.")
+
+
+class ContractSeriesResponse(BaseModel):
+    occ_symbol: str
+    right: Literal["C", "P"]
+    points: list[ContractPointResponse]
+
+
+class ContractChartResponse(BaseModel):
+    """Call | Put of one 0DTE strike, minute by minute, from option_quote_minutes (the stream's last bid/ask of each minute in which the
+    quote changed; only the contracts near the money the stream follows). Read-only."""
+
+    schema_version: int = Field(examples=[1])
+    symbol: str = Field(examples=["SPX"])
+    root: str = Field(examples=["SPXW"])
+    session_date: str = Field(examples=["2026-10-30"])
+    expiration: str
+    strikes: list[Number] = Field(description="Strikes with both a call and a put recorded that day.")
+    strike: Number | None = Field(description="The strike shown: the requested one, else the at-the-money strike at the last recorded minute.")
+    call: ContractSeriesResponse | None
+    put: ContractSeriesResponse | None
+
+
 class GammaHeatmapResponse(BaseModel):
     """Strike x time matrix of one stored per-strike figure (gamma_aggregate_items), binned by `bucket_seconds`; each column is
     the last stored snapshot of its bucket. Read-only: nothing is calculated here. `scale_p98` is the 98th percentile of

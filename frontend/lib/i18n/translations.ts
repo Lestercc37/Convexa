@@ -264,6 +264,8 @@ export type Translations = {
     windowsMenu: string;
     alertsWindow: string;
     dealersWindow: string;
+    flowChainWindow: string;
+    contractWindow: string;
     openApart: string;
     windowsNote: string;
     reduceMotion: string;
@@ -291,6 +293,34 @@ export type Translations = {
     proprietaryBadge: string;
     citationLabel: string;
     engines: Record<string, { name: string; description: string }>;
+  };
+  flowChain: {
+    title: string;
+    strike: string;
+    day: string;
+    packages15: string;
+    level: string;
+    spot: string;
+    netDay: (value: string) => string;
+    signedShare: (pct: string) => string;
+    expiration: { "0dte": string; "0-2dte": string; all: string };
+    live: string;
+    replayAt: (time: string) => string;
+    empty: string;
+    source: (source: string) => string;
+    magnetTitle: string;
+    hint: string;
+  };
+  contractChart: {
+    title: string;
+    strike: string;
+    call: string;
+    put: string;
+    sessionOf: (date: string) => string;
+    mid: string;
+    sinceFirst: string;
+    empty: string;
+    hint: string;
   };
   login: {
     title: string;

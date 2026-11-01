@@ -8,6 +8,7 @@ from fastapi import APIRouter, HTTPException, Query, Request
 
 from backend.api.schemas import (
     ChainExpirationsResponse,
+    ContractChartResponse,
     FlowPressureResponse,
     FlowResponse,
     GammaAggregateResponse,
@@ -48,6 +49,7 @@ from backend.domain.use_cases import (
     get_option_chain_expirations_async,
     get_symbol_flow_pressure_async,
 )
+from backend.domain.use_cases.contract_chart import ContractChart, ContractSeries, get_contract_chart
 from backend.domain.use_cases.futures_proxy import proxy_symbol_for
 from backend.domain.use_cases.market_hours import EASTERN_TIME
 from backend.domain.use_cases.strike_flow import (
@@ -300,6 +302,71 @@ async def strike_flow(
     ratio, offset = await price_mapping(storage, symbol, reading, at)
     chain = replace(chain, flow_source=reading, price_ratio=ratio, price_offset=offset)
     return StrikeFlowResponse.model_validate(strike_flow_response(chain, expiration))
+
+
+CONTRACT_CHART_LOOKBACK_DAYS = 7
+
+
+def _series_payload(series: ContractSeries | None) -> dict | None:
+    if series is None:
+        return None
+    return {
+        "occ_symbol": series.occ_symbol,
+        "right": series.right,
+        "points": [
+            {"time": p.minute.astimezone(timezone.utc).isoformat().replace("+00:00", "Z"), "bid": p.bid, "ask": p.ask, "mid": p.mid, "pnl": p.pnl}
+            for p in series.points
+        ],
+    }
+
+
+def _contract_chart_payload(chart: ContractChart) -> dict:
+    return {
+        "schema_version": 1,
+        "symbol": chart.symbol,
+        "root": chart.root,
+        "session_date": chart.session_date.isoformat(),
+        "expiration": chart.expiration.isoformat(),
+        "strikes": list(chart.strikes),
+        "strike": chart.strike,
+        "call": _series_payload(chart.call),
+        "put": _series_payload(chart.put),
+    }
+
+
+@router.get(
+    "/contracts/{symbol}/minutes",
+    response_model=ContractChartResponse,
+    summary="Call | Put of one 0DTE strike, minute by minute, in dollars per contract",
+    description=(
+        "Reads option_quote_minutes (the stream processor's last bid/ask of each minute; 0DTE contracts near the money only). `date` defaults to "
+        "the latest session with recorded contracts in the last 7 days; `strike` defaults to the at-the-money strike at the last recorded minute. "
+        "ES/NQ read SPX/NDX's options (SPXW/NDXP). Read-only."
+    ),
+)
+async def contract_minutes(
+    symbol: str,
+    request: Request,
+    session_date: date | None = Query(default=None, alias="date"),
+    strike: float | None = Query(default=None, gt=0),
+) -> ContractChartResponse:
+    container: Container = request.app.state.container
+    storage = container.async_market_storage
+    if session_date is not None:
+        chart = await get_contract_chart(storage, symbol, session_date, strike)
+    else:
+        today = datetime.now(EASTERN_TIME).date()
+        chart = None
+        for back in range(CONTRACT_CHART_LOOKBACK_DAYS + 1):
+            day = today - timedelta(days=back)
+            if day.weekday() >= 5:
+                continue
+            chart = await get_contract_chart(storage, symbol, day, strike)
+            if chart.strikes:
+                break
+        if chart is None:
+            chart = await get_contract_chart(storage, symbol, today, strike)
+    return ContractChartResponse.model_validate(_contract_chart_payload(chart))
 
 
 @router.get("/flow/{symbol}", response_model=FlowResponse)
