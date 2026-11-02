@@ -343,6 +343,8 @@ export type Translations = {
     put: string;
     sessionOf: (date: string) => string;
     mid: string;
+    since: (price: string, time: string) => string;
+    dayHigh: string;
     sinceFirst: string;
     empty: string;
     hint: string;

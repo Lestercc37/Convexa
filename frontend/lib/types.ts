@@ -271,7 +271,7 @@ export type StrikeFlowResponse = {
 };
 
 // GET /contracts/{symbol}/minutes: Call | Put of one 0DTE strike, dollars per contract since the first minute.
-export type ContractPoint = { time: string; bid: number; ask: number; mid: number; pnl: number };
+export type ContractPoint = { time: string; bid: number; ask: number; mid: number; pnl: number; pnl_high: number; pnl_low: number };
 export type ContractSeries = { occ_symbol: string; right: "C" | "P"; points: ContractPoint[] };
 export type ContractChartResponse = {
   schema_version: number;

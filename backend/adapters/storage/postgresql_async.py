@@ -810,8 +810,8 @@ class AsyncPostgreSQLStorage:
             return
         statement = text(
             """
-            INSERT INTO option_quote_minutes (time, occ_symbol, bid, ask, quote_time)
-            VALUES (:time, :occ_symbol, :bid, :ask, :quote_time)
+            INSERT INTO option_quote_minutes (time, occ_symbol, bid, ask, quote_time, mid_high, mid_low, trade_high, trade_low)
+            VALUES (:time, :occ_symbol, :bid, :ask, :quote_time, :mid_high, :mid_low, :trade_high, :trade_low)
             ON CONFLICT (time, occ_symbol) DO NOTHING
             """
         )
@@ -827,6 +827,10 @@ class AsyncPostgreSQLStorage:
                             "bid": row.bid,
                             "ask": row.ask,
                             "quote_time": row.quote_time,
+                            "mid_high": row.mid_high,
+                            "mid_low": row.mid_low,
+                            "trade_high": row.trade_high,
+                            "trade_low": row.trade_low,
                         }
                         for row in batch
                     ],
@@ -865,7 +869,7 @@ class AsyncPostgreSQLStorage:
                     await session.execute(
                         text(
                             """
-                            SELECT time, occ_symbol, bid, ask, quote_time FROM option_quote_minutes
+                            SELECT time, occ_symbol, bid, ask, quote_time, mid_high, mid_low, trade_high, trade_low FROM option_quote_minutes
                             WHERE occ_symbol = ANY(:symbols) AND time >= :start AND time < :end
                             ORDER BY time
                             """
@@ -876,7 +880,11 @@ class AsyncPostgreSQLStorage:
         except Exception:
             logger.exception("Reading the option quote minutes failed; serving none")
             return []
-        return [OptionQuoteMinute(row[0], str(row[1]), Decimal(row[2]), Decimal(row[3]), row[4]) for row in rows]
+        optional = lambda value: None if value is None else Decimal(value)  # noqa: E731
+        return [
+            OptionQuoteMinute(row[0], str(row[1]), Decimal(row[2]), Decimal(row[3]), row[4], optional(row[5]), optional(row[6]), optional(row[7]), optional(row[8]))
+            for row in rows
+        ]
 
     async def get_last_option_quotes(self, occ_symbols: list[str], start: datetime, end: datetime) -> dict[str, OptionQuoteMinute]:
         """The last recorded minute of each contract in [start, end) (one indexed lookup per contract). A read error returns {}."""

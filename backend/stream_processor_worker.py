@@ -121,7 +121,7 @@ from backend.domain.entities import OptionQuoteMinute, QuoteEvent, UnderlyingTra
 from backend.domain.underlyings import ACTIVE_UNDERLYINGS
 from backend.domain.use_cases.large_prints import LargePrintRecorder
 from backend.domain.use_cases.market_hours import EASTERN_TIME, is_market_open
-from backend.domain.use_cases.minute_flow import MINUTE_FLOW_SYMBOLS, MinuteFlowRecorder
+from backend.domain.use_cases.minute_flow import MINUTE_FLOW_SYMBOLS, MULTI_LEG_CONDITIONS, MinuteFlowRecorder
 from backend.domain.use_cases.stream_vwap import StreamVwap
 from backend.domain.use_cases.stream_underlying_price import (
     StreamUnderlyingPriceUseCase,
@@ -171,6 +171,22 @@ MINUTE_FLOW_DELTA_REFRESH_SECONDS = 60
 MINUTE_FLOW_LOG_EVERY_SECONDS = 1800
 
 
+def _price(value: float | None) -> Decimal | None:
+    return None if value is None else Decimal(str(round(value, 4)))
+
+
+def _moved_inside(span: list[float | None] | None, bid: Decimal, ask: Decimal) -> bool:
+    """True when the minute traded or its mid went somewhere other than where the minute's last quote left it."""
+    if span is None:
+        return False
+    if span[2] is not None:
+        return True
+    if span[0] is None or ask <= 0 or bid > ask:
+        return False
+    close = (float(max(0, bid)) + float(ask)) / 2
+    return abs(span[0] - close) > 1e-9 or abs(span[1] - close) > 1e-9  # type: ignore[operator]
+
+
 class _ProcessorState:
     """Everything one raw frame's handling needs beyond the pure
     parse_*_message functions themselves -- bundled so
@@ -199,7 +215,9 @@ class _ProcessorState:
         # record_minute_quote / take_minute_rows (table option_quote_minutes, migration 0040).
         self.minute_quotes_enabled = True
         self.minute_quotes: dict[str, tuple[Decimal, Decimal, datetime]] = {}
-        self._minute_quotes_last_written: dict[str, tuple[Decimal, Decimal]] = {}
+        # Range inside the current minute per contract (migration 0052): [mid_high, mid_low, trade_high, trade_low], None = not seen.
+        self.minute_ranges: dict[str, list[float | None]] = {}
+        self._minute_quotes_last_written: dict[str, tuple[Decimal, Decimal, datetime]] = {}
         self._minute_quotes_date: date | None = None
         self.large_prints_enabled = True
         self.large_prints = LargePrintRecorder()
@@ -246,27 +264,75 @@ class _ProcessorState:
     def record_minute_quote(self, event: QuoteEvent) -> None:
         """Keeps the latest bid/ask per contract for the current minute: one dict assignment per quote that
         is not a repeat (is_repeated_quote already dropped the ~85% that only changed sizes)."""
-        if self.minute_quotes_enabled:
-            self.minute_quotes[event.occ_symbol] = (event.bid, event.ask, event.as_of)
+        if not self.minute_quotes_enabled:
+            return
+        bid, ask = event.bid, event.ask
+        self.minute_quotes[event.occ_symbol] = (bid, ask, event.as_of)
+        if ask > 0 and bid <= ask:  # a usable quote: no offer or crossed says nothing about the price
+            mid = (float(max(0, bid)) + float(ask)) / 2
+            span = self.minute_ranges.get(event.occ_symbol)
+            if span is None:
+                self.minute_ranges[event.occ_symbol] = [mid, mid, None, None]
+            elif span[0] is None:
+                span[0] = span[1] = mid
+            elif mid > span[0]:
+                span[0] = mid
+            elif mid < span[1]:
+                span[1] = mid
+
+    def record_minute_trade(self, occ_symbol: str, price: object, condition: object) -> None:
+        """Highest/lowest single-leg trade price of the minute (migration 0052): a multi-leg leg is priced inside its package, so it is left
+        out, the same split the per-strike flow uses (MULTI_LEG_CONDITIONS)."""
+        if not self.minute_quotes_enabled or condition in MULTI_LEG_CONDITIONS or price is None:
+            return
+        value = float(price)  # type: ignore[arg-type]
+        if value <= 0:
+            return
+        span = self.minute_ranges.get(occ_symbol)
+        if span is None:
+            self.minute_ranges[occ_symbol] = [None, None, value, value]
+        elif span[2] is None:
+            span[2] = span[3] = value
+        elif value > span[2]:
+            span[2] = value
+        elif value < span[3]:  # type: ignore[operator]
+            span[3] = value
 
     def take_minute_rows(self, minute_start: datetime) -> list[OptionQuoteMinute]:
         """Hands over the minute that just ended and starts a new one. Same shape as ThetaData's quote flat
         file: a contract whose bid/ask equals what was last written has no row (carry the previous one
         forward), so a quiet contract costs nothing. The last-written memory restarts every session day.
+        A minute whose last quote came back to the written one still gets a row when it moved inside the minute or traded (its
+        range is the point of migration 0052); a contract that only traded carries its last written quote.
         Nothing is marked as written here: see mark_minute_rows_written."""
         quotes, self.minute_quotes = self.minute_quotes, {}
+        ranges, self.minute_ranges = self.minute_ranges, {}
         if self._minute_quotes_date != minute_start.date():
             self._minute_quotes_date = minute_start.date()
             self._minute_quotes_last_written.clear()
-        return [
-            OptionQuoteMinute(minute_start, occ_symbol, bid, ask, quote_time)
-            for occ_symbol, (bid, ask, quote_time) in quotes.items()
-            if self._minute_quotes_last_written.get(occ_symbol) != (bid, ask)
-        ]
+        rows: list[OptionQuoteMinute] = []
+        for occ_symbol in quotes.keys() | ranges.keys():
+            quote = quotes.get(occ_symbol)
+            written = self._minute_quotes_last_written.get(occ_symbol)
+            if quote is None:
+                if written is None:
+                    continue  # traded before any quote was seen today: no bid/ask to carry
+                quote = written
+            span = ranges.get(occ_symbol)
+            bid, ask, quote_time = quote
+            if written is not None and written[:2] == (bid, ask) and not _moved_inside(span, bid, ask):
+                continue
+            mid_high, mid_low, trade_high, trade_low = span if span is not None else (None, None, None, None)
+            rows.append(
+                OptionQuoteMinute(
+                    minute_start, occ_symbol, bid, ask, quote_time, _price(mid_high), _price(mid_low), _price(trade_high), _price(trade_low)
+                )
+            )
+        return rows
 
     def mark_minute_rows_written(self, rows: list[OptionQuoteMinute]) -> None:
         for row in rows:
-            self._minute_quotes_last_written[row.occ_symbol] = (row.bid, row.ask)
+            self._minute_quotes_last_written[row.occ_symbol] = (row.bid, row.ask, row.quote_time)
 
     def is_repeated_quote(self, message: dict) -> bool:
         """True when this QUOTE carries the same bid/ask as the last one
@@ -355,6 +421,7 @@ def _handle_raw_frame(state: _ProcessorState, raw: str) -> None:
                     )
                     if parsed.event is not None:
                         state.whale_alerts_relay.publish_trade(parsed.event)
+                        state.record_minute_trade(parsed.occ_symbol, message["trade"].get("price"), parsed.event.condition)
                         if state.minute_flow_enabled:
                             state.minute_flow.observe_trade(parsed.event, parsed.exchange_ts)
             elif security_type in ("STOCK", "INDEX"):

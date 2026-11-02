@@ -429,6 +429,8 @@ class ContractPointResponse(BaseModel):
     ask: Number
     mid: Number
     pnl: Number = Field(description="Dollars per contract since the first minute of the series: (mid - first mid) x 100.")
+    pnl_high: Number = Field(description="Highest price inside the minute (mid of every quote, single-leg trades), same dollars as pnl.")
+    pnl_low: Number = Field(description="Lowest price inside the minute, same dollars as pnl.")
 
 
 class ContractSeriesResponse(BaseModel):
