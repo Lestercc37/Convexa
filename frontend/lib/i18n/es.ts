@@ -457,7 +457,7 @@ export const es: Translations = {
     live: "En vivo",
     replayAt: (time) => `Repetición: ${time} ET`,
     empty: (source) =>
-      `Todavía no hay flujo por strike guardado de ${source} en la última semana. Se guarda en vivo desde el lunes 2026-11-02; NDX e IWM tienen días anteriores.`,
+      `Todavía no hay flujo por strike guardado de ${source} en las últimas 2 semanas. Se guarda en vivo desde el lunes 2026-11-02; NDX e IWM tienen días anteriores.`,
     lastSession: (date) => `Última sesión con datos: ${date}`,
     source: (source) => `Flujo de ${source}`,
     magnetTitle: "El strike que más flujo neto recibió en esta ventana",

@@ -313,7 +313,7 @@ async def strike_flow(
 
 
 CONTRACT_CHART_LOOKBACK_DAYS = 7
-STRIKE_FLOW_LOOKBACK_DAYS = 7
+STRIKE_FLOW_LOOKBACK_DAYS = 14
 
 
 def _series_payload(series: ContractSeries | None) -> dict | None:
