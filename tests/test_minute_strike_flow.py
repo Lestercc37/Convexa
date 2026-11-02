@@ -244,3 +244,21 @@ def test_nq_reads_qqq_flow_by_default_and_maps_each_strike_to_nq_price_units() -
         and ndx_own["price_ratio"] == 1.0
         and ndx_own["strikes"] == []
     )
+
+
+def test_on_a_weekend_the_chain_falls_back_to_the_latest_session_with_flow() -> None:
+    from backend.domain.use_cases.strike_flow import latest_session_with_flow
+
+    storage = SyncStorageAsyncReadAdapter(InMemoryStorage())
+    friday = datetime(2026, 10, 30, 15, 0, tzinfo=UTC)  # 11:00 ET
+    storage.minute_strike_flow.append(_cell(friday, 7600.0, "C", 12.0, expiration=date(2026, 10, 30)))
+    sunday = datetime(2026, 11, 1, 18, 0, tzinfo=UTC)
+
+    found = asyncio.run(latest_session_with_flow(storage, "SPX", sunday, 7))
+    assert found is not None
+    close, traded = found
+    assert close == datetime(2026, 10, 30, 20, 0, tzinfo=UTC)  # 16:00 ET (EDT)
+    assert traded == [date(2026, 10, 30)]
+    # Nothing within the lookback: no fallback.
+    assert asyncio.run(latest_session_with_flow(storage, "SPX", sunday + timedelta(days=14), 7)) is None
+    assert asyncio.run(latest_session_with_flow(storage, "NDX", sunday, 7)) is None

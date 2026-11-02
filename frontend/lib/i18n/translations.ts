@@ -306,7 +306,8 @@ export type Translations = {
     expiration: { "0dte": string; "0-2dte": string; all: string };
     live: string;
     replayAt: (time: string) => string;
-    empty: string;
+    empty: (source: string) => string;
+    lastSession: (date: string) => string;
     source: (source: string) => string;
     magnetTitle: string;
     hint: string;

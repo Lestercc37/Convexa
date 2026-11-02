@@ -11,7 +11,7 @@ Expirations: "0dte" = the session's own expiration, "0-2dte" = the first three e
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, time, timedelta
 
 from backend.domain.entities import StrikeFlowSummary
 from backend.domain.use_cases.futures_proxy import future_level_offset_async, proxy_symbol_for
@@ -70,6 +70,22 @@ def session_bounds(at: datetime) -> tuple[datetime, datetime]:
     open_ = local.replace(hour=9, minute=30, second=0, microsecond=0)
     close = local.replace(hour=16, minute=0, second=0, microsecond=0)
     return open_, min(local.replace(second=0, microsecond=0), close)
+
+
+async def latest_session_with_flow(storage, underlying: str, at: datetime, lookback_days: int) -> tuple[datetime, list[date]] | None:
+    """The close (16:00 ET) of the latest earlier weekday, up to `lookback_days` back, that has per-strike flow, and its traded expirations;
+    None if there is none. Used when the current session has nothing yet (weekend, holiday, before the open)."""
+    today = at.astimezone(EASTERN_TIME).date()
+    for back in range(1, lookback_days + 1):
+        day = today - timedelta(days=back)
+        if day.weekday() >= 5:
+            continue
+        close = datetime.combine(day, time(16, 0), EASTERN_TIME)
+        start, end = session_bounds(close)
+        traded = await storage.get_strike_flow_expirations(underlying, start, end)
+        if traded:
+            return close, traded
+    return None
 
 
 def pick_expirations(mode: str, traded: list[date], session_day: date) -> list[date] | None:
