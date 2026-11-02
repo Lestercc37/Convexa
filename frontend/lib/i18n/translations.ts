@@ -330,10 +330,15 @@ export type Translations = {
     submitButton: string;
     invalidCredentials: string;
     genericError: string;
+    rememberUsername: string;
+    forgotPassword: string;
   };
   signup: {
     title: string;
     creatingAccountFor: (username: string) => string;
+    resettingPasswordFor: (username: string) => string;
+    resetSubmitButton: string;
+    newPasswordLabel: string;
     passwordLabel: string;
     confirmPasswordLabel: string;
     submitButton: string;

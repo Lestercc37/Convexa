@@ -115,6 +115,9 @@ class User:
         object.__setattr__(self, "username", self.username.strip().lower())
 
 
+INVITE_PURPOSES = ("signup", "reset")
+
+
 @dataclass(frozen=True, slots=True)
 class Invite:
     """A one-time signup link the owner generates for a teammate (see
@@ -130,12 +133,16 @@ class Invite:
     created_at: datetime
     expires_at: datetime
     used_at: datetime | None = None
+    # 'signup' creates the account; 'reset' sets a new password on the existing account of `username` (backend/scripts/create_password_reset.py).
+    purpose: str = "signup"
 
     def __post_init__(self) -> None:
         if not self.token or not self.token.strip():
             raise InvalidOptionError("invite token is required")
         if not self.username or not self.username.strip():
             raise InvalidOptionError("username is required")
+        if self.purpose not in INVITE_PURPOSES:
+            raise InvalidOptionError(f"invite purpose must be one of {INVITE_PURPOSES}")
         object.__setattr__(self, "username", self.username.strip().lower())
 
     @property

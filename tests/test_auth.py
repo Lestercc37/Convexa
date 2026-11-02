@@ -251,7 +251,7 @@ def test_signup_routes_are_public_and_accept_invite_logs_the_user_in() -> None:
         # Both routes must be reachable with no session cookie at all.
         preview = client.get(f"/api/v1/auth/invites/{token}")
         assert preview.status_code == 200
-        assert preview.json() == {"username": "teammate1"}
+        assert preview.json() == {"username": "teammate1", "purpose": "signup"}
 
         accept = client.post(
             "/api/v1/auth/accept-invite", json={"token": token, "password": "a fresh password"}
@@ -269,6 +269,57 @@ def test_signup_routes_are_public_and_accept_invite_logs_the_user_in() -> None:
             "/api/v1/auth/accept-invite", json={"token": token, "password": "whatever"}
         )
         assert second_attempt.status_code == 404
+
+
+def test_reset_link_sets_a_new_password_on_the_existing_account_and_keeps_its_access() -> None:
+    storage = InMemoryStorage()
+    password_hash, salt = hash_password("forgotten password")
+    storage.create_user(username="gabriel95", password_hash=password_hash, salt=salt, is_admin=False)
+    token = generate_invite_token()
+    storage.create_invite(
+        token=token, username="gabriel95", is_admin=True, expires_at=utc_now() + timedelta(hours=48), purpose="reset"
+    )
+
+    user = AcceptInviteUseCase(storage=storage).execute(token, "a brand new password")
+
+    assert user is not None and user.username == "gabriel95"
+    # The account keeps its own access level, whatever the link row says.
+    assert user.is_admin is False
+    login = AuthenticateUserUseCase(storage=storage)
+    assert login.execute("gabriel95", "a brand new password") is not None
+    assert login.execute("gabriel95", "forgotten password") is None
+    # Single use, like a signup link.
+    assert AcceptInviteUseCase(storage=storage).execute(token, "another password") is None
+
+
+def test_reset_link_for_a_missing_account_creates_nothing() -> None:
+    storage = InMemoryStorage()
+    token = generate_invite_token()
+    storage.create_invite(
+        token=token, username="nobody", is_admin=False, expires_at=utc_now() + timedelta(hours=48), purpose="reset"
+    )
+
+    assert AcceptInviteUseCase(storage=storage).execute(token, "a password") is None
+    assert storage.get_user_by_username("nobody") is None
+
+
+def test_reset_link_preview_says_reset_and_logs_the_user_in() -> None:
+    app = create_app()
+    with TestClient(app) as client:
+        storage = app.state.container.storage
+        password_hash, salt = hash_password("forgotten password")
+        storage.create_user(username="gabriel95", password_hash=password_hash, salt=salt, is_admin=False)
+        token = generate_invite_token()
+        storage.create_invite(
+            token=token, username="gabriel95", is_admin=False,
+            expires_at=utc_now() + timedelta(hours=48), purpose="reset",
+        )
+
+        preview = client.get(f"/api/v1/auth/invites/{token}")
+        assert preview.json() == {"username": "gabriel95", "purpose": "reset"}
+        accept = client.post("/api/v1/auth/accept-invite", json={"token": token, "password": "a fresh password"})
+        assert accept.status_code == 200
+        assert client.get("/api/v1/auth/me").json()["username"] == "gabriel95"
 
 
 def test_preview_invite_404s_for_an_unknown_token() -> None:

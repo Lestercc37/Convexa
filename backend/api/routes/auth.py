@@ -60,7 +60,7 @@ def preview_invite(token: str, request: Request) -> InvitePreviewResponse:
     invite = container.storage.get_invite_by_token(token)
     if invite is None or not invite.is_valid:
         raise NotFoundError("Invite not found, already used, or expired")
-    return InvitePreviewResponse(username=invite.username)
+    return InvitePreviewResponse(username=invite.username, purpose=invite.purpose)
 
 
 @router.post("/accept-invite", response_model=SessionUserResponse)

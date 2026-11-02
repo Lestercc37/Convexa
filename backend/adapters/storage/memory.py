@@ -97,8 +97,16 @@ class InMemoryStorage:
         self._users[user.username] = user
         return user
 
+    def update_user_password(self, username: str, password_hash: str, salt: str) -> User | None:
+        user = self._users.get(username.strip().lower())
+        if user is None:
+            return None
+        updated = replace(user, password_hash=password_hash, salt=salt)
+        self._users[user.username] = updated
+        return updated
+
     def create_invite(
-        self, token: str, username: str, is_admin: bool, expires_at: datetime
+        self, token: str, username: str, is_admin: bool, expires_at: datetime, purpose: str = "signup"
     ) -> Invite:
         invite = Invite(
             id=self._next_invite_id,
@@ -107,6 +115,7 @@ class InMemoryStorage:
             is_admin=is_admin,
             created_at=utc_now(),
             expires_at=expires_at,
+            purpose=purpose,
         )
         self._next_invite_id += 1
         self._invites[invite.token] = invite

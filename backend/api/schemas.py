@@ -859,6 +859,8 @@ class SessionUserResponse(BaseModel):
 
 class InvitePreviewResponse(BaseModel):
     username: str
+    # 'signup' = new account, 'reset' = new password for an existing account (the /signup page words itself accordingly).
+    purpose: str = "signup"
 
 
 class AcceptInviteRequest(BaseModel):

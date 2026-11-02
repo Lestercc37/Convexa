@@ -72,6 +72,22 @@
   font-size: 13px;
 }
 
+.login-remember {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--tv-text-dim);
+  cursor: pointer;
+}
+
+.login-hint {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--tv-text-dim);
+}
+
 .login-submit {
   padding: 10px;
   background: var(--accent);
