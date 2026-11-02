@@ -455,7 +455,7 @@ export const en: Translations = {
     live: "Live",
     replayAt: (time) => `Replay: ${time} ET`,
     empty: (source) =>
-      `No per-strike flow stored for ${source} in the last week yet. It is recorded live from Monday 2026-11-02; NDX and IWM have earlier days.`,
+      `No per-strike flow stored for ${source} in the last 2 weeks yet. It is recorded live from Monday 2026-11-02; NDX and IWM have earlier days.`,
     lastSession: (date) => `Latest session with data: ${date}`,
     source: (source) => `${source} flow`,
     magnetTitle: "The strike that took the most net flow in this window",
