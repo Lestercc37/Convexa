@@ -736,13 +736,13 @@ export function Dashboard({ mode = "full", route, onRouteChange }: DashboardProp
             </button>
           ))}
           {/* Through /vista/grafico?panel=...: the installed desktop app (Oct 30 build) opens any /vista/grafico address as its own window. */}
-          {(["cadena", "contrato"] as const).map((panel) => (
+          {(["cadena", "contrato", "repeticion"] as const).map((panel) => (
             <button
               key={panel}
               type="button"
               onClick={() => window.open(`/vista/grafico?panel=${panel}&simbolo=${encodeURIComponent(symbol)}`, `convexa-${panel}`)}
             >
-              {panel === "cadena" ? t.appV2.flowChainWindow : t.appV2.contractWindow}
+              {panel === "cadena" ? t.appV2.flowChainWindow : panel === "contrato" ? t.appV2.contractWindow : t.appV2.replayWindow}
               <span>⧉ {t.appV2.openApart}</span>
             </button>
           ))}

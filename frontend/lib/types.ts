@@ -285,6 +285,35 @@ export type ContractChartResponse = {
   put: ContractSeries | null;
 };
 
+// GET /replay/{symbol}/day and /replay/{symbol}/days: one stored session for the replay window (docs/diseno-replay-5-dias-2026-10-29.txt).
+export type ReplayCandle = { time: string; open: number; high: number; low: number; close: number };
+export type ReplayLevels = {
+  time: string;
+  call_wall: number | null;
+  put_wall: number | null;
+  absolute_gamma_strike: number | null;
+  gamma_flip: number | null;
+};
+export type ReplayDayResponse = {
+  schema_version: number;
+  symbol: string;
+  source_symbol: string;
+  session_date: string;
+  view: GammaView;
+  live: boolean;
+  session_open: string;
+  session_close: string;
+  price_offset: number;
+  anchored: boolean | null;
+  candles_1m: ReplayCandle[];
+  candles_5m: ReplayCandle[];
+  levels: ReplayLevels[];
+  vwap: { time: string; value: number }[];
+  vwap_not_applicable: boolean;
+  vwap_proxy_symbol: string | null;
+};
+export type ReplayDaysResponse = { schema_version: number; symbol: string; today: string; today_has_data: boolean; sessions: string[] };
+
 export type MinuteFlowResponse = {
   schema_version: number;
   symbol: string;

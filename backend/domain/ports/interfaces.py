@@ -25,6 +25,7 @@ from backend.domain.entities import (
     GammaHeatmap,
     Invite,
     LargeTradePrint,
+    LevelCycle,
     MarketHoliday,
     MarketPrice,
     MarketSnapshot,
@@ -224,6 +225,10 @@ class IAsyncMarketReadStorage(Protocol):
     async def get_price_history(
         self, underlying: str, start: datetime, end: datetime
     ) -> list[MarketPrice]: ...
+    async def get_session_dates(self, underlying: str, first_day: date, last_day: date) -> list[date]: ...
+    async def get_level_history(
+        self, underlying: str, start: datetime, end: datetime, view: str
+    ) -> list[LevelCycle]: ...
     async def get_gamma_heatmap(
         self, underlying: str, view: str, metric: str, start: datetime, end: datetime, bucket_seconds: int, source: str = "cycle"
     ) -> GammaHeatmap: ...

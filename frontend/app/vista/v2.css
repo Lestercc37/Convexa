@@ -654,3 +654,49 @@
   min-width: 0;
   min-height: 220px;
 }
+
+/* Replay window (docs/diseno-replay-5-dias-2026-10-29.txt, phase 1). */
+.v2-replay {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  height: 100%;
+  min-height: 0;
+}
+.v2-replay-controls,
+.v2-replay-speeds {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.v2-replay-controls .v2-ibtn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.v2-replay-speeds .v2-btn {
+  padding: 3px 7px;
+  font-family: "JetBrains Mono", monospace;
+}
+.v2-replay-speeds .v2-btn[aria-pressed="true"] {
+  border-color: var(--v2-flip);
+  color: var(--v2-flip);
+}
+.v2-replay-note {
+  margin: 0;
+  font-size: 12px;
+}
+.v2-replay-frame {
+  position: relative;
+  flex: 1;
+  min-height: 320px;
+  display: flex;
+}
+.v2-replay-chart {
+  flex: 1;
+  min-width: 0;
+  min-height: 320px;
+}
+.v2-replay-scrub {
+  width: 100%;
+  accent-color: var(--v2-flip);
+}

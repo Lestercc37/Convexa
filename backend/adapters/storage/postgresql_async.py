@@ -21,6 +21,7 @@ from backend.domain.entities import (
     GammaHeatmapColumn,
     Greeks,
     LargeTradePrint,
+    LevelCycle,
     MarketPrice,
     MinuteOptionFlow,
     MinuteStrikeFlow,
@@ -87,6 +88,13 @@ def _json_decimals(value: object) -> dict[str, Decimal] | None:
         return None
     parsed = json.loads(value) if isinstance(value, (str, bytes)) else value
     return {str(key): Decimal(str(number)) for key, number in parsed.items()}
+
+
+def _optional_level(value: object) -> Decimal | None:
+    """A stored level as the replay draws it: NULL and 0 (an empty cycle's absolute-gamma strike) are "no level"."""
+    if value is None or Decimal(str(value)) == 0:
+        return None
+    return Decimal(str(value))
 
 
 class AsyncPostgreSQLStorage:
@@ -337,6 +345,60 @@ class AsyncPostgreSQLStorage:
                 as_of=row["time"],
                 price=Decimal(row["price"]),
                 volume=int(row["volume"]),
+            )
+            for row in rows
+        ]
+
+    async def get_session_dates(self, underlying: str, first_day: date, last_day: date) -> list[date]:
+        """The ET dates from `first_day` to `last_day` with at least one stored price inside 09:30-16:00 ET, newest first. One index probe per
+        day (EXISTS ... on idx_market_snapshots_underlying_time), never a scan of the days' rows."""
+        async with self.session_factory() as session:
+            rows = (
+                await session.execute(
+                    text(
+                        """
+                        SELECT d::date AS day
+                        FROM generate_series(CAST(:first AS date), CAST(:last AS date), interval '1 day') AS d
+                        WHERE EXISTS (
+                            SELECT 1 FROM market_snapshots AS m
+                            WHERE m.underlying_id = (SELECT id FROM underlyings WHERE symbol = :symbol)
+                              AND m.time >= (d::date + TIME '09:30') AT TIME ZONE 'America/New_York'
+                              AND m.time < (d::date + TIME '16:00') AT TIME ZONE 'America/New_York'
+                        )
+                        ORDER BY day DESC
+                        """
+                    ),
+                    {"symbol": underlying.upper(), "first": first_day, "last": last_day},
+                )
+            ).all()
+        return [row.day for row in rows]
+
+    async def get_level_history(
+        self, underlying: str, start: datetime, end: datetime, view: str
+    ) -> list[LevelCycle]:
+        """The four drawn levels of every stored cycle of `view` in [start, end), oldest first: only those columns (no items, no exposures)."""
+        async with self.session_factory() as session:
+            rows = (
+                await session.execute(
+                    text(
+                        """
+                        SELECT g.time, g.call_wall, g.put_wall, g.absolute_gamma_strike, g.gamma_flip
+                        FROM gamma_aggregates AS g
+                        WHERE g.underlying_id = (SELECT id FROM underlyings WHERE symbol = :symbol)
+                          AND g.view = :view AND g.time >= :start AND g.time < :end
+                        ORDER BY g.time
+                        """
+                    ),
+                    {"symbol": underlying.upper(), "view": view, "start": start, "end": end},
+                )
+            ).all()
+        return [
+            LevelCycle(
+                time=row.time,
+                call_wall=_optional_level(row.call_wall),
+                put_wall=_optional_level(row.put_wall),
+                absolute_gamma_strike=_optional_level(row.absolute_gamma_strike),
+                gamma_flip=_optional_level(row.gamma_flip),
             )
             for row in rows
         ]

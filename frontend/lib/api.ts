@@ -13,6 +13,8 @@ import type {
   MinuteFlowResponse,
   OptionChainResponse,
   PriceCandlesResponse,
+  ReplayDayResponse,
+  ReplayDaysResponse,
   ScreenerPresetName,
   ScreenerPresetResponse,
   ScreenerPresetSettings,
@@ -201,15 +203,26 @@ export function getContractChart(symbol: string, options: { date?: string; strik
   return getJson<ContractChartResponse>(`/contracts/${encodeURIComponent(symbol)}/minutes${query}`, signal);
 }
 
+export function getReplayDays(symbol: string, signal?: AbortSignal) {
+  return getJson<ReplayDaysResponse>(`/replay/${encodeURIComponent(symbol)}/days`, signal);
+}
+
+export function getReplayDay(symbol: string, day: string, view: GammaView, signal?: AbortSignal) {
+  const query = new URLSearchParams({ dia: day, view }).toString();
+  return getJson<ReplayDayResponse>(`/replay/${encodeURIComponent(symbol)}/day?${query}`, signal);
+}
+
 export function getGammaHeatmap(
   symbol: string,
-  options: { view?: GammaView; metric?: GammaHeatmapMetric; start?: Date; bucketSeconds?: number; source?: "cycle" | "fast" },
+  options: { view?: GammaView; metric?: GammaHeatmapMetric; start?: Date; end?: Date; bucketSeconds?: number; source?: "cycle" | "fast" },
   signal?: AbortSignal,
 ) {
   const params = new URLSearchParams();
   if (options.view) params.set("view", options.view);
   if (options.metric) params.set("metric", options.metric);
   if (options.start) params.set("start", options.start.toISOString());
+  // The replay asks for one past session at a time (default end = now).
+  if (options.end) params.set("end", options.end.toISOString());
   if (options.bucketSeconds) params.set("bucket_seconds", String(options.bucketSeconds));
   // "fast" = the 10-second layer (gamma_fast_items); the default is the REST cycle's own rows.
   if (options.source) params.set("source", options.source);

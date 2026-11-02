@@ -6,6 +6,7 @@ import { AuthGate } from "@/components/auth-gate";
 import { ContractChartPanel } from "@/components/contract-chart-panel";
 import { Dashboard } from "@/components/dashboard";
 import { FlowChainPanel } from "@/components/flow-chain-panel";
+import { ReplayPanel } from "@/components/replay-panel";
 import { PanelWindowInner } from "@/components/v2-panel-window";
 import { chartRouteQuery, parseChartRoute, type ChartRouteState } from "@/lib/view-route";
 
@@ -19,6 +20,9 @@ function ChartView() {
   }
   if (panel === "contrato") {
     return <PanelWindowInner title="Contratos Call | Put">{(symbol) => <ContractChartPanel key={symbol} symbol={symbol} />}</PanelWindowInner>;
+  }
+  if (panel === "repeticion") {
+    return <PanelWindowInner title="Repetición">{(symbol) => <ReplayPanel key={symbol} symbol={symbol} />}</PanelWindowInner>;
   }
   return <PlainChartView />;
 }
