@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import { useEffect, useRef, useState } from "react";
 import { BaselineSeries, ColorType, createChart, type IChartApi, type ISeriesApi, type UTCTimestamp } from "lightweight-charts";
 import { getContractChart } from "@/lib/api";
@@ -35,7 +36,14 @@ function ContractPane({ series, label }: { series: ContractSeries | null; label:
     if (!container.current) return;
     const chart = createChart(container.current, {
       autoSize: true,
-      layout: { background: { type: ColorType.Solid, color: "transparent" }, textColor: "#8a93a0", fontFamily: "JetBrains Mono, monospace", fontSize: 11 },
+      // Same as the main price chart: no TradingView logo, Convexa's own watermark below (attribution stays where the main chart keeps it).
+      layout: {
+        background: { type: ColorType.Solid, color: "transparent" },
+        textColor: "#8a93a0",
+        fontFamily: "JetBrains Mono, monospace",
+        fontSize: 11,
+        attributionLogo: false,
+      },
       grid: { vertLines: { color: "rgba(255,255,255,0.04)" }, horzLines: { color: "rgba(255,255,255,0.04)" } },
       rightPriceScale: { borderColor: "rgba(255,255,255,0.09)" },
       timeScale: { borderColor: "rgba(255,255,255,0.09)", timeVisible: true, secondsVisible: false, tickMarkFormatter: (time: UTCTimestamp) => etTime(time) },
@@ -84,7 +92,10 @@ function ContractPane({ series, label }: { series: ContractSeries | null; label:
           </>
         )}
       </header>
-      <div ref={container} className="v2-contract-chart" aria-label={`${label} ${t.contractChart.sinceFirst}`} />
+      <div className="v2-contract-frame">
+        <div ref={container} className="v2-contract-chart" aria-label={`${label} ${t.contractChart.sinceFirst}`} />
+        <Image src="/logo-watermark.png" alt="" width={360} height={215} className="chart-watermark" aria-hidden="true" />
+      </div>
     </section>
   );
 }

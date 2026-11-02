@@ -640,7 +640,14 @@
   font-family: "JetBrains Mono", monospace;
   font-size: 12px;
 }
+.v2-contract-frame {
+  position: relative;
+  flex: 1;
+  min-height: 220px;
+  display: flex;
+}
 .v2-contract-chart {
   flex: 1;
+  min-width: 0;
   min-height: 220px;
 }
