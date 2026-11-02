@@ -456,7 +456,9 @@ export const es: Translations = {
     expiration: { "0dte": "0DTE", "0-2dte": "0-2 DTE", all: "Todos" },
     live: "En vivo",
     replayAt: (time) => `Repetición: ${time} ET`,
-    empty: "Sin operaciones por strike en esta sesión todavía.",
+    empty: (source) =>
+      `Todavía no hay flujo por strike guardado de ${source} en la última semana. Se guarda en vivo desde el lunes 2026-11-02; NDX e IWM tienen días anteriores.`,
+    lastSession: (date) => `Última sesión con datos: ${date}`,
     source: (source) => `Flujo de ${source}`,
     magnetTitle: "El strike que más flujo neto recibió en esta ventana",
     hint: "Contratos-delta con lado (compra de calls o venta de puts = verde). Los paquetes multi-leg van aparte, sin lado. Estimación, no inventario.",

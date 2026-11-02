@@ -67,6 +67,10 @@ function etClock(iso: string): string {
   return new Date(iso).toLocaleTimeString("es-US", { timeZone: "America/New_York", hour: "2-digit", minute: "2-digit", hour12: false });
 }
 
+function etDate(iso: string): string {
+  return new Intl.DateTimeFormat("en-CA", { timeZone: "America/New_York", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date(iso));
+}
+
 function minutesSinceOpen(sessionStart: string, now = new Date()): number {
   return Math.max(0, Math.min(SESSION_MINUTES, Math.floor((now.getTime() - new Date(sessionStart).getTime()) / 60_000)));
 }
@@ -176,7 +180,12 @@ export function FlowChainPanel({ symbol }: { symbol: string }) {
             </option>
           ))}
         </select>
-        {data && <span className={data.net_day >= 0 ? "v2-up" : "v2-down"}>{t.flowChain.netDay(formatFlow(data.net_day))}</span>}
+        {data && etDate(data.session_start) !== etDate(new Date().toISOString()) && (
+          <span className="v2-chain-past">{t.flowChain.lastSession(etDate(data.session_start))}</span>
+        )}
+        {data && data.strikes.length > 0 && (
+          <span className={data.net_day >= 0 ? "v2-up" : "v2-down"}>{t.flowChain.netDay(formatFlow(data.net_day))}</span>
+        )}
         {data?.signed_share_day != null && <span className="v2-dim">{t.flowChain.signedShare(`${Math.round(data.signed_share_day * 100)} %`)}</span>}
         {data && data.flow_source !== data.symbol && <span className="v2-dim">{t.flowChain.source(data.flow_source)}</span>}
         {data && <span className="v2-dim">{etClock(data.as_of)} ET</span>}
@@ -202,7 +211,7 @@ export function FlowChainPanel({ symbol }: { symbol: string }) {
       ) : !data ? (
         <p className="v2-panel-note">Cargando…</p>
       ) : rows.length === 0 ? (
-        <p className="v2-panel-note">{t.flowChain.empty}</p>
+        <p className="v2-panel-note">{t.flowChain.empty(data.flow_source)}</p>
       ) : (
         <div className="v2-chain-scroll">
           <table className="v2-chain-table">

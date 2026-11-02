@@ -497,6 +497,9 @@
   font-family: "JetBrains Mono", monospace;
   font-size: 12px;
 }
+.v2-chain-past {
+  color: var(--v2-flip);
+}
 .v2-chain-replay {
   display: flex;
   align-items: center;

@@ -55,6 +55,7 @@ from backend.domain.use_cases.market_hours import EASTERN_TIME
 from backend.domain.use_cases.strike_flow import (
     build_chain,
     flow_source_for,
+    latest_session_with_flow,
     pick_expirations,
     price_mapping,
     session_bounds,
@@ -290,12 +291,19 @@ async def strike_flow(
 ) -> StrikeFlowResponse:
     container: Container = request.app.state.container
     reading = flow_source_for(symbol, flow_source)
+    explicit_at = at is not None
     at = at or datetime.now(timezone.utc)
     if at.tzinfo is None:
         raise HTTPException(status_code=422, detail="at must include a timezone (e.g. ...Z)")
     start, end = session_bounds(at)
     storage = container.async_market_storage
     traded = await storage.get_strike_flow_expirations(reading, start, end) if end > start else []
+    if not explicit_at and not traded:
+        # Weekend, holiday or before the open: show the latest session with per-strike flow (up to a week back), at its close.
+        earlier = await latest_session_with_flow(storage, reading, at, STRIKE_FLOW_LOOKBACK_DAYS)
+        if earlier is not None:
+            at, traded = earlier
+            start, end = session_bounds(at)
     expirations = pick_expirations(expiration, traded, start.date())
     summaries = await storage.get_strike_flow_summary(reading, start, end, expirations) if end > start and expirations != [] else []
     chain = build_chain(symbol, end, start, expirations if expirations is not None else traded, summaries)
@@ -305,6 +313,7 @@ async def strike_flow(
 
 
 CONTRACT_CHART_LOOKBACK_DAYS = 7
+STRIKE_FLOW_LOOKBACK_DAYS = 7
 
 
 def _series_payload(series: ContractSeries | None) -> dict | None:

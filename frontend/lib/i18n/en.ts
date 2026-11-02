@@ -454,7 +454,9 @@ export const en: Translations = {
     expiration: { "0dte": "0DTE", "0-2dte": "0-2 DTE", all: "All" },
     live: "Live",
     replayAt: (time) => `Replay: ${time} ET`,
-    empty: "No per-strike trades in this session yet.",
+    empty: (source) =>
+      `No per-strike flow stored for ${source} in the last week yet. It is recorded live from Monday 2026-11-02; NDX and IWM have earlier days.`,
+    lastSession: (date) => `Latest session with data: ${date}`,
     source: (source) => `${source} flow`,
     magnetTitle: "The strike that took the most net flow in this window",
     hint: "Signed delta-equivalent contracts (calls bought or puts sold = green). Multi-leg packages are apart, without side. An estimate, not inventory.",
