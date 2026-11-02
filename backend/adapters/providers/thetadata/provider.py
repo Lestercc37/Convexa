@@ -2992,7 +2992,7 @@ class ThetaDataProvider:
         return result
 
     def _fetch_near_the_money_entries_all(
-        self, symbol: str, wildcard_entries: list[dict[str, Any]]
+        self, symbol: str, wildcard_entries: list[dict[str, Any]], cache_key: str | None = None
     ) -> list[dict[str, Any]]:
         """Cutoff-filtered (unexpired only), un-collapsed entries from a
         wildcard (expiration=*) near-the-money fetch -- every expiration
@@ -3007,7 +3007,7 @@ class ThetaDataProvider:
         Gamma/Max Pain source, every symbol) can reuse it instead of
         issuing a second real REST call -- see that method's own
         docstring."""
-        cache_key = symbol
+        cache_key = cache_key or symbol
         now_et = datetime.now(EASTERN_TIME)
         cutoff = _nearest_expiration_cutoff(now_et)
         unexpired_entries = [
@@ -3023,7 +3023,9 @@ class ThetaDataProvider:
         self._near_the_money_all_raw_cache[cache_key] = (time.monotonic(), unexpired_entries)
         return unexpired_entries
 
-    def _fetch_near_the_money_all_expirations(self, symbol: str) -> tuple[_NearTheMoneyChain, ...]:
+    def _fetch_near_the_money_all_expirations(
+        self, symbol: str, max_dte: int = WILDCARD_MAX_DTE
+    ) -> tuple[_NearTheMoneyChain, ...]:
         """All unexpired expirations' near-the-money chains -- source for
         Gamma Aggregate/Max Pain/Absolute Gamma Strike, for every symbol.
         Originally index-only (SPX/NDX/VIX): confirmed live (2026-09-14)
@@ -3054,7 +3056,8 @@ class ThetaDataProvider:
         ThetaData for anything extra; only the client-side filter kept
         was ever the narrow one.
         """
-        cache_key = symbol
+        # The 90-day view (max_dte=90, every 15 min) keeps its own cache entry, so it never replaces the cycle's 14-day one.
+        cache_key = symbol if max_dte == WILDCARD_MAX_DTE else f"{symbol}|dte{max_dte}"
         cached = self._near_the_money_all_raw_cache.get(cache_key)
         if cached is None or time.monotonic() - cached[0] >= NEAR_THE_MONEY_CACHE_TTL_SECONDS:
             entries: list[dict[str, Any]] = []
@@ -3064,13 +3067,13 @@ class ThetaDataProvider:
                     symbol=root,
                     expiration="*",
                     strike_range=NEAR_THE_MONEY_OVERFETCH_STRIKE_RANGE,
-                    max_dte=WILDCARD_MAX_DTE,
+                    max_dte=max_dte,
                     format="json",
                 )
                 entries.extend(entry for entry in body.get("response", []) if entry.get("data"))
             if not entries:
                 raise RuntimeError(f"ThetaData returned no near-the-money contracts for {symbol}")
-            self._fetch_near_the_money_entries_all(symbol, entries)
+            self._fetch_near_the_money_entries_all(symbol, entries, cache_key)
             cached = self._near_the_money_all_raw_cache[cache_key]
 
         unexpired_entries = cached[1]
@@ -3305,8 +3308,18 @@ class ThetaDataProvider:
                     new_root, new_expiration, new_contract_type, new_strike
                 )
 
-    def get_option_chain(self, underlying: str, expiration: date | None = None) -> OptionChain:
+    def get_option_chain(
+        self, underlying: str, expiration: date | None = None, max_dte: int | None = None
+    ) -> OptionChain:
+        """`max_dte` (the 90-day gamma view, docs/diseno-vistas-0dte-1dte-90d-2026-10-30.txt): every expiration up to that many days, fetched on its
+        own wildcard request and NEVER registered for streaming (the stream keeps the nearest expiration only)."""
         symbol = underlying.upper()
+        if max_dte is not None:
+            return self._build_chain(
+                symbol,
+                self._fetch_near_the_money_all_expirations(symbol, max_dte),
+                self._fetch_open_interest_all_expirations(symbol),
+            )
         # streaming_chain is ALWAYS the single nearest-expiration chain,
         # for every symbol without exception, and is the ONLY thing ever
         # passed to _register_streaming_contracts -- see that method's
@@ -3357,6 +3370,9 @@ class ThetaDataProvider:
                 for (root, strike, right), oi in open_interest_single.items()
             }
 
+        return self._build_chain(symbol, gamma_calc_chains, open_interest_by_key)
+
+    def _build_chain(self, symbol: str, gamma_calc_chains, open_interest_by_key) -> OptionChain:
         rate = self._risk_free_rate()
 
         spot_price: Decimal | None = None

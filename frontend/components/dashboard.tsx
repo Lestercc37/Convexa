@@ -32,6 +32,7 @@ import {
   storeGammaWeight,
   supportsVolumeWeight,
   GAMMA_SOURCE_SYMBOL_BY_FUTURE,
+  APP_GAMMA_VIEW_TABS,
   GAMMA_VIEW_TABS,
   isExpirationView,
   listedExpirationForView,
@@ -261,10 +262,13 @@ export function Dashboard({ mode = "full", route, onRouteChange }: DashboardProp
   }, [onRouteChange, symbol, timeframe, chartRange, gammaTab, initialRoute]);
 
   useEffect(() => {
-    const stored = initialRoute?.gammaTab ?? readStoredGammaView();
+    // The app's windows have their own tabs (0DTE / 1DTE / 90 días): a saved web tab they do not have (0-2 DTE, 2DTE) falls back to 0DTE.
+    const tabs = isChartOnly ? APP_GAMMA_VIEW_TABS : GAMMA_VIEW_TABS;
+    const fromRoute = initialRoute?.gammaTab && tabs.some((tab) => tab.view === initialRoute.gammaTab) ? initialRoute.gammaTab : null;
+    const stored = fromRoute ?? readStoredGammaView(tabs);
     if (stored) setGammaTab(stored);
     setGammaWeight(readStoredGammaWeight());
-  }, [initialRoute]);
+  }, [initialRoute, isChartOnly]);
 
   const gammaSourceSymbol = GAMMA_SOURCE_SYMBOL_BY_FUTURE[symbol] ?? symbol;
   useEffect(() => {
@@ -677,7 +681,7 @@ export function Dashboard({ mode = "full", route, onRouteChange }: DashboardProp
           </div>
         )}
         <div className="v2-seg" role="group" aria-label={t.dashboard.gammaViewGroupAriaLabel} title={t.dashboard.gammaViewVwapNote}>
-          {GAMMA_VIEW_TABS.map((tab) => (
+          {APP_GAMMA_VIEW_TABS.map((tab) => (
             <button key={tab.view} type="button" aria-pressed={gammaTab === tab.view} onClick={() => selectGammaView(tab.view)}>
               {tab.label}
             </button>
