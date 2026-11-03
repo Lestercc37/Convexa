@@ -5,11 +5,14 @@ import {
   clampCursor,
   cursorRange,
   dayOptions,
+  DEFAULT_REPLAY_SPEED,
   heatmapColumnsAt,
   initialDay,
   levelsAt,
   nextCursor,
   prepareDay,
+  REPLAY_SPEEDS,
+  replaySpeedLabel,
   sessionWhitespace,
   shiftHeatmap,
   sliceHeatmap,
@@ -118,5 +121,15 @@ describe("cursor and days", () => {
     expect(initialDay({ ...days, today_has_data: true }, null)).toBe("2026-11-02");
     expect(initialDay(days, "2026-10-29")).toBe("2026-10-29");
     expect(initialDay(days, "2026-01-01")).toBe("2026-10-30");
+  });
+});
+
+describe("replay speeds", () => {
+  it("offers slower speeds than one minute per second and labels them as fractions", () => {
+    expect(REPLAY_SPEEDS[0]).toBe(0.25);
+    expect(replaySpeedLabel(0.25)).toBe("x¼");
+    expect(replaySpeedLabel(0.5)).toBe("x½");
+    expect(replaySpeedLabel(10)).toBe("x10");
+    expect(DEFAULT_REPLAY_SPEED).toBe(0.5);
   });
 });

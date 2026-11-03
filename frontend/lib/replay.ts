@@ -10,7 +10,14 @@ export type Bar = { time: number; open: number; high: number; low: number; close
 export type LinePoint = { time: number; value: number };
 export type LevelsAtMinute = { callWall: number | null; putWall: number | null; abs: number | null; flip: number | null };
 
-export const REPLAY_SPEEDS = [1, 2, 5, 10] as const;
+// x1 = one market minute per second; x¼ and x½ (Lester 2026-11-03: "bajarle la velocidad") give 4 s and 2 s per minute.
+export const REPLAY_SPEEDS = [0.25, 0.5, 1, 2, 5, 10] as const;
+export const DEFAULT_REPLAY_SPEED = 0.5;
+const SPEED_LABELS: Record<number, string> = { 0.25: "¼", 0.5: "½" };
+
+export function replaySpeedLabel(speed: number): string {
+  return `x${SPEED_LABELS[speed] ?? speed}`;
+}
 export type ReplaySpeed = (typeof REPLAY_SPEEDS)[number];
 // x1 = one market minute per second; x10 = ten (a full session in 39 s).
 export const MINUTE_SECONDS = 60;
