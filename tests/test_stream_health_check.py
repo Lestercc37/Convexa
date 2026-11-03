@@ -313,3 +313,17 @@ def test_rediscovery_heartbeat_alarm() -> None:
     assert check_rediscovery_heartbeat(None, _dt(2026, 10, 29, 9, 35), True, 5).ok  # opening grace
     assert check_rediscovery_heartbeat(None, _dt(2026, 10, 29, 20, 0), False, 600).ok  # market closed
     assert not check_rediscovery_heartbeat(None, _dt(2026, 10, 29, 11, 0), True, 90).ok
+
+
+def test_rediscovery_heartbeat_survives_a_worker_log_rotation(tmp_path) -> None:
+    """2026-11-03 12:06:56 worker.log rotated; the 12:06:57 check found no heartbeat in the new file and raised a false alarm."""
+    (tmp_path / "worker.log.1").write_text(
+        "2026-11-03 12:05:55,010 INFO [x] Contract rediscovery alive: pass 1840, 824 contracts registered\n", encoding="utf-8"
+    )
+    (tmp_path / "worker.log").write_text("2026-11-03 12:06:56,422 INFO [httpx] HTTP Request: GET ...\n", encoding="utf-8")
+    assert shc.rediscovery_heartbeat_from_logs(tmp_path) == datetime(2026, 11, 3, 12, 5, 55)
+    (tmp_path / "worker.log").write_text(
+        "2026-11-03 12:16:25,000 INFO [x] Contract rediscovery alive: pass 1850, 824 contracts registered\n", encoding="utf-8"
+    )
+    assert shc.rediscovery_heartbeat_from_logs(tmp_path) == datetime(2026, 11, 3, 12, 16, 25)
+    assert shc.rediscovery_heartbeat_from_logs(tmp_path / "missing") is None
