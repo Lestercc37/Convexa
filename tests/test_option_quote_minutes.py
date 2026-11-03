@@ -53,7 +53,40 @@ def test_the_last_quote_of_the_minute_is_the_row() -> None:
 
     rows = state.take_minute_rows(MINUTE)
 
-    assert rows == [OptionQuoteMinute(MINUTE, OCC, Decimal("10.10"), Decimal("10.60"), _quote(OCC, "0", "0", 40).as_of)]
+    assert rows == [
+        OptionQuoteMinute(MINUTE, OCC, Decimal("10.10"), Decimal("10.60"), _quote(OCC, "0", "0", 40).as_of, Decimal("10.35"), Decimal("10.25"))
+    ]
+
+
+def test_a_spike_that_came_back_inside_the_minute_keeps_its_high_and_low() -> None:
+    """SPXW 11-02 P7620 (Lester 2026-11-02): the last quote of 14:48 was mid 63.20 while the contract printed 64.81 inside the minute."""
+    state = _state()
+    state.record_minute_quote(_quote(OCC, "55.80", "56.20", 1))
+    state.mark_minute_rows_written(state.take_minute_rows(MINUTE))
+
+    state.record_minute_quote(_quote(OCC, "64.20", "64.60", 10))
+    state.record_minute_trade(OCC, 64.81, 18)
+    state.record_minute_trade(OCC, 70.00, 131)  # a multi-leg leg: priced inside its package, left out
+    state.record_minute_quote(_quote(OCC, "52.10", "52.60", 30))
+    state.record_minute_quote(_quote(OCC, "55.80", "56.20", 55))  # back where the last written row left it
+
+    [row] = state.take_minute_rows(MINUTE.replace(minute=6))
+    assert (row.bid, row.ask) == (Decimal("55.80"), Decimal("56.20"))
+    assert (row.mid_high, row.mid_low, row.trade_high, row.trade_low) == (Decimal("64.4"), Decimal("52.35"), Decimal("64.81"), Decimal("64.81"))
+
+
+def test_a_contract_that_only_traded_carries_its_last_written_quote() -> None:
+    state = _state()
+    state.record_minute_trade(OCC, 10.0, None)  # no quote seen yet today: nothing to carry
+    assert state.take_minute_rows(MINUTE) == []
+
+    state.record_minute_quote(_quote(OCC, "10.00", "10.50", 5))
+    state.mark_minute_rows_written(state.take_minute_rows(MINUTE))
+    state.record_minute_trade(OCC, 10.40, 18)
+    state.record_minute_trade(OCC, 10.05, 18)
+    [row] = state.take_minute_rows(MINUTE.replace(minute=6))
+    assert (row.bid, row.ask, row.quote_time) == (Decimal("10.00"), Decimal("10.50"), _quote(OCC, "0", "0", 5).as_of)
+    assert (row.mid_high, row.trade_high, row.trade_low) == (None, Decimal("10.4"), Decimal("10.05"))
 
 
 def test_taking_a_minute_starts_a_new_one() -> None:
@@ -99,6 +132,7 @@ def test_the_recorder_can_be_switched_off() -> None:
     state = _state()
     state.minute_quotes_enabled = False
     state.record_minute_quote(_quote(OCC, "10.00", "10.50"))
+    state.record_minute_trade(OCC, 10.2, 18)
     assert state.take_minute_rows(MINUTE) == []
 
 
@@ -118,6 +152,19 @@ def test_a_raw_quote_frame_reaches_the_recorder_but_a_repeat_does_not() -> None:
 
     _handle_raw_frame(state, frame)  # identical bid/ask within the refresh window: dropped before parsing
     assert state.minute_quotes == {}
+
+
+def test_a_raw_option_trade_frame_reaches_the_minute_range() -> None:
+    state = _state()
+    frame = {
+        "header": {"type": "TRADE", "status": "CONNECTED"},
+        "contract": {"security_type": "OPTION", "root": "SPXW", "expiration": 20261014, "strike": 7850000, "right": "C"},
+        "trade": {"price": 10.25, "size": 2, "condition": 18, "date": 20261014, "ms_of_day": 36300000},
+    }
+    _handle_raw_frame(state, json.dumps(frame))
+    frame["trade"] = {**frame["trade"], "price": 11.0, "condition": 135}
+    _handle_raw_frame(state, json.dumps(frame))
+    assert state.minute_ranges == {OCC: [None, None, 10.25, 10.25]}
 
 
 @pytest.mark.asyncio
@@ -149,7 +196,7 @@ async def test_the_periodic_task_writes_the_minute_and_marks_it(monkeypatch: pyt
     storage.save_option_quote_minutes.assert_awaited()
     written = storage.save_option_quote_minutes.await_args.args[0]
     assert [row.occ_symbol for row in written] == [OCC]
-    assert state._minute_quotes_last_written[OCC] == (Decimal("10.00"), Decimal("10.50"))
+    assert state._minute_quotes_last_written[OCC][:2] == (Decimal("10.00"), Decimal("10.50"))
 
 
 @pytest.mark.asyncio

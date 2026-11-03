@@ -492,9 +492,11 @@ export const en: Translations = {
     put: "Put",
     sessionOf: (date) => `Session ${date} · 0DTE`,
     mid: "Mid price",
+    since: (price, time) => `since ${price} (${time})`,
+    dayHigh: "High",
     sinceFirst: "$ per contract since the first minute",
     empty: "No 0DTE contracts recorded for this symbol in the last days.",
-    hint: "Mid (bid + ask) / 2 of each minute; the axis is what 1 contract (× 100) gained or lost since the first minute.",
+    hint: "Line: mid (bid + ask) / 2 at the end of each minute. Thin bars: high and low inside the minute (every quote and the single-leg trades). The axis is what 1 contract (× 100) gained or lost since the first minute.",
   },
   login: {
     title: "Convexa",

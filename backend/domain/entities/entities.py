@@ -945,13 +945,21 @@ class StrikeFlowSummary:
 @dataclass(frozen=True, slots=True)
 class OptionQuoteMinute:
     """The last bid/ask of one option contract in one ET minute in which it changed (see migration 0040).
-    `minute` is the START of the minute; a minute without a row still holds the previous row's quote."""
+    `minute` is the START of the minute; a minute without a row still holds the previous row's quote.
+
+    The range inside the minute (migration 0052, Lester 2026-11-02: the chart's peak stayed $161 under the contract's real one because
+    only the last quote was kept): highest/lowest mid of every quote received in it, and highest/lowest single-leg trade price (multi-leg
+    package legs are priced inside their package, not on the contract's own market). None = nothing seen (older rows, or no trade)."""
 
     minute: datetime
     occ_symbol: str
     bid: Decimal
     ask: Decimal
     quote_time: datetime
+    mid_high: Decimal | None = None
+    mid_low: Decimal | None = None
+    trade_high: Decimal | None = None
+    trade_low: Decimal | None = None
 
 
 @dataclass(frozen=True, slots=True)

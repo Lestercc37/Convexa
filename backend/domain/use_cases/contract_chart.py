@@ -1,6 +1,7 @@
 """Call | Put chart of one strike (Lester 2026-10-30: "the call/put chart of the same contract, the vertical axis in dollars gained or lost"):
 per minute, the mid of the 0DTE call and put of one strike from option_quote_minutes (the stream processor's last bid/ask of each minute,
-migration 0040), and the dollars per contract since the first minute ((mid - first mid) x 100). Read-only: nothing new is stored.
+migration 0040), and the dollars per contract since the first minute ((mid - first mid) x 100), with the range inside each minute (highest/
+lowest mid and single-leg trade, migration 0052) so a spike that came back within the minute still shows. Read-only: nothing new is stored.
 
 option_quote_minutes keeps a row only in the minutes a contract's quote changed, and only for the 0DTE contracts near the money the stream
 follows; a minute without a row still holds the previous quote, so each series is the recorded rows as they are (no fill)."""
@@ -50,6 +51,10 @@ class ContractPoint:
     ask: float
     mid: float
     pnl: float  # dollars per contract since the first minute of the series
+    # The range inside the minute in the same dollars (migration 0052): highest/lowest of the mid and of the single-leg trades; equal to
+    # pnl when only the last quote is known (rows recorded before 0052).
+    pnl_high: float
+    pnl_low: float
 
 
 @dataclass(frozen=True, slots=True)
@@ -81,7 +86,10 @@ def build_series(occ: str, right: str, rows: list[OptionQuoteMinute]) -> Contrac
         mid = (max(bid, 0.0) + ask) / 2
         if first_mid is None:
             first_mid = mid
-        points.append(ContractPoint(row.minute, bid, ask, mid, round((mid - first_mid) * CONTRACT_MULTIPLIER, 2)))
+        extremes = [float(v) for v in (row.mid_high, row.mid_low, row.trade_high, row.trade_low) if v is not None]
+        high, low = max([mid, *extremes]), min([mid, *extremes])
+        pnl, pnl_high, pnl_low = (round((price - first_mid) * CONTRACT_MULTIPLIER, 2) for price in (mid, high, low))
+        points.append(ContractPoint(row.minute, bid, ask, mid, pnl, pnl_high, pnl_low))
     return ContractSeries(occ, right, tuple(points))
 
 

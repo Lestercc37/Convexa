@@ -32,6 +32,10 @@ async def test_minute_rows_round_trip_ignore_duplicates_and_batch() -> None:
             OptionQuoteMinute(MINUTE, f"{prefix}C{index:08d}", Decimal("10.1000"), Decimal("10.5000"), MINUTE)
             for index in range(OPTION_QUOTE_MINUTES_BATCH + 25)
         ]
+        # The range inside the minute (migration 0052) on the first row; the others leave it NULL like the rows recorded before it.
+        rows[0] = OptionQuoteMinute(
+            MINUTE, rows[0].occ_symbol, Decimal("10.1000"), Decimal("10.5000"), MINUTE, Decimal("11.25"), Decimal("9.8"), Decimal("11.4"), None
+        )
         async_engine = create_engine(url)
         try:
             storage = AsyncPostgreSQLStorage(create_session_factory(async_engine))
@@ -49,9 +53,18 @@ async def test_minute_rows_round_trip_ignore_duplicates_and_batch() -> None:
                 text("select bid, ask, quote_time from option_quote_minutes where occ_symbol = :o and time = :t"),
                 {"o": rows[0].occ_symbol, "t": MINUTE},
             ).one()
+        async_engine = create_engine(url)
+        try:
+            read = await AsyncPostgreSQLStorage(create_session_factory(async_engine)).get_option_quote_minutes([rows[0].occ_symbol, rows[1].occ_symbol], MINUTE, MINUTE.replace(minute=6))
+        finally:
+            await async_engine.dispose()
         assert count == len(rows)
         assert (sample[0], sample[1]) == (Decimal("10.1000"), Decimal("10.5000"))
         assert sample[2] == MINUTE
+        by_symbol = {row.occ_symbol: row for row in read}
+        assert (by_symbol[rows[0].occ_symbol].mid_high, by_symbol[rows[0].occ_symbol].mid_low) == (Decimal("11.25"), Decimal("9.8"))
+        assert (by_symbol[rows[0].occ_symbol].trade_high, by_symbol[rows[0].occ_symbol].trade_low) == (Decimal("11.4"), None)
+        assert by_symbol[rows[1].occ_symbol].mid_high is None
     finally:
         with sync_engine.begin() as connection:
             connection.execute(text("delete from option_quote_minutes where occ_symbol like :p"), {"p": prefix + "%"})

@@ -323,7 +323,7 @@ def _series_payload(series: ContractSeries | None) -> dict | None:
         "occ_symbol": series.occ_symbol,
         "right": series.right,
         "points": [
-            {"time": p.minute.astimezone(timezone.utc).isoformat().replace("+00:00", "Z"), "bid": p.bid, "ask": p.ask, "mid": p.mid, "pnl": p.pnl}
+            {"time": p.minute.astimezone(timezone.utc).isoformat().replace("+00:00", "Z"), "bid": p.bid, "ask": p.ask, "mid": p.mid, "pnl": p.pnl, "pnl_high": p.pnl_high, "pnl_low": p.pnl_low}
             for p in series.points
         ],
     }

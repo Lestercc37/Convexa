@@ -54,6 +54,17 @@ def test_dollars_per_contract_start_at_zero_and_skip_unusable_quotes() -> None:
     assert series.points[1].mid == 4.10
 
 
+def test_the_range_inside_the_minute_is_in_the_same_dollars() -> None:
+    occ = "SPXW261102P07620000"
+    first = _quote(OPEN, occ, "18.90", "19.10")  # an older row: only the last quote
+    spike = OptionQuoteMinute(
+        OPEN + timedelta(minutes=1), occ, Decimal("63.00"), Decimal("63.40"), OPEN, Decimal("64.40"), Decimal("52.35"), Decimal("64.81"), Decimal("64.81")
+    )
+    points = build_series(occ, "P", [first, spike]).points
+    assert (points[0].pnl_high, points[0].pnl_low) == (0.0, 0.0)
+    assert (points[1].pnl, points[1].pnl_high, points[1].pnl_low) == (4420.0, 4581.0, 3335.0)
+
+
 def test_the_default_strike_is_the_at_the_money_one() -> None:
     strikes = (7620.0, 7630.0, 7640.0)
     mids = {7620.0: (15.0, 5.0), 7630.0: (9.0, 8.5), 7640.0: (4.0, 13.0)}
@@ -84,6 +95,7 @@ def test_the_endpoint_returns_both_sides_of_the_requested_and_the_default_strike
     assert default["strikes"] == [7630, 7640]
     assert default["strike"] == 7630
     assert [p["pnl"] for p in default["call"]["points"]] == [0, 100]
+    assert [p["pnl_high"] for p in default["call"]["points"]] == [0, 100]
     assert default["put"]["occ_symbol"] == "SPXW261030P07630000"
     assert chosen["strike"] == 7640 and chosen["symbol"] == "ES"
     assert empty["strikes"] == [] and empty["call"] is None

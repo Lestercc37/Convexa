@@ -494,9 +494,11 @@ export const es: Translations = {
     put: "Put",
     sessionOf: (date) => `Sesión ${date} · 0DTE`,
     mid: "Precio medio",
+    since: (price, time) => `desde ${price} (${time})`,
+    dayHigh: "Máx",
     sinceFirst: "$ por contrato desde el primer minuto",
     empty: "No hay contratos 0DTE guardados para este símbolo en los últimos días.",
-    hint: "Valor medio (bid + ask) / 2 de cada minuto; el eje es cuánto gana o pierde 1 contrato (× 100) desde el primer minuto.",
+    hint: "Línea: valor medio (bid + ask) / 2 al cierre de cada minuto. Barras finas: máximo y mínimo dentro del minuto (cada cotización y las operaciones de una sola pata). El eje es cuánto gana o pierde 1 contrato (× 100) desde el primer minuto.",
   },
   login: {
     title: "Convexa",

@@ -2,16 +2,17 @@
 
 import Image from "next/image";
 import { useEffect, useRef, useState } from "react";
-import { BaselineSeries, ColorType, createChart, type IChartApi, type ISeriesApi, type UTCTimestamp } from "lightweight-charts";
+import { BarSeries, BaselineSeries, ColorType, createChart, type IChartApi, type ISeriesApi, type UTCTimestamp } from "lightweight-charts";
 import { getContractChart } from "@/lib/api";
 import { useLanguage } from "@/lib/i18n/language-context";
 import { EASTERN_TIME_ZONE } from "@/lib/market-session";
-import type { ContractChartResponse, ContractSeries } from "@/lib/types";
+import type { ContractChartResponse, ContractPoint, ContractSeries } from "@/lib/types";
 
 /**
  * Call | Put of the same 0DTE strike in two separate charts side by side (Lester 2026-10-30, ThinkorSwim-style): the vertical axis is the
  * dollars ONE contract gained or lost since the first minute ((mid - first mid) x 100), green above zero, red below. Data: GET
- * /contracts/{symbol}/minutes (option_quote_minutes, the stream's last bid/ask of each minute).
+ * /contracts/{symbol}/minutes (option_quote_minutes, the stream's last bid/ask of each minute). Thin bars behind the line: the high/low
+ * inside each minute (Lester 2026-11-02: the line alone drew SPXW 11-02 P7620's peak $161 under the real one).
  */
 const REFRESH_MS = 60_000;
 
@@ -26,11 +27,35 @@ function todayEt(): string {
   return new Intl.DateTimeFormat("en-CA", { timeZone: EASTERN_TIME_ZONE, year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
 }
 
+const toSeconds = (iso: string) => Math.floor(new Date(iso).getTime() / 1000) as UTCTimestamp;
+
+/** The point with the day's highest price inside a minute (null for an empty series). */
+export function dayHigh(points: ContractPoint[]): ContractPoint | null {
+  return points.reduce<ContractPoint | null>((best, p) => (best === null || p.pnl_high > best.pnl_high ? p : best), null);
+}
+
+/** One thin bar per minute whose range went beyond the line (open = close = the line's value), colored by the side of zero. */
+export function rangeBars(points: ContractPoint[]) {
+  return points
+    .filter((p) => p.pnl_high > p.pnl || p.pnl_low < p.pnl)
+    .map((p) => ({
+      time: toSeconds(p.time),
+      open: p.pnl,
+      high: p.pnl_high,
+      low: p.pnl_low,
+      close: p.pnl,
+      color: p.pnl >= 0 ? "rgba(0, 220, 90, 0.55)" : "rgba(250, 0, 10, 0.55)",
+    }));
+}
+
 function ContractPane({ series, label }: { series: ContractSeries | null; label: string }) {
   const { t } = useLanguage();
   const container = useRef<HTMLDivElement | null>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const seriesRef = useRef<ISeriesApi<"Baseline"> | null>(null);
+  const rangeRef = useRef<ISeriesApi<"Bar"> | null>(null);
+  // The whole session stays in view (refit on every refresh and resize) until the user zooms or pans.
+  const userAdjusted = useRef(false);
 
   useEffect(() => {
     if (!container.current) return;
@@ -46,9 +71,17 @@ function ContractPane({ series, label }: { series: ContractSeries | null; label:
       },
       grid: { vertLines: { color: "rgba(255,255,255,0.04)" }, horzLines: { color: "rgba(255,255,255,0.04)" } },
       rightPriceScale: { borderColor: "rgba(255,255,255,0.09)" },
-      timeScale: { borderColor: "rgba(255,255,255,0.09)", timeVisible: true, secondsVisible: false, tickMarkFormatter: (time: UTCTimestamp) => etTime(time) },
+      // lockVisibleTimeRangeOnResize: autoSize's first resize otherwise keeps the bar spacing of the empty chart and shows only part of the day.
+      timeScale: {
+        borderColor: "rgba(255,255,255,0.09)",
+        timeVisible: true,
+        secondsVisible: false,
+        lockVisibleTimeRangeOnResize: true,
+        tickMarkFormatter: (time: UTCTimestamp) => etTime(time),
+      },
       localization: { timeFormatter: (time: UTCTimestamp) => etTime(time), priceFormatter: (value: number) => usd.format(value) },
     });
+    rangeRef.current = chart.addSeries(BarSeries, { thinBars: true, openVisible: false, lastValueVisible: false, priceLineVisible: false });
     seriesRef.current = chart.addSeries(BaselineSeries, {
       baseValue: { type: "price", price: 0 },
       topLineColor: "#00dc5a",
@@ -60,21 +93,38 @@ function ContractPane({ series, label }: { series: ContractSeries | null; label:
       lineWidth: 2,
     });
     chartRef.current = chart;
+    const element = container.current;
+    const markAdjusted = () => {
+      userAdjusted.current = true;
+    };
+    element.addEventListener("wheel", markAdjusted, { passive: true });
+    element.addEventListener("pointerdown", markAdjusted);
+    const observer = new ResizeObserver(() => {
+      if (!userAdjusted.current) chart.timeScale().fitContent();
+    });
+    observer.observe(element);
     return () => {
+      observer.disconnect();
+      element.removeEventListener("wheel", markAdjusted);
+      element.removeEventListener("pointerdown", markAdjusted);
       chart.remove();
       chartRef.current = null;
       seriesRef.current = null;
+      rangeRef.current = null;
     };
   }, []);
 
   useEffect(() => {
-    if (!seriesRef.current) return;
-    const points = (series?.points ?? []).map((p) => ({ time: Math.floor(new Date(p.time).getTime() / 1000) as UTCTimestamp, value: p.pnl }));
-    seriesRef.current.setData(points);
-    chartRef.current?.timeScale().fitContent();
+    if (!seriesRef.current || !rangeRef.current) return;
+    const points = series?.points ?? [];
+    rangeRef.current.setData(rangeBars(points));
+    seriesRef.current.setData(points.map((p) => ({ time: toSeconds(p.time), value: p.pnl })));
+    if (!userAdjusted.current) chartRef.current?.timeScale().fitContent();
   }, [series]);
 
+  const first = series?.points[0] ?? null;
   const last = series?.points.at(-1) ?? null;
+  const high = dayHigh(series?.points ?? []);
   return (
     <section className="v2-contract-pane">
       <header>
@@ -89,6 +139,13 @@ function ContractPane({ series, label }: { series: ContractSeries | null; label:
               {last.pnl >= 0 ? "+" : ""}
               {usd.format(last.pnl)}
             </span>
+            {first && <span className="v2-dim">{t.contractChart.since(price.format(first.mid), etTime(toSeconds(first.time)))}</span>}
+            {high && (
+              <span className="v2-dim">
+                {t.contractChart.dayHigh} {high.pnl_high >= 0 ? "+" : ""}
+                {usd.format(high.pnl_high)} ({etTime(toSeconds(high.time))})
+              </span>
+            )}
           </>
         )}
       </header>
