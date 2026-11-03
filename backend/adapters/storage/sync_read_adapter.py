@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, time, timedelta
 from decimal import Decimal
 
 from backend.domain.entities import (
@@ -10,6 +10,7 @@ from backend.domain.entities import (
     GammaAggregate,
     GammaHeatmap,
     LargeTradePrint,
+    LevelCycle,
     MarketPrice,
     MinuteOptionFlow,
     MinuteStrikeFlow,
@@ -20,6 +21,7 @@ from backend.domain.entities import (
 )
 from backend.domain.ports import IStorage
 from backend.domain.use_cases.flow import SymbolFlowPressure, WhaleAlert
+from backend.domain.use_cases.market_hours import EASTERN_TIME
 
 
 class SyncStorageAsyncReadAdapter:
@@ -127,6 +129,30 @@ class SyncStorageAsyncReadAdapter:
         self, underlying: str, start: datetime, end: datetime
     ) -> list[MarketPrice]:
         return self._storage.get_price_history(underlying, start, end)
+
+    async def get_session_dates(self, underlying: str, first_day: date, last_day: date) -> list[date]:
+        days = {
+            reading.as_of.astimezone(EASTERN_TIME).date()
+            for reading in self._storage.get_price_history(
+                underlying,
+                datetime.combine(first_day, time(0), EASTERN_TIME),
+                datetime.combine(last_day + timedelta(days=1), time(0), EASTERN_TIME),
+            )
+            if time(9, 30) <= reading.as_of.astimezone(EASTERN_TIME).time() < time(16, 0)
+        }
+        return sorted(days, reverse=True)
+
+    async def get_level_history(
+        self, underlying: str, start: datetime, end: datetime, view: str
+    ) -> list[LevelCycle]:
+        def level(value: Decimal | None) -> Decimal | None:
+            return None if value is None or value == 0 else value
+
+        return [
+            LevelCycle(gamma.as_of, level(gamma.call_wall), level(gamma.put_wall), level(gamma.absolute_gamma_strike), level(gamma.gamma_flip))
+            for gamma in self._storage.get_gamma_history(underlying, start, end, view=view)
+            if gamma.as_of < end
+        ]
 
     async def get_gamma_heatmap(
         self, underlying: str, view: str, metric: str, start: datetime, end: datetime, bucket_seconds: int, source: str = "cycle"

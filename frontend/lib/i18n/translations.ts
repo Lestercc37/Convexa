@@ -266,6 +266,7 @@ export type Translations = {
     dealersWindow: string;
     flowChainWindow: string;
     contractWindow: string;
+    replayWindow: string;
     openApart: string;
     windowsNote: string;
     reduceMotion: string;
@@ -310,6 +311,29 @@ export type Translations = {
     lastSession: (date: string) => string;
     source: (source: string) => string;
     magnetTitle: string;
+    hint: string;
+  };
+  replay: {
+    title: string;
+    day: string;
+    todayLive: string;
+    timeframe: string;
+    play: string;
+    pause: string;
+    stepBack: string;
+    stepForward: string;
+    speed: string;
+    goLive: string;
+    scrub: string;
+    loading: string;
+    failed: string;
+    noData: string;
+    noDataToday: string;
+    replayAt: (replay: string, live: string) => string;
+    liveAt: (time: string) => string;
+    noAnchor: (future: string, index: string, day: string) => string;
+    anchoredOn: (future: string, index: string, offset: string) => string;
+    vwapProxy: (proxy: string) => string;
     hint: string;
   };
   contractChart: {

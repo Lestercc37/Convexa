@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import UTC, date, datetime
+from decimal import Decimal
 from typing import Literal
 
 from fastapi import APIRouter, Query, Request
@@ -9,6 +11,8 @@ from backend.api.schemas import (
     MarketSnapshotResponse,
     PriceCandlesResponse,
     PriceHistoryResponse,
+    ReplayDayResponse,
+    ReplayDaysResponse,
     VwapHistoryResponse,
 )
 from backend.api.serializers import (
@@ -19,7 +23,9 @@ from backend.api.serializers import (
 )
 from backend.api.response_cache import TtlSingleFlight
 from backend.core.container import Container
+from backend.domain.entities import GammaView, PriceCandle
 from backend.domain.use_cases.read_models import MAX_SESSIONS_1M
+from backend.domain.use_cases.replay import ReplayDay, get_replay_day, get_replay_days
 from backend.domain.use_cases import (
     build_market_snapshot_async,
     get_price_candles_async,
@@ -136,3 +142,85 @@ async def get_vwap_history(symbol: str, request: Request) -> VwapHistoryResponse
     return VwapHistoryResponse.model_validate(
         vwap_history_response(symbol, series, not_applicable)
     )
+
+
+def _iso(moment: datetime) -> str:
+    return moment.astimezone(UTC).isoformat().replace("+00:00", "Z")
+
+
+def _number(value: Decimal | None) -> float | None:
+    return None if value is None else float(value)
+
+
+def _candles_payload(candles: tuple[PriceCandle, ...]) -> list[dict]:
+    return [{"time": _iso(c.time), "open": float(c.open), "high": float(c.high), "low": float(c.low), "close": float(c.close)} for c in candles]
+
+
+def _replay_day_payload(replay: ReplayDay) -> dict:
+    return {
+        "schema_version": 1,
+        "symbol": replay.symbol,
+        "source_symbol": replay.source_symbol,
+        "session_date": replay.session_date.isoformat(),
+        "view": replay.view,
+        "live": replay.live,
+        "session_open": _iso(replay.session_open),
+        "session_close": _iso(replay.session_close),
+        "price_offset": float(replay.price_offset),
+        "anchored": replay.anchored,
+        "candles_1m": _candles_payload(replay.candles_1m),
+        "candles_5m": _candles_payload(replay.candles_5m),
+        "levels": [
+            {
+                "time": _iso(cycle.time),
+                "call_wall": _number(cycle.call_wall),
+                "put_wall": _number(cycle.put_wall),
+                "absolute_gamma_strike": _number(cycle.absolute_gamma_strike),
+                "gamma_flip": _number(cycle.gamma_flip),
+            }
+            for cycle in replay.levels
+        ],
+        "vwap": [{"time": _iso(stamp), "value": float(value)} for stamp, value in replay.vwap],
+        "vwap_not_applicable": replay.vwap_not_applicable,
+        "vwap_proxy_symbol": replay.vwap_proxy_symbol,
+    }
+
+
+@router.get(
+    "/replay/{symbol}/days",
+    response_model=ReplayDaysResponse,
+    summary="Sessions the replay can show: today and the last 5 with stored prices",
+)
+async def replay_days(symbol: str, request: Request) -> ReplayDaysResponse:
+    container: Container = request.app.state.container
+    days = await get_replay_days(container.async_market_storage, symbol)
+    return ReplayDaysResponse.model_validate(
+        {
+            "schema_version": 1,
+            "symbol": days.symbol,
+            "today": days.today.isoformat(),
+            "today_has_data": days.today_has_data,
+            "sessions": [day.isoformat() for day in days.sessions],
+        }
+    )
+
+
+@router.get(
+    "/replay/{symbol}/day",
+    response_model=ReplayDayResponse,
+    summary="One stored session for the replay: 1m/5m candles, the levels of every cycle and the anchored VWAP",
+    description=(
+        "Reads market_snapshots (candles bucketed from 09:30 ET), gamma_aggregates (Call Wall, Put Wall, ABS, Flip of every stored cycle of `view`) "
+        "and runs the live chart's anchored-VWAP formula over that day. ES/NQ are SPX/NDX shifted by that day's typed anchor; without one, the index "
+        "is returned unshifted with `anchored` false. Read-only; a finished day is cached for 10 minutes, today's for 5 seconds."
+    ),
+)
+async def replay_day(
+    symbol: str,
+    request: Request,
+    dia: date = Query(description="ET session date, YYYY-MM-DD."),
+    view: GammaView = Query(default="tactical"),
+) -> ReplayDayResponse:
+    container: Container = request.app.state.container
+    replay = await get_replay_day(container.async_market_storage, symbol, dia, view)
+    return ReplayDayResponse.model_validate(_replay_day_payload(replay))

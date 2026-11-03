@@ -8,6 +8,7 @@ import {
   getMarket,
   getOptionChain,
   getOptionChainExpirations,
+  getReplayDay,
   getUnderlyings,
   historyWindowStart,
   setFutureOpeningPrice,
@@ -36,6 +37,18 @@ describe("getGammaHeatmap", () => {
     expect(first).toContain("start=2026-10-16T12%3A30%3A00.000Z");
     expect(first).toContain("bucket_seconds=60");
     expect(String(fetchMock.mock.calls[1][0])).not.toContain("bucket_seconds"); // omitted: the server default
+  });
+});
+
+describe("replay requests", () => {
+  it("asks one day of the replay and the heatmap of that day's window", async () => {
+    fetchMock.mockResolvedValue(response({}));
+
+    await getReplayDay("ES", "2026-10-30", "tactical");
+    await getGammaHeatmap("SPX", { start: new Date("2026-10-30T13:30:00Z"), end: new Date("2026-10-30T20:00:00Z"), bucketSeconds: 120 });
+
+    expect(String(fetchMock.mock.calls[0][0])).toContain("/replay/ES/day?dia=2026-10-30&view=tactical");
+    expect(String(fetchMock.mock.calls[1][0])).toContain("end=2026-10-30T20%3A00%3A00.000Z");
   });
 });
 

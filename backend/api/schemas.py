@@ -877,3 +877,55 @@ class CubeMinimumsResponse(BaseModel):
     minimums: dict[str, int]
     # The same rule on the NET cube size (gross x |buy - sell| / (buy + sell)), which the dashboard draws by default.
     net_minimums: dict[str, int] = Field(default_factory=dict)
+
+
+class ReplayCandleResponse(BaseModel):
+    time: str = Field(description="Start of the bucket (counted from 09:30 ET), ISO 8601 UTC.")
+    open: Number
+    high: Number
+    low: Number
+    close: Number
+
+
+class ReplayLevelsResponse(BaseModel):
+    time: str = Field(description="When the scheduler cycle was stored, ISO 8601 UTC.")
+    call_wall: Number | None
+    put_wall: Number | None
+    absolute_gamma_strike: Number | None
+    gamma_flip: Number | None
+
+
+class ReplayPointResponse(BaseModel):
+    time: str
+    value: Number
+
+
+class ReplayDayResponse(BaseModel):
+    """One stored session for the replay (docs/diseno-replay-5-dias-2026-10-29.txt): 1- and 5-minute candles of the stored prices, the levels of
+    every stored cycle of the view, and the anchored VWAP per minute. ES/NQ = SPX/NDX shifted by THAT day's anchor (`anchored` false: no anchor
+    that day, the index is shown as is). The heatmap comes from /gamma/{source_symbol}/heatmap with the day's window. Read-only."""
+
+    schema_version: int = Field(examples=[1])
+    symbol: str = Field(examples=["SPX"])
+    source_symbol: str = Field(description="Whose stored data is shown (SPX for ES, NDX for NQ).", examples=["SPX"])
+    session_date: str = Field(examples=["2026-10-30"])
+    view: str = Field(examples=["tactical"])
+    live: bool = Field(description="Today's session before 16:00 ET: it keeps growing.")
+    session_open: str
+    session_close: str
+    price_offset: Number = Field(description="Added to the source's prices and strikes (ES/NQ: that day's anchor minus the index's opening reference); 0 otherwise.")
+    anchored: bool | None = Field(description="ES/NQ: whether that day had a typed anchor; null for other symbols.")
+    candles_1m: list[ReplayCandleResponse]
+    candles_5m: list[ReplayCandleResponse]
+    levels: list[ReplayLevelsResponse]
+    vwap: list[ReplayPointResponse]
+    vwap_not_applicable: bool
+    vwap_proxy_symbol: str | None
+
+
+class ReplayDaysResponse(BaseModel):
+    schema_version: int = Field(examples=[1])
+    symbol: str
+    today: str = Field(description="Today's ET date.")
+    today_has_data: bool
+    sessions: list[str] = Field(description="Earlier sessions with stored prices, newest first (at most 5).")

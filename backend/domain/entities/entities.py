@@ -882,6 +882,18 @@ class PriceCandle:
 
 
 @dataclass(frozen=True, slots=True)
+class LevelCycle:
+    """The levels one stored scheduler cycle (gamma_aggregates) had, as the replay draws them. None = that level was not found in that cycle
+    (a wall with no candidate, no Flip crossing, an empty cycle's 0 absolute-gamma strike)."""
+
+    time: datetime
+    call_wall: Decimal | None
+    put_wall: Decimal | None
+    absolute_gamma_strike: Decimal | None
+    gamma_flip: Decimal | None
+
+
+@dataclass(frozen=True, slots=True)
 class MinuteOptionFlow:
     """The signed delta flow of one underlying's option trades in one ET minute (one row per root; see migration 0048). `minute` is the START of the minute. Flows are in
     delta-equivalent contracts (contracts x |delta|), buying a call +, selling a call -, buying a put -, selling a put + (positive = bullish pressure on both sides)."""

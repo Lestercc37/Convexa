@@ -138,8 +138,9 @@ const PANEL_TITLES = {
   "/vista/dealers": "Convexa — Dealers",
   "/vista/cadena": "Convexa — Cadena de flujo",
   "/vista/contrato": "Convexa — Contratos Call | Put",
+  "/vista/repeticion": "Convexa — Repetición",
 };
-const PANEL_PARAM_TITLES = { cadena: "Convexa — Cadena de flujo", contrato: "Convexa — Contratos Call | Put" };
+const PANEL_PARAM_TITLES = { cadena: "Convexa — Cadena de flujo", contrato: "Convexa — Contratos Call | Put", repeticion: "Convexa — Repetición" };
 const panelWindows = new Map();
 function openPanelWindow(path, title, url) {
   const existing = panelWindows.get(path);
