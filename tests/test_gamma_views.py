@@ -340,6 +340,23 @@ def test_execute_both_also_saves_one_view_per_listed_expiration_and_tactical_tak
     assert strikes == {"0dte": {Decimal(550)}, "1dte": {Decimal(552)}, "2dte": {Decimal(548)}}
 
 
+def test_the_cycle_never_writes_the_90_day_view() -> None:
+    """2026-11-03: the cycle looped over every expiration view including "90d" and saved the 4th LISTED expiration as "90d" every ~30 s,
+    on top of the real 90-day aggregate refreshed every 15 min by its own max_dte=90 fetch: the app's "90 días" tab read the wrong one.
+    Four listed expirations here, so the old code would have saved the fourth one as "90d"."""
+    storage = InMemoryStorage()
+    contracts = tuple(
+        _contract(f"SPY2601{15 + days:02d}C00{550 + days}000", ContractType.CALL, Decimal(550 + days), TODAY_ET + timedelta(days=days), open_interest=100, gamma="0.02")
+        for days in (0, 1, 2, 3)
+    )
+    storage.save_chain_snapshot(OptionChain(symbol="SPY", as_of=AS_OF, spot_price=SPOT_PRICE, contracts=contracts))
+
+    _orchestrator(storage).execute_both("SPY")
+
+    assert storage.get_latest_gamma_aggregate("SPY", view="2dte") is not None
+    assert storage.get_latest_gamma_aggregate("SPY", view="90d") is None
+
+
 def test_a_missing_expiration_slot_is_an_honest_empty_view() -> None:
     storage = InMemoryStorage()
     contracts = (

@@ -6,7 +6,7 @@ from dataclasses import replace
 from datetime import date, datetime, timedelta
 from decimal import Decimal
 
-from backend.domain.entities import EXPIRATION_GAMMA_VIEWS, VOLUME_GAMMA_VIEWS, DailyBar, GammaAggregate, GammaView, OptionChain
+from backend.domain.entities import LISTED_EXPIRATION_VIEWS, VOLUME_GAMMA_VIEWS, DailyBar, GammaAggregate, GammaView, OptionChain
 from backend.domain.ports import IAsyncMarketReadStorage, IStorage
 from backend.domain.use_cases.calculate_atr_range import REQUIRED_DAILY_BARS
 from backend.domain.use_cases.calculate_gamma_aggregate import (
@@ -212,7 +212,7 @@ class CalculateGammaExposureOrchestrator:
         if underlying.upper() in TACTICAL_ENABLED_SYMBOLS:
             # The per-expiration views (0DTE / 1DTE / 2DTE tabs) after the 0-2 DTE one, each on its own: a failure here never
             # costs the tactical aggregate (already saved) nor the other views.
-            for view in EXPIRATION_GAMMA_VIEWS:
+            for view in LISTED_EXPIRATION_VIEWS:  # never "90d": its own 90-day fetch (refresh_snapshot) owns that view
                 try:
                     self._storage.save_gamma_aggregate(
                         self.build_expiration_view(underlying, chain, daily_bars, view)
@@ -714,7 +714,7 @@ def listed_expiration_for_view(chain: OptionChain, view: str) -> date | None:
     """The expiration a per-expiration view reads: the n-th LISTED expiration from today (ET) on, by listed order, not by
     calendar days ("0dte" = today's or the nearest one, "1dte" the next, "2dte" the one after; on a Friday "1dte" is
     Monday's). NVDA / VIX, with no daily listings, therefore read their nearest weeklies instead of an empty view."""
-    position = EXPIRATION_GAMMA_VIEWS.index(VOLUME_GAMMA_VIEWS.get(view, view))
+    position = LISTED_EXPIRATION_VIEWS.index(VOLUME_GAMMA_VIEWS.get(view, view))
     today = chain.as_of.astimezone(EASTERN_TIME).date()
     listed = sorted({contract.expiration for contract in chain.contracts if contract.expiration >= today})
     return listed[position] if len(listed) > position else None

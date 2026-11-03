@@ -1,5 +1,6 @@
 from backend.domain.entities.entities import (
     EXPIRATION_GAMMA_VIEWS,
+    LISTED_EXPIRATION_VIEWS,
     GAMMA_VIEWS,
     SCHEMA_VERSION,
     VOLUME_GAMMA_VIEWS,
@@ -73,6 +74,7 @@ from backend.domain.entities.entities import (
 
 __all__ = [
     "EXPIRATION_GAMMA_VIEWS",
+    "LISTED_EXPIRATION_VIEWS",
     "GAMMA_VIEWS",
     "SCHEMA_VERSION",
     "VOLUME_GAMMA_VIEWS",
