@@ -3,7 +3,7 @@
 import Image from "next/image";
 import { useEffect, useRef, useState } from "react";
 import { BarSeries, BaselineSeries, ColorType, createChart, type IChartApi, type ISeriesApi, type UTCTimestamp } from "lightweight-charts";
-import { getContractChart } from "@/lib/api";
+import { getContractChart, getReplayDays } from "@/lib/api";
 import { useLanguage } from "@/lib/i18n/language-context";
 import { EASTERN_TIME_ZONE } from "@/lib/market-session";
 import type { ContractChartResponse, ContractPoint, ContractSeries } from "@/lib/types";
@@ -160,13 +160,25 @@ function ContractPane({ series, label }: { series: ContractSeries | null; label:
 export function ContractChartPanel({ symbol }: { symbol: string }) {
   const { t } = useLanguage();
   const [strike, setStrike] = useState<number | null>(null);
+  // null = the latest session (today once it has data); otherwise one of the past sessions the replay lists (Lester 2026-11-03: to compare a
+  // past day with thinkorswim himself).
+  const [day, setDay] = useState<string | null>(null);
+  const [sessions, setSessions] = useState<string[]>([]);
   const [data, setData] = useState<ContractChartResponse | null>(null);
   const [failed, setFailed] = useState(false);
 
   useEffect(() => {
     const controller = new AbortController();
+    getReplayDays(symbol, controller.signal)
+      .then((response) => setSessions([...(response.today_has_data ? [response.today] : []), ...response.sessions]))
+      .catch(() => setSessions([]));
+    return () => controller.abort();
+  }, [symbol]);
+
+  useEffect(() => {
+    const controller = new AbortController();
     const load = () =>
-      getContractChart(symbol, { strike: strike ?? undefined }, controller.signal)
+      getContractChart(symbol, { strike: strike ?? undefined, date: day ?? undefined }, controller.signal)
         .then((response) => {
           setData(response);
           setFailed(false);
@@ -184,11 +196,28 @@ export function ContractChartPanel({ symbol }: { symbol: string }) {
       window.clearInterval(interval);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [symbol, strike]);
+  }, [symbol, strike, day]);
 
   return (
     <div className="v2-contract">
       <div className="v2-chain-head">
+        <label className="v2-dim">
+          {t.contractChart.day}{" "}
+          <select
+            className="v2-sel"
+            aria-label={t.contractChart.day}
+            value={day ?? ""}
+            onChange={(event) => setDay(event.target.value || null)}
+            disabled={sessions.length === 0}
+          >
+            <option value="">{t.contractChart.latestSession}</option>
+            {sessions.map((session) => (
+              <option key={session} value={session}>
+                {session}
+              </option>
+            ))}
+          </select>
+        </label>
         <label className="v2-dim">
           {t.contractChart.strike}{" "}
           <select

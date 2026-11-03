@@ -467,6 +467,7 @@ export const en: Translations = {
     day: "Day",
     todayLive: "Today (live)",
     timeframe: "Candles",
+    viewGroup: "Gamma view",
     play: "Play",
     pause: "Pause",
     stepBack: "Step back",
@@ -488,6 +489,8 @@ export const en: Translations = {
   contractChart: {
     title: "Contracts Call | Put",
     strike: "Strike",
+    day: "Day",
+    latestSession: "Latest session",
     call: "Call",
     put: "Put",
     sessionOf: (date) => `Session ${date} · 0DTE`,
