@@ -342,6 +342,14 @@ def registered_contracts_from_logs(logs_dir: Path) -> int | None:
     return count_registered_contracts(read_log_text(logs_dir / "worker.log.1") + read_log_text(logs_dir / "worker.log"))
 
 
+def rediscovery_heartbeat_from_logs(logs_dir: Path) -> datetime | None:
+    current = last_rediscovery_heartbeat(read_log_text(logs_dir / "worker.log", max_bytes=4 * 1024 * 1024))
+    if current is not None:
+        return current
+    # worker.log just rotated (2026-11-03 12:06:56: false alarm at 12:06:57, the 12:05:55 heartbeat was in worker.log.1)
+    return last_rediscovery_heartbeat(read_log_text(logs_dir / "worker.log.1", max_bytes=4 * 1024 * 1024))
+
+
 def read_log_tail(path: Path) -> str:
     if not path.exists():
         return ""
@@ -414,7 +422,7 @@ def run_once(logs_dir: Path, state_path: Path, toast_task: str | None = None, au
         ),
         check_contract_count(registered_contracts_from_logs(logs_dir)),
         check_rediscovery_heartbeat(
-            last_rediscovery_heartbeat(read_log_text(logs_dir / "worker.log", max_bytes=4 * 1024 * 1024)),
+            rediscovery_heartbeat_from_logs(logs_dir),
             datetime.now(),  # noqa: DTZ005 -- compared against naive local log stamps
             market_open,
             minutes_since_open(now),
