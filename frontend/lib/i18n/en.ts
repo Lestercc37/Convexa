@@ -484,7 +484,7 @@ export const en: Translations = {
     noAnchor: (future, index, day) => `${future} has no stored anchor on ${day}: showing ${index} as is.`,
     anchoredOn: (future, index, offset) => `${future} = ${index} ${offset} (that day's anchor)`,
     vwapProxy: (proxy) => `VWAP with ${proxy} volume`,
-    hint: "x1 = one market minute per second. Levels as stored in each cycle; nothing after the chosen time is drawn.",
+    hint: "x1 = one market minute per second (x½ = 2 s, x¼ = 4 s). Levels as stored in each cycle; nothing after the chosen time is drawn.",
   },
   contractChart: {
     title: "Contracts Call | Put",

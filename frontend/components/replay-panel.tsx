@@ -32,7 +32,9 @@ import {
   MINUTE_SECONDS,
   nextCursor,
   prepareDay,
+  DEFAULT_REPLAY_SPEED,
   REPLAY_SPEEDS,
+  replaySpeedLabel,
   type ReplaySpeed,
   type ReplayTimeframe,
   sessionWhitespace,
@@ -222,7 +224,7 @@ export function ReplayPanel({ symbol }: { symbol: string }) {
   // Where the replay stands, remembered with the day it belongs to: another day (or symbol) reads as "not set", so it starts at 09:30 paused.
   const [position, setPosition] = useState<{ key: string; cursor: number; following: boolean } | null>(null);
   const [playingKey, setPlayingKey] = useState<string | null>(null);
-  const [speed, setSpeed] = useState<ReplaySpeed>(1);
+  const [speed, setSpeed] = useState<ReplaySpeed>(DEFAULT_REPLAY_SPEED);
   const [gammaTab, setGammaTab] = useState<GammaView>(DEFAULT_TAB);
   const [gammaWeight, setGammaWeight] = useState<GammaWeight>(DEFAULT_WEIGHT);
   const view = effectiveGammaView(gammaTab, gammaWeight);
@@ -441,7 +443,7 @@ export function ReplayPanel({ symbol }: { symbol: string }) {
         <span className="v2-replay-speeds" role="group" aria-label={t.replay.speed}>
           {REPLAY_SPEEDS.map((option) => (
             <button key={option} type="button" className="v2-btn" aria-pressed={speed === option} onClick={() => setSpeed(option)}>
-              x{option}
+              {replaySpeedLabel(option)}
             </button>
           ))}
         </span>
