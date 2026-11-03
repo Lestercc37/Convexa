@@ -40,6 +40,7 @@ import {
   sliceHeatmap,
   vwapAt,
 } from "@/lib/replay";
+import { APP_GAMMA_VIEW_TABS, effectiveGammaView, supportsVolumeWeight, type GammaWeight } from "@/lib/gamma-views";
 import type { GammaView, ReplayDayResponse, ReplayDaysResponse } from "@/lib/types";
 import { GammaHeatmapPrimitive, heatmapFromResponse, type HeatmapData } from "./gamma-heatmap-primitive";
 
@@ -53,7 +54,10 @@ const LIVE_POLL_MS = 10_000;
 const HEATMAP_LIVE_POLL_MS = 30_000;
 const RETRY_MS = 10_000;
 const HEATMAP_BUCKET_SECONDS = 120;
-const VIEW: GammaView = "tactical";
+// The app's own tabs (0DTE | 1DTE | 90 días) and OI | Volumen, so the replay shows what was seen live (Lester 2026-11-03: the 0-2 DTE view it
+// used first painted the 7575 band an hour later than his 0DTE chart). Starts on 0DTE by volume, his request.
+const DEFAULT_TAB: GammaView = "0dte";
+const DEFAULT_WEIGHT: GammaWeight = "volume";
 const VWAP_COLOR = "#f3c969";
 const LEVEL_LINES: { key: keyof LevelsAtMinute; title: string; color: string }[] = [
   { key: "callWall", title: "Call Wall", color: "#00DC5A" },
@@ -219,6 +223,9 @@ export function ReplayPanel({ symbol }: { symbol: string }) {
   const [position, setPosition] = useState<{ key: string; cursor: number; following: boolean } | null>(null);
   const [playingKey, setPlayingKey] = useState<string | null>(null);
   const [speed, setSpeed] = useState<ReplaySpeed>(1);
+  const [gammaTab, setGammaTab] = useState<GammaView>(DEFAULT_TAB);
+  const [gammaWeight, setGammaWeight] = useState<GammaWeight>(DEFAULT_WEIGHT);
+  const view = effectiveGammaView(gammaTab, gammaWeight);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -243,8 +250,10 @@ export function ReplayPanel({ symbol }: { symbol: string }) {
   }, [symbol, requestedDay]);
 
   const dayKey = day ? `${symbol}|${day}` : "";
+  // The loaded data also depends on the view; the cursor (dayKey) does not, so changing the view keeps the replay where it is.
+  const dataKey = day ? `${dayKey}|${view}` : "";
   const isToday = days !== null && day === days.today;
-  const data = loaded && loaded.key === dayKey ? loaded.data : null;
+  const data = loaded && loaded.key === dataKey ? loaded.data : null;
   const live = data?.live ?? false;
 
   // The day's data: once for a finished day, every 10 s while today's session is open (the server holds it 5 s, shared by every window).
@@ -253,9 +262,9 @@ export function ReplayPanel({ symbol }: { symbol: string }) {
     const controller = new AbortController();
     let timer: number | undefined;
     const load = () =>
-      getReplayDay(symbol, day, VIEW, controller.signal)
+      getReplayDay(symbol, day, view, controller.signal)
         .then((response) => {
-          setLoaded({ key: `${symbol}|${day}`, data: response });
+          setLoaded({ key: `${symbol}|${day}|${view}`, data: response });
           setDayFailed(false);
           if (response.live) timer = window.setTimeout(load, LIVE_POLL_MS);
         })
@@ -269,10 +278,10 @@ export function ReplayPanel({ symbol }: { symbol: string }) {
       controller.abort();
       window.clearTimeout(timer);
     };
-  }, [symbol, day]);
+  }, [symbol, day, view]);
 
   // The heatmap of the day's window from the existing endpoint, in the source's strikes (SPX for ES) moved by that day's offset.
-  const heatmapKey = data ? `${dayKey}|${data.source_symbol}|${data.price_offset}` : "";
+  const heatmapKey = data ? `${dataKey}|${data.source_symbol}|${data.price_offset}` : "";
   useEffect(() => {
     if (!data) return;
     const controller = new AbortController();
@@ -282,7 +291,7 @@ export function ReplayPanel({ symbol }: { symbol: string }) {
       getGammaHeatmap(
         data.source_symbol,
         {
-          view: VIEW,
+          view,
           metric: "gamma",
           start: new Date(data.session_open),
           end: data.live ? undefined : new Date(data.session_close),
@@ -378,6 +387,31 @@ export function ReplayPanel({ symbol }: { symbol: string }) {
             <option value="5m">5m</option>
           </select>
         </label>
+        <div className="v2-seg" role="group" aria-label={t.replay.viewGroup}>
+          {APP_GAMMA_VIEW_TABS.map((tab) => (
+            <button key={tab.view} type="button" aria-pressed={gammaTab === tab.view} onClick={() => setGammaTab(tab.view)}>
+              {tab.label}
+            </button>
+          ))}
+        </div>
+        <div
+          className="v2-seg"
+          role="group"
+          aria-label={t.dashboard.gammaWeightGroupAriaLabel}
+          title={supportsVolumeWeight(gammaTab) ? t.dashboard.gammaWeightNote : t.dashboard.gammaWeightOnly0dteNote}
+        >
+          {(["oi", "volume"] as const).map((weight) => (
+            <button
+              key={weight}
+              type="button"
+              aria-pressed={(supportsVolumeWeight(gammaTab) ? gammaWeight : "oi") === weight}
+              disabled={weight === "volume" && !supportsVolumeWeight(gammaTab)}
+              onClick={() => setGammaWeight(weight)}
+            >
+              {weight === "oi" ? t.dashboard.gammaWeightOi : t.dashboard.gammaWeightVolume}
+            </button>
+          ))}
+        </div>
         <span className="v2-replay-controls">
           <button type="button" className="v2-ibtn" title={t.replay.stepBack} aria-label={t.replay.stepBack} onClick={() => step(-1)} disabled={!hasCandles}>
             ⏮

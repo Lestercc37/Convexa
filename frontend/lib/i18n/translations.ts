@@ -318,6 +318,7 @@ export type Translations = {
     day: string;
     todayLive: string;
     timeframe: string;
+    viewGroup: string;
     play: string;
     pause: string;
     stepBack: string;
@@ -339,6 +340,8 @@ export type Translations = {
   contractChart: {
     title: string;
     strike: string;
+    day: string;
+    latestSession: string;
     call: string;
     put: string;
     sessionOf: (date: string) => string;
