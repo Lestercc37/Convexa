@@ -497,6 +497,11 @@ WILDCARD_MAX_DTE = 14
 # directly instead, matching that same cadence rather than inventing a
 # new one.
 CONTRACT_REDISCOVERY_INTERVAL_SECONDS = 60.0
+# The STREAM's subscription band per symbol, when it differs from the near-the-money chain's ATR x 1.5 (which the rest of the provider keeps).
+# SPX x 2.0 (Lester 2026-11-03 "si"): with x 1.5 (124 pts that day) 18 far-OTM 0DTE calls entered the stream only as spot neared them (7715C at
+# 13:12: 301 counted vs 4,260 traded) and the stream missed 22,119 contracts of volume (0.68 % of the day) in minute flow, alerts and the flow
+# chain; x 2.0 (165 pts) would have held all 18 from the open for +32 contracts at the open (100 -> 132), +36 over the day (docs/hm_band_width_cost.py).
+STREAMING_BAND_MULTIPLIERS: dict[str, Decimal] = {"SPX": Decimal("2.0")}
 _EASTERN = ZoneInfo("America/New_York")
 # One "Contract rediscovery alive" INFO line every this many passes (~10 min).
 REDISCOVERY_ALIVE_EVERY_PASSES = 10
@@ -2533,7 +2538,7 @@ class ThetaDataProvider:
                     "Failed to discover near-the-money contracts for %s at startup", symbol
                 )
                 continue
-            for entry in chain.entries:
+            for entry in self._streaming_entries(symbol, chain):
                 contract_meta = entry["contract"]
                 # The actual root this entry came from — for SPX/NDX
                 # (see _roots_for_symbol) this can be the weekly root
@@ -3247,6 +3252,14 @@ class ThetaDataProvider:
             logger.exception("Failed to fetch underlying volume for %s", symbol)
             return 0
 
+    def _streaming_entries(self, symbol: str, chain: _NearTheMoneyChain) -> list[dict[str, Any]]:
+        """The contracts the stream follows: `chain.entries` (ATR x 1.5), or the nearest expiration's wide entries filtered with the symbol's own
+        STREAMING_BAND_MULTIPLIERS width. Only the stream changes; chain.entries keeps serving every other near-the-money reader."""
+        multiplier = STREAMING_BAND_MULTIPLIERS.get(symbol.upper())
+        if multiplier is None or not chain.wide_entries:
+            return chain.entries
+        return self._filter_near_the_money(symbol, chain.wide_entries, multiplier=multiplier)
+
     def _register_streaming_contracts(self, symbol: str, chain: _NearTheMoneyChain) -> None:
         """Registers/live-subscribes Whale Alerts' Trade/Quote streaming
         for exactly `chain`'s contracts. Deliberately typed to take a
@@ -3282,7 +3295,7 @@ class ThetaDataProvider:
         (that's REST request concurrency, via theta_request_slots).
         """
         newly_registered_contracts: list[tuple[str, date, ContractType, Decimal]] = []
-        for entry in chain.entries:
+        for entry in self._streaming_entries(symbol, chain):
             contract_meta = entry["contract"]
             # The actual root this entry came from — for SPX/NDX this can
             # be the weekly root (e.g. "SPXW"), which lists real,

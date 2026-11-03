@@ -4307,3 +4307,27 @@ def test_is_noisy_itm_quote_matches_the_charts_readable_iv_rule() -> None:
     assert _is_noisy_itm_quote("CALL", Decimal(990), spot, Decimal("9.9"), Decimal("10.1")) is True  # mid = intrinsic 10: no time value at all
     assert _is_noisy_itm_quote("CALL", Decimal(1010), spot, Decimal(1), Decimal("1.2")) is False  # OTM is never noisy
     assert _is_noisy_itm_quote("CALL", Decimal(990), spot, Decimal(11), Decimal(10)) is False  # crossed quote: not judged
+
+
+class TestStreamingBandPerSymbol:
+    """SPX's stream follows ATR x 2.0 (Lester 2026-11-03): with x 1.5 far-OTM 0DTE calls entered only as spot neared them and the stream
+    missed their earlier trades. Every other symbol, and every non-stream reader of chain.entries, keeps x 1.5."""
+
+    def _chain(self) -> provider_module._NearTheMoneyChain:
+        wide = [
+            _first_order_entry(strike, "CALL", expiration="2026-11-03", underlying_price="7552.00", root="SPXW")
+            for strike in ("7552.00", "7670.00", "7715.00", "7760.00")
+        ]
+        return provider_module._NearTheMoneyChain(date(2026, 11, 3), wide[:2], wide_entries=wide)
+
+    def test_spx_streams_the_x2_band_and_other_symbols_keep_the_chain_entries(self, monkeypatch) -> None:
+        provider = _provider_with_transport(lambda request: httpx.Response(404))
+        widths = {Decimal("1.5"): Decimal(124), Decimal("2.0"): Decimal(165)}
+        monkeypatch.setattr(provider, "_resolve_width", lambda symbol, spot, multiplier=Decimal("1.5"): widths[multiplier])
+        chain = self._chain()
+
+        spx = [entry["contract"]["strike"] for entry in provider._streaming_entries("SPX", chain)]
+        spy = [entry["contract"]["strike"] for entry in provider._streaming_entries("SPY", chain)]
+
+        assert [float(s) for s in spx] == [7552.0, 7670.0, 7715.0]  # 7715 is 163 pts away: in x 2.0 (165), out of x 1.5 (124)
+        assert spy == [entry["contract"]["strike"] for entry in chain.entries]
