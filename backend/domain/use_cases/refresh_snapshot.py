@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import threading
 import time
 from dataclasses import dataclass
 from datetime import timedelta
@@ -153,7 +154,12 @@ class RefreshUnderlyingSnapshotUseCase:
 # aggregate and its per-strike rows are stored (view '90d'), never the 90-day chain itself (it would add ~1.5 M snapshot rows a day).
 LONG_VIEW_REFRESH_SECONDS = 15 * 60
 LONG_VIEW_MAX_DTE = 90
+# At most ONE symbol's 90-day fetch per cycle (~30 s; the symbols run in parallel): on 2026-11-03 all 7 fetched in the same cycle and that cycle
+# took 80.8 s at 09:31 and 54 s at 09:47 (the others ~36 s). Spaced, the 7 symbols take ~4 min to go round and each still refreshes every 15 min.
+LONG_VIEW_SPACING_SECONDS = 30
 _long_view_refreshed_at: dict[str, float] = {}
+_long_view_last_any: list[float | None] = [None]
+_long_view_lock = threading.Lock()
 
 
 def _long_view_due(symbol: str, now: float) -> bool:
@@ -161,14 +167,23 @@ def _long_view_due(symbol: str, now: float) -> bool:
     return last is None or now - last >= LONG_VIEW_REFRESH_SECONDS
 
 
+def _take_long_view_slot(symbol: str, now: float) -> bool:
+    """True (and the slot is taken) when `symbol` is due and no other symbol fetched in the last LONG_VIEW_SPACING_SECONDS."""
+    with _long_view_lock:
+        last_any = _long_view_last_any[0]
+        if not _long_view_due(symbol, now) or (last_any is not None and now - last_any < LONG_VIEW_SPACING_SECONDS):
+            return False
+        _long_view_refreshed_at[symbol] = now  # a failure waits for the next slot too: never a retry storm against ThetaData
+        _long_view_last_any[0] = now
+        return True
+
+
 def _refresh_long_view_impl(use_case: "RefreshUnderlyingSnapshotUseCase", symbol: str) -> None:
     upper = symbol.upper()
     if upper not in TACTICAL_ENABLED_SYMBOLS or not use_case.long_view_enabled:
         return
-    now = time.monotonic()
-    if not _long_view_due(upper, now):
+    if not _take_long_view_slot(upper, time.monotonic()):
         return
-    _long_view_refreshed_at[upper] = now  # a failure waits for the next slot too: never a retry storm against ThetaData
     try:
         started = time.monotonic()
         chain = use_case.market_data_provider.get_option_chain(upper, max_dte=LONG_VIEW_MAX_DTE)
