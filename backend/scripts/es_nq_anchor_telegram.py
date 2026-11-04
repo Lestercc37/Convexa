@@ -4,7 +4,8 @@ Why on the server: the chat assistant's scheduled reminders only fire when it is
 
 What it sends (same rule as the manual message since the 2026-10-16 offset fix): from Yahoo's 1-minute ES=F / NQ=F bars (about 10 minutes delayed, so the 09:30 bar exists
 from ~09:41), ANCHOR = (high + low + close) / 3 of the 09:30 ET bar, rounded to 0.25 — the number Lester types as the opening price. Convexa's offset = anchor - median of
-the first minute of stored SPX / NDX readings; it is reported with a warning when it falls outside the usual ranges.
+the first minute of stored SPX / NDX readings; it is checked against the last days; when the check passes and the day has no anchor yet the task also SAVES it
+(source "yahoo"; Lester 2026-11-02), never over a number he typed or one NinjaTrader saved at 09:31 (backend/domain/use_cases/futures_anchor.py).
 
 Skips weekends and days without SPX readings at 09:30 (market holidays). Retries the Yahoo bar every 30 s for up to 4 minutes. The bot token is read from the server's
 .env (QLL_TELEGRAM_BOT_TOKEN, written by Lester) and never printed or logged; the chat id is in V:/Convexa/config/telegram_owner_chat.txt.
@@ -15,18 +16,23 @@ from __future__ import annotations
 
 import argparse
 import logging
-import statistics
 import sys
 import time
 from datetime import datetime, timedelta
+from decimal import Decimal
 from pathlib import Path
 
 import httpx
 from pydantic import SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
-from sqlalchemy import text
 
+from backend.adapters.storage.futures_anchor_queries import first_minute_median, recent_offsets
 from backend.core.container import build_container
+from backend.domain.use_cases.futures_anchor import (
+    AutoSaveResult,
+    anchor_from_bar,
+    auto_save_anchor,
+)
 from backend.domain.use_cases.market_hours import EASTERN_TIME
 
 logger = logging.getLogger("es_nq_anchor")
@@ -65,45 +71,27 @@ def opening_bar(
     return None
 
 
-def first_minute_median(container, index_symbol: str, day_open: datetime) -> float | None:
-    with container.storage.session_factory() as session:
-        rows = session.execute(
-            text(
-                """SELECT m.price FROM market_snapshots m JOIN underlyings u ON u.id = m.underlying_id
-                   WHERE u.symbol = :s AND m.time >= :a AND m.time < :b ORDER BY m.time"""
-            ),
-            {"s": index_symbol, "a": day_open, "b": day_open + timedelta(minutes=1)},
-        ).all()
-        session.rollback()
-    return statistics.median(float(r[0]) for r in rows) if rows else None
-
-
-def recent_offsets(
-    container, future: str, index_symbol: str, before: datetime, sessions: int = 5
-) -> list[float]:
-    """The offsets of the last `sessions` days Lester typed an anchor: anchor - median of that day's first minute of index readings."""
-    with container.storage.session_factory() as session:
-        rows = session.execute(
-            text(
-                """SELECT a.session_date, a.anchor_price FROM future_price_anchors a JOIN underlyings u ON u.id = a.underlying_id
-                   WHERE u.symbol = :f AND a.session_date < :d ORDER BY a.session_date DESC LIMIT :n"""
-            ),
-            {"f": future, "d": before.date(), "n": sessions},
-        ).all()
-        session.rollback()
-    offsets = []
-    for session_date, anchor in rows:
-        day_open = datetime(
-            session_date.year, session_date.month, session_date.day, 9, 30, tzinfo=EASTERN_TIME
-        )
-        median = first_minute_median(container, index_symbol, day_open)
-        if median is not None:
-            offsets.append(float(anchor) - median)
-    return offsets
+def save_line(name: str, result: AutoSaveResult | None) -> str | None:
+    """What happened to the day's saved anchor (Lester 2026-11-02: the 09:41 task also SAVES it; never over a number he typed)."""
+    if result is None:
+        return None
+    if result.status == "saved":
+        return f"{name}: guardado ✓ (Yahoo)"
+    if result.status == "would_save":
+        return f"{name}: se guardaría (prueba, no se escribió nada)"
+    if result.status == "exists":
+        diff = result.anchor - result.existing if result.existing is not None else None
+        tail = f" (Yahoo da {result.anchor:,.2f}, diferencia {diff:+.2f})" if diff is not None else ""
+        if result.existing_source == "ninjatrader":
+            return f"{name}: ya guardado por NinjaTrader 09:31: {result.existing:,.2f}{tail}"
+        if result.existing_source == "manual":
+            return f"{name}: ya lo escribiste tú: {result.existing:,.2f}{tail}"
+        return f"{name}: ya estaba guardado ({result.existing_source}): {result.existing:,.2f}{tail}"
+    return f"{name}: NO guardado. {result.check.warning} Revísalo y escríbelo tú."
 
 
 def build_message(
-    day: str, anchors: dict, offsets: dict, bars: dict, warnings: list[str], test: bool
+    day: str, anchors: dict, offsets: dict, bars: dict, saves: dict, test: bool
 ) -> str:
     lines = [("PRUEBA · " if test else "") + f"Convexa · apertura ES / NQ · {day}"]
     for name in ("ES", "NQ"):
@@ -116,7 +104,7 @@ def build_message(
             )
         else:
             lines.append(f"{name}: sin vela de 09:30 en Yahoo todavía")
-    lines.extend(warnings)
+    lines.extend(line for name in ("ES", "NQ") if (line := save_line(name, saves.get(name))) is not None)
     return "\n".join(lines)
 
 
@@ -138,7 +126,7 @@ def main() -> int:
     day_open = now.replace(hour=9, minute=30, second=0, microsecond=0)
     container = build_container()
     medians = {
-        name: first_minute_median(container, spec[1], day_open) for name, spec in FUTURES.items()
+        name: first_minute_median(container.storage, spec[1], day_open) for name, spec in FUTURES.items()
     }
     if medians["ES"] is None and medians["NQ"] is None:
         logger.info("no SPX / NDX readings at 09:30 today: market closed, nothing to send")
@@ -161,29 +149,19 @@ def main() -> int:
                 break
             time.sleep(RETRY_SECONDS)
 
-    anchors = {name: round((b[1] + b[2] + b[3]) / 3 * 4) / 4 for name, b in bars.items()}
-    offsets, warnings = {}, []
+    anchors = {name: anchor_from_bar(Decimal(str(b[1])), Decimal(str(b[2])), Decimal(str(b[3]))) for name, b in bars.items()}
+    offsets, saves = {}, {}
     for name, anchor in anchors.items():
         median = medians.get(name)
-        if median is None:
-            continue
-        offsets[name] = anchor - median
-        margin = FUTURES[name][3]
-        # The basis shrinks as the futures contract nears expiry, so a fixed range goes stale: compare with the offsets of the last days typed.
-        history = recent_offsets(container, name, FUTURES[name][1], day_open)
-        if history:
-            usual = statistics.median(history)
-            if abs(offsets[name] - usual) > margin:
-                warnings.append(
-                    f"Ojo: {name} − {FUTURES[name][1]} = {offsets[name]:+.1f}; los últimos días fue {usual:+.1f}. Revísalo antes de escribirlo."
-                )
-        else:
-            low, high = FUTURES[name][2]
-            if not (low - margin <= offsets[name] <= high + margin):
-                warnings.append(
-                    f"Ojo: {name} − {FUTURES[name][1]} = {offsets[name]:+.1f}, fuera de lo habitual ({low:+d} a {high:+d}). Revísalo antes de escribirlo."
-                )
-    message = build_message(day, anchors, offsets, bars, warnings, args.test)
+        if median is not None:
+            offsets[name] = float(anchor) - median
+        # The basis shrinks as the futures contract nears expiry, so the check compares with the offsets of the last days with an anchor.
+        history = recent_offsets(container.storage, name, FUTURES[name][1], day_open)
+        saves[name] = auto_save_anchor(
+            container.storage, name, day_open.date(), anchor, "yahoo", median, history, dry_run=args.dry_run
+        )
+        logger.info("anchor %s %s: %s (existing %s %s)", name, anchor, saves[name].status, saves[name].existing, saves[name].existing_source)
+    message = build_message(day, anchors, offsets, bars, saves, args.test)
 
     if args.dry_run:
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")  # the server console is cp1252

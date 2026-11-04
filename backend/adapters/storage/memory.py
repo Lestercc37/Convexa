@@ -49,6 +49,7 @@ class InMemoryStorage:
         self._volume_corrections: dict[str, int] = {}
         self._future_price_anchors: dict[tuple[str, date], Decimal] = {}
         self._future_price_anchor_saved_at: dict[tuple[str, date], datetime] = {}
+        self._future_price_anchor_source: dict[tuple[str, date], str] = {}
         self._whale_thresholds: dict[str, WhaleThreshold] = {
             underlying.symbol: WhaleThreshold(
                 symbol=underlying.symbol,
@@ -303,10 +304,20 @@ class InMemoryStorage:
             if occ_symbol in self._volume_corrections
         }
 
+    def add_future_price_anchor_if_absent(self, symbol: str, session_date: date, anchor_price: Decimal, source: str) -> bool:
+        if (symbol.upper(), session_date) in self._future_price_anchors:
+            return False
+        self.set_future_price_anchor(symbol, session_date, anchor_price, source)
+        return True
+
+    def get_future_price_anchor_source(self, symbol: str, session_date: date) -> str | None:
+        return self._future_price_anchor_source.get((symbol.upper(), session_date))
+
     def set_future_price_anchor(
-        self, symbol: str, session_date: date, anchor_price: Decimal
+        self, symbol: str, session_date: date, anchor_price: Decimal, source: str = "manual"
     ) -> None:
         self._future_price_anchors[(symbol.upper(), session_date)] = anchor_price
+        self._future_price_anchor_source[(symbol.upper(), session_date)] = source
         self._future_price_anchor_saved_at[(symbol.upper(), session_date)] = datetime.now(UTC)
 
     def get_future_price_anchor(self, symbol: str, session_date: date) -> Decimal | None:
