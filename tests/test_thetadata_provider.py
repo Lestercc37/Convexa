@@ -4310,8 +4310,8 @@ def test_is_noisy_itm_quote_matches_the_charts_readable_iv_rule() -> None:
 
 
 class TestStreamingBandPerSymbol:
-    """SPX's stream follows ATR x 2.0 (Lester 2026-11-03): with x 1.5 far-OTM 0DTE calls entered only as spot neared them and the stream
-    missed their earlier trades. Every other symbol, and every non-stream reader of chain.entries, keeps x 1.5."""
+    """A per-symbol stream band (STREAMING_BAND_MULTIPLIERS). SPX ran at ATR x 2.0 on 2026-11-03/04 and was reverted to x 1.5 (the open lost
+    3.5x more SLOW CONSUMER packets); the mechanism stays, so it is tested with a patched setting."""
 
     def _chain(self) -> provider_module._NearTheMoneyChain:
         wide = [
@@ -4320,7 +4320,13 @@ class TestStreamingBandPerSymbol:
         ]
         return provider_module._NearTheMoneyChain(date(2026, 11, 3), wide[:2], wide_entries=wide)
 
-    def test_spx_streams_the_x2_band_and_other_symbols_keep_the_chain_entries(self, monkeypatch) -> None:
+    def test_by_default_every_symbol_streams_the_chain_entries(self) -> None:
+        provider = _provider_with_transport(lambda request: httpx.Response(404))
+        chain = self._chain()
+        assert provider._streaming_entries("SPX", chain) == chain.entries
+
+    def test_a_symbol_with_its_own_multiplier_streams_that_band_and_others_keep_the_chain_entries(self, monkeypatch) -> None:
+        monkeypatch.setattr(provider_module, "STREAMING_BAND_MULTIPLIERS", {"SPX": Decimal("2.0")})
         provider = _provider_with_transport(lambda request: httpx.Response(404))
         widths = {Decimal("1.5"): Decimal(124), Decimal("2.0"): Decimal(165)}
         monkeypatch.setattr(provider, "_resolve_width", lambda symbol, spot, multiplier=Decimal("1.5"): widths[multiplier])
