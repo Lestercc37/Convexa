@@ -44,7 +44,7 @@ namespace NinjaTrader.NinjaScript.Indicators
                 DisplayInDataBox = false;
                 PaintPriceMarkers = false;
                 IsSuspendedWhileInactive = false;
-                Url = "https://dashboard.convexatrading.com/api/v1/feeds/futures-anchor";
+                Url = "https://dashboard.convexatrading.com/backend/api/v1/feeds/futures-anchor";
                 DryRun = false;
             }
         }
