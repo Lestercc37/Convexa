@@ -501,7 +501,11 @@ CONTRACT_REDISCOVERY_INTERVAL_SECONDS = 60.0
 # SPX x 2.0 (Lester 2026-11-03 "si"): with x 1.5 (124 pts that day) 18 far-OTM 0DTE calls entered the stream only as spot neared them (7715C at
 # 13:12: 301 counted vs 4,260 traded) and the stream missed 22,119 contracts of volume (0.68 % of the day) in minute flow, alerts and the flow
 # chain; x 2.0 (165 pts) would have held all 18 from the open for +32 contracts at the open (100 -> 132), +36 over the day (docs/hm_band_width_cost.py).
-STREAMING_BAND_MULTIPLIERS: dict[str, Decimal] = {"SPX": Decimal("2.0")}
+# REVERTED 2026-11-04 (Lester "si"): the first open with SPX x 2.0 lost 1,132,284 SLOW CONSUMER packets 09:30-10:45 (11-03 at x 1.5: 322k),
+# peak 82,928 frames/s (73,965) and the raw SPX 0DTE gap grew to -3.66 % spread over near-money strikes: every ThetaData stall drops more when
+# more is subscribed, and the far-OTM strikes only carry ~0.68 % of the day's volume. Empty = every symbol streams chain.entries (ATR x 1.5);
+# the mechanism stays for a future band (a |delta| band is being studied, docs/estudio_banda_delta_2026-11-04.txt).
+STREAMING_BAND_MULTIPLIERS: dict[str, Decimal] = {}
 _EASTERN = ZoneInfo("America/New_York")
 # One "Contract rediscovery alive" INFO line every this many passes (~10 min).
 REDISCOVERY_ALIVE_EVERY_PASSES = 10
