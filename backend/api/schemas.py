@@ -10,6 +10,7 @@ from backend.domain.entities import (
     ContractType,
     GammaAggregate,
     GammaAggregateItem,
+    GammaView,
     Greeks,
     OptionChain,
     OptionContract,
@@ -283,7 +284,7 @@ class GammaAggregateResponse(BaseModel):
     schema_version: int = Field(examples=[1])
     symbol: str = Field(examples=["SPY"])
     as_of: str = Field(examples=["2026-01-15T14:30:00Z"])
-    view: Literal["structural", "tactical", "0dte", "1dte", "2dte", "0dte_volume"] = Field(examples=["tactical"])
+    view: GammaView = Field(examples=["tactical"])  # the entity's own Literal: "90d" was missing here (500 on the 90-day tab, 2026-11-04)
     # See GammaSummaryResponse.has_data's own comment -- this response
     # already carries `items`, so `not items` is an equally valid check,
     # but the explicit field keeps both response shapes symmetric.
@@ -329,7 +330,7 @@ class GammaSummaryResponse(BaseModel):
     schema_version: int = Field(examples=[1])
     symbol: str = Field(examples=["SPY"])
     as_of: str = Field(examples=["2026-01-15T14:30:00Z"])
-    view: Literal["structural", "tactical", "0dte", "1dte", "2dte", "0dte_volume"] = Field(examples=["tactical"])
+    view: GammaView = Field(examples=["tactical"])
     # False only for the honest-empty Tactical case (a symbol with no
     # 0-2 DTE contracts listed today -- see CalculateGammaExposureOrchestrator
     # ._build_view's own comment) -- every other field on this response
@@ -461,7 +462,7 @@ class GammaHeatmapResponse(BaseModel):
 
     schema_version: int = Field(examples=[1])
     symbol: str = Field(examples=["SPX"])
-    view: Literal["tactical", "structural", "0dte", "1dte", "2dte", "0dte_volume"]
+    view: GammaView
     metric: Literal["gamma", "absolute_gamma", "delta", "vanna", "charm", "call_gamma", "put_gamma", "total_gamma"]
     bucket_seconds: int = Field(examples=[120])
     strikes: list[Number]
