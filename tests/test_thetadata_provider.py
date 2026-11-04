@@ -4310,8 +4310,8 @@ def test_is_noisy_itm_quote_matches_the_charts_readable_iv_rule() -> None:
 
 
 class TestStreamingBandPerSymbol:
-    """A per-symbol stream band (STREAMING_BAND_MULTIPLIERS). SPX ran at ATR x 2.0 on 2026-11-03/04 and was reverted to x 1.5 (the open lost
-    3.5x more SLOW CONSUMER packets); the mechanism stays, so it is tested with a patched setting."""
+    """A per-symbol stream band (STREAMING_BAND_MULTIPLIERS): SPX streams ATR x 2.0 (re-applied 2026-11-04; the extra SLOW CONSUMER packets are
+    repeated quotes, the whole-day volume loss fell), every other symbol and every non-stream reader of chain.entries keeps x 1.5."""
 
     def _chain(self) -> provider_module._NearTheMoneyChain:
         wide = [
@@ -4320,10 +4320,8 @@ class TestStreamingBandPerSymbol:
         ]
         return provider_module._NearTheMoneyChain(date(2026, 11, 3), wide[:2], wide_entries=wide)
 
-    def test_by_default_every_symbol_streams_the_chain_entries(self) -> None:
-        provider = _provider_with_transport(lambda request: httpx.Response(404))
-        chain = self._chain()
-        assert provider._streaming_entries("SPX", chain) == chain.entries
+    def test_by_default_spx_has_its_own_x2_band_and_no_other_symbol_does(self) -> None:
+        assert provider_module.STREAMING_BAND_MULTIPLIERS == {"SPX": Decimal("2.0")}
 
     def test_a_symbol_with_its_own_multiplier_streams_that_band_and_others_keep_the_chain_entries(self, monkeypatch) -> None:
         monkeypatch.setattr(provider_module, "STREAMING_BAND_MULTIPLIERS", {"SPX": Decimal("2.0")})
