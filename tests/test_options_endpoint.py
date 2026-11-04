@@ -1,3 +1,4 @@
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 
 from fastapi.testclient import TestClient
@@ -162,6 +163,18 @@ def test_gamma_get_serves_the_tactical_aggregate_and_no_structural_one_exists() 
     assert tactical.json()["view"] == "tactical"
     assert tactical.json()["has_data"] is True
     assert default.json() == tactical.json()
+
+
+def test_gamma_get_serves_the_90_day_view() -> None:
+    """2026-11-04: the app's "90 días" tab got a 500 because the response models listed every view except "90d"."""
+    with TestClient(app) as client:
+        client.post("/internal/trigger-calculation/spy")
+        storage = app.state.container.storage
+        storage.save_gamma_aggregate(replace(storage.get_latest_gamma_aggregate("SPY", view="tactical"), view="90d"))
+        response = client.get("/api/v1/gamma/spy?view=90d")
+
+    assert response.status_code == 200
+    assert response.json()["view"] == "90d"
 
 
 def test_gamma_profile_get_is_read_only_and_returns_uniform_not_found() -> None:
