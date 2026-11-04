@@ -1708,6 +1708,25 @@ def test_future_price_anchor_round_trip_with_saved_at_against_postgresql(
     saved_at = storage.get_future_price_anchor_saved_at(symbol, session)
     assert saved_at is not None and saved_at >= before
     assert storage.get_future_price_anchor(symbol, date(2026, 10, 12)) is None, "other sessions stay empty"
+    assert storage.get_future_price_anchor_source(symbol, session) == "manual"
+
+
+def test_an_automatic_future_anchor_is_written_only_when_the_day_has_none_against_postgresql(
+    postgresql_storage: tuple[PostgreSQLStorage, Engine, str],
+) -> None:
+    """NinjaTrader / Yahoo saves (migration 0053, Lester 2026-11-04): first one wins, a typed number is never overwritten, the source is kept."""
+    storage, _, symbol = postgresql_storage
+    session = date(2026, 11, 5)
+
+    assert storage.add_future_price_anchor_if_absent(symbol, session, Decimal("7640.00"), "ninjatrader") is True
+    assert storage.add_future_price_anchor_if_absent(symbol, session, Decimal("7641.25"), "yahoo") is False
+    assert storage.get_future_price_anchor(symbol, session) == Decimal("7640.00")
+    assert storage.get_future_price_anchor_source(symbol, session) == "ninjatrader"
+
+    storage.set_future_price_anchor(symbol, session, Decimal("7639.50"))  # Lester types his own: it replaces the automatic one
+    assert storage.get_future_price_anchor_source(symbol, session) == "manual"
+    assert storage.add_future_price_anchor_if_absent(symbol, session, Decimal("7642.00"), "yahoo") is False
+    assert storage.get_future_price_anchor(symbol, session) == Decimal("7639.50")
 
 
 def _delete_test_data(engine: Engine, symbol: str) -> None:

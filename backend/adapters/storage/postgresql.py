@@ -1688,17 +1688,18 @@ class PostgreSQLStorage:
             )
 
     def set_future_price_anchor(
-        self, symbol: str, session_date: date, anchor_price: Decimal
+        self, symbol: str, session_date: date, anchor_price: Decimal, source: str = "manual"
     ) -> None:
         with self.session_factory.begin() as session:
             underlying_id = self._ensure_underlying(session, symbol)
             session.execute(
                 text(
                     """
-                    INSERT INTO future_price_anchors (underlying_id, session_date, anchor_price)
-                    VALUES (:underlying_id, :session_date, :anchor_price)
+                    INSERT INTO future_price_anchors (underlying_id, session_date, anchor_price, source)
+                    VALUES (:underlying_id, :session_date, :anchor_price, :source)
                     ON CONFLICT (underlying_id, session_date) DO UPDATE SET
                         anchor_price = EXCLUDED.anchor_price,
+                        source = EXCLUDED.source,
                         updated_at = now()
                     """
                 ),
@@ -1706,8 +1707,43 @@ class PostgreSQLStorage:
                     "underlying_id": underlying_id,
                     "session_date": session_date,
                     "anchor_price": anchor_price,
+                    "source": source,
                 },
             )
+
+    def add_future_price_anchor_if_absent(self, symbol: str, session_date: date, anchor_price: Decimal, source: str) -> bool:
+        """An automatic save (NinjaTrader / Yahoo): only when the day has no anchor yet, so a typed number (or an earlier automatic one) is
+        never overwritten. True when it was written."""
+        with self.session_factory.begin() as session:
+            underlying_id = self._ensure_underlying(session, symbol)
+            row = session.execute(
+                text(
+                    """
+                    INSERT INTO future_price_anchors (underlying_id, session_date, anchor_price, source)
+                    VALUES (:underlying_id, :session_date, :anchor_price, :source)
+                    ON CONFLICT (underlying_id, session_date) DO NOTHING
+                    RETURNING session_date
+                    """
+                ),
+                {"underlying_id": underlying_id, "session_date": session_date, "anchor_price": anchor_price, "source": source},
+            ).first()
+            return row is not None
+
+    def get_future_price_anchor_source(self, symbol: str, session_date: date) -> str | None:
+        """Who saved the day's anchor: 'manual' (also for older rows without a source), 'ninjatrader' or 'yahoo'; None when there is none."""
+        with self.session_factory() as session:
+            row = session.execute(
+                text(
+                    """
+                    SELECT COALESCE(a.source, 'manual') AS source
+                    FROM future_price_anchors AS a
+                    JOIN underlyings AS u ON u.id = a.underlying_id
+                    WHERE u.symbol = :symbol AND a.session_date = :session_date
+                    """
+                ),
+                {"symbol": symbol.upper(), "session_date": session_date},
+            ).mappings().first()
+            return str(row["source"]) if row is not None else None
 
     def get_future_price_anchor(self, symbol: str, session_date: date) -> Decimal | None:
         with self.session_factory() as session:

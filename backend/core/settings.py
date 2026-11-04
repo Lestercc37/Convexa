@@ -73,6 +73,9 @@ class Settings(BaseSettings):
     # The 90-day gamma view (docs/diseno-vistas-0dte-1dte-90d-2026-10-30.txt): one extra wildcard request with max_dte=90 per symbol every 15 min,
     # stored as view '90d'. QLL_GAMMA_LONG_VIEW_ENABLED=false and a ConvexaScheduler restart switch it off.
     gamma_long_view_enabled: bool = Field(default=True)
+    # The shared key NinjaTrader's 'Convexa Ancla' indicator sends with the 09:30 ES/NQ bar (POST /api/v1/feeds/futures-anchor, Lester 2026-11-04).
+    # Only the PATH lives here; the key itself is in that file (made by backend/scripts/make_ninjatrader_anchor_key.py), never in .env, logs or chat.
+    ninjatrader_anchor_key_file: str = Field(default="V:/Convexa/config/ninjatrader_anchor_key.txt")
     # Audit sample of the minute flow, OFF by default: QLL_MINUTE_FLOW_AUDIT_SYMBOLS=SPY,SPX and QLL_MINUTE_FLOW_AUDIT_WINDOW=10:15-10:18 (ET, end exclusive) keep every option trade of those
     # underlyings inside the window, with the bid/ask used and the outcome, in logs/minute_flow_audit_YYYY-MM-DD.ndjson, to check the panel trade by trade.
     minute_flow_audit_symbols: str = Field(default="")
