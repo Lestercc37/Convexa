@@ -286,7 +286,7 @@ class ProfileOverlayRenderer implements IPrimitivePaneRenderer {
       context.fillStyle = "rgba(14, 17, 26, 0.92)";
       fillRounded(context, lineX - 6 * hr - tagWidth, 3 * vr, tagWidth, tagHeight, 5 * hr);
       context.fillStyle = LABEL_COLOR;
-      context.fillText("AHORA", lineX - 6 * hr - tagWidth / 2, 3 * vr + tagHeight / 2 + 0.5 * vr);
+      context.fillText(this.source.lineTag, lineX - 6 * hr - tagWidth / 2, 3 * vr + tagHeight / 2 + 0.5 * vr);
       context.font = `500 ${10 * hr}px ${FONT_FAMILY}`;
       context.textAlign = "left";
       context.textBaseline = "bottom";
@@ -323,6 +323,8 @@ export class LiveProfilePrimitive implements ISeriesPrimitive<Time> {
   palette: HeatmapPalette = "gamma";
   /** The caption at the foot of the column (the figure being shown). */
   label = "PERFIL EN VIVO";
+  /** The tag on the line of time: AHORA live, the cursor's time in the Replay. */
+  lineTag = "AHORA";
   private requestUpdate: (() => void) | null = null;
   private readonly views: IPrimitivePaneView[];
 
@@ -353,6 +355,12 @@ export class LiveProfilePrimitive implements ISeriesPrimitive<Time> {
     this.bars = bars;
     this.palette = palette;
     this.label = label;
+    this.requestUpdate?.();
+  }
+
+  setLineTag(tag: string): void {
+    if (tag === this.lineTag) return;
+    this.lineTag = tag;
     this.requestUpdate?.();
   }
 

@@ -336,6 +336,7 @@ export type Translations = {
     noAnchor: (future: string, index: string, day: string) => string;
     anchoredOn: (future: string, index: string, offset: string) => string;
     vwapProxy: (proxy: string) => string;
+    profileAt: (figure: string, time: string) => string;
     hint: string;
   };
   contractChart: {
