@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import datetime
+
 from fastapi import APIRouter, Query, Request
 
 from backend.api.schemas import CubeMinimumsResponse, WhaleAlertsResponse
@@ -14,7 +16,9 @@ router = APIRouter(tags=["alerts"])
 async def get_alerts(
     symbol: str,
     request: Request,
-    limit: int = Query(default=100, ge=1, le=1000),
+    limit: int = Query(default=100, ge=1, le=10000),
+    # The chart's cubes pass the session start so a busy day's morning alerts are not cut off by the limit (2026-11-05: SPX ~900 by 13:30).
+    since: datetime | None = Query(default=None),
 ) -> WhaleAlertsResponse:
     # async def, not def: same reasoning as /gamma and /market (see
     # container.async_market_storage's own docstring) -- a pure storage
@@ -26,7 +30,7 @@ async def get_alerts(
     # since Postgres has no equivalent limit.
     container: Container = request.app.state.container
     normalized = symbol.upper()
-    alerts = await container.async_market_storage.get_recent_whale_alerts(normalized, limit)
+    alerts = await container.async_market_storage.get_recent_whale_alerts(normalized, limit, since)
     return WhaleAlertsResponse.model_validate(
         {
             "schema_version": SCHEMA_VERSION,

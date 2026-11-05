@@ -681,12 +681,17 @@ class AsyncPostgreSQLStorage:
             for row in rows
         ]
 
-    async def get_recent_whale_alerts(self, underlying: str, limit: int = 100) -> list[WhaleAlert]:
+    async def get_recent_whale_alerts(
+        self, underlying: str, limit: int = 100, since: datetime | None = None
+    ) -> list[WhaleAlert]:
         source_filter = (
             "AND abs((w.estimated_buy_volume + w.estimated_sell_volume) - w.amount) < 1"
             if self._whale_alerts_lee_ready_only
             else ""
         )
+        # The chart's alert cubes ask for the whole session (since), not only the latest N: on a busy day SPX passed 500 alerts by
+        # midday and the morning's cubes fell off the chart (2026-11-05).
+        since_filter = "AND w.time >= :since" if since else ""
         async with self.session_factory() as session:
             result = await session.execute(
                 text(
@@ -699,11 +704,12 @@ class AsyncPostgreSQLStorage:
                     JOIN underlyings AS u ON u.id = w.underlying_id
                     WHERE u.symbol = :symbol
                     {source_filter}
+                    {since_filter}
                     ORDER BY w.time DESC
                     LIMIT :limit
                     """
                 ),
-                {"symbol": underlying.upper(), "limit": limit},
+                {"symbol": underlying.upper(), "limit": limit, **({"since": since} if since else {})},
             )
             rows = result.mappings().all()
         return [

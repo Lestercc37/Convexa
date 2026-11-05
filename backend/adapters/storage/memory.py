@@ -268,8 +268,10 @@ class InMemoryStorage:
     def save_whale_alert(self, alert: WhaleAlert) -> None:
         self._whale_alerts.setdefault(alert.symbol, []).append(alert)
 
-    def get_recent_whale_alerts(self, underlying: str, limit: int = 100) -> list[WhaleAlert]:
-        alerts = self._whale_alerts.get(underlying.upper(), [])
+    def get_recent_whale_alerts(
+        self, underlying: str, limit: int = 100, since: datetime | None = None
+    ) -> list[WhaleAlert]:
+        alerts = [a for a in self._whale_alerts.get(underlying.upper(), []) if since is None or a.as_of >= since]
         return sorted(alerts, key=lambda alert: alert.as_of, reverse=True)[:limit]
 
     def save_symbol_flow_pressure(self, flow: SymbolFlowPressure) -> None:

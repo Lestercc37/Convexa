@@ -113,6 +113,8 @@ const HISTORICAL_LEVELS = [
 ] as const;
 
 const VWAP_COLOR = "#f3c969";
+// The API's cap; one session of the busiest symbol (NDX) is a few thousand alerts.
+const ALERT_CUBES_LIMIT = 10_000;
 
 // How long after mount the [candles] effect keeps re-fitting on every bulk
 // jump, instead of only the first one -- confirmed live, 2026-09-21: under a
@@ -1235,7 +1237,9 @@ export function PriceChart({
     chart.subscribeCrosshairMove(onCrosshairMove);
     const controller = new AbortController();
     const refresh = () => {
-      getAlerts(symbol, controller.signal, 500)
+      // The whole session (from an hour before the open, like the heatmap), not the latest 500: on 2026-11-05 SPX had ~900 alerts by 13:30
+      // and every cube before ~11:00 had fallen off the chart.
+      getAlerts(symbol, controller.signal, ALERT_CUBES_LIMIT, new Date(heatmapStartSeconds(lastCandleTimeRef.current) * 1000))
         .then((response) => {
           setCubeAlerts(response.alerts);
           setOpeningAlerts(summarizeOpeningAlerts(response.alerts, heatmapStartSeconds(lastCandleTimeRef.current) + 3600));
