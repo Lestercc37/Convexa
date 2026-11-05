@@ -63,6 +63,9 @@ import { V2Dropdown } from "./v2-dropdown";
 import { PriceChart } from "./price-chart";
 import { QuickScreener } from "./quick-screener";
 
+// Three missed 10 s market polls: the window was asleep or throttled, so the day is re-read instead of only appending from now.
+const RESEED_AFTER_GAP_MS = 3 * MARKET_POLLING_INTERVAL_MS;
+
 // Only 1-minute candles are ever fetched (client-side accumulated,
 // dashboard-spec.md section 2.2) — the other timeframes are pure
 // client-side aggregation of that same data, via aggregateCandles.
@@ -502,6 +505,26 @@ export function Dashboard({ mode = "full", route, onRouteChange }: DashboardProp
     const controller = new AbortController();
     let interval: number | undefined;
     let marketInterval: number | undefined;
+    // While the computer sleeps (or Edge throttles a hidden window) the polls stop, and when they come back they only append from "now": the
+    // minutes in between never got candles, and the heatmap, drawn between candles, was squeezed into that gap (Yaser 2026-11-05, 12:05-12:35
+    // missing after the PC went to sleep). A market poll that fires more than RESEED_AFTER_GAP_MS after the previous one marks the day as
+    // having a hole, and the day is re-read (the same merge as the first seed) as soon as the window is visible again.
+    let lastMarketTickAt = Date.now();
+    let missedMinutes = false;
+    let reseeding = false;
+    const reseedIfMissed = () => {
+      if (!missedMinutes || reseeding || document.visibilityState !== "visible" || controller.signal.aborted) return;
+      reseeding = true;
+      missedMinutes = false;
+      void seedPriceAndVwap(symbol, controller.signal).finally(() => {
+        reseeding = false;
+      });
+    };
+    const onVisible = () => {
+      if (Date.now() - lastMarketTickAt > RESEED_AFTER_GAP_MS) missedMinutes = true;
+      reseedIfMissed();
+    };
+    document.addEventListener("visibilitychange", onVisible);
 
     const seedThenPoll = async () => {
       await seedPriceAndVwap(symbol, controller.signal);
@@ -527,6 +550,10 @@ export function Dashboard({ mode = "full", route, onRouteChange }: DashboardProp
         POLLING_INTERVAL_MS,
       );
       marketInterval = window.setInterval(() => {
+        const now = Date.now();
+        if (now - lastMarketTickAt > RESEED_AFTER_GAP_MS) missedMinutes = true;
+        lastMarketTickAt = now;
+        reseedIfMissed();
         getMarket(symbol, controller.signal)
           .then((marketData) => {
             if (!controller.signal.aborted) applyMarket(marketData);
@@ -540,6 +567,7 @@ export function Dashboard({ mode = "full", route, onRouteChange }: DashboardProp
 
     return () => {
       controller.abort();
+      document.removeEventListener("visibilitychange", onVisible);
       if (interval !== undefined) window.clearInterval(interval);
       if (marketInterval !== undefined) window.clearInterval(marketInterval);
     };

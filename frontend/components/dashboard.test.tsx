@@ -4,7 +4,7 @@ import type { ReactNode } from "react";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiError } from "@/lib/api";
 import { renderWithLanguage } from "@/lib/i18n/test-utils";
-import { POLLING_INTERVAL_MS } from "@/lib/polling";
+import { MARKET_POLLING_INTERVAL_MS, POLLING_INTERVAL_MS } from "@/lib/polling";
 import { derivedMetricsFixture } from "@/test/fixtures";
 import { Dashboard } from "./dashboard";
 
@@ -506,6 +506,26 @@ describe("Dashboard", () => {
 
     await user.selectOptions(screen.getByRole("combobox", { name: "Subyacente" }), "GOOGL");
     await screen.findByLabelText("Chart de velas para GOOGL");
+
+    vi.useRealTimers();
+  });
+
+  it("re-reads the day's prices and VWAP when the polls come back after the computer slept", async () => {
+    // Yaser 2026-11-05: after the PC woke up the chart had no candles for 12:05-12:35, because the polls only append from "now".
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    renderWithLanguage(<Dashboard />);
+    await screen.findByLabelText("Chart de velas para SPY");
+    await vi.waitFor(() => expect(apiMocks.getMarketPriceHistory).toHaveBeenCalledTimes(1));
+
+    // Normal polls do not re-read the day.
+    await vi.advanceTimersByTimeAsync(MARKET_POLLING_INTERVAL_MS * 2);
+    expect(apiMocks.getMarketPriceHistory).toHaveBeenCalledTimes(1);
+
+    // Asleep: the clock moves 30 minutes without any timer firing, then the next market poll fires.
+    vi.setSystemTime(Date.now() + 30 * 60_000);
+    await vi.advanceTimersByTimeAsync(MARKET_POLLING_INTERVAL_MS);
+    await vi.waitFor(() => expect(apiMocks.getMarketPriceHistory).toHaveBeenCalledTimes(2));
+    expect(apiMocks.getVwapHistory).toHaveBeenCalledTimes(2);
 
     vi.useRealTimers();
   });
