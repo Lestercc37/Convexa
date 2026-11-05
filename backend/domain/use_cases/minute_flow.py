@@ -250,7 +250,14 @@ class MinuteFlowRecorder:
     def take_strikes_before(self, epoch_seconds: float | None = None) -> list[MinuteStrikeFlow]:
         """Same as take_before for the per-strike cells."""
         now_minute = int(time.time() if epoch_seconds is None else epoch_seconds) // 60
-        ready = [key for key in self._strike_cells if key[0] < now_minute]
+        return self._take_strike_cells([key for key in self._strike_cells if key[0] < now_minute])
+
+    def take_strikes_all(self) -> list[MinuteStrikeFlow]:
+        """Every per-strike cell, the current minute's too (the 5 s flush of the flow chain view): the upsert ADDS to the stored row, so a minute written in
+        several partial pieces sums to the same total as one write at its end."""
+        return self._take_strike_cells(list(self._strike_cells))
+
+    def _take_strike_cells(self, ready: list[tuple[int, str, date, float, str]]) -> list[MinuteStrikeFlow]:
         rows: list[MinuteStrikeFlow] = []
         for key in sorted(ready):
             cell = self._strike_cells.pop(key)

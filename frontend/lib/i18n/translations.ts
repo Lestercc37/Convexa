@@ -306,6 +306,7 @@ export type Translations = {
     signedShare: (pct: string) => string;
     expiration: { "0dte": string; "0-2dte": string; all: string };
     live: string;
+    ago: (seconds: number) => string;
     replayAt: (time: string) => string;
     empty: (source: string) => string;
     lastSession: (date: string) => string;

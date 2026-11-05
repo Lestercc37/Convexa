@@ -169,6 +169,8 @@ LARGE_PRINTS_LOG_EVERY_SECONDS = 1800
 MINUTE_FLOW_FLUSH_DELAY_SECONDS = 3.0
 MINUTE_FLOW_DELTA_REFRESH_SECONDS = 60
 MINUTE_FLOW_LOG_EVERY_SECONDS = 1800
+# minute_strike_flow with the fast flush on (settings.minute_strike_flow_fast_flush): every cell, the current minute's too, this often (peak 356 cells a minute, all symbols, 11-02).
+STRIKE_FLOW_FLUSH_SECONDS = 5
 
 
 def _price(value: float | None) -> Decimal | None:
@@ -532,10 +534,10 @@ def _append_minute_flow_audit(rows: list[dict]) -> None:
             handle.write(json.dumps(row) + "\n")
 
 
-async def _flush_minute_flow_periodically(container, state: _ProcessorState) -> None:
+async def _flush_minute_flow_periodically(container, state: _ProcessorState, strikes_per_minute: bool = True) -> None:
     """At every minute boundary (+ a few seconds) writes the signed delta flow of the minutes that ended to minute_option_flow. Never raises: a failed write puts its minutes back for the
     next flush (bounded, see MinuteFlowRecorder), it must not take the stream processor down. With the per-strike flow on (QLL_MINUTE_STRIKE_FLOW_ENABLED) the same flush also writes
-    minute_strike_flow."""
+    minute_strike_flow, unless the 5 s strike flush owns it (strikes_per_minute=False)."""
     written = strikes_written = 0
     last_log = time.monotonic()
     while True:
@@ -559,7 +561,7 @@ async def _flush_minute_flow_periodically(container, state: _ProcessorState) -> 
             except Exception:
                 state.minute_flow.put_back(rows)
                 logger.exception("Stream processor worker: writing %d minute-flow rows failed, they stay queued", len(rows))
-        strike_rows = state.minute_flow.take_strikes_before(time.time() - MINUTE_FLOW_FLUSH_DELAY_SECONDS + 1.0)
+        strike_rows = state.minute_flow.take_strikes_before(time.time() - MINUTE_FLOW_FLUSH_DELAY_SECONDS + 1.0) if strikes_per_minute else []
         if strike_rows:
             try:
                 await container.async_market_storage.save_minute_strike_flow(strike_rows)
@@ -578,6 +580,43 @@ async def _flush_minute_flow_periodically(container, state: _ProcessorState) -> 
                 (time.monotonic() - last_log) / 60,
             )
             written = strikes_written = 0
+            last_log = time.monotonic()
+
+
+async def _flush_strike_flow_periodically(container, state: _ProcessorState) -> None:
+    """Every STRIKE_FLOW_FLUSH_SECONDS writes every per-strike cell, the current minute's too (minute_strike_flow ADDS on conflict, so a minute written in pieces sums
+    exactly as one write). Never raises: a failed write puts its cells back for the next flush (bounded, see MinuteFlowRecorder)."""
+    written = flushes = failures = 0
+    slowest = 0.0
+    last_log = time.monotonic()
+    while True:
+        await asyncio.sleep(STRIKE_FLOW_FLUSH_SECONDS)
+        rows = state.minute_flow.take_strikes_all()
+        if rows:
+            started = time.monotonic()
+            try:
+                await container.async_market_storage.save_minute_strike_flow(rows)
+                written += len(rows)
+                flushes += 1
+                slowest = max(slowest, time.monotonic() - started)
+            except asyncio.CancelledError:
+                state.minute_flow.put_back_strikes(rows)
+                raise
+            except Exception:
+                state.minute_flow.put_back_strikes(rows)
+                failures += 1
+                logger.exception("Stream processor worker: writing %d minute-strike-flow rows failed, they stay queued", len(rows))
+        if time.monotonic() - last_log >= MINUTE_FLOW_LOG_EVERY_SECONDS:
+            logger.info(
+                "Stream processor worker: minute_strike_flow 5 s flush wrote %d rows in %d flushes (slowest %.3f s, %d failed) in the last %.0f min",
+                written,
+                flushes,
+                slowest,
+                failures,
+                (time.monotonic() - last_log) / 60,
+            )
+            written = flushes = failures = 0
+            slowest = 0.0
             last_log = time.monotonic()
 
 
@@ -730,14 +769,20 @@ async def run() -> None:
             state.minute_flow.set_audit(audited, container.settings.minute_flow_audit_window)
         if container.settings.minute_strike_flow_enabled:
             state.minute_flow.enable_strikes()
+    fast_strikes = (
+        state.minute_flow_enabled and container.settings.minute_strike_flow_enabled and container.settings.minute_strike_flow_fast_flush
+    )
     minute_flow_tasks = (
         [
             asyncio.create_task(_refresh_minute_flow_deltas_periodically(container, state)),
-            asyncio.create_task(_flush_minute_flow_periodically(container, state)),
+            asyncio.create_task(_flush_minute_flow_periodically(container, state, strikes_per_minute=not fast_strikes)),
         ]
         if state.minute_flow_enabled
         else []
     )
+    if fast_strikes:
+        minute_flow_tasks.append(asyncio.create_task(_flush_strike_flow_periodically(container, state)))
+        logger.info("Stream processor worker: minute_strike_flow flushed every %d s (current minute included)", STRIKE_FLOW_FLUSH_SECONDS)
 
     relay = StreamProcessorRelayClient(
         container.settings.stream_processor_relay_host,

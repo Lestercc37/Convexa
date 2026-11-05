@@ -1,5 +1,6 @@
 """The flow chain view (docs/diseno-cadena-flujo-2026-10-25.txt): per strike, the signed option flow of the last 5 / 15 / 30 / 60 minutes and of the day, calls and puts apart and netted,
-multi-leg packages apart, read from minute_strike_flow (migration 0050). Only finished minutes count: the windows end at the start of the minute of `at`.
+multi-leg packages apart, read from minute_strike_flow (migration 0050). A replay (`at`) counts only finished minutes: the windows end at the start of the minute of `at`; the live view also counts the current
+partial minute (session_bounds(partial_minute=True)).
 
 Flow source (Lester 2026-10-29, docs/hm_delta_by_category.py): NDX 0DTE flow is mostly multi-leg packages (only ~25 % of its delta carries a side), QQQ's carries
 ~64 %, so NQ reads its FLOW from QQQ by default, while its LEVELS stay NDX's. Every strike then also gets `price`, the strike in the requested symbol's own units:
@@ -64,12 +65,13 @@ class StrikeFlowChain:
         return sum(row.contracts_signed_day for row in self.rows) / total if total else None
 
 
-def session_bounds(at: datetime) -> tuple[datetime, datetime]:
-    """(09:30 ET of `at`'s day, the start of `at`'s minute capped at 16:00 ET)."""
+def session_bounds(at: datetime, partial_minute: bool = False) -> tuple[datetime, datetime]:
+    """(09:30 ET of `at`'s day, the start of `at`'s minute capped at 16:00 ET). With partial_minute (the live view) the end is `at` itself, still capped at 16:00 ET:
+    the stream processor writes the current minute every 5 s, so the windows include it (the 5-minute window = the current partial minute + the 4 before)."""
     local = at.astimezone(EASTERN_TIME)
     open_ = local.replace(hour=9, minute=30, second=0, microsecond=0)
     close = local.replace(hour=16, minute=0, second=0, microsecond=0)
-    return open_, min(local.replace(second=0, microsecond=0), close)
+    return open_, min(local if partial_minute else local.replace(second=0, microsecond=0), close)
 
 
 async def latest_session_with_flow(storage, underlying: str, at: datetime, lookback_days: int) -> tuple[datetime, list[date]] | None:

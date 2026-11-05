@@ -70,6 +70,9 @@ class Settings(BaseSettings):
     # The same flow kept per strike too (minute_strike_flow, migration 0050; the flow chain view, docs/diseno-cadena-flujo-2026-10-25.txt), for the same symbols. OFF until the migration is
     # applied: QLL_MINUTE_STRIKE_FLOW_ENABLED=true and a restart of ConvexaStreamProcessor switch it on.
     minute_strike_flow_enabled: bool = Field(default=False)
+    # The per-strike cells are written every 5 s, the current minute included (the flow chain view live within ~5-10 s instead of 33-93 s); the upsert adds, so partial writes never
+    # double count. QLL_MINUTE_STRIKE_FLOW_FAST_FLUSH=false and a restart of ConvexaStreamProcessor go back to one write per finished minute.
+    minute_strike_flow_fast_flush: bool = Field(default=True)
     # The 90-day gamma view (docs/diseno-vistas-0dte-1dte-90d-2026-10-30.txt): one extra wildcard request with max_dte=90 per symbol every 15 min,
     # stored as view '90d'. QLL_GAMMA_LONG_VIEW_ENABLED=false and a ConvexaScheduler restart switch it off.
     gamma_long_view_enabled: bool = Field(default=True)
