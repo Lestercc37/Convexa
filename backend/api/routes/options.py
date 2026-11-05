@@ -276,8 +276,8 @@ async def minute_flow(
     response_model=StrikeFlowResponse,
     summary="Signed option flow per strike: last 5 / 15 / 30 / 60 minutes and the day",
     description=(
-        "Reads minute_strike_flow (written by the stream processor with the same rule as /flow/{symbol}/minutes), summed per strike in one query. Only finished minutes: the windows "
-        "end at the start of the minute of `at` (default now, capped at 16:00 ET); the day starts 09:30 ET. `expiration`: 0dte (default), 0-2dte or all. ES reads SPX; NQ reads "
+        "Reads minute_strike_flow (written by the stream processor with the same rule as /flow/{symbol}/minutes), summed per strike in one query. Live (no `at`): the windows end now, "
+        "the current partial minute included (written every 5 s), capped at 16:00 ET; with `at` (replay) only finished minutes, ending at the start of the minute of `at`; the day starts 09:30 ET. `expiration`: 0dte (default), 0-2dte or all. ES reads SPX; NQ reads "
         "QQQ's flow by default (NDX's 0DTE flow is mostly multi-leg packages), `flow_source` picks another one; every strike also gets `price` in the requested symbol's units. "
         "Before migration 0050 is applied, or with the per-strike flow switched off, the list is simply empty."
     ),
@@ -295,7 +295,7 @@ async def strike_flow(
     at = at or datetime.now(timezone.utc)
     if at.tzinfo is None:
         raise HTTPException(status_code=422, detail="at must include a timezone (e.g. ...Z)")
-    start, end = session_bounds(at)
+    start, end = session_bounds(at, partial_minute=not explicit_at)
     storage = container.async_market_storage
     traded = await storage.get_strike_flow_expirations(reading, start, end) if end > start else []
     if not explicit_at and not traded:

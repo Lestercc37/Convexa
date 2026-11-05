@@ -9,7 +9,7 @@ import type { StrikeFlowResponse, StrikeFlowRow, StrikeFlowWindows } from "@/lib
 
 /**
  * The flow chain (docs/diseno-cadena-flujo-2026-10-25.txt, Lester's gex-flow.html): per strike, the signed option flow of the last
- * 5 / 15 / 30 / 60 finished minutes and of the day (GET /flow/{symbol}/strikes, table minute_strike_flow), ~14 strikes above and below
+ * 5 / 15 / 30 / 60 minutes (live: the current minute too, written every 5 s) and of the day (GET /flow/{symbol}/strikes, table minute_strike_flow), ~14 strikes above and below
  * the price, Convexa's own levels in the last column, a magnet on the strike that took the most net flow in each window, and a replay
  * slider over the session. Green = bullish pressure (calls bought or puts sold).
  */
@@ -17,6 +17,10 @@ const WINDOWS = ["m5", "m15", "m30", "m60"] as const;
 const WINDOW_LABELS: Record<(typeof WINDOWS)[number], string> = { m5: "5M", m15: "15M", m30: "30M", m60: "60M" };
 const ROWS_EACH_SIDE = 14;
 const SESSION_MINUTES = 390;
+// Live the stream processor writes the per-strike flow every 5 s (current minute included), so the chain is read that often; a past session, the time
+// after the close or a replay keep the 30 s poll.
+export const LIVE_CHAIN_POLL_MS = 5_000;
+const LIVE_AS_OF_MS = 60_000;
 type Expiration = StrikeFlowResponse["expiration_mode"];
 type Levels = { abs: number | null; callWall: number | null; putWall: number | null; flip: number | null };
 
@@ -71,6 +75,22 @@ function etDate(iso: string): string {
   return new Intl.DateTimeFormat("en-CA", { timeZone: "America/New_York", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date(iso));
 }
 
+/** 5 s while the response is live (as_of within a minute of now: during the session the backend's as_of is the request time), 30 s otherwise. */
+export function chainPollMs(asOf: string | null, now = Date.now()): number {
+  return asOf !== null && now - new Date(asOf).getTime() < LIVE_AS_OF_MS ? LIVE_CHAIN_POLL_MS : POLLING_INTERVAL_MS;
+}
+
+/** "hace N s" since the data's as_of, ticking every second; nothing once the data is not live. */
+function DataAge({ asOf, label }: { asOf: string; label: (seconds: number) => string }) {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const interval = window.setInterval(() => setNow(Date.now()), 1_000);
+    return () => window.clearInterval(interval);
+  }, []);
+  const seconds = Math.max(0, Math.round((now - new Date(asOf).getTime()) / 1_000));
+  return seconds * 1_000 < LIVE_AS_OF_MS * 2 ? <span className="v2-dim">{label(seconds)}</span> : null;
+}
+
 function minutesSinceOpen(sessionStart: string, now = new Date()): number {
   return Math.max(0, Math.min(SESSION_MINUTES, Math.floor((now.getTime() - new Date(sessionStart).getTime()) / 60_000)));
 }
@@ -104,21 +124,27 @@ export function FlowChainPanel({ symbol }: { symbol: string }) {
       replayMinute !== null && data
         ? new Date(new Date(data.session_start).getTime() + replayMinute * 60_000 + 30_000)
         : undefined;
-    const load = () =>
+    let timer: number | undefined;
+    const load = (): Promise<void> =>
       getStrikeFlow(symbol, { expiration, at }, controller.signal)
         .then((response) => {
           setData(response);
           setFailed(false);
+          return response.as_of;
         })
         .catch(() => {
           if (!controller.signal.aborted) setFailed(true);
+          return null;
+        })
+        .then((asOf) => {
+          // The replay reads its minute once; live re-reads every 5 s, a past session every 30 s.
+          if (controller.signal.aborted || replayMinute !== null) return;
+          timer = window.setTimeout(() => void load(), chainPollMs(asOf));
         });
     void load();
-    if (replayMinute !== null) return () => controller.abort();
-    const interval = window.setInterval(() => void load(), POLLING_INTERVAL_MS);
     return () => {
       controller.abort();
-      window.clearInterval(interval);
+      window.clearTimeout(timer);
     };
     // data.session_start only matters for the replay's start; re-running on every poll would loop.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -189,6 +215,7 @@ export function FlowChainPanel({ symbol }: { symbol: string }) {
         {data?.signed_share_day != null && <span className="v2-dim">{t.flowChain.signedShare(`${Math.round(data.signed_share_day * 100)} %`)}</span>}
         {data && data.flow_source !== data.symbol && <span className="v2-dim">{t.flowChain.source(data.flow_source)}</span>}
         {data && <span className="v2-dim">{etClock(data.as_of)} ET</span>}
+        {data && replayMinute === null && <DataAge asOf={data.as_of} label={t.flowChain.ago} />}
       </div>
       <div className="v2-chain-replay">
         <button type="button" className={replayMinute === null ? "on" : ""} onClick={() => setReplayMinute(null)}>

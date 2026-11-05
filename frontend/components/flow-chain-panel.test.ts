@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { StrikeFlowRow } from "@/lib/types";
-import { levelLabels, visibleRows } from "./flow-chain-panel";
+import { POLLING_INTERVAL_MS } from "@/lib/polling";
+import { LIVE_CHAIN_POLL_MS, chainPollMs, levelLabels, visibleRows } from "./flow-chain-panel";
 
 const zero = { m5: 0, m15: 0, m30: 0, m60: 0 };
 const row = (strike: number, price: number | null = strike): StrikeFlowRow => ({
@@ -39,5 +40,15 @@ describe("flow chain rows", () => {
     expect(labels.get(7660)).toEqual(["CW"]);
     expect(labels.get(7645)).toEqual(["Flip"]);
     expect([...labels.values()].flat()).not.toContain("PW");
+  });
+});
+
+describe("flow chain poll", () => {
+  it("re-reads every 5 s while the data is live and every 30 s for a past session, after the close or after a failed read", () => {
+    const now = Date.parse("2026-11-06T15:00:30Z");
+    expect(chainPollMs("2026-11-06T15:00:29Z", now)).toBe(LIVE_CHAIN_POLL_MS);
+    expect(chainPollMs("2026-11-05T21:00:00Z", now)).toBe(POLLING_INTERVAL_MS);
+    expect(chainPollMs("2026-11-06T14:58:00Z", now)).toBe(POLLING_INTERVAL_MS);
+    expect(chainPollMs(null, now)).toBe(POLLING_INTERVAL_MS);
   });
 });

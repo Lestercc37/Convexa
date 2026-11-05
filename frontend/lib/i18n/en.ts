@@ -454,6 +454,7 @@ export const en: Translations = {
     signedShare: (pct) => `With side: ${pct}`,
     expiration: { "0dte": "0DTE", "0-2dte": "0-2 DTE", all: "All" },
     live: "Live",
+    ago: (seconds) => `${seconds} s ago`,
     replayAt: (time) => `Replay: ${time} ET`,
     empty: (source) =>
       `No per-strike flow stored for ${source} in the last 2 weeks yet. It is recorded live from Monday 2026-11-02; NDX and IWM have earlier days.`,

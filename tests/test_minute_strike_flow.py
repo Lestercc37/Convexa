@@ -262,3 +262,76 @@ def test_on_a_weekend_the_chain_falls_back_to_the_latest_session_with_flow() -> 
     # Nothing within the lookback: no fallback.
     assert asyncio.run(latest_session_with_flow(storage, "SPX", sunday + timedelta(days=14), 7)) is None
     assert asyncio.run(latest_session_with_flow(storage, "NDX", sunday, 7)) is None
+
+
+def test_the_5_s_partial_flushes_add_up_exactly_to_the_per_minute_totals() -> None:
+    # The fast flush (take_strikes_all every 5 s, the current minute included) against one write per finished minute: same rows once the upsert adds them up.
+    trades = [
+        _trade(CALL, "10.50", size=10),
+        _trade(CALL, "10.00", size=4, at=T0 + timedelta(seconds=20)),
+        _trade(PUT, "10.50", size=10, at=T0 + timedelta(seconds=30)),
+        _trade(CALL, "10.20", size=3, condition=132, at=T0 + timedelta(seconds=40)),
+        _trade(CALL, "10.50", size=7, at=T0 + timedelta(minutes=1, seconds=5)),
+        _trade(PUT, "10.00", size=6, at=T0 + timedelta(minutes=1, seconds=15)),
+    ]
+    whole = _recorder()
+    for trade in trades:
+        whole.observe_trade(trade)
+    per_minute = whole.take_strikes_before(LATER)
+
+    fast, pieces = _recorder(), []
+    for trade in trades:
+        fast.observe_trade(trade)
+        pieces.append(fast.take_strikes_all())  # a flush after every trade: the current minute is handed over too
+    assert fast.take_strikes_all() == []
+    storage = SyncStorageAsyncReadAdapter(InMemoryStorage())
+    for piece in pieces:
+        asyncio.run(storage.save_minute_strike_flow(piece))
+
+    def totals(rows):
+        out: dict = {}
+        for row in rows:
+            key = (row.minute, row.expiration, row.strike, row.option_right)
+            acc = out.setdefault(key, [0.0, 0, 0, 0, 0.0, 0.0])
+            for i, value in enumerate((row.delta_flow, row.contracts_signed, row.contracts_package, row.contracts_other, row.buy_premium, row.sell_premium)):
+                acc[i] += value
+        return {key: [round(v, 6) for v in acc] for key, acc in out.items()}
+
+    assert len(per_minute) == 4  # 2 minutes x (call, put)
+    assert totals(storage.minute_strike_flow) == totals(per_minute)
+
+
+def test_the_live_strikes_endpoint_includes_the_current_partial_minute(monkeypatch) -> None:
+    from fastapi.testclient import TestClient
+
+    import backend.api.routes.options as options_route
+    from backend.main import app
+
+    now = datetime(2026, 10, 19, 15, 0, 30, tzinfo=UTC)  # 11:00:30 ET
+
+    class _Now(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return now.astimezone(tz) if tz else now.replace(tzinfo=None)
+
+    monkeypatch.setattr(options_route, "datetime", _Now)
+    minute = datetime(2026, 10, 19, 15, 0, tzinfo=UTC)
+    with TestClient(app) as client:
+        storage = client.app.state.container.async_market_storage
+        storage.minute_strike_flow.extend(
+            [
+                _cell(minute, 7700.0, "C", 25.0),  # the current minute, written by the 5 s flush
+                _cell(minute - timedelta(minutes=4), 7700.0, "C", 5.0),  # still inside the 5-minute window
+                _cell(minute - timedelta(minutes=5), 7700.0, "C", 100.0),  # 15-minute window, not the 5
+            ]
+        )
+        live = client.get("/api/v1/flow/SPX/strikes").json()
+        replay = client.get("/api/v1/flow/SPX/strikes?at=2026-10-19T15:00:30Z").json()
+        storage.minute_strike_flow.clear()
+
+    (row,) = live["strikes"]
+    assert row["net"]["m5"] == 30.0 and row["net"]["m15"] == 130.0 and row["net_day"] == 130.0
+    assert live["as_of"] == "2026-10-19T15:00:30Z"  # now, not the start of the minute
+    # The replay keeps finished minutes only.
+    (old,) = replay["strikes"]
+    assert old["net"]["m5"] == 105.0 and old["net_day"] == 105.0
