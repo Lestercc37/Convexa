@@ -78,15 +78,17 @@ def post_futures_anchor(body: FuturesAnchorBar, request: Request, x_convexa_key:
     storage = container.storage
     day_open = datetime.combine(today, time(9, 30), EASTERN_TIME)
     index_symbol = FUTURE_SPECS[future].index_symbol
+    stats = futures_anchor_queries.first_minute_stats(storage, index_symbol, day_open)
     result = auto_save_anchor(
         storage,
         future,
         today,
         anchor_from_bar(body.high, body.low, body.close),
         "ninjatrader",
-        futures_anchor_queries.first_minute_median(storage, index_symbol, day_open),
+        stats[0] if stats else None,
         futures_anchor_queries.recent_offsets(storage, future, index_symbol, day_open),
         dry_run=body.dry_run,
+        first_minute_range=stats[1] if stats else 0.0,
     )
     logger.info(
         "futures anchor from NinjaTrader: %s %s -> %s (offset %s, existing %s %s)%s",
