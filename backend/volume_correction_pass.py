@@ -8,12 +8,15 @@ volume keeps reading the continuous counter. See docs/propuesta-volumen-suscripc
 
 Guards: refuses to run outside 09:45-16:30 ET on a weekday (the first minutes of the open are the stream's heaviest moment; --force overrides, for tests and reruns), stops
 asking at the first failing request (the partial result is still stored: each figure is a real ThetaData volume), and never runs longer than the time box.
+A request ThetaData rejects for its own data (a 4xx other than 429, e.g. 2026-11-05 14:00 NDXP 400 "Expected exactly one underlying INDEX tick; got 0")
+is skipped instead: it says nothing about load, and stopping there left the remaining expirations uncorrected until the next pass.
 """
 
 from __future__ import annotations
 
 import argparse
 import logging
+import re
 import sys
 import time
 from datetime import datetime
@@ -30,6 +33,14 @@ ALLOWED_FROM = time_of_day(9, 45)
 ALLOWED_UNTIL = time_of_day(16, 30)
 TIME_BOX_SECONDS = 150.0
 PAUSE_BETWEEN_REQUESTS_SECONDS = 0.3
+# The provider's error text ends with "-> <status> <body>" (ThetaDataProvider._get_json).
+_REJECTED_REQUEST = re.compile(r"-> (4\d\d) ")
+
+
+def is_rejected_request(error: Exception) -> bool:
+    """A 4xx other than 429 (rate limit): ThetaData refused this one request for its own data, not because it is busy."""
+    match = _REJECTED_REQUEST.search(str(error))
+    return match is not None and match.group(1) != "429"
 
 
 def within_allowed_window(now: datetime) -> bool:
@@ -43,6 +54,7 @@ def run_pass(storage, provider, now: datetime | None = None, sleep=time.sleep, m
     today = (now or datetime.now(EASTERN_TIME)).astimezone(EASTERN_TIME).date()
     volumes: dict[str, int] = {}
     requests = 0
+    skipped: list[str] = []
     stopped_because: str | None = None
     for symbol, underlying in ACTIVE_UNDERLYINGS_BY_SYMBOL.items():
         if underlying.kind == UnderlyingKind.FUTURE or stopped_because:
@@ -57,6 +69,11 @@ def run_pass(storage, provider, now: datetime | None = None, sleep=time.sleep, m
             try:
                 volumes.update(provider.get_option_volume_snapshot(symbol, expiration))
             except Exception as error:  # noqa: BLE001 -- the first failing request ends the pass; what is already read is kept
+                if is_rejected_request(error):
+                    skipped.append(f"{symbol} {expiration}")
+                    logger.warning("Volume correction skipped %s %s: %s", symbol, expiration, error)
+                    sleep(PAUSE_BETWEEN_REQUESTS_SECONDS)
+                    continue
                 stopped_because = f"{symbol} {expiration}: {type(error).__name__}"
                 logger.warning("Volume correction pass stopped at %s", stopped_because, exc_info=True)
                 break
@@ -69,6 +86,7 @@ def run_pass(storage, provider, now: datetime | None = None, sleep=time.sleep, m
         "contracts": len(volumes),
         "volume": sum(volumes.values()),
         "seconds": round(monotonic() - started, 1),
+        "skipped": skipped,
         "stopped_because": stopped_because,
     }
 
