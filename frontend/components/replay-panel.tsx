@@ -43,8 +43,17 @@ import {
   vwapAt,
 } from "@/lib/replay";
 import { APP_GAMMA_VIEW_TABS, effectiveGammaView, supportsVolumeWeight, type GammaWeight } from "@/lib/gamma-views";
-import type { GammaView, ReplayDayResponse, ReplayDaysResponse } from "@/lib/types";
-import { GammaHeatmapPrimitive, heatmapFromResponse, type HeatmapData } from "./gamma-heatmap-primitive";
+import { HEATMAP_METRIC_TABS } from "@/lib/heatmap-metrics";
+import type { GammaHeatmapMetric, GammaView, ReplayDayResponse, ReplayDaysResponse } from "@/lib/types";
+import {
+  GammaHeatmapPrimitive,
+  heatmapFromResponse,
+  mergeSides,
+  paletteForMetric,
+  type HeatmapData,
+  type HeatmapPalette,
+} from "./gamma-heatmap-primitive";
+import { LiveProfilePrimitive, profileBarsFromHeatmap, profileWidthCssPx, sideBarsFromHeatmaps, type ProfileBar } from "./live-profile-primitive";
 
 /**
  * Replay of a stored session (docs/diseno-replay-5-dias-2026-10-29.txt, phase 1): candles up to the chosen minute, the heatmap up to it, the levels
@@ -61,6 +70,25 @@ const HEATMAP_BUCKET_SECONDS = 120;
 const DEFAULT_TAB: GammaView = "0dte";
 const DEFAULT_WEIGHT: GammaWeight = "volume";
 const VWAP_COLOR = "#f3c969";
+// The heatmap figure and the GEX profile column, as in the main chart's Gamma menu (Lester 2026-11-04): same tabs, Calls / Puts sides and defaults (net gamma, profile on).
+const DEFAULT_HEATMAP_METRIC: GammaHeatmapMetric = "gamma";
+type SideLayers = { calls: boolean; puts: boolean };
+
+/** What the heatmap requests: the chosen figure, or the call / put gamma of each side switched on (the sides replace the figure, as in the main chart). */
+export function replayHeatmapMetrics(metric: GammaHeatmapMetric, sides: SideLayers): GammaHeatmapMetric[] {
+  if (!sides.calls && !sides.puts) return [metric];
+  return [...(sides.calls ? (["call_gamma"] as const) : []), ...(sides.puts ? (["put_gamma"] as const) : [])];
+}
+
+/** The profile AT THE CURSOR: per strike the value of the last stored cycle up to the chosen minute (the heatmap columns up to it), never a later one. */
+export function replayProfileBars(layers: Partial<Record<GammaHeatmapMetric, HeatmapData>>, metric: GammaHeatmapMetric, sides: SideLayers, cursor: number): ProfileBar[] {
+  const upTo = (data: HeatmapData | undefined) => (data ? sliceHeatmap(data, heatmapColumnsAt(data, cursor)) : null);
+  if (sides.calls || sides.puts) return sideBarsFromHeatmaps(upTo(layers.call_gamma), upTo(layers.put_gamma));
+  const single = upTo(layers[metric]);
+  return single ? profileBarsFromHeatmap(single) : [];
+}
+
+type ReplayProfile = { bars: ProfileBar[]; palette: HeatmapPalette; caption: string; tag: string };
 const LEVEL_LINES: { key: keyof LevelsAtMinute; title: string; color: string }[] = [
   { key: "callWall", title: "Call Wall", color: "#00DC5A" },
   { key: "putWall", title: "Put Wall", color: "#FA000A" },
@@ -74,16 +102,21 @@ type ReplayChartProps = {
   vwap: LinePoint[];
   levels: LevelsAtMinute | null;
   heatmap: HeatmapData | null;
+  // The GEX profile column at the right of the session (null = switched off): the chart keeps its width free after 16:00.
+  profile: ReplayProfile | null;
   // A new day or timeframe: the time axis is fitted to the whole session once.
   fitKey: string;
 };
 
-function ReplayChart({ bars, whitespace, vwap, levels, heatmap, fitKey }: ReplayChartProps) {
+function ReplayChart({ bars, whitespace, vwap, levels, heatmap, profile, fitKey }: ReplayChartProps) {
   const container = useRef<HTMLDivElement | null>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const candlesRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
   const vwapRef = useRef<ISeriesApi<"Line"> | null>(null);
   const heatmapRef = useRef<GammaHeatmapPrimitive | null>(null);
+  const profileRef = useRef<LiveProfilePrimitive | null>(null);
+  const profileOn = profile !== null;
+  const profileOnRef = useRef(profileOn);
   const linesRef = useRef<Map<keyof LevelsAtMinute, IPriceLine>>(new Map());
   const fittedKeyRef = useRef("");
   // Logical slots of the whole session (candles + empty slots to the close): the axis is fitted to them, not just to the candles drawn so far.
@@ -91,11 +124,16 @@ function ReplayChart({ bars, whitespace, vwap, levels, heatmap, fitKey }: Replay
   // Until the viewer zooms or pans, the window keeps the whole session in view (also after a resize); after that their own view is never fought.
   const userAdjustedRef = useRef(false);
 
-  // The whole session on screen, 09:30 at the left and 16:00 at the right, so the axis never moves while the replay plays.
+  // The whole session on screen, 09:30 at the left and 16:00 at the right (then the profile column, when on), so the axis never moves while the replay plays.
   const fitSession = () => {
     const chart = chartRef.current;
     if (!chart || slotsRef.current === 0) return;
-    chart.timeScale().setVisibleLogicalRange({ from: -0.5, to: slotsRef.current - 0.5 });
+    const slots = slotsRef.current;
+    const width = chart.timeScale().width();
+    const reserved = profileOnRef.current ? profileWidthCssPx(width) : 0;
+    // The column's pixels as empty logical slots after the close, so the candles never run under the bars.
+    const extra = reserved > 0 && width > reserved ? (slots * reserved) / (width - reserved) : 0;
+    chart.timeScale().setVisibleLogicalRange({ from: -0.5, to: slots - 0.5 + extra });
   };
 
   useEffect(() => {
@@ -199,6 +237,28 @@ function ReplayChart({ bars, whitespace, vwap, levels, heatmap, fitKey }: Replay
     heatmapRef.current?.setData(heatmap);
   }, [heatmap]);
 
+  // The profile primitive exists only while the column is on; switching it re-fits the session (unless the viewer moved the view) so the column has its room.
+  useEffect(() => {
+    const series = candlesRef.current;
+    profileOnRef.current = profileOn;
+    if (!userAdjustedRef.current) fitSession();
+    if (!profileOn || !series) return;
+    const primitive = new LiveProfilePrimitive();
+    series.attachPrimitive(primitive);
+    profileRef.current = primitive;
+    return () => {
+      if (profileRef.current === primitive) profileRef.current = null;
+      // On unmount the chart is already removed: detaching would ask it for a redraw ("Object is disposed").
+      if (candlesRef.current === series) series.detachPrimitive(primitive);
+    };
+  }, [profileOn]);
+
+  useEffect(() => {
+    if (!profile) return;
+    profileRef.current?.setBars(profile.bars, profile.palette, profile.caption);
+    profileRef.current?.setLineTag(profile.tag);
+  }, [profile]);
+
   return (
     <div className="v2-replay-frame">
       <div ref={container} className="v2-replay-chart" />
@@ -220,7 +280,7 @@ export function ReplayPanel({ symbol }: { symbol: string }) {
   // The loaded day with the key it was asked for, so a slow answer for another day is never drawn under this one.
   const [loaded, setLoaded] = useState<{ key: string; data: ReplayDayResponse } | null>(null);
   const [dayFailed, setDayFailed] = useState(false);
-  const [heatmap, setHeatmap] = useState<{ key: string; data: HeatmapData } | null>(null);
+  const [heatmap, setHeatmap] = useState<{ key: string; layers: Partial<Record<GammaHeatmapMetric, HeatmapData>> } | null>(null);
   // Where the replay stands, remembered with the day it belongs to: another day (or symbol) reads as "not set", so it starts at 09:30 paused.
   const [position, setPosition] = useState<{ key: string; cursor: number; following: boolean } | null>(null);
   const [playingKey, setPlayingKey] = useState<string | null>(null);
@@ -228,6 +288,10 @@ export function ReplayPanel({ symbol }: { symbol: string }) {
   const [gammaTab, setGammaTab] = useState<GammaView>(DEFAULT_TAB);
   const [gammaWeight, setGammaWeight] = useState<GammaWeight>(DEFAULT_WEIGHT);
   const view = effectiveGammaView(gammaTab, gammaWeight);
+  const [heatmapMetric, setHeatmapMetric] = useState<GammaHeatmapMetric>(DEFAULT_HEATMAP_METRIC);
+  const [sideLayers, setSideLayers] = useState<SideLayers>({ calls: false, puts: false });
+  const sidesOn = sideLayers.calls || sideLayers.puts;
+  const [showProfile, setShowProfile] = useState(true);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -282,31 +346,41 @@ export function ReplayPanel({ symbol }: { symbol: string }) {
     };
   }, [symbol, day, view]);
 
-  // The heatmap of the day's window from the existing endpoint, in the source's strikes (SPX for ES) moved by that day's offset.
-  const heatmapKey = data ? `${dataKey}|${data.source_symbol}|${data.price_offset}` : "";
+  // The heatmap of the day's window from the existing endpoint, in the source's strikes (SPX for ES) moved by that day's offset: the chosen figure, or one
+  // request per side switched on. The cursor (dayKey) is not part of the key, so changing the figure keeps the replay where it is.
+  const metricsKey = replayHeatmapMetrics(heatmapMetric, sideLayers).join("+");
+  const heatmapKey = data ? `${dataKey}|${data.source_symbol}|${data.price_offset}|${metricsKey}` : "";
   useEffect(() => {
     if (!data) return;
     const controller = new AbortController();
     let timer: number | undefined;
     const key = heatmapKey;
+    const metrics = metricsKey.split("+") as GammaHeatmapMetric[];
     const load = () =>
-      getGammaHeatmap(
-        data.source_symbol,
-        {
-          view,
-          metric: "gamma",
-          start: new Date(data.session_open),
-          end: data.live ? undefined : new Date(data.session_close),
-          bucketSeconds: HEATMAP_BUCKET_SECONDS,
-        },
-        controller.signal,
+      Promise.all(
+        metrics.map((metric) =>
+          getGammaHeatmap(
+            data.source_symbol,
+            {
+              view,
+              metric,
+              start: new Date(data.session_open),
+              end: data.live ? undefined : new Date(data.session_close),
+              bucketSeconds: HEATMAP_BUCKET_SECONDS,
+            },
+            controller.signal,
+          )
+            .then((response) => {
+              const shifted = shiftHeatmap(heatmapFromResponse(response), data.price_offset);
+              return [metric, { ...shifted, scaleMode: "column" as const }] as const;
+            })
+            // No heatmap (an older session without per-strike rows, a failed read): the candles and levels still replay.
+            .catch(() => null),
+        ),
       )
-        .then((response) => {
-          const shifted = shiftHeatmap(heatmapFromResponse(response), data.price_offset);
-          setHeatmap({ key, data: { ...shifted, scaleMode: "column" } });
-        })
-        .catch(() => {
-          // No heatmap (an older session without per-strike rows, a failed read): the candles and levels still replay.
+        .then((loadedLayers) => {
+          const layers = Object.fromEntries(loadedLayers.filter((layer) => layer !== null));
+          if (!controller.signal.aborted && Object.keys(layers).length > 0) setHeatmap({ key, layers });
         })
         .finally(() => {
           if (!controller.signal.aborted && data.live) timer = window.setTimeout(load, HEATMAP_LIVE_POLL_MS);
@@ -354,10 +428,36 @@ export function ReplayPanel({ symbol }: { symbol: string }) {
   const whitespace = useMemo(() => (prepared ? sessionWhitespace(prepared, timeframe, lastBarTime) : []), [prepared, timeframe, lastBarTime]);
   const vwap = useMemo(() => (prepared && shownCursor !== null ? vwapAt(prepared, shownCursor, timeframe) : []), [prepared, shownCursor, timeframe]);
   const levels = useMemo(() => (prepared && shownCursor !== null ? levelsAt(prepared, shownCursor) : null), [prepared, shownCursor]);
-  const dayHeatmap = heatmap && heatmap.key === heatmapKey ? heatmap.data : null;
+  const dayLayers = heatmap && heatmap.key === heatmapKey ? heatmap.layers : null;
+  const dayHeatmap = useMemo(
+    () => (dayLayers ? (sidesOn ? mergeSides(dayLayers.call_gamma ?? null, dayLayers.put_gamma ?? null) : (dayLayers[heatmapMetric] ?? null)) : null),
+    [dayLayers, sidesOn, heatmapMetric],
+  );
   const columnCount = dayHeatmap && shownCursor !== null ? heatmapColumnsAt(dayHeatmap, shownCursor) : 0;
   // Sliced only when a new 2-minute column comes into view, so the heatmap image is rebuilt a few times a second at most, not every tick.
   const visibleHeatmap = useMemo(() => (dayHeatmap ? sliceHeatmap(dayHeatmap, columnCount) : null), [dayHeatmap, columnCount]);
+  // The profile follows the heatmap's figure (net gamma by default) and is rebuilt only when a new stored column comes into view.
+  const profileColumnTime = visibleHeatmap?.columns.at(-1)?.time ?? null;
+  const figureLabel = sidesOn
+    ? [sideLayers.calls ? t.priceChart.heatmapSideCalls : null, sideLayers.puts ? t.priceChart.heatmapSidePuts : null].filter(Boolean).join(" / ")
+    : t.priceChart[HEATMAP_METRIC_TABS.find((tab) => tab.metric === heatmapMetric)?.labelKey ?? "heatmapMetricGamma"];
+  const profileBars = useMemo(
+    () => (showProfile && dayLayers && profileColumnTime !== null ? replayProfileBars(dayLayers, heatmapMetric, sideLayers, profileColumnTime) : []),
+    [showProfile, dayLayers, heatmapMetric, sideLayers, profileColumnTime],
+  );
+  const cursorTag = shownCursor !== null ? etClock(shownCursor) : "";
+  const profile = useMemo<ReplayProfile | null>(
+    () =>
+      showProfile
+        ? {
+            bars: profileBars,
+            palette: sidesOn ? "gamma" : paletteForMetric(heatmapMetric),
+            caption: t.replay.profileAt(figureLabel, profileColumnTime !== null ? etClock(profileColumnTime) : "--:--"),
+            tag: cursorTag,
+          }
+        : null,
+    [showProfile, profileBars, sidesOn, heatmapMetric, figureLabel, profileColumnTime, cursorTag, t],
+  );
 
   const step = (direction: 1 | -1) => {
     if (!range || shownCursor === null) return;
@@ -414,6 +514,32 @@ export function ReplayPanel({ symbol }: { symbol: string }) {
             </button>
           ))}
         </div>
+        <label className="v2-dim">
+          <input type="checkbox" checked={showProfile} onChange={(event) => setShowProfile(event.target.checked)} /> {t.priceChart.gexHistogramLabel}
+        </label>
+        <div className="v2-seg" role="group" aria-label={t.priceChart.heatmapMetricAriaLabel}>
+          {HEATMAP_METRIC_TABS.map((tab) => (
+            <button
+              key={tab.metric}
+              type="button"
+              aria-pressed={!sidesOn && heatmapMetric === tab.metric}
+              onClick={() => {
+                setHeatmapMetric(tab.metric);
+                setSideLayers({ calls: false, puts: false });
+              }}
+            >
+              {t.priceChart[tab.labelKey]}
+            </button>
+          ))}
+        </div>
+        <label className="v2-dim" title={t.priceChart.heatmapSidesTitle}>
+          <input type="checkbox" checked={sideLayers.calls} onChange={(event) => setSideLayers((current) => ({ ...current, calls: event.target.checked }))} />{" "}
+          {t.priceChart.heatmapSideCalls}
+        </label>
+        <label className="v2-dim" title={t.priceChart.heatmapSidesTitle}>
+          <input type="checkbox" checked={sideLayers.puts} onChange={(event) => setSideLayers((current) => ({ ...current, puts: event.target.checked }))} />{" "}
+          {t.priceChart.heatmapSidePuts}
+        </label>
         <span className="v2-replay-controls">
           <button type="button" className="v2-ibtn" title={t.replay.stepBack} aria-label={t.replay.stepBack} onClick={() => step(-1)} disabled={!hasCandles}>
             ⏮
@@ -483,7 +609,7 @@ export function ReplayPanel({ symbol }: { symbol: string }) {
         <p className="v2-panel-note">{isToday ? t.replay.noDataToday : t.replay.noData}</p>
       ) : (
         <>
-          <ReplayChart bars={bars} whitespace={whitespace} vwap={vwap} levels={levels} heatmap={visibleHeatmap} fitKey={`${dayKey}|${timeframe}`} />
+          <ReplayChart bars={bars} whitespace={whitespace} vwap={vwap} levels={levels} heatmap={visibleHeatmap} profile={profile} fitKey={`${dayKey}|${timeframe}`} />
           {range && shownCursor !== null && (
             <input
               type="range"

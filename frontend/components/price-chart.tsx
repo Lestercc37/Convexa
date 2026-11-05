@@ -55,6 +55,7 @@ import {
   type ProfileBar,
   type SmilePoint,
 } from "./live-profile-primitive";
+import { HEATMAP_METRIC_TABS } from "@/lib/heatmap-metrics";
 import { LIVE_LEVELS_POLLING_INTERVAL_MS, POLLING_INTERVAL_MS } from "@/lib/polling";
 import { currentExpirations, smilePointsFromChain } from "@/lib/volatility-smile-data";
 import type { ChartLayerPreset } from "@/lib/view-route";
@@ -489,15 +490,6 @@ function mergePriceRange(base: AutoscaleInfo | null, extraPrices: number[]): Aut
   };
 }
 
-// The metric tabs of the heatmap, in the order of the approved mockup (Gamma | Delta) plus absolute gamma, vanna and charm.
-const HEATMAP_METRIC_TABS = [
-  { metric: "gamma", labelKey: "heatmapMetricGamma" },
-  { metric: "absolute_gamma", labelKey: "heatmapMetricAbsolute" },
-  { metric: "total_gamma", labelKey: "heatmapMetricTotal" },
-  { metric: "delta", labelKey: "heatmapMetricDelta" },
-  { metric: "vanna", labelKey: "heatmapMetricVanna" },
-  { metric: "charm", labelKey: "heatmapMetricCharm" },
-] as const satisfies readonly { metric: GammaHeatmapMetric; labelKey: string }[];
 
 export function PriceChart({
   symbol,
