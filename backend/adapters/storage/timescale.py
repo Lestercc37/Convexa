@@ -85,7 +85,9 @@ class TimescaleStorage:
     def save_whale_alert(self, alert: WhaleAlert) -> None:
         raise NotImplementedError
 
-    def get_recent_whale_alerts(self, underlying: str, limit: int = 100) -> list[WhaleAlert]:
+    def get_recent_whale_alerts(
+        self, underlying: str, limit: int = 100, since: datetime | None = None
+    ) -> list[WhaleAlert]:
         raise NotImplementedError
 
     def save_symbol_flow_pressure(self, flow: SymbolFlowPressure) -> None:

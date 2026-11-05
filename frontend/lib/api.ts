@@ -256,8 +256,11 @@ export function getVwapHistory(symbol: string, signal?: AbortSignal) {
   );
 }
 
-export function getAlerts(symbol: string, signal?: AbortSignal, limit?: number) {
-  const query = limit ? `?${new URLSearchParams({ limit: String(limit) }).toString()}` : "";
+export function getAlerts(symbol: string, signal?: AbortSignal, limit?: number, since?: Date) {
+  const params = new URLSearchParams();
+  if (limit) params.set("limit", String(limit));
+  if (since) params.set("since", since.toISOString());
+  const query = params.toString() ? `?${params.toString()}` : "";
   return getJson<WhaleAlertsResponse>(`/alerts/${encodeURIComponent(symbol)}${query}`, signal);
 }
 

@@ -140,3 +140,27 @@ def test_the_alerts_endpoint_sends_the_cube_fields_and_null_for_old_alerts() -> 
     old = alerts["SPXW261016P07725000"]
     assert (old["delta"], old["contracts"], old["condition_premium"], old["simple_flow"]) == (None, None, None, None)
     assert (old["trade_start"], old["trade_minutes"]) == (None, None)
+
+
+def test_the_alerts_endpoint_returns_the_whole_session_when_given_since() -> None:
+    # 2026-11-05: the chart asked for the latest 500 alerts and SPX had ~900 by 13:30, so the morning's cubes were gone.
+    with TestClient(app) as client:
+        storage = client.app.state.container.storage
+        for minute in range(30):
+            storage.save_whale_alert(
+                WhaleAlert(
+                    symbol="NDX",
+                    occ_symbol=f"NDXP261105C{25000 + minute:05d}000",
+                    alert_type=WhaleAlertType.UNUSUAL,
+                    amount=Decimal("1000"),
+                    estimated_buy_volume=Decimal("1000"),
+                    estimated_sell_volume=Decimal("0"),
+                    as_of=datetime(2026, 11, 5, 14, 30 + minute, tzinfo=UTC),
+                )
+            )
+        latest = client.get("/api/v1/alerts/NDX?limit=10").json()["alerts"]
+        session = client.get("/api/v1/alerts/NDX?limit=10000&since=2026-11-05T14:40:00Z").json()["alerts"]
+
+    assert len(latest) == 10
+    assert len(session) == 20
+    assert min(alert["timestamp"] for alert in session).startswith("2026-11-05T14:40:00")

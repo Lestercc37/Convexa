@@ -1015,7 +1015,8 @@ describe("PriceChart", () => {
 
     // The GEX histogram primitive is attached by default now, so pick the cubes one by its shape.
     const primitive = chartMocks.attachPrimitive.mock.calls.map((call) => call[0]).find((candidate) => "cubes" in candidate);
-    await waitFor(() => expect(chartMocks.getAlerts).toHaveBeenCalledWith("SPY", expect.any(AbortSignal), 500));
+    // The whole session, not the latest N (2026-11-05: SPX passed 500 alerts by midday and the morning's cubes were gone).
+    await waitFor(() => expect(chartMocks.getAlerts).toHaveBeenCalledWith("SPY", expect.any(AbortSignal), 10_000, expect.any(Date)));
     await waitFor(() => expect(primitive.cubes.map((cube: { strike: number }) => cube.strike)).toEqual([540]));
     expect(chartMocks.subscribeCrosshairMove).toHaveBeenCalledTimes(2);
 

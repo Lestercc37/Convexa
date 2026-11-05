@@ -178,8 +178,10 @@ class SyncStorageAsyncReadAdapter:
     ) -> list[DailyGammaReference]:
         return self._storage.get_daily_gamma_references(underlying, limit=limit)
 
-    async def get_recent_whale_alerts(self, underlying: str, limit: int = 100) -> list[WhaleAlert]:
-        return self._storage.get_recent_whale_alerts(underlying, limit=limit)
+    async def get_recent_whale_alerts(
+        self, underlying: str, limit: int = 100, since: datetime | None = None
+    ) -> list[WhaleAlert]:
+        return self._storage.get_recent_whale_alerts(underlying, limit=limit, since=since)
 
     async def get_symbol_flow_pressure(self, underlying: str) -> SymbolFlowPressure | None:
         return self._storage.get_symbol_flow_pressure(underlying)
