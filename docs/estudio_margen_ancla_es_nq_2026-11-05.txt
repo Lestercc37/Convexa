@@ -1,0 +1,65 @@
+Estudio del margen del ancla ES / NQ — jueves 2026-11-05 (después del cierre)
+===========================================================================
+
+Por qué
+-------
+Hoy el control automático rechazó los valores BUENOS de NinjaTrader de las 09:31:
+  ES 7702.75 (diferencia con SPX +26.7; los últimos días +33-34)
+  NQ 28159.25 (diferencia con NDX +111.0; los últimos días +139-152)
+Lester los escribió a las 09:36/09:37. Yahoo a las 09:41 dio ES 7703.00 / NQ 28158.75 (0.25 / 0.5 de diferencia).
+
+Datos (solo lectura): future_price_anchors, todo el historial (ES 20 días desde 09-28, NQ 19 días desde 10-12).
+diferencia = ancla − mediana del índice en 09:30:00-09:30:59 (lo mismo que hace futures_anchor_queries.py).
+Script: docs/hm_anchor_margin_study.py (salida completa en el chat del 11-05).
+
+1. Distancia a la regla vieja (mediana de los últimos 5 días)
+-------------------------------------------------------------
+            mediana   p90    p95    máx    hoy     rechazos con el margen viejo
+  ES (±5)     3.8     7.2    7.9   13.3   −7.2    7 de 19 días
+  NQ (±15)   14.4    41.7   45.7   46.3  −40.1    9 de 18 días
+La regla vieja rechazaba casi la mitad de los anclas BUENOS. Casi todas las distancias son negativas: la diferencia baja día a día
+(ES de +60 el 09-28 a +27 hoy) porque la base se achica hacia el vencimiento del 18 de diciembre, y la mediana de 5 días va atrasada.
+
+2. Rango del primer minuto del índice (lo que mueve la mediana con la que se compara)
+-----------------------------------------------------------------------------------
+  SPX: mediana 8.6, p90 15.3, máx 24.6 (11-04); hoy 12.9
+  NDX: mediana 36.1, p90 61.1, máx 77.1 (HOY)
+NQ es mucho más ruidoso porque el primer minuto de NDX se mueve 30-77 puntos.
+
+3. Reglas probadas (distancia |real − esperado|)
+-----------------------------------------------
+                                      ES: mediana  p95  máx   hoy  |  NQ: mediana  p95   máx   hoy
+  mediana de 5 días (vieja)                  3.8   7.3  13.3  −7.2 |       14.4   45.5  46.3  −40.1
+  tendencia lineal 10 días                   2.4   6.1   7.2  −4.7 |        9.6   33.2  65.5  −29.1
+  base por día al vencimiento (5 días)       2.0   5.0   5.1  −5.0 |        7.3   41.3  42.5  −31.5
+"Base por día": la diferencia de cada uno de los últimos 5 días ÷ días que le faltaban al contrato; la mediana de eso × los días que
+le faltan hoy. Es la que mejor sigue el encogimiento.
+
+Margen según el ruido del primer minuto (base por día, días con 3 o más días anteriores):
+  ES margen 5 + 0.5 × rango SPX:  0 rechazos de 17 (el más justo, 3.3 puntos dentro)
+  NQ margen 20 + 0.5 × rango NDX: 0 rechazos de 16 (el más justo, 8 puntos dentro)
+  (con historial de todos los días: solo NQ 10-13, cuando había UN solo día anterior, con un 10-12 raro de +253)
+
+4. Yahoo contra lo escrito / NinjaTrader (es_nq_anchor.log desde 11-02, backend_main.log)
+----------------------------------------------------------------------------------------
+  11-02  Yahoo ES 7649.00 vs 7649.25 (0.25) · NQ igual
+  11-03  igual / igual
+  11-04  igual / igual · NinjaTrader NQ (reenvío de la tarde) 28491.75 vs 28492.50 (0.75)
+  11-05  Yahoo ES 7703.00 vs 7702.75 (0.25) · NQ 28158.75 vs 28159.25 (0.50) · NinjaTrader = lo escrito
+Las dos fuentes coinciden con lo escrito dentro de 0.25-0.75 puntos.
+
+Decisión
+--------
+(a) SÍ: diferencia esperada = base por día al vencimiento; margen ES 5 + 0.5 × rango SPX, NQ 20 + 0.5 × rango NDX.
+    Hoy habría guardado los dos valores de NinjaTrader a las 09:31: ES −5.0 de un margen de 11.5; NQ −31.5 de un margen de 58.5.
+    Una vela equivocada o un dígito cambiado se sigue rechazando: ES 20 puntos fuera con rango 6 → rechazado; NQ 100 fuera → rechazado.
+    Cambio de contrato: ES / NQ pasan al de marzo el 10 de diciembre (8 días antes del 18). Desde 3 días antes hasta 3 días después
+    se acepta cualquiera de los dos contratos, porque NinjaTrader y Yahoo pueden cambiar con un día de diferencia.
+(b) NO por ahora: el cruce con Yahoo a las 09:41 necesitaría una tabla nueva para guardar el intento rechazado de NinjaTrader, y con (a)
+    ningún día del historial lo habría necesitado. Si (a) vuelve a rechazar un valor bueno, ese es el siguiente paso.
+(c) NO: la relación ES/NQ añade otra fuente de ruido y no separa mejor los casos.
+
+Lo que no se pudo verificar
+---------------------------
+- Solo hay 4 semanas de historial y ningún cambio de contrato (el primero es el 10-12-2026).
+- No hay ningún caso real de valor MALO para probar el rechazo; se probaron casos inventados (vela de un minuto tarde, dígito cambiado).

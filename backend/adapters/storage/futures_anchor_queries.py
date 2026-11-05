@@ -4,14 +4,15 @@ offsets of the last days that have an anchor. Shared by the 09:41 Yahoo task and
 from __future__ import annotations
 
 import statistics
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 
 from sqlalchemy import text
 
 from backend.domain.use_cases.market_hours import EASTERN_TIME
 
 
-def first_minute_median(storage, index_symbol: str, day_open: datetime) -> float | None:
+def first_minute_stats(storage, index_symbol: str, day_open: datetime) -> tuple[float, float] | None:
+    """(median, high - low) of the index's readings 09:30:00-09:30:59; the range sets how much noise the check allows."""
     with storage.session_factory() as session:
         rows = session.execute(
             text(
@@ -21,11 +22,17 @@ def first_minute_median(storage, index_symbol: str, day_open: datetime) -> float
             {"s": index_symbol, "a": day_open, "b": day_open + timedelta(minutes=1)},
         ).all()
         session.rollback()
-    return statistics.median(float(r[0]) for r in rows) if rows else None
+    prices = [float(r[0]) for r in rows]
+    return (statistics.median(prices), max(prices) - min(prices)) if prices else None
 
 
-def recent_offsets(storage, future: str, index_symbol: str, before: datetime, sessions: int = 5) -> list[float]:
-    """The offsets of the last `sessions` days with an anchor (typed or saved automatically): anchor - median of that day's first minute."""
+def first_minute_median(storage, index_symbol: str, day_open: datetime) -> float | None:
+    stats = first_minute_stats(storage, index_symbol, day_open)
+    return stats[0] if stats else None
+
+
+def recent_offsets(storage, future: str, index_symbol: str, before: datetime, sessions: int = 5) -> list[tuple[date, float]]:
+    """(day, offset) of the last `sessions` days with an anchor (typed or saved automatically), newest first: anchor - median of that day's first minute."""
     with storage.session_factory() as session:
         rows = session.execute(
             text(
@@ -40,5 +47,5 @@ def recent_offsets(storage, future: str, index_symbol: str, before: datetime, se
         day_open = datetime(session_date.year, session_date.month, session_date.day, 9, 30, tzinfo=EASTERN_TIME)
         median = first_minute_median(storage, index_symbol, day_open)
         if median is not None:
-            offsets.append(float(anchor) - median)
+            offsets.append((session_date, float(anchor) - median))
     return offsets

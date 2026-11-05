@@ -26,7 +26,7 @@ import httpx
 from pydantic import SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from backend.adapters.storage.futures_anchor_queries import first_minute_median, recent_offsets
+from backend.adapters.storage.futures_anchor_queries import first_minute_stats, recent_offsets
 from backend.core.container import build_container
 from backend.domain.use_cases.futures_anchor import (
     AutoSaveResult,
@@ -125,9 +125,8 @@ def main() -> int:
         return 0
     day_open = now.replace(hour=9, minute=30, second=0, microsecond=0)
     container = build_container()
-    medians = {
-        name: first_minute_median(container.storage, spec[1], day_open) for name, spec in FUTURES.items()
-    }
+    stats = {name: first_minute_stats(container.storage, spec[1], day_open) for name, spec in FUTURES.items()}
+    medians = {name: (value[0] if value else None) for name, value in stats.items()}
     if medians["ES"] is None and medians["NQ"] is None:
         logger.info("no SPX / NDX readings at 09:30 today: market closed, nothing to send")
         return 0
@@ -155,10 +154,11 @@ def main() -> int:
         median = medians.get(name)
         if median is not None:
             offsets[name] = float(anchor) - median
-        # The basis shrinks as the futures contract nears expiry, so the check compares with the offsets of the last days with an anchor.
+        # The basis shrinks as the futures contract nears expiry, so the check compares with the offset the last days' basis gives for today.
         history = recent_offsets(container.storage, name, FUTURES[name][1], day_open)
+        first_range = stats[name][1] if stats.get(name) else 0.0
         saves[name] = auto_save_anchor(
-            container.storage, name, day_open.date(), anchor, "yahoo", median, history, dry_run=args.dry_run
+            container.storage, name, day_open.date(), anchor, "yahoo", median, history, dry_run=args.dry_run, first_minute_range=first_range
         )
         logger.info("anchor %s %s: %s (existing %s %s)", name, anchor, saves[name].status, saves[name].existing, saves[name].existing_source)
     message = build_message(day, anchors, offsets, bars, saves, args.test)
