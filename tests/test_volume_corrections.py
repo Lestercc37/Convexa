@@ -68,14 +68,15 @@ def test_the_in_memory_correction_only_grows_within_the_trade_date() -> None:
 
 
 class _FakeProvider:
-    def __init__(self, fail_on: str | None = None) -> None:
+    def __init__(self, fail_on: str | None = None, error: str = "ThetaData request failed: 503") -> None:
         self.calls: list[tuple[str, date]] = []
         self._fail_on = fail_on
+        self._error = error
 
     def get_option_volume_snapshot(self, symbol: str, expiration: date) -> dict[str, int]:
         self.calls.append((symbol, expiration))
         if symbol == self._fail_on:
-            raise RuntimeError("ThetaData request failed: 503")
+            raise RuntimeError(self._error)
         return {f"{symbol}{expiration:%y%m%d}P00007550": 1000 + len(self.calls)}
 
 
@@ -134,3 +135,21 @@ def test_the_chain_reply_shows_the_corrected_total_and_the_stored_counter_stays_
     volumes = {item["strike"]: item["volume"] for item in reply.json()["contracts"]}
     assert volumes[7550] == 7229 and volumes[7600] == 500
     assert [contract.volume for contract in stored.contracts] == [1416, 500]
+
+
+def test_a_request_thetadata_rejects_for_its_own_data_is_skipped_and_the_pass_goes_on() -> None:
+    # 2026-11-05 14:00: NDXP 2026-11-06 got a 400 "Expected exactly one underlying INDEX tick; got 0" and the pass stopped there.
+    rejected = (
+        "ThetaData request failed: GET /v3/option/snapshot/ohlc {'symbol': 'NDXP'} -> 400 Expected exactly one underlying INDEX tick; got 0"
+    )
+    storage, provider = _storage_with_chains("SPX", "SPY"), _FakeProvider(fail_on="SPY", error=rejected)
+    summary = volume_correction_pass.run_pass(storage, provider, NOW, sleep=lambda _s: None)
+    assert summary["stopped_because"] is None
+    assert summary["skipped"] == [f"SPY {TODAY}", "SPY 2026-10-17"]
+    assert summary["requests"] == 2 and summary["contracts"] == 2  # both SPX expirations still read
+
+
+def test_a_rate_limit_or_a_server_error_still_ends_the_pass() -> None:
+    for error in ("ThetaData request failed: GET /x {} -> 429 slow down", "ThetaData request failed: GET /x {} -> 503 busy"):
+        summary = volume_correction_pass.run_pass(_storage_with_chains("SPX", "SPY"), _FakeProvider(fail_on="SPY", error=error), NOW, sleep=lambda _s: None)
+        assert summary["stopped_because"] is not None and summary["skipped"] == []
