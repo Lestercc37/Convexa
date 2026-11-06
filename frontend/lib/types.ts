@@ -337,7 +337,7 @@ export type FutureLiveResponse = {
   schema_version: number;
   symbol: string;
   offset: number | null;
-  offset_source: "ninjatrader" | "anchor" | null;
+  offset_source: "ninjatrader" | "anchor" | "ninjatrader_last" | null;
   live_basis: number | null;
   anchor_offset: number | null;
   quote: FutureLiveQuote | null;

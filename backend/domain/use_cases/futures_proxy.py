@@ -100,6 +100,59 @@ async def live_future_basis_async(storage, future: str) -> float | None:
     return _remember_basis(future, found[0] if found else None)
 
 
+# The last known basis (any age) from NinjaTrader's bars of the last LAST_BASIS_DAYS: the fallback when a day has no anchor and no fresh bar
+# (2026-11-06: NQ's 09:31 anchor failed its check, Yahoo saved none, and after the close 'Convexa Niveles' on NQ got 409 all evening).
+LAST_BASIS_DAYS = 4
+_last_basis_cache: dict[str, tuple[float, float | None]] = {}
+
+
+def last_known_basis(storage, future: str) -> Decimal | None:
+    """Sync twin of last_known_basis_async, as a Decimal offset (None when there is none)."""
+    cached = _last_basis_cache.get(future)
+    if cached is not None and time.monotonic() - cached[0] < 60:
+        return None if cached[1] is None else Decimal(str(round(cached[1], 2)))
+    read = getattr(storage, "get_futures_live_bars", None)
+    found = None
+    if read is not None:
+        now = datetime.now(timezone.utc)
+        try:
+            found = live_basis(read(future, now - timedelta(days=LAST_BASIS_DAYS)), now, fresh=None)
+        except Exception:
+            _log_basis_failure()
+    _last_basis_cache[future] = (time.monotonic(), found[0] if found else None)
+    return Decimal(str(round(found[0], 2))) if found else None
+
+
+async def last_known_basis_async(storage, future: str) -> float | None:
+    cached = _last_basis_cache.get(future)
+    if cached is not None and time.monotonic() - cached[0] < 60:
+        return cached[1]
+    read = getattr(storage, "get_futures_live_bars", None)
+    found = None
+    if read is not None:
+        now = datetime.now(timezone.utc)
+        try:
+            found = live_basis(await read(future, now - timedelta(days=LAST_BASIS_DAYS)), now, fresh=None)
+        except Exception:
+            _log_basis_failure()
+    _last_basis_cache[future] = (time.monotonic(), found[0] if found else None)
+    return found[0] if found else None
+
+
+async def resolve_future_offset_async(storage, future: str, proxy_symbol: str) -> tuple[Decimal | None, str | None, Decimal | None, float | None]:
+    """(offset, source, anchor offset, fresh live basis): the fresh NinjaTrader basis when trusted, else today's anchor, else the last known
+    NinjaTrader basis; source 'ninjatrader' / 'anchor' / 'ninjatrader_last' (None when there is nothing at all)."""
+    anchor = await _anchor_offset_async(storage, future, proxy_symbol)
+    live = await live_future_basis_async(storage, future)
+    offset = _with_live_basis(future, anchor, live)
+    if offset is not None:
+        return offset, ("anchor" if offset == anchor else "ninjatrader"), anchor, live
+    last = await last_known_basis_async(storage, future)
+    if last is None:
+        return None, None, anchor, live
+    return Decimal(str(round(last, 2))), "ninjatrader_last", anchor, live
+
+
 def _with_live_basis(future: str, anchor_offset: Decimal | None, live: float | None) -> Decimal | None:
     """The live basis when it is trusted (see futures_live.trusted_basis), the anchor offset otherwise."""
     if trusted_basis(future, live, float(anchor_offset) if anchor_offset is not None else None):
@@ -153,7 +206,8 @@ def _remember_open(proxy_symbol: str, session_date: date, price: Decimal) -> Non
 def future_level_offset(storage, future_symbol: str, proxy_symbol: str) -> Decimal | None:
     """The future's points minus the proxy's: NinjaTrader's live basis while fresh (2026-11-06), else anchor - proxy's first price of the
     session, or None while neither exists. Sync twin of future_level_offset_async."""
-    return _with_live_basis(future_symbol.upper(), _anchor_offset(storage, future_symbol, proxy_symbol), live_future_basis(storage, future_symbol.upper()))
+    offset = _with_live_basis(future_symbol.upper(), _anchor_offset(storage, future_symbol, proxy_symbol), live_future_basis(storage, future_symbol.upper()))
+    return offset if offset is not None else last_known_basis(storage, future_symbol.upper())
 
 
 def _anchor_offset(storage, future_symbol: str, proxy_symbol: str) -> Decimal | None:
@@ -177,8 +231,8 @@ def _anchor_offset(storage, future_symbol: str, proxy_symbol: str) -> Decimal | 
 
 
 async def future_level_offset_async(storage, future_symbol: str, proxy_symbol: str) -> Decimal | None:
-    anchor = await _anchor_offset_async(storage, future_symbol, proxy_symbol)
-    return _with_live_basis(future_symbol.upper(), anchor, await live_future_basis_async(storage, future_symbol.upper()))
+    offset, _, _, _ = await resolve_future_offset_async(storage, future_symbol.upper(), proxy_symbol)
+    return offset
 
 
 async def _anchor_offset_async(storage, future_symbol: str, proxy_symbol: str) -> Decimal | None:

@@ -60,8 +60,10 @@ def client(tmp_path, monkeypatch):
     monkeypatch.setattr(nt_feed, "get_gamma_exposure_async", gamma)
     monkeypatch.setattr(nt_feed, "build_market_snapshot_async", snapshot)
     monkeypatch.setattr(nt_feed, "get_gamma_heatmap_async", heatmap)
-    monkeypatch.setattr(nt_feed, "_anchor_offset_async", anchor)
-    monkeypatch.setattr(nt_feed, "live_future_basis_async", live)
+    async def resolve(storage, future, index):
+        return Decimal("31.2"), "ninjatrader", await anchor(storage, future, index), await live(storage, future)
+
+    monkeypatch.setattr(nt_feed, "resolve_future_offset_async", resolve)
     futures_proxy._live_basis_cache.clear()
     with TestClient(app) as test_client:
         test_client.calls = calls
