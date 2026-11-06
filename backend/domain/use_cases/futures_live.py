@@ -126,6 +126,17 @@ def live_basis(bars: list[FuturesLiveBar], now: datetime) -> tuple[float, int, d
     return statistics.median(float(bar.close - bar.index_price) for bar in usable), len(usable), usable[-1].minute
 
 
+def live_ratio(bars: list[FuturesLiveBar], now: datetime) -> tuple[float, int, datetime] | None:
+    """Like live_basis but close / index price: RTY against IWM (an ETF about a tenth of the index, so a ratio, not a difference)."""
+    usable = sorted(
+        (bar for bar in bars if bar.index_price is not None and bar.index_price > 0 and bar.session == "rth" and is_front(bar.contract, bar.minute.date())),
+        key=lambda bar: bar.minute,
+    )[-LIVE_BASIS_BARS:]
+    if not usable or now - (usable[-1].minute + timedelta(minutes=1)) > LIVE_BASIS_FRESH:
+        return None
+    return statistics.median(float(bar.close / bar.index_price) for bar in usable), len(usable), usable[-1].minute
+
+
 def trusted_basis(future: str, live: float | None, anchor_offset: float | None) -> bool:
     """A live basis replaces the anchor offset unless both exist and they are further apart than LIVE_BASIS_MAX_GAP."""
     if live is None:
