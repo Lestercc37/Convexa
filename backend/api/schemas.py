@@ -128,6 +128,23 @@ class VwapHistoryResponse(BaseModel):
     points: list[VwapPointResponse]
 
 
+class OrderFlowEventResponse(BaseModel):
+    at: str = Field(examples=["2026-11-06T16:32:05Z"])
+    type: Literal["absorption", "stacked_imbalance", "big_trade"]
+    side: Literal["buy", "sell"]
+    price: Number = Field(examples=[7387.25], description="the event's price on THIS symbol's chart (translated from the future)")
+    future: str = Field(examples=["ES"])
+    future_price: Number = Field(examples=[7418.50])
+    volume: int = Field(examples=[236])
+    detail: str = Field(examples=["refills 7, held 64 s"])
+
+
+class OrderFlowEventsResponse(BaseModel):
+    schema_version: int = Field(examples=[1])
+    symbol: str = Field(examples=["SPX"])
+    events: list[OrderFlowEventResponse]
+
+
 class PriceSourceResponse(BaseModel):
     symbol: str = Field(examples=["SPX"])
     proxy: str = Field(examples=["SPY"])

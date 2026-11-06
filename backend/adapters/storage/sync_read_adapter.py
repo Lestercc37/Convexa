@@ -23,6 +23,7 @@ from backend.domain.ports import IStorage
 from backend.domain.use_cases.flow import SymbolFlowPressure, WhaleAlert
 from backend.domain.use_cases.index_stale_guard import IndexPriceFallback
 from backend.domain.use_cases.futures_live import FuturesLiveBar, FuturesLiveQuote
+from backend.domain.use_cases.futures_events import FuturesEvent
 from backend.domain.use_cases.market_hours import EASTERN_TIME
 
 
@@ -202,3 +203,6 @@ class SyncStorageAsyncReadAdapter:
 
     async def get_futures_live_bars(self, symbol: str, since: datetime) -> list[FuturesLiveBar]:
         return self._storage.get_futures_live_bars(symbol, since)
+
+    async def get_futures_events(self, future: str, start: datetime, end: datetime) -> list[FuturesEvent]:
+        return self._storage.get_futures_events(future, start, end)

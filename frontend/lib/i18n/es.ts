@@ -215,6 +215,8 @@ export const es: Translations = {
     heatmapSideCalls: "Calls",
     heatmapSidePuts: "Puts",
     heatmapDayScaleLabel: "Escala del día",
+    orderFlowEventsLabel: "Absorción NT",
+    orderFlowEventsTitle: "Lo que tu NinjaTrader detecta en el futuro (ES → SPX/SPY, NQ → NDX/QQQ, RTY → IWM), al precio de este gráfico: rombo = absorción, triángulo = imbalances apilados (arriba compradores, abajo vendedores), punto = operación grande. Verde gana el comprador, rojo el vendedor; azul/naranja = operación grande de compra/venta.",
     heatmapDayScaleTitle: "Apagada: cada minuto se colorea contra sí mismo, el strike más fuerte de ese momento sale blanco y el historial se queda como se pintó. Encendida: una sola escala para toda la sesión.",
     heatmapGrowingScaleLabel: "Escala por volumen (prueba ES)",
     heatmapGrowingScaleTitle: "Cada minuto se colorea contra el OI 0DTE del mismo momento: a las 9:30 el mapa aparece completo pero tenue y cada nivel se enciende a medida que entra volumen. Brillo completo cuando el volumen llega a 10 veces el OI. Enciende Escala del día para volver a la escala de siempre.",

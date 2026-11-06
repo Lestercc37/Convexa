@@ -20,7 +20,8 @@ import {
   type Time,
   type UTCTimestamp,
 } from "lightweight-charts";
-import { getAlerts, getGammaHeatmap, getGammaHistory, getGammaProfile, getMinuteFlow, getOptionChain, getOptionChainExpirations, getPriceCandles, getCubeMinimums } from "@/lib/api";
+import { getAlerts, getGammaHeatmap, getGammaHistory, getGammaProfile, getMinuteFlow, getOptionChain, getOptionChainExpirations, getOrderFlowEvents, getPriceCandles, getCubeMinimums } from "@/lib/api";
+import { OrderFlowEventsPrimitive } from "./order-flow-events-primitive";
 import { followsFastLayer, profileSource } from "@/lib/profile-source";
 import { flowBarsFromResponse } from "@/lib/minute-flow";
 import { buildCubes, DEFAULT_CUBE_FILTER, DEFAULT_CUBE_SIZING, type CubeSizing } from "@/lib/alert-cubes";
@@ -204,6 +205,9 @@ const TIMEFRAME_STEP_SECONDS: Record<Timeframe, number> = { "1m": 60, "5m": 300,
 function lastSessionSlot(openSeconds: number, timeframe: Timeframe): number {
   return sessionSlots(openSeconds, openSeconds + SESSION_SECONDS, TIMEFRAME_STEP_SECONDS[timeframe]).at(-1) ?? openSeconds;
 }
+
+// The charts NinjaTrader's futures events are drawn on (backend use_cases/futures_events.py TARGETS).
+const ORDER_FLOW_SYMBOLS = new Set(["SPX", "SPY", "NDX", "QQQ", "IWM"]);
 
 // The profile's own fast-layer read (heatmap off, 0DTE tab): the last minute of columns, and a minute's pause when the fast layer has nothing.
 const FAST_TAIL_WINDOW_MS = 60_000;
@@ -594,6 +598,9 @@ export function PriceChart({
   const [showSmile, setShowSmile] = useState(layers ? layers.smile : true);
   // The minute flow panes (calls and puts, under the candles, hidden by default): one histogram series each, in its own pane so the time axis and the crosshair are the candles'.
   const [showFlow, setShowFlow] = useState(layers?.flow ?? false);
+  // NinjaTrader's order-flow events on this symbol's future (order-flow-events-primitive.ts); on by default where a future maps here.
+  const orderFlowSymbol = ORDER_FLOW_SYMBOLS.has(symbol.toUpperCase());
+  const [showOrderFlowEvents, setShowOrderFlowEvents] = useState(true);
   // The flow since the open, summarised from the poll the flow panes already make (no extra request) and shown in a line above the chart; the alerts half comes from the cubes' poll.
   const [openingFlow, setOpeningFlow] = useState<OpeningFlow | null>(null);
   const [openingAlerts, setOpeningAlerts] = useState<OpeningAlerts | null>(null);
@@ -1338,6 +1345,34 @@ export function PriceChart({
   useEffect(() => {
     cubesPrimitiveRef.current?.setCubes(cubes);
   }, [cubes, showAlertCubes]);
+
+  // NinjaTrader's absorption / imbalance / big trade events (polled like the other live panels; a failed poll keeps what is drawn).
+  useEffect(() => {
+    const series = seriesRef.current;
+    if (!showOrderFlowEvents || !orderFlowSymbol || !series) return;
+    // Attached only once there is something to draw: most sessions start (and many charts stay) without any event.
+    const primitive = new OrderFlowEventsPrimitive();
+    let attached = false;
+    const controller = new AbortController();
+    const refresh = () =>
+      getOrderFlowEvents(symbol, controller.signal)
+        .then((response) => {
+          if (controller.signal.aborted) return;
+          if (!attached && response.events.length) {
+            series.attachPrimitive(primitive);
+            attached = true;
+          }
+          primitive.setEvents(response.events);
+        })
+        .catch(() => undefined);
+    void refresh();
+    const interval = window.setInterval(() => void refresh(), POLLING_INTERVAL_MS);
+    return () => {
+      controller.abort();
+      window.clearInterval(interval);
+      if (attached && seriesRef.current === series) series.detachPrimitive(primitive);
+    };
+  }, [showOrderFlowEvents, orderFlowSymbol, symbol]);
   // Gamma heatmap: a series primitive drawn behind the candles. The matrix covers the most recent session (from an hour before the open) and is
   // refreshed like the other live panels; a failed poll keeps what is drawn, and a symbol without data (ES/NQ before the opening price
   // is entered, a weekend) simply stays empty.
@@ -1887,6 +1922,12 @@ export function PriceChart({
             <input type="checkbox" checked={showFlow} onChange={(event) => setShowFlow(event.target.checked)} />
             {t.priceChart.flowLabel}
           </label>
+          {orderFlowSymbol && (
+            <label title={t.priceChart.orderFlowEventsTitle}>
+              <input type="checkbox" checked={showOrderFlowEvents} onChange={(event) => setShowOrderFlowEvents(event.target.checked)} />
+              {t.priceChart.orderFlowEventsLabel}
+            </label>
+          )}
           <h4>{t.appV2.cubesGroup}</h4>
           <label>
             <input type="checkbox" checked={showAlertCubes} onChange={(event) => setShowAlertCubes(event.target.checked)} />
@@ -2033,6 +2074,12 @@ export function PriceChart({
               <input type="checkbox" checked={showFlow} onChange={(event) => setShowFlow(event.target.checked)} />
               {t.priceChart.flowLabel}
             </label>
+            {orderFlowSymbol && (
+              <label className="chart-toggle" title={t.priceChart.orderFlowEventsTitle}>
+                <input type="checkbox" checked={showOrderFlowEvents} onChange={(event) => setShowOrderFlowEvents(event.target.checked)} />
+                {t.priceChart.orderFlowEventsLabel}
+              </label>
+            )}
             <EmaMenu emas={emas} convergingIds={convergingEmas} onChange={setEmas} />
             <label className="chart-toggle">
               <input

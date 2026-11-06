@@ -39,6 +39,7 @@ from backend.domain.use_cases.trade_date import volume_rows_since
 from backend.domain.use_cases.flow import Moneyness, SymbolFlowPressure, WhaleAlert, WhaleAlertType
 from backend.domain.use_cases.index_stale_guard import IndexPriceFallback, fallback_from_row, fallback_params
 from backend.domain.use_cases.futures_live import FuturesLiveBar, FuturesLiveQuote, bar_from_row, bar_params, quote_from_row, quote_params
+from backend.domain.use_cases.futures_events import FuturesEvent, event_from_row, event_params
 
 # See get_latest_chain_snapshot's own comment -- how far back its fast
 # path looks before falling back to an unbounded (and much slower) scan
@@ -1796,6 +1797,18 @@ class PostgreSQLStorage:
     def get_futures_live_bars(self, symbol: str, since: datetime) -> list[FuturesLiveBar]:
         with self.session_factory() as session:
             return [bar_from_row(row) for row in session.execute(text("SELECT symbol, contract, minute, open, high, low, close, volume, session, index_price, received_at FROM futures_live_bars WHERE symbol = :symbol AND minute >= :since ORDER BY minute, contract"), {"symbol": symbol.upper(), "since": since}).mappings()]
+
+    def save_futures_events(self, events: list[FuturesEvent]) -> None:
+        if not events:
+            return
+        with self.session_factory.begin() as session:
+            session.execute(text("""INSERT INTO futures_events (future, contract, at, type, side, price, price_low, price_high, volume, detail, translated, received_at)
+                    VALUES (:future, :contract, :at, :type, :side, :price, :price_low, :price_high, :volume, :detail, CAST(:translated AS jsonb), :received_at)"""), [event_params(event) for event in events])
+
+    def get_futures_events(self, future: str, start: datetime, end: datetime) -> list[FuturesEvent]:
+        with self.session_factory() as session:
+            rows = session.execute(text("SELECT future, contract, at, type, side, price, price_low, price_high, volume, detail, translated, received_at FROM futures_events WHERE future = :future AND at >= :start AND at < :end ORDER BY at"), {"future": future.upper(), "start": start, "end": end}).mappings()
+            return [event_from_row(row) for row in rows]
 
     def get_future_price_anchor(self, symbol: str, session_date: date) -> Decimal | None:
         with self.session_factory() as session:

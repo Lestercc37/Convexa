@@ -177,6 +177,8 @@ export type Translations = {
     heatmapSidePuts: string;
     heatmapSidesTitle: string;
     heatmapDayScaleLabel: string;
+    orderFlowEventsLabel: string;
+    orderFlowEventsTitle: string;
     heatmapDayScaleTitle: string;
     heatmapGrowingScaleLabel: string;
     heatmapGrowingScaleTitle: string;

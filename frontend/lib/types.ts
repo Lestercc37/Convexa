@@ -320,6 +320,18 @@ export type MinuteFlowResponse = {
   minutes: { minute: string; calls_delta_flow: number; puts_delta_flow: number; classified_share: number | null }[];
 };
 
+export type OrderFlowEvent = {
+  at: string;
+  type: "absorption" | "stacked_imbalance" | "big_trade";
+  side: "buy" | "sell";
+  price: number;
+  future: string;
+  future_price: number;
+  volume: number;
+  detail: string;
+};
+export type OrderFlowEventsResponse = { schema_version: number; symbol: string; events: OrderFlowEvent[] };
+
 export type FutureLiveQuote = { contract: string; last: number; bid: number | null; ask: number | null; time: string; age_seconds: number };
 export type FutureLiveResponse = {
   schema_version: number;
