@@ -1268,6 +1268,24 @@ describe("PriceChart", () => {
     expect(screen.queryByText("Escala por volumen (prueba ES)")).toBeNull();
   });
 
+  it("paints the ES heatmap to the close: an invisible series of empty slots up to 16:00 and the latest column projected (trial), and only on ES", async () => {
+    chartMocks.getGammaHeatmap.mockResolvedValue({ schema_version: 1, symbol: "ES", view: "tactical", metric: "gamma", bucket_seconds: 60, strikes: [6800], columns: [{ as_of: "2026-08-06T14:31:00Z", values: [3] }], scale_p98: 6 });
+    const user = userEvent.setup();
+    const { rerender } = renderWithLanguage(<PriceChart symbol="ES" candles={candlesWithRange} gamma={gamma} gammaView="tactical" />);
+    await user.click(screen.getByLabelText("Heatmap"));
+    await waitFor(() => expect(chartMocks.addSeries).toHaveBeenCalledWith("LineSeries", expect.objectContaining({ lineVisible: false })));
+    await waitFor(() => expect(chartMocks.lineSetData.mock.calls.some((call) => call[0].length === 390 && !("value" in call[0][0]))).toBe(true));
+    await waitFor(() => expect(chartMocks.attachPrimitive.mock.calls.some((call) => "data" in call[0] && typeof call[0].data?.projectUntil === "number")).toBe(true));
+
+    chartMocks.addSeries.mockClear();
+    chartMocks.attachPrimitive.mockClear();
+    rerender(<PriceChart symbol="SPX" candles={candlesWithRange} gamma={gamma} gammaView="tactical" />);
+    await waitFor(() => expect(chartMocks.removeSeries).toHaveBeenCalled());
+    await waitFor(() => expect(chartMocks.attachPrimitive.mock.calls.some((call) => "data" in call[0] && call[0].data !== null)).toBe(true));
+    expect(chartMocks.addSeries).not.toHaveBeenCalledWith("LineSeries", expect.objectContaining({ lineVisible: false }));
+    expect(chartMocks.attachPrimitive.mock.calls.some((call) => "data" in call[0] && call[0].data?.projectUntil !== undefined)).toBe(false);
+  });
+
   it("keeps drawing what it has when a heatmap poll fails", async () => {
     chartMocks.getGammaHeatmap.mockRejectedValue(new Error("409"));
     const user = userEvent.setup();

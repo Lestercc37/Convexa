@@ -4,6 +4,7 @@ import type {
   IPrimitivePaneView,
   ISeriesApi,
   ISeriesPrimitive,
+  Logical,
   SeriesAttachedParameter,
   Time,
 } from "lightweight-charts";
@@ -41,6 +42,8 @@ export type HeatmapData = {
    */
   scaleMode?: "day" | "column" | "growing";
   columnScaleList?: (number | null)[];
+  /** Epoch seconds of the close: the latest column is stretched up to that slot of the time scale in a softer tone (lib/heatmap-projection.ts, ES trial). */
+  projectUntil?: number;
 };
 
 export type HeatmapPalette = "gamma" | "unsigned" | "vanna" | "charm";
@@ -128,6 +131,8 @@ export const HEATMAP_TOP_SHARE = 0.985;
 export const HEATMAP_ALPHA = 0.62;
 /** Blur of the smooth drawing, in CSS pixels (same value as the approved prototype). */
 export const HEATMAP_BLUR_CSS_PX = 3;
+// The stretched latest column (projectUntil) is drawn at this share of the heatmap's opacity, so the forecast reads apart from the history.
+export const HEATMAP_PROJECTION_ALPHA = 0.55;
 // A grid with more rows than this is not drawn as one image (the sharp per-cell drawing is used instead).
 const MAX_IMAGE_ROWS = 1500;
 const ROW_FILL_FRACTION = 0.92;
@@ -423,6 +428,21 @@ export function heatmapImage(data: HeatmapData): HeatmapImage | null {
 
 type CachedImage = { source: HeatmapData; image: HeatmapImage; canvas: HTMLCanvasElement };
 
+/**
+ * Bitmap x of the right edge of the close's slot when the data is projected (projectUntil), null otherwise or when the slot is not on the time scale. The slot is
+ * an empty one of the invisible series that spans the session (price-chart.tsx), so it is read from the time scale directly, not through the candle series.
+ */
+function projectionRightBitmap(timeScale: ReturnType<IChartApi["timeScale"]>, data: HeatmapData, hpr: number): number | null {
+  if (data.projectUntil === undefined) return null;
+  const index = timeScale.timeToIndex(data.projectUntil as Time, true);
+  if (index === null) return null;
+  const x = timeScale.logicalToCoordinate(index as unknown as Logical);
+  const next = timeScale.logicalToCoordinate((index + 1) as unknown as Logical);
+  if (x === null || !Number.isFinite(x)) return null;
+  const halfBar = next !== null && Number.isFinite(next) && next > x ? (next - x) / 2 : 0;
+  return (x + halfBar) * hpr;
+}
+
 class GammaHeatmapRenderer implements IPrimitivePaneRenderer {
   private cached: CachedImage | null = null;
   private scratch: HTMLCanvasElement | null = null;
@@ -478,11 +498,15 @@ class GammaHeatmapRenderer implements IPrimitivePaneRenderer {
       placed.push({ index, left: x * hpr, width });
     });
     if (!placed.length) return false;
+    const lastPlaced = placed[placed.length - 1];
+    const historyRight = lastPlaced.left + lastPlaced.width;
+    const projectionEnd = projectionRightBitmap(timeScale, data, hpr);
+    const projectionRight = projectionEnd !== null && projectionEnd > historyRight ? projectionEnd : historyRight;
 
     // Compose only what is on screen (plus a margin so the blur has real pixels at the edges).
     const margin = (HEATMAP_BLUR_CSS_PX * 3 + 2) * hpr;
     const totalLeft = placed[0].left;
-    const totalRight = placed[placed.length - 1].left + placed[placed.length - 1].width;
+    const totalRight = projectionRight;
     const left = Math.max(totalLeft, -margin);
     const right = Math.min(totalRight, scope.bitmapSize.width + margin);
     const visibleTop = Math.max(top, -margin);
@@ -505,6 +529,11 @@ class GammaHeatmapRenderer implements IPrimitivePaneRenderer {
     for (const column of placed) {
       if (column.left + column.width < left || column.left > right) continue;
       scratchContext.drawImage(canvas, column.index, 0, 1, image.height, column.left - left, top - visibleTop, column.width + 0.75, bottom - top);
+    }
+    if (projectionRight > historyRight) {
+      scratchContext.globalAlpha = HEATMAP_PROJECTION_ALPHA;
+      scratchContext.drawImage(canvas, lastPlaced.index, 0, 1, image.height, historyRight - left, top - visibleTop, projectionRight - historyRight, bottom - top);
+      scratchContext.globalAlpha = 1;
     }
 
     const context = scope.context;
@@ -549,11 +578,18 @@ class GammaHeatmapRenderer implements IPrimitivePaneRenderer {
             ? (next - x) * scope.horizontalPixelRatio
             : lastWidth || scope.horizontalPixelRatio * 8;
         lastWidth = width;
+        // The latest column also fills up to the close when it is projected, in the softer tone.
+        const projectionEnd = position === data.columns.length - 1 ? projectionRightBitmap(timeScale, data, scope.horizontalPixelRatio) : null;
+        const projection = projectionEnd !== null && projectionEnd > left + width ? projectionEnd - (left + width) : 0;
         for (const row of rows) {
           const rgb = columnCellRgb(data, column, position, row.index);
           if (rgb === null) continue;
           scope.context.fillStyle = `rgba(${rgb[0]}, ${rgb[1]}, ${rgb[2]}, ${HEATMAP_ALPHA})`;
           scope.context.fillRect(left, row.y - rowHeight / 2, Math.max(1, width), rowHeight);
+          if (projection > 0) {
+            scope.context.fillStyle = `rgba(${rgb[0]}, ${rgb[1]}, ${rgb[2]}, ${HEATMAP_ALPHA * HEATMAP_PROJECTION_ALPHA})`;
+            scope.context.fillRect(left + width, row.y - rowHeight / 2, projection, rowHeight);
+          }
         }
       });
     });
