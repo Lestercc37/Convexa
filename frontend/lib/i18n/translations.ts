@@ -167,6 +167,8 @@ export type Translations = {
     heatmapSidesTitle: string;
     heatmapDayScaleLabel: string;
     heatmapDayScaleTitle: string;
+    heatmapGrowingScaleLabel: string;
+    heatmapGrowingScaleTitle: string;
     expectedMoveRangeLabel: string;
     streamFallbackLabel: string;
     drawingToolsAriaLabel: string;

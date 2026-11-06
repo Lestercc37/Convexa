@@ -57,6 +57,7 @@ import {
   type SmilePoint,
 } from "./live-profile-primitive";
 import { HEATMAP_METRIC_TABS } from "@/lib/heatmap-metrics";
+import { growingScales, usesGrowingScale } from "@/lib/growing-scale";
 import { LIVE_LEVELS_POLLING_INTERVAL_MS, POLLING_INTERVAL_MS } from "@/lib/polling";
 import { currentExpirations, smilePointsFromChain } from "@/lib/volatility-smile-data";
 import type { ChartLayerPreset } from "@/lib/view-route";
@@ -1327,10 +1328,18 @@ export function PriceChart({
       // The session of the candles on screen (Friday's before Monday's open), not simply "today".
       const start = new Date(heatmapStartSeconds(lastCandleTimeRef.current) * 1000);
       let fast = false;
+      // ES 0DTE Volumen (trial, lib/growing-scale.ts): the 0DTE OI matrix of the same moments is read alongside and sets each column's scale; without it the
+      // default per-column scale is used. "Escala del día" still wins when it is on.
+      const growing = !dayScale && usesGrowingScale(symbol, gammaView);
+      const openInterest = growing ? loadHeatmap(symbol, { view: "0dte", metric: heatmapMetric, start }, controller.signal).catch(() => null) : null;
       loadHeatmap(symbol, { view: gammaView, metric: heatmapMetric, start }, controller.signal)
-        .then((loaded) => {
+        .then(async (loaded) => {
           fast = loaded.fast;
-          const data = { ...loaded.data, scaleMode: dayScale ? ("day" as const) : ("column" as const) };
+          const oi = await openInterest;
+          if (controller.signal.aborted) return;
+          const data: HeatmapData = oi
+            ? { ...loaded.data, scaleMode: "growing", columnScaleList: growingScales(loaded.data, oi.data) }
+            : { ...loaded.data, scaleMode: dayScale ? "day" : "column" };
           primitive.setData(data);
           setHeatmapProfile(profileBarsFromHeatmap(data));
           setHeatmapFast(loaded.fast);
@@ -1815,6 +1824,7 @@ export function PriceChart({
                 <input type="checkbox" checked={dayScale} onChange={(event) => setDayScale(event.target.checked)} />
                 {t.priceChart.heatmapDayScaleLabel}
               </label>
+              {!dayScale && usesGrowingScale(symbol, gammaView) && <span title={t.priceChart.heatmapGrowingScaleTitle}>{t.priceChart.heatmapGrowingScaleLabel}</span>}
               <label title={t.priceChart.heatmapSidesTitle}>
                 <input type="checkbox" checked={sideLayers.calls} onChange={(event) => setSideLayers((current) => ({ ...current, calls: event.target.checked }))} />
                 {t.priceChart.heatmapSideCalls}
@@ -2047,6 +2057,9 @@ export function PriceChart({
                 <input type="checkbox" checked={dayScale} onChange={(event) => setDayScale(event.target.checked)} />
                 {t.priceChart.heatmapDayScaleLabel}
               </label>
+            )}
+            {showHeatmap && !dayScale && usesGrowingScale(symbol, gammaView) && (
+              <span className="chart-toggle" title={t.priceChart.heatmapGrowingScaleTitle}>{t.priceChart.heatmapGrowingScaleLabel}</span>
             )}
             {showHeatmap && (
               <div className="chart-layers" role="group" aria-label={t.priceChart.heatmapSidesAriaLabel} title={t.priceChart.heatmapSidesTitle}>

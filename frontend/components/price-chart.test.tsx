@@ -1238,6 +1238,36 @@ describe("PriceChart", () => {
     await waitFor(() => expect(chartMocks.attachPrimitive.mock.calls.some((call) => "data" in call[0] && call[0].data?.scaleMode === "day")).toBe(true));
   });
 
+  it("colours ES 0DTE Volumen against the 0DTE OI of the same minute (growing-scale trial), and only there", async () => {
+    chartMocks.getGammaHeatmap.mockImplementation((symbol: string, options: { view?: string }) =>
+      Promise.resolve({
+        schema_version: 1,
+        symbol,
+        view: options.view,
+        metric: "gamma",
+        bucket_seconds: 60,
+        strikes: [6800],
+        columns: [{ as_of: "2026-08-06T14:31:00Z", values: [options.view === "0dte" ? 100 : 30] }],
+        scale_p98: 1,
+      }),
+    );
+    const user = userEvent.setup();
+    const { rerender } = renderWithLanguage(<PriceChart symbol="ES" candles={candlesWithRange} gamma={gamma} gammaView="0dte_volume" />);
+    await user.click(screen.getByLabelText("Heatmap"));
+    await waitFor(() => expect(chartMocks.getGammaHeatmap).toHaveBeenCalledWith("ES", expect.objectContaining({ view: "0dte" }), expect.any(AbortSignal)));
+    // Volume 0.3x the OI: the floor, own p98 / 0.15 = 200.
+    await waitFor(() =>
+      expect(chartMocks.attachPrimitive.mock.calls.some((call) => "data" in call[0] && call[0].data?.scaleMode === "growing" && call[0].data.columnScaleList?.[0] === 200)).toBe(true),
+    );
+    expect(screen.getAllByText("Escala por volumen (prueba ES)").length).toBeGreaterThan(0);
+
+    chartMocks.getGammaHeatmap.mockClear();
+    rerender(<PriceChart symbol="SPX" candles={candlesWithRange} gamma={gamma} gammaView="0dte_volume" />);
+    await waitFor(() => expect(chartMocks.getGammaHeatmap).toHaveBeenCalledWith("SPX", expect.objectContaining({ view: "0dte_volume" }), expect.any(AbortSignal)));
+    expect(chartMocks.getGammaHeatmap).not.toHaveBeenCalledWith("SPX", expect.objectContaining({ view: "0dte" }), expect.any(AbortSignal));
+    expect(screen.queryByText("Escala por volumen (prueba ES)")).toBeNull();
+  });
+
   it("keeps drawing what it has when a heatmap poll fails", async () => {
     chartMocks.getGammaHeatmap.mockRejectedValue(new Error("409"));
     const user = userEvent.setup();
