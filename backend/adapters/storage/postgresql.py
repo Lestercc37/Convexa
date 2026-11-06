@@ -38,6 +38,7 @@ from backend.domain.use_cases.market_hours import EASTERN_TIME
 from backend.domain.use_cases.trade_date import volume_rows_since
 from backend.domain.use_cases.flow import Moneyness, SymbolFlowPressure, WhaleAlert, WhaleAlertType
 from backend.domain.use_cases.index_stale_guard import IndexPriceFallback, fallback_from_row, fallback_params
+from backend.domain.use_cases.futures_live import FuturesLiveBar, FuturesLiveQuote, bar_from_row, bar_params, quote_from_row, quote_params
 
 # See get_latest_chain_snapshot's own comment -- how far back its fast
 # path looks before falling back to an unbounded (and much slower) scan
@@ -1769,6 +1770,32 @@ class PostgreSQLStorage:
     def get_index_price_fallbacks(self) -> list[IndexPriceFallback]:
         with self.session_factory() as session:
             return [fallback_from_row(row) for row in session.execute(text("SELECT symbol, proxy, active, ratio, reason, since, updated_at FROM index_price_fallback ORDER BY symbol")).mappings()]
+
+    def save_futures_live_quote(self, quote: FuturesLiveQuote) -> None:
+        with self.session_factory.begin() as session:
+            session.execute(text("""INSERT INTO futures_live_quotes (symbol, contract, last, bid, ask, exchange_time, received_at)
+                    VALUES (:symbol, :contract, :last, :bid, :ask, :exchange_time, :received_at)
+                    ON CONFLICT (symbol) DO UPDATE SET contract = EXCLUDED.contract, last = EXCLUDED.last, bid = EXCLUDED.bid, ask = EXCLUDED.ask,
+                        exchange_time = EXCLUDED.exchange_time, received_at = EXCLUDED.received_at"""), quote_params(quote))
+
+    def get_futures_live_quote(self, symbol: str) -> FuturesLiveQuote | None:
+        with self.session_factory() as session:
+            row = session.execute(text("SELECT symbol, contract, last, bid, ask, exchange_time, received_at FROM futures_live_quotes WHERE symbol = :symbol"), {"symbol": symbol.upper()}).mappings().first()
+            return quote_from_row(row) if row is not None else None
+
+    def save_futures_live_bars(self, bars: list[FuturesLiveBar]) -> None:
+        if not bars:
+            return
+        with self.session_factory.begin() as session:
+            session.execute(text("""INSERT INTO futures_live_bars (symbol, contract, minute, open, high, low, close, volume, session, index_price, received_at)
+                    VALUES (:symbol, :contract, :minute, :open, :high, :low, :close, :volume, :session, :index_price, :received_at)
+                    ON CONFLICT (symbol, contract, minute) DO UPDATE SET open = EXCLUDED.open, high = EXCLUDED.high, low = EXCLUDED.low,
+                        close = EXCLUDED.close, volume = EXCLUDED.volume, session = EXCLUDED.session,
+                        index_price = COALESCE(EXCLUDED.index_price, futures_live_bars.index_price), received_at = EXCLUDED.received_at"""), [bar_params(bar) for bar in bars])
+
+    def get_futures_live_bars(self, symbol: str, since: datetime) -> list[FuturesLiveBar]:
+        with self.session_factory() as session:
+            return [bar_from_row(row) for row in session.execute(text("SELECT symbol, contract, minute, open, high, low, close, volume, session, index_price, received_at FROM futures_live_bars WHERE symbol = :symbol AND minute >= :since ORDER BY minute, contract"), {"symbol": symbol.upper(), "since": since}).mappings()]
 
     def get_future_price_anchor(self, symbol: str, session_date: date) -> Decimal | None:
         with self.session_factory() as session:

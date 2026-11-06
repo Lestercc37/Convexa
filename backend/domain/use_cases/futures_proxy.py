@@ -14,12 +14,15 @@ or computed for the future itself (the scheduler and the stream skip futures).
 
 from __future__ import annotations
 
+import logging
+import time
 from dataclasses import dataclass, replace
-from datetime import date, datetime
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 
 from backend.domain.entities import GammaAggregate, MarketSnapshot, OptionChain
 from backend.domain.use_cases.calculate_anchored_vwap import calculate_session_open, opening_reference
+from backend.domain.use_cases.futures_live import LIVE_BASIS_BARS, LIVE_BASIS_FRESH, live_basis, trusted_basis
 from backend.domain.use_cases.market_hours import EASTERN_TIME, MARKET_OPEN_ET
 
 # future -> the index whose own data stands in for it.
@@ -32,6 +35,76 @@ PRICE_PROXY_SYMBOL_BY_FUTURE: dict[str, str] = {
 # session has started, so it is read once instead of loading the session's whole price history on
 # every gamma request.
 _proxy_open_cache: dict[tuple[str, date], Decimal] = {}
+
+logger = logging.getLogger(__name__)
+# The live basis from NinjaTrader (use_cases/futures_live.py, 2026-11-06) replaces the morning anchor offset while it is fresh. It is read
+# on every ES / NQ request (chart, levels, heatmap, price stream), so it is cached per future for LIVE_BASIS_CACHE_SECONDS.
+LIVE_BASIS_CACHE_SECONDS = 5.0
+_live_basis_cache: dict[str, tuple[float, float | None]] = {}
+_live_basis_failed_logged = False
+
+
+def _bars_since(now: datetime) -> datetime:
+    return now - LIVE_BASIS_FRESH - timedelta(minutes=LIVE_BASIS_BARS + 2)
+
+
+def _cached_basis(future: str) -> tuple[bool, float | None]:
+    cached = _live_basis_cache.get(future)
+    if cached is not None and time.monotonic() - cached[0] < LIVE_BASIS_CACHE_SECONDS:
+        return True, cached[1]
+    return False, None
+
+
+def _remember_basis(future: str, basis: float | None) -> float | None:
+    _live_basis_cache[future] = (time.monotonic(), basis)
+    return basis
+
+
+def _log_basis_failure() -> None:
+    global _live_basis_failed_logged
+    if not _live_basis_failed_logged:
+        _live_basis_failed_logged = True
+        logger.exception("Reading the live futures basis failed; the anchor offset is used (logged once)")
+
+
+def live_future_basis(storage, future: str) -> float | None:
+    """The NinjaTrader basis of `future` right now (None: none fresh, or a storage without the feed). Sync twin of live_future_basis_async."""
+    hit, basis = _cached_basis(future)
+    if hit:
+        return basis
+    read = getattr(storage, "get_futures_live_bars", None)
+    if read is None:
+        return None
+    now = datetime.now(timezone.utc)
+    try:
+        found = live_basis(read(future, _bars_since(now)), now)
+    except Exception:
+        _log_basis_failure()
+        found = None
+    return _remember_basis(future, found[0] if found else None)
+
+
+async def live_future_basis_async(storage, future: str) -> float | None:
+    hit, basis = _cached_basis(future)
+    if hit:
+        return basis
+    read = getattr(storage, "get_futures_live_bars", None)
+    if read is None:
+        return None
+    now = datetime.now(timezone.utc)
+    try:
+        found = live_basis(await read(future, _bars_since(now)), now)
+    except Exception:
+        _log_basis_failure()
+        found = None
+    return _remember_basis(future, found[0] if found else None)
+
+
+def _with_live_basis(future: str, anchor_offset: Decimal | None, live: float | None) -> Decimal | None:
+    """The live basis when it is trusted (see futures_live.trusted_basis), the anchor offset otherwise."""
+    if trusted_basis(future, live, float(anchor_offset) if anchor_offset is not None else None):
+        return Decimal(str(round(live, 2)))
+    return anchor_offset
 
 
 @dataclass(frozen=True, slots=True)
@@ -78,8 +151,12 @@ def _remember_open(proxy_symbol: str, session_date: date, price: Decimal) -> Non
 
 
 def future_level_offset(storage, future_symbol: str, proxy_symbol: str) -> Decimal | None:
-    """anchor - proxy's first price of the session, or None while the proxy has no price yet or
-    the owner has not entered today's anchor. Sync twin of future_level_offset_async."""
+    """The future's points minus the proxy's: NinjaTrader's live basis while fresh (2026-11-06), else anchor - proxy's first price of the
+    session, or None while neither exists. Sync twin of future_level_offset_async."""
+    return _with_live_basis(future_symbol.upper(), _anchor_offset(storage, future_symbol, proxy_symbol), live_future_basis(storage, future_symbol.upper()))
+
+
+def _anchor_offset(storage, future_symbol: str, proxy_symbol: str) -> Decimal | None:
     latest = storage.get_latest_price(proxy_symbol)
     if latest is None:
         return None
@@ -100,6 +177,11 @@ def future_level_offset(storage, future_symbol: str, proxy_symbol: str) -> Decim
 
 
 async def future_level_offset_async(storage, future_symbol: str, proxy_symbol: str) -> Decimal | None:
+    anchor = await _anchor_offset_async(storage, future_symbol, proxy_symbol)
+    return _with_live_basis(future_symbol.upper(), anchor, await live_future_basis_async(storage, future_symbol.upper()))
+
+
+async def _anchor_offset_async(storage, future_symbol: str, proxy_symbol: str) -> Decimal | None:
     latest = await storage.get_latest_price(proxy_symbol)
     if latest is None:
         return None
