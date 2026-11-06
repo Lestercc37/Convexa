@@ -1035,6 +1035,31 @@ class AsyncPostgreSQLStorage:
             return []
         return [row[0] for row in rows]
 
+    async def get_strike_flow_minutes(
+        self, underlying: str, start: datetime, end: datetime, expirations: list[date] | None
+    ) -> list[tuple[datetime, float, float]]:
+        """minute_strike_flow of [start, end) per minute and strike, calls and puts added (the primary key (symbol, minute, ...) serves the range)."""
+        async with self.session_factory() as session:
+            result = await session.execute(
+                text(
+                    """
+                    SELECT minute, strike, SUM(delta_flow) AS flow
+                    FROM minute_strike_flow
+                    WHERE symbol = :symbol AND minute >= :start AND minute < :end
+                      AND (CAST(:all_expirations AS boolean) OR expiration = ANY(:expirations))
+                    GROUP BY minute, strike
+                    """
+                ),
+                {
+                    "symbol": underlying.upper(),
+                    "start": start,
+                    "end": end,
+                    "all_expirations": expirations is None,
+                    "expirations": list(expirations or []),
+                },
+            )
+            return [(row.minute, float(row.strike), float(row.flow)) for row in result]
+
     async def get_strike_flow_summary(
         self, underlying: str, start: datetime, end: datetime, expirations: list[date] | None
     ) -> list[StrikeFlowSummary]:

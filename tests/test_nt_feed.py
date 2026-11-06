@@ -111,3 +111,37 @@ def test_rty_multiplies_iwm_by_the_live_ratio_and_needs_the_feed(client) -> None
     assert "basis_ratio 10.000000 ninjatrader" in lines
     assert "level gamma_flip 74125.00" in lines  # the fake IWM level x 10
     assert client.calls["gamma"][0] == "IWM"
+
+
+def test_pressure_decays_by_half_every_15_minutes() -> None:
+    from backend.domain.use_cases.flow_pressure import pressure_matrix
+
+    start = datetime(2026, 11, 6, 14, 30, tzinfo=UTC)
+    rows = [(start, 7400.0, 100.0), (start, 7400.0, 20.0), (start, 7405.0, -50.0)]
+    strikes, minutes = pressure_matrix(rows, start, start + timedelta(minutes=16))
+    assert strikes == [7400.0, 7405.0]
+    assert minutes[0][1] == [120.0, -50.0]
+    assert minutes[15][1][0] == pytest.approx(60.0)  # 15 minutes later: half
+    assert len(minutes) == 16
+
+
+def test_es_pressure_rows_in_futures_points(client, monkeypatch) -> None:
+    from backend.domain.entities import MinuteStrikeFlow
+    from backend.domain.use_cases.market_hours import EASTERN_TIME
+
+    async def mapping(storage, future, source, now):
+        return 1.0, 31.25
+
+    monkeypatch.setattr(nt_feed, "price_mapping", mapping)
+    nt_feed._pressure_cache.clear()
+    storage = client.app.state.container.async_market_storage
+    day_open = datetime.combine(datetime.now(UTC).astimezone(EASTERN_TIME).date(), datetime.min.time(), EASTERN_TIME).replace(hour=9, minute=30)
+    if datetime.now(UTC) < day_open + timedelta(minutes=2):
+        pytest.skip("before 09:32 ET there is no minute of today's session to test with")
+    minute = day_open + timedelta(minutes=1)
+    storage.minute_strike_flow.append(MinuteStrikeFlow(minute, "SPX", day_open.date(), 7400.0, "C", 80.0, 10, 0, 0, 0.0, 0.0))
+    lines = client.get("/api/v1/feeds/nt/ES?pressure=true&heatmap=false", headers=KEY).text.splitlines()
+    assert "pressure SPX 0dte 15" in lines
+    assert "pstrikes 7431.25" in lines
+    rows = [line for line in lines if line.startswith("prow ")]
+    assert rows[0].endswith(" 0") and rows[1].endswith(" 80")
