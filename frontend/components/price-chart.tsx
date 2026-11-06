@@ -19,7 +19,8 @@ import {
   type LineWidth,
   type UTCTimestamp,
 } from "lightweight-charts";
-import { getAlerts, getGammaHistory, getGammaProfile, getMinuteFlow, getOptionChain, getOptionChainExpirations, getPriceCandles, getCubeMinimums } from "@/lib/api";
+import { getAlerts, getGammaHeatmap, getGammaHistory, getGammaProfile, getMinuteFlow, getOptionChain, getOptionChainExpirations, getPriceCandles, getCubeMinimums } from "@/lib/api";
+import { followsFastLayer, profileSource } from "@/lib/profile-source";
 import { flowBarsFromResponse } from "@/lib/minute-flow";
 import { buildCubes, DEFAULT_CUBE_FILTER, DEFAULT_CUBE_SIZING, type CubeSizing } from "@/lib/alert-cubes";
 import { CUBE_MIN_LIMIT, effectiveCubeMin, loadCubeMins, loadCubeSizing, parseCubeMin, saveCubeMins, saveCubeSizing } from "@/lib/cube-minimum";
@@ -45,8 +46,8 @@ import { EmaMenu } from "./ema-menu";
 import { CandleCountdownPrimitive } from "./candle-countdown-primitive";
 import { candleSecondsLeft, formatCountdown } from "@/lib/candle-countdown";
 import { AlertCubeTooltip } from "./alert-cube-tooltip";
-import { HEATMAP_FAST_POLLING_INTERVAL_MS, loadHeatmap } from "./heatmap-source";
-import { GammaHeatmapPrimitive, mergeSides, paletteForMetric, type HeatmapData } from "./gamma-heatmap-primitive";
+import { fastBucketSeconds, HEATMAP_FAST_POLLING_INTERVAL_MS, loadHeatmap } from "./heatmap-source";
+import { GammaHeatmapPrimitive, heatmapFromResponse, mergeSides, paletteForMetric, type HeatmapData } from "./gamma-heatmap-primitive";
 import {
   LiveProfilePrimitive,
   profileBarsFromHeatmap,
@@ -179,6 +180,10 @@ function fitCandles(chart: IChartApi, stillWanted: () => boolean, reservedPx: ()
 // Gamma levels, VWAP, ATR bands) — a user-drawn annotation, not something
 // Convexa calculated.
 const TRENDLINE_COLOR = "#e6e6e6";
+
+// The profile's own fast-layer read (heatmap off, 0DTE tab): the last minute of columns, and a minute's pause when the fast layer has nothing.
+const FAST_TAIL_WINDOW_MS = 60_000;
+const FAST_TAIL_RETRY_MS = 60_000;
 
 type TrendlinePoint = { time: UTCTimestamp; price: number };
 type Trendline = { start: TrendlinePoint; end: TrendlinePoint };
@@ -584,6 +589,10 @@ export function PriceChart({
   const profilePrimitiveRef = useRef<LiveProfilePrimitive | null>(null);
   // Figures the profile endpoint does not serve (delta, vanna, charm) come from the latest heatmap values.
   const [heatmapProfile, setHeatmapProfile] = useState<ProfileBar[] | null>(null);
+  // Whether the heatmap's latest load came from the fast layer, and the fast layer's last columns read for the profile alone when the heatmap is off
+  // (0DTE tabs only, see lib/profile-source.ts).
+  const [heatmapFast, setHeatmapFast] = useState(false);
+  const [fastTailProfile, setFastTailProfile] = useState<ProfileBar[] | null>(null);
   // The width the chart currently keeps free at the right of the time scale for the profile column (0 = none), and whether the column is on.
   const reservedRightPxRef = useRef(0);
   const profileColumnOnRef = useRef(layers ? layers.profile : true);
@@ -965,9 +974,19 @@ export function PriceChart({
     fitCandles(chart, () => chartRef.current === chart, () => reservedRightPxRef.current);
   }, [showProfile]);
 
-  // What the profile shows follows the heatmap's figure while the heatmap is on (net gamma otherwise).
+  // What the profile shows follows the heatmap's figure while the heatmap is on (net gamma otherwise). On the 0DTE tabs it follows the fast layer
+  // (every 2 s, like the heatmap) instead of the cycle's profile (about once a minute): Lester 2026-11-05.
   const profileMetric: GammaHeatmapMetric = showHeatmap && !sidesOn ? heatmapMetric : "gamma";
-  const profileFromEndpoint = !(showHeatmap && sidesOn) && (profileMetric === "gamma" || profileMetric === "absolute_gamma");
+  const profileFrom = profileSource({
+    view: gammaView,
+    showHeatmap,
+    sidesOn,
+    metric: profileMetric,
+    heatmapIsFast: heatmapFast,
+    fastTailHasBars: fastTailProfile !== null,
+  });
+  const profileFromEndpoint = profileFrom === "endpoint";
+  const fastTailWanted = showProfile && !showHeatmap && followsFastLayer(gammaView);
   const profileCaption = showHeatmap && sidesOn
     ? sideLayers.calls && sideLayers.puts
       ? t.priceChart.profileCaptionSides.both
@@ -1005,9 +1024,44 @@ export function PriceChart({
   }, [showProfile, symbol, gammaView, profileMetric, profileFromEndpoint, t]);
 
   useEffect(() => {
-    if (!showProfile || profileFromEndpoint || !heatmapProfile) return;
+    if (!showProfile || profileFrom !== "heatmap" || !heatmapProfile) return;
     profilePrimitiveRef.current?.setBars(heatmapProfile, showHeatmap && sidesOn ? "gamma" : paletteForMetric(profileMetric), profileCaption);
-  }, [showProfile, profileFromEndpoint, heatmapProfile, profileMetric, profileCaption, showHeatmap, sidesOn]);
+  }, [showProfile, profileFrom, heatmapProfile, profileMetric, profileCaption, showHeatmap, sidesOn]);
+
+  // 0DTE tab with the heatmap off: only the fast layer's last columns (a few KB) every 2 s for the profile. Nothing there (a symbol without a fast
+  // layer, after the close, an error) leaves the cycle's profile on and asks again a minute later.
+  useEffect(() => {
+    if (!fastTailWanted) return;
+    const controller = new AbortController();
+    let timer: number | undefined;
+    const refresh = () => {
+      const bucket = fastBucketSeconds(symbol);
+      const start = new Date(Date.now() - Math.max(FAST_TAIL_WINDOW_MS, 3 * bucket * 1000));
+      getGammaHeatmap(symbol, { view: gammaView, metric: "gamma", start, bucketSeconds: bucket, source: "fast" }, controller.signal)
+        .then((response) => {
+          if (controller.signal.aborted) return;
+          const bars = response.columns.length ? profileBarsFromHeatmap(heatmapFromResponse(response)) : [];
+          setFastTailProfile(bars.length ? bars : null);
+          timer = window.setTimeout(refresh, bars.length ? HEATMAP_FAST_POLLING_INTERVAL_MS : FAST_TAIL_RETRY_MS);
+        })
+        .catch(() => {
+          if (controller.signal.aborted) return;
+          setFastTailProfile(null);
+          timer = window.setTimeout(refresh, FAST_TAIL_RETRY_MS);
+        });
+    };
+    refresh();
+    return () => {
+      controller.abort();
+      window.clearTimeout(timer);
+      setFastTailProfile(null);
+    };
+  }, [fastTailWanted, symbol, gammaView]);
+
+  useEffect(() => {
+    if (!showProfile || profileFrom !== "fast-tail" || !fastTailProfile) return;
+    profilePrimitiveRef.current?.setBars(fastTailProfile, paletteForMetric("gamma"), t.priceChart.profileCaptions.gamma);
+  }, [showProfile, profileFrom, fastTailProfile, t]);
 
   // The viewer's own cube minimums load once after mount (never during render) and save on every change after that; the suggestions are asked whenever the cubes are switched on (the API caches them for an hour).
   useEffect(() => {
@@ -1279,6 +1333,7 @@ export function PriceChart({
           const data = { ...loaded.data, scaleMode: dayScale ? ("day" as const) : ("column" as const) };
           primitive.setData(data);
           setHeatmapProfile(profileBarsFromHeatmap(data));
+          setHeatmapFast(loaded.fast);
         })
         .catch(() => {
           // A failed poll keeps the cells already drawn; the next one retries.
@@ -1295,6 +1350,7 @@ export function PriceChart({
       window.clearTimeout(timer);
       if (seriesRef.current === series) series.detachPrimitive(primitive);
       setHeatmapProfile(null);
+      setHeatmapFast(false);
     };
   }, [showHeatmap, sidesOn, symbol, gammaView, heatmapMetric, dayScale]);
 

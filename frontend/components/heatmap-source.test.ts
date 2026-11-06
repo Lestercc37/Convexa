@@ -131,6 +131,19 @@ describe("loadHeatmap", () => {
     expect(cycleCalls).toHaveLength(1);
   });
 
+  it("asks for the cycle's history at the same time as the fast layer, not after it (symbol switch, 2026-11-05)", async () => {
+    let releaseFast: (value: unknown) => void = () => undefined;
+    api.getGammaHeatmap.mockImplementation((_symbol: string, options: { source?: string }) =>
+      options.source === "fast" ? new Promise((resolve) => (releaseFast = resolve)) : Promise.resolve(CYCLE),
+    );
+    const pending = loadHeatmap("SPY", REQUEST);
+    await Promise.resolve();
+    const sources = api.getGammaHeatmap.mock.calls.map(([, options]) => options.source ?? "cycle");
+    expect(sources).toEqual(["cycle", "fast"]); // both left before the fast answer came back
+    releaseFast(FAST);
+    expect((await pending).data.columns).toHaveLength(4);
+  });
+
   it("lets an aborted request through instead of treating it as 'no fast layer'", async () => {
     api.getGammaHeatmap.mockRejectedValue(new DOMException("aborted", "AbortError"));
     await expect(loadHeatmap("SPY", REQUEST)).rejects.toThrow("aborted");

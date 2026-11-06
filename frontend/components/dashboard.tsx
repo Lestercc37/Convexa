@@ -437,16 +437,12 @@ export function Dashboard({ mode = "full", route, onRouteChange }: DashboardProp
   // only after it finished, was most of a real ~10s symbol-switch
   // delay teammates reported). Settled, not Promise.all, so one
   // endpoint failing still lets the other's real data apply instead of
-  // discarding it too.
+  // discarding it too. Each series is applied as soon as ITS response arrives (2026-11-05): waiting for both made the candles
+  // wait for the VWAP series, the slower one (SPX 3.7 MB / ~1 s of server time before the API sent one point per minute).
   const seedPriceAndVwap = useCallback(async (activeSymbol: string, signal?: AbortSignal) => {
-    const [historyResult, vwapResult] = await Promise.allSettled([
-      getMarketPriceHistory(activeSymbol, signal),
-      getVwapHistory(activeSymbol, signal),
-    ]);
-    if (signal?.aborted) return;
-
-    if (historyResult.status === "fulfilled") {
-      const seeded = historyResult.value.points.map((point) => ({
+    const history = getMarketPriceHistory(activeSymbol, signal).then((response) => {
+      if (signal?.aborted) return;
+      const seeded = response.points.map((point) => ({
         timestamp: point.timestamp,
         price: point.price,
       }));
@@ -475,13 +471,11 @@ export function Dashboard({ mode = "full", route, onRouteChange }: DashboardProp
           : current;
         return [...seeded, ...newerThanSeed];
       });
-    } else if (!signal?.aborted) {
-      setError(historyResult.reason);
-    }
-
-    if (vwapResult.status === "fulfilled") {
-      setVwapNotApplicable(vwapResult.value.not_applicable);
-      const seeded = vwapResult.value.points.map((point) => ({
+    });
+    const vwap = getVwapHistory(activeSymbol, signal).then((response) => {
+      if (signal?.aborted) return;
+      setVwapNotApplicable(response.not_applicable);
+      const seeded = response.points.map((point) => ({
         timestamp: point.timestamp,
         value: point.value,
       }));
@@ -496,9 +490,11 @@ export function Dashboard({ mode = "full", route, onRouteChange }: DashboardProp
           : current;
         return [...seeded, ...newerThanSeed];
       });
-    } else if (!signal?.aborted) {
-      setError(vwapResult.reason);
-    }
+    });
+    const [historyResult, vwapResult] = await Promise.allSettled([history, vwap]);
+    if (signal?.aborted) return;
+    if (historyResult.status === "rejected") setError(historyResult.reason);
+    if (vwapResult.status === "rejected") setError(vwapResult.reason);
   }, []);
 
   useEffect(() => {
@@ -528,9 +524,11 @@ export function Dashboard({ mode = "full", route, onRouteChange }: DashboardProp
     document.addEventListener("visibilitychange", onVisible);
 
     const seedThenPoll = async () => {
+      // Gamma + market leave together with the day's prices (2026-11-05): the chart waits for all of them, and asking for gamma only after
+      // the seed had arrived put two round trips in a row before the first candle (the /market read alone is ~0.8-1.5 s when cold).
+      void refresh(symbol, gammaViewRef.current, controller.signal);
       await seedPriceAndVwap(symbol, controller.signal);
       if (controller.signal.aborted) return;
-      void refresh(symbol, gammaViewRef.current, controller.signal);
       // controller.signal here too, not just the call above -- confirmed
       // live, 2026-10-01: without it, a poll tick that was already in
       // flight when the user switched symbols has nothing aborting it,
