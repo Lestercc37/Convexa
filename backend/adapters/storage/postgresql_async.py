@@ -36,6 +36,7 @@ from backend.domain.underlyings import ACTIVE_UNDERLYINGS_BY_SYMBOL
 from backend.domain.use_cases.flow import Moneyness, SymbolFlowPressure, WhaleAlert, WhaleAlertType
 from backend.domain.use_cases.index_stale_guard import IndexPriceFallback, fallback_from_row, fallback_params
 from backend.domain.use_cases.futures_live import FuturesLiveBar, FuturesLiveQuote, bar_from_row, quote_from_row
+from backend.domain.use_cases.futures_events import FuturesEvent, event_from_row
 from backend.domain.use_cases.market_hours import EASTERN_TIME
 from backend.domain.use_cases.trade_date import volume_rows_since
 
@@ -1201,6 +1202,11 @@ class AsyncPostgreSQLStorage:
         async with self.session_factory() as session:
             result = await session.execute(text("SELECT symbol, contract, minute, open, high, low, close, volume, session, index_price, received_at FROM futures_live_bars WHERE symbol = :symbol AND minute >= :since ORDER BY minute, contract"), {"symbol": symbol.upper(), "since": since})
             return [bar_from_row(row) for row in result.mappings()]
+
+    async def get_futures_events(self, future: str, start: datetime, end: datetime) -> list[FuturesEvent]:
+        async with self.session_factory() as session:
+            result = await session.execute(text("SELECT future, contract, at, type, side, price, price_low, price_high, volume, detail, translated, received_at FROM futures_events WHERE future = :future AND at >= :start AND at < :end ORDER BY at"), {"future": future.upper(), "start": start, "end": end})
+            return [event_from_row(row) for row in result.mappings()]
 
     async def _lookup_underlying_id(self, symbol: str) -> int | None:
         # Read-only counterpart to _ensure_underlying: reuses its cache but

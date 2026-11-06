@@ -47,6 +47,7 @@ const chartMocks = vi.hoisted(() => ({
   getMinuteFlow: vi.fn(),
   getPriceCandles: vi.fn(),
   getCubeMinimums: vi.fn(),
+  getOrderFlowEvents: vi.fn(),
 }));
 
 vi.mock("@/lib/api", async () => {
@@ -66,6 +67,7 @@ vi.mock("@/lib/api", async () => {
     getMinuteFlow: chartMocks.getMinuteFlow,
     getPriceCandles: chartMocks.getPriceCandles,
     getCubeMinimums: chartMocks.getCubeMinimums,
+    getOrderFlowEvents: chartMocks.getOrderFlowEvents,
   };
 });
 
@@ -144,6 +146,7 @@ beforeEach(() => {
   chartMocks.getPriceCandles.mockResolvedValue({ schema_version: 1, symbol: "SPY", timeframe: "1m", sessions: 5, candles: [] });
   window.localStorage.clear();
   chartMocks.getCubeMinimums.mockResolvedValue({ schema_version: 1, target_per_session: 40, sessions: 5, minimums: {} });
+  chartMocks.getOrderFlowEvents.mockResolvedValue({ schema_version: 1, symbol: "SPY", events: [] });
   chartMocks.getGammaHistory.mockResolvedValue({
     schema_version: 1,
     symbol: "SPY",
@@ -1266,6 +1269,18 @@ describe("PriceChart", () => {
     await waitFor(() => expect(chartMocks.getGammaHeatmap).toHaveBeenCalledWith("SPX", expect.objectContaining({ view: "0dte_volume" }), expect.any(AbortSignal)));
     expect(chartMocks.getGammaHeatmap).not.toHaveBeenCalledWith("SPX", expect.objectContaining({ view: "0dte" }), expect.any(AbortSignal));
     expect(screen.queryByText("Escala por volumen (prueba ES)")).toBeNull();
+  });
+
+  it("draws NinjaTrader's order-flow events on SPX (and asks nothing on a symbol without a future)", async () => {
+    const event = { at: "2026-08-06T14:31:05Z", type: "absorption", side: "buy", price: 6400.25, future: "ES", future_price: 6431.5, volume: 236, detail: "refills 7, held 64 s" };
+    chartMocks.getOrderFlowEvents.mockResolvedValue({ schema_version: 1, symbol: "SPX", events: [event] });
+    const { rerender } = renderWithLanguage(<PriceChart symbol="SPX" candles={candlesWithRange} gamma={gamma} gammaView="tactical" />);
+    await waitFor(() => expect(chartMocks.getOrderFlowEvents).toHaveBeenCalledWith("SPX", expect.any(AbortSignal)));
+    await waitFor(() => expect(chartMocks.attachPrimitive.mock.calls.some((call) => "events" in call[0] && call[0].events.length === 1)).toBe(true));
+    chartMocks.getOrderFlowEvents.mockClear();
+    rerender(<PriceChart symbol="NVDA" candles={candlesWithRange} gamma={gamma} gammaView="tactical" />);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(chartMocks.getOrderFlowEvents).not.toHaveBeenCalled();
   });
 
   it("keeps drawing what it has when a heatmap poll fails", async () => {

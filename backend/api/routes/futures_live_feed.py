@@ -16,14 +16,17 @@ from pydantic import BaseModel, Field
 
 from backend.api.routes.futures_anchor_feed import _key_matches
 from backend.core.container import Container
+from backend.domain.use_cases.futures_events import EVENT_TYPES, INDEX_OF, SIDES, FuturesEvent, translate
 from backend.domain.use_cases.futures_live import (
     LIVE_FUTURES,
     QUOTE_CLOCK_SKEW,
     FuturesLiveBar,
     FuturesLiveQuote,
     is_rth,
+    live_ratio,
     normalize_live_future,
 )
+from backend.domain.use_cases.futures_proxy import future_level_offset
 from backend.domain.use_cases.index_stale_guard import STATUS_STALE
 from backend.domain.use_cases.market_hours import EASTERN_TIME
 
@@ -125,3 +128,73 @@ def post_futures_live(body: LiveFeedIn, request: Request, x_convexa_key: str | N
     if skipped:
         logger.info("futures live feed: %d quote(s), %d bar(s) saved; skipped: %s", quotes_saved, len(bars), "; ".join(skipped[:5]))
     return LiveFeedResult(quotes_saved=quotes_saved, bars_saved=len(bars), skipped=skipped)
+
+
+class FuturesEventIn(BaseModel):
+    symbol: str = Field(examples=["ES"])
+    contract: str = Field(examples=["ES 12-26"])
+    time: datetime = Field(description="when NinjaTrader detected it, with its offset")
+    type: str = Field(examples=["absorption"], description="absorption | stacked_imbalance | big_trade")
+    side: str = Field(examples=["buy"], description="buy = buyers win (selling absorbed at the bid, stacked buy imbalances, a big buy)")
+    price: Decimal = Field(gt=0)
+    price_low: Decimal | None = Field(default=None, gt=0)
+    price_high: Decimal | None = Field(default=None, gt=0)
+    volume: int = Field(ge=0)
+    detail: str = Field(default="", max_length=200)
+
+
+class FuturesEventsIn(BaseModel):
+    events: list[FuturesEventIn]
+
+
+class FuturesEventsResult(BaseModel):
+    saved: int
+    skipped: list[str]
+
+
+def _index_etf_ratio(storage, index: str) -> float | None:
+    """index / its ETF from the latest stored prices (SPX / SPY ~10.03, NDX / QQQ ~41.1): the ETF chart's price of an index level."""
+    from backend.domain.use_cases.futures_events import ETF_OF_INDEX
+
+    index_price = storage.get_latest_price(index)
+    etf_price = storage.get_latest_price(ETF_OF_INDEX[index])
+    if index_price is None or etf_price is None or etf_price.price <= 0:
+        return None
+    return float(index_price.price / etf_price.price)
+
+
+@router.post("/feeds/futures-events", response_model=FuturesEventsResult)
+def post_futures_events(body: FuturesEventsIn, request: Request, x_convexa_key: str | None = Header(default=None)) -> FuturesEventsResult:
+    """Absorption / stacked imbalance / big trade events from 'Convexa Detector' (use_cases/futures_events.py), translated and stored."""
+    if not _key_matches(x_convexa_key):
+        raise HTTPException(status_code=401, detail="bad key")
+    if len(body.events) > 200:
+        raise HTTPException(status_code=422, detail="at most 200 events per post")
+    container: Container = request.app.state.container
+    storage = container.storage
+    now = datetime.now(UTC)
+    saved: list[FuturesEvent] = []
+    skipped: list[str] = []
+    for event in body.events:
+        future = normalize_live_future(event.symbol)
+        if future is None or event.type not in EVENT_TYPES or event.side not in SIDES or event.time.tzinfo is None:
+            skipped.append(f"{event.symbol} {event.type} {event.side}: unknown future / type / side, or no time offset")
+            continue
+        basis = ratio = rty = None
+        if future in INDEX_OF:
+            basis = future_level_offset(storage, future, INDEX_OF[future])
+            ratio = _index_etf_ratio(storage, INDEX_OF[future])
+        else:
+            found = live_ratio(storage.get_futures_live_bars("RTY", now - timedelta(minutes=20)), now)
+            rty = found[0] if found else None
+        saved.append(
+            FuturesEvent(
+                future, event.contract, event.time.astimezone(UTC), event.type, event.side, event.price,
+                event.price_low or event.price, event.price_high or event.price, event.volume, event.detail,
+                translate(future, event.price, basis, ratio, rty), now,
+            )
+        )
+    storage.save_futures_events(saved)
+    if skipped:
+        logger.info("futures events: %d saved; skipped: %s", len(saved), "; ".join(skipped[:5]))
+    return FuturesEventsResult(saved=len(saved), skipped=skipped)
