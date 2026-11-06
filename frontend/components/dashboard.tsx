@@ -45,6 +45,7 @@ import { useLanguage, type Language } from "@/lib/i18n/language-context";
 import { RegimeCompactBadge } from "./regime-badge";
 import { VixTranslatorBadge } from "./vix-translator-badge";
 import { PriceSourceBadge } from "./price-source-badge";
+import { FuturesLiveBadge } from "./futures-live-badge";
 import { ExpectedMoveCompactBadge } from "./expected-move-badge";
 import { SessionClock } from "./session-clock";
 import { isWithinTheMostRecentSession } from "@/lib/market-session";
@@ -742,6 +743,7 @@ export function Dashboard({ mode = "full", route, onRouteChange }: DashboardProp
         {market && <ExpectedMoveCompactBadge expectedMove={market.expected_move} />}
         <VixTranslatorBadge symbol={symbol} />
         <PriceSourceBadge symbol={symbol} />
+        <FuturesLiveBadge symbol={symbol} />
         <span className="v2-clock num">
           <SessionClock />
         </span>
@@ -895,6 +897,7 @@ export function Dashboard({ mode = "full", route, onRouteChange }: DashboardProp
         {/* VIX -> SPX / NDX: points per VIX point at this VIX level and today's VIX change translated (only SPX / ES / NDX / NQ). */}
         <VixTranslatorBadge symbol={symbol} />
         <PriceSourceBadge symbol={symbol} />
+        <FuturesLiveBadge symbol={symbol} />
         {!isFutureSymbol && (
           <div className="tv-timeframes" role="group" aria-label={t.dashboard.rangeGroupAriaLabel}>
             {(["day", "week"] as const).map((option) => (

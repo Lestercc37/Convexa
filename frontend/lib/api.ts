@@ -23,6 +23,7 @@ import type {
   StrikeFlowResponse,
   UnderlyingsResponse,
   PriceSourcesResponse,
+  FutureLiveResponse,
   VwapHistoryResponse,
   CubeMinimumsResponse,
   WhaleAlertsResponse,
@@ -251,6 +252,11 @@ export function getMarketPriceHistory(symbol: string, signal?: AbortSignal) {
 }
 
 // SPX / NDX written from SPY / QQQ while ThetaData's index feed lags (backend use_cases/index_stale_guard.py); empty the rest of the time.
+// The ES / NQ basis in use and, for the owner only, NinjaTrader's real last price (backend use_cases/futures_live.py).
+export function getFutureLive(symbol: string, signal?: AbortSignal) {
+  return getJson<FutureLiveResponse>(`/futures/${encodeURIComponent(symbol)}/live`, signal);
+}
+
 export function getPriceSources(signal?: AbortSignal) {
   return getJson<PriceSourcesResponse>("/price-sources", signal);
 }

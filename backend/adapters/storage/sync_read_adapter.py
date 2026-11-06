@@ -22,6 +22,7 @@ from backend.domain.entities import (
 from backend.domain.ports import IStorage
 from backend.domain.use_cases.flow import SymbolFlowPressure, WhaleAlert
 from backend.domain.use_cases.index_stale_guard import IndexPriceFallback
+from backend.domain.use_cases.futures_live import FuturesLiveBar, FuturesLiveQuote
 from backend.domain.use_cases.market_hours import EASTERN_TIME
 
 
@@ -195,3 +196,9 @@ class SyncStorageAsyncReadAdapter:
 
     async def get_index_price_fallbacks(self) -> list[IndexPriceFallback]:
         return self._storage.get_index_price_fallbacks()
+
+    async def get_futures_live_quote(self, symbol: str) -> FuturesLiveQuote | None:
+        return self._storage.get_futures_live_quote(symbol)
+
+    async def get_futures_live_bars(self, symbol: str, since: datetime) -> list[FuturesLiveBar]:
+        return self._storage.get_futures_live_bars(symbol, since)

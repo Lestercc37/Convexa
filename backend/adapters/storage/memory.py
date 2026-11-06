@@ -25,6 +25,7 @@ from backend.domain.entities import (
 from backend.domain.underlyings import ACTIVE_UNDERLYINGS
 from backend.domain.use_cases.flow import SymbolFlowPressure, WhaleAlert
 from backend.domain.use_cases.index_stale_guard import IndexPriceFallback
+from backend.domain.use_cases.futures_live import FuturesLiveBar, FuturesLiveQuote
 
 
 class InMemoryStorage:
@@ -51,6 +52,8 @@ class InMemoryStorage:
         self._future_price_anchors: dict[tuple[str, date], Decimal] = {}
         self._future_price_anchor_saved_at: dict[tuple[str, date], datetime] = {}
         self._index_price_fallbacks: dict[str, IndexPriceFallback] = {}
+        self._futures_live_quotes: dict[str, FuturesLiveQuote] = {}
+        self._futures_live_bars: dict[tuple[str, str, datetime], FuturesLiveBar] = {}
         self._future_price_anchor_source: dict[tuple[str, date], str] = {}
         self._whale_thresholds: dict[str, WhaleThreshold] = {
             underlying.symbol: WhaleThreshold(
@@ -335,3 +338,19 @@ class InMemoryStorage:
 
     def get_index_price_fallbacks(self) -> list[IndexPriceFallback]:
         return sorted(self._index_price_fallbacks.values(), key=lambda status: status.symbol)
+
+    def save_futures_live_quote(self, quote: FuturesLiveQuote) -> None:
+        self._futures_live_quotes[quote.symbol] = quote
+
+    def get_futures_live_quote(self, symbol: str) -> FuturesLiveQuote | None:
+        return self._futures_live_quotes.get(symbol.upper())
+
+    def save_futures_live_bars(self, bars: list[FuturesLiveBar]) -> None:
+        for bar in bars:
+            self._futures_live_bars[(bar.symbol, bar.contract, bar.minute)] = bar
+
+    def get_futures_live_bars(self, symbol: str, since: datetime) -> list[FuturesLiveBar]:
+        return sorted(
+            (bar for bar in self._futures_live_bars.values() if bar.symbol == symbol.upper() and bar.minute >= since),
+            key=lambda bar: (bar.minute, bar.contract),
+        )

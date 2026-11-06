@@ -43,6 +43,13 @@ export type Translations = {
     label: string;
     title: (points: string, pct: string, low: string, high: string, iv: string) => string;
   };
+  futuresLiveBadge: {
+    real: (future: string, price: string) => string;
+    basis: (basis: string, source: string) => string;
+    sourceLive: string;
+    sourceAnchor: string;
+    title: (future: string, live: string, anchor: string) => string;
+  };
   priceSourceBadge: {
     label: (index: string, proxy: string) => string;
     title: (index: string, proxy: string, ratio: string, since: string) => string;
