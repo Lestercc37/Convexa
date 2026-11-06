@@ -9,7 +9,9 @@
 //     half (buyers absorbed; side "buy"), or the mirror at the high.
 //   - ABSORPTION: aggressive selling into the same best bid adds up to AbsorptionVolume while the bid keeps refilling and price never trades
 //     below it for at least AbsorptionHoldSeconds (buyers absorb: side "buy"); the mirror on the ask (side "sell"). Level 1 is enough.
-//   - BIG TRADES: one aggressive ORDER of BigTradeVolume or more. CME reports a sweeping order as many 1-3 lot prints in the same instant (Lester's
+//   - BIG TRADES: one aggressive ORDER in the top (100 - BigTradePercentile) % of the day's orders so far (Lester 2026-11-06: a fixed size either
+//     floods a busy day or hides a quiet one), never under the instrument's floor; a fixed BigTradeVolume > 0 replaces it. Every order of
+//     OrderLogMin contracts or more is written to Documents\Convexa\nt_export\orders_<future>_<yyyyMMdd>.csv to measure the real distribution. CME reports a sweeping order as many 1-3 lot prints in the same instant (Lester's
 //     Time & Sales, 2026-11-06), so consecutive prints of the same side less than 5 ms apart are added up into one order first (as NinjaTrader's
 //     and Bookmap's bubbles do); the order's price is its last print.
 // The aggressor side comes from the best bid / ask: at or above the ask = buy, at or below the bid = sell, in between = the tick rule.
@@ -66,6 +68,14 @@ namespace NinjaTrader.NinjaScript.Indicators
         private DateTime orderLastUtc = DateTime.MinValue;
 
         private int barAbsorptionVolume;
+        // The day's aggregated order sizes (index = contracts, capped) for the adaptive big-trade threshold, and the order log.
+        private readonly long[] sizeCounts = new long[5001];
+        private long ordersToday;
+        private DateTime sizesDay = DateTime.MinValue;
+        private StreamWriter orderLog;
+        private DateTime orderLogDay = DateTime.MinValue;
+        private int printsSeen, printsWithMs;
+        private bool msReported;
         private static readonly TimeZoneInfo Eastern = TimeZoneInfo.FindSystemTimeZoneById("Eastern Standard Time");
         // Export: one open file per ET day.
         private StreamWriter exportWriter;
@@ -105,6 +115,8 @@ namespace NinjaTrader.NinjaScript.Indicators
                 DrawOnChart = true;
                 BarAbsorptionVolume = 0;
                 ExportDays = 0;
+                BigTradePercentile = 99.0;
+                OrderLogMin = 20;
             }
             else if (State == State.Configure)
             {
@@ -119,7 +131,7 @@ namespace NinjaTrader.NinjaScript.Indicators
                 int[] auto = AutoSizes(master);
                 imbalanceVolume = MinImbalanceVolume > 0 ? MinImbalanceVolume : auto[0];
                 absorptionVolume = AbsorptionVolume > 0 ? AbsorptionVolume : auto[1];
-                bigTradeVolume = BigTradeVolume > 0 ? BigTradeVolume : auto[2];
+                bigTradeVolume = auto[2]; // the floor of the adaptive threshold (BigTradeThreshold)
                 barAbsorptionVolume = BarAbsorptionVolume > 0 ? BarAbsorptionVolume : auto[3];
             }
             else if (State == State.Realtime)
@@ -131,6 +143,11 @@ namespace NinjaTrader.NinjaScript.Indicators
             else if (State == State.Terminated)
             {
                 CloseExport();
+                if (orderLog != null)
+                {
+                    orderLog.Dispose();
+                    orderLog = null;
+                }
                 if (timer != null)
                 {
                     timer.Dispose();
@@ -145,12 +162,12 @@ namespace NinjaTrader.NinjaScript.Indicators
         {
             switch (name)
             {
-                case "NQ": return new[] { 15, 120, 50, 60 };
-                case "RTY": return new[] { 10, 80, 30, 40 };
-                case "MES": return new[] { 60, 600, 200, 300 };
-                case "MNQ": return new[] { 30, 240, 100, 120 };
-                case "M2K": return new[] { 20, 160, 60, 80 };
-                default: return new[] { 30, 300, 100, 150 }; // ES
+                case "NQ": return new[] { 15, 120, 20, 60 };
+                case "RTY": return new[] { 10, 80, 10, 40 };
+                case "MES": return new[] { 60, 600, 100, 300 };
+                case "MNQ": return new[] { 30, 240, 40, 120 };
+                case "M2K": return new[] { 20, 160, 20, 80 };
+                default: return new[] { 30, 300, 50, 150 }; // ES; the third number is the big-trade FLOOR
             }
         }
 
@@ -261,6 +278,18 @@ namespace NinjaTrader.NinjaScript.Indicators
             if (e.MarketDataType != MarketDataType.Last || e.Volume <= 0)
                 return;
 
+            // Whether this feed stamps prints with milliseconds: the grouping of one order's prints relies on it (said once in NinjaScript Output).
+            if (!msReported)
+            {
+                printsSeen++;
+                if (e.Time.Millisecond != 0)
+                    printsWithMs++;
+                if (printsSeen >= 300)
+                {
+                    msReported = true;
+                    Print("Convexa Detector: " + printsWithMs + " of " + printsSeen + " prints carry milliseconds" + (printsWithMs == 0 ? " (whole seconds only: orders are grouped by side and price direction within the second)" : ""));
+                }
+            }
             double price = e.Price;
             bool buy = ask > 0 && price >= ask ? true : bid > 0 && price <= bid ? false : price > lastPrice ? true : price < lastPrice ? false : lastWasBuy;
             lastWasBuy = buy;
@@ -302,9 +331,66 @@ namespace NinjaTrader.NinjaScript.Indicators
 
         private void CloseOrder()
         {
-            if (orderVolume >= bigTradeVolume)
-                Emit(orderLastUtc, "big_trade", orderBuy ? "buy" : "sell", orderPrice, orderPrice, orderPrice, orderVolume, (orderBuy ? "B " : "S ") + orderVolume);
+            DateTime dayEt = TimeZoneInfo.ConvertTimeFromUtc(orderLastUtc, Eastern).Date;
+            if (dayEt != sizesDay)
+            {
+                Array.Clear(sizeCounts, 0, sizeCounts.Length);
+                ordersToday = 0;
+                sizesDay = dayEt;
+            }
+            long threshold = BigTradeThreshold();
+            sizeCounts[Math.Min(sizeCounts.Length - 1, orderVolume)]++;
+            ordersToday++;
+            if (orderVolume >= OrderLogMin)
+                LogOrder(dayEt);
+            if (orderVolume >= threshold)
+                Emit(orderLastUtc, "big_trade", orderBuy ? "buy" : "sell", orderPrice, orderPrice, orderPrice, orderVolume,
+                    (orderBuy ? "B " : "S ") + orderVolume + " (>= " + threshold + ")");
             orderVolume = 0;
+        }
+
+        // A fixed BigTradeVolume when set; else the day's BigTradePercentile of order sizes (after 300 orders), never under the floor.
+        private long BigTradeThreshold()
+        {
+            if (BigTradeVolume > 0)
+                return BigTradeVolume;
+            if (ordersToday < 300)
+                return bigTradeVolume;
+            long rank = (long)Math.Ceiling(ordersToday * BigTradePercentile / 100.0);
+            long seen = 0;
+            for (int size = 1; size < sizeCounts.Length; size++)
+            {
+                seen += sizeCounts[size];
+                if (seen >= rank)
+                    return Math.Max(bigTradeVolume, size);
+            }
+            return Math.Max(bigTradeVolume, sizeCounts.Length - 1);
+        }
+
+        private void LogOrder(DateTime dayEt)
+        {
+            try
+            {
+                if (orderLog == null || dayEt != orderLogDay)
+                {
+                    if (orderLog != null)
+                        orderLog.Dispose();
+                    string folder = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), "Convexa", "nt_export");
+                    Directory.CreateDirectory(folder);
+                    string file = Path.Combine(folder, "orders_" + master + "_" + dayEt.ToString("yyyyMMdd", CultureInfo.InvariantCulture) + ".csv");
+                    bool fresh = !File.Exists(file);
+                    orderLog = new StreamWriter(file, true, Encoding.UTF8) { AutoFlush = true };
+                    if (fresh)
+                        orderLog.WriteLine("time_utc,contract,side,price,contracts");
+                    orderLogDay = dayEt;
+                }
+                orderLog.WriteLine(string.Format(CultureInfo.InvariantCulture, "{0},{1},{2},{3},{4}",
+                    orderLastUtc.ToString("yyyy-MM-ddTHH:mm:ss.fffZ", CultureInfo.InvariantCulture), contract, orderBuy ? "buy" : "sell", orderPrice, orderVolume));
+            }
+            catch (Exception error)
+            {
+                Log("order log failed: " + error.Message);
+            }
         }
 
         // An episode is reported once it held long enough with enough volume and price left it in the absorbers' direction (or it went quiet
@@ -520,8 +606,16 @@ namespace NinjaTrader.NinjaScript.Indicators
         public int AbsorptionHoldSeconds { get; set; }
 
         [Range(0, 1000000)]
-        [Display(Name = "Big trade (0 = auto)", Order = 6, GroupName = "Convexa")]
+        [Display(Name = "Big trade fijo (0 = percentil del dia)", Order = 6, GroupName = "Convexa")]
         public int BigTradeVolume { get; set; }
+
+        [Range(90.0, 99.99)]
+        [Display(Name = "Big trade: percentil del dia (si Big trade = 0)", Order = 11, GroupName = "Convexa")]
+        public double BigTradePercentile { get; set; }
+
+        [Range(1, 100000)]
+        [Display(Name = "Registrar ordenes desde (contratos)", Order = 12, GroupName = "Convexa")]
+        public int OrderLogMin { get; set; }
 
         [Range(0, 1000000)]
         [Display(Name = "Bar absorption at the extreme (0 = auto)", Order = 9, GroupName = "Convexa")]
