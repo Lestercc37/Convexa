@@ -140,8 +140,21 @@ async def get_vwap_history(symbol: str, request: Request) -> VwapHistoryResponse
     container: Container = request.app.state.container
     series, not_applicable = await get_vwap_history_async(container.async_market_storage, symbol)
     return VwapHistoryResponse.model_validate(
-        vwap_history_response(symbol, series, not_applicable)
+        vwap_history_response(symbol, last_point_per_minute(series), not_applicable)
     )
+
+
+def last_point_per_minute(series: list[tuple[datetime, Decimal]]) -> list[tuple[datetime, Decimal]]:
+    """The last reading of every minute of an ascending series. The chart draws the VWAP line from the last value of each candle (1 minute or
+    longer, frontend lib/candles.ts aggregateVwapPoints), so this is the same line; every reading was ~60,000 points, 3.7 MB and ~1 s of
+    server time for SPX on 2026-11-05, and the candles of a symbol switch waited for it."""
+    kept: list[tuple[datetime, Decimal]] = []
+    for moment, value in series:
+        if kept and kept[-1][0].replace(second=0, microsecond=0) == moment.replace(second=0, microsecond=0):
+            kept[-1] = (moment, value)
+        else:
+            kept.append((moment, value))
+    return kept
 
 
 def _iso(moment: datetime) -> str:

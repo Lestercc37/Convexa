@@ -50,6 +50,10 @@ export async function loadHeatmap(symbol: string, request: HeatmapRequest, signa
   // Per symbol AND view: the fast layer writes 0-2 DTE and 0DTE only, so a 1DTE / 2DTE miss must not switch the others' fast columns off.
   const fastKey = `${symbol}|${request.view}`;
   const retryAt = fastUnavailableUntil.get(fastKey) ?? 0;
+  // The cycle's one-minute columns are asked for at the same time as the fast layer (2026-11-05): they are the morning under the fast columns
+  // and, when the fast layer has nothing, the whole answer (the same request). Asked one after the other they added ~0.2-0.5 s to every first paint.
+  // Never left rejected: an aborted switch must not leave an unhandled rejection behind (cycleHistory rethrows only aborts).
+  const history = Date.now() >= retryAt ? cycleHistory(key, symbol, request, signal).catch(() => null) : null;
   if (Date.now() >= retryAt) {
     try {
       const now = Date.now();
@@ -74,12 +78,14 @@ export async function loadHeatmap(symbol: string, request: HeatmapRequest, signa
         const live = incremental ? { ...prependHistory(held.data, tail), scale: held.data.scale } : tail;
         for (const [otherKey, entry] of fastCache) if (now - entry.fullAt > FAST_CACHE_KEEP_MS) fastCache.delete(otherKey);
         fastCache.set(key, { data: live, fullAt: incremental ? held.fullAt : now });
-        return { data: prependHistory(await cycleHistory(key, symbol, request, signal), live), fast: true };
+        return { data: prependHistory(await history, live), fast: true };
       }
     } catch (error) {
       if (isAbort(error)) throw error;
     }
     fastUnavailableUntil.set(fastKey, Date.now() + FAST_RETRY_AFTER_MS);
+    const cycle = await history;
+    if (cycle) return { data: cycle, fast: false };
   }
   const response = await getGammaHeatmap(symbol, { ...request, bucketSeconds: CYCLE_BUCKET_SECONDS }, signal);
   return { data: heatmapFromResponse(response), fast: false };

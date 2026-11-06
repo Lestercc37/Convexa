@@ -474,6 +474,13 @@ describe("Dashboard", () => {
     );
   });
 
+  it("asks for gamma and market together with the day's prices, not after them (symbol switch, 2026-11-05)", async () => {
+    apiMocks.getMarketPriceHistory.mockImplementation(() => new Promise(() => undefined)); // the day's prices never arrive
+    renderWithLanguage(<Dashboard />);
+    await waitFor(() => expect(apiMocks.getGamma).toHaveBeenCalledWith("SPY", expect.anything(), expect.any(AbortSignal)));
+    expect(apiMocks.getMarket).toHaveBeenCalledWith("SPY", expect.any(AbortSignal));
+  });
+
   it("aborts the interval's own refresh() calls on a symbol switch, not just the first one (regression)", async () => {
     // Confirmed live, 2026-10-01: the initial refresh() call right after
     // seeding passed controller.signal, but the window.setInterval callback

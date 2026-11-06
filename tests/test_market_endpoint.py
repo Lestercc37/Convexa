@@ -447,3 +447,21 @@ def test_openapi_documents_versioned_market_response_model() -> None:
         "responses"
     ]["200"]["content"]["application/json"]["schema"]
     assert response_schema["$ref"].endswith("/MarketSnapshotResponse")
+
+
+def test_vwap_history_sends_the_last_reading_of_each_minute() -> None:
+    # The chart draws the last VWAP value of each candle (1 minute or longer); every reading made the SPX seed 3.7 MB (2026-11-05).
+    with TestClient(app) as client:
+        storage = client.app.state.container.storage
+        minute = datetime.combine(date.today(), time(19, 0), UTC)
+        for seconds, price in ((5, 550), (20, 552), (50, 556), (65, 560)):
+            storage.save_market_price(MarketPrice(symbol="SPY", as_of=minute + timedelta(seconds=seconds), price=Decimal(price), volume=100 * (seconds // 5)))
+        response = client.get("/api/v1/market/SPY/vwap-history")
+
+    points = response.json()["points"]
+    assert [p["timestamp"] for p in points] == [
+        (minute + timedelta(seconds=50)).isoformat().replace("+00:00", "Z"),
+        (minute + timedelta(seconds=65)).isoformat().replace("+00:00", "Z"),
+    ]
+    # The kept value is the running VWAP at that reading (volume is the day's cumulative count), exactly what the full series had there.
+    assert points[0]["value"] == pytest.approx((550 * 100 + 552 * 300 + 556 * 600) / 1000)
