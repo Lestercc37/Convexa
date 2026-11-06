@@ -41,6 +41,14 @@ export const en: Translations = {
   regimeBadge: {
     ariaLabel: "Gamma regime",
   },
+  futuresLiveBadge: {
+    real: (future, price) => `${future} live ${price} · `,
+    basis: (basis, source) => `basis ${basis} (${source})`,
+    sourceLive: "NT",
+    sourceAnchor: "anchor",
+    title: (future, live, anchor) =>
+      `The ${future} − index difference Convexa uses right now for the ${future} price, levels and heatmap. "NT": the median of your NinjaTrader's last 5 one-minute bars (${live}); "anchor": the 09:31 one (${anchor}), while NinjaTrader is not sending. The "live" price comes from your NinjaTrader and only you see it.`,
+  },
   priceSourceBadge: {
     label: (index, proxy) => `${index} ≈ ${proxy}`,
     title: (index, proxy, ratio, since) =>

@@ -7,6 +7,7 @@ from backend.api.routes.alerts import router as alerts_router
 from backend.api.routes.auth import router as auth_router
 from backend.api.routes.futures import router as futures_router
 from backend.api.routes.futures_anchor_feed import router as futures_anchor_feed_router
+from backend.api.routes.futures_live_feed import router as futures_live_feed_router
 from backend.api.routes.health import router as health_router
 from backend.api.routes.internal import router as internal_router
 from backend.api.routes.market import router as market_router
@@ -22,6 +23,7 @@ def api_router() -> APIRouter:
     router.include_router(auth_router, prefix="/api/v1")
     # NinjaTrader's indicator has no browser session: its own shared-key check (futures_anchor_feed._key_matches).
     router.include_router(futures_anchor_feed_router, prefix="/api/v1")
+    router.include_router(futures_live_feed_router, prefix="/api/v1")
     # Every other router below requires a logged-in session -- see
     # backend/api/deps.py's own docstring on why this is applied here
     # (the composition root) rather than per router file, so a route

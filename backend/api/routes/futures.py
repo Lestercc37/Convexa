@@ -5,14 +5,22 @@ from decimal import Decimal
 
 from fastapi import APIRouter, Depends, Request
 
-from backend.api.deps import require_admin
-from backend.api.schemas import FuturePriceAnchorRequest, FuturePriceAnchorResponse
+from backend.api.deps import require_admin, require_session
+from backend.api.schemas import FutureLiveQuoteResponse, FutureLiveResponse, FuturePriceAnchorRequest, FuturePriceAnchorResponse
+from backend.core.sessions import SessionPayload
+from backend.domain.use_cases.futures_live import QUOTE_FRESH, normalize_live_future
 from backend.core.container import Container
 from backend.domain.entities import SCHEMA_VERSION
 from backend.domain.ports import IStorage
 from backend.domain.use_cases import PRICE_PROXY_SYMBOL_BY_FUTURE
 from backend.domain.use_cases.errors import NotFoundError, OpeningPriceNotOpenYetError
-from backend.domain.use_cases.futures_proxy import OpeningPriceWindow, opening_price_window
+from backend.domain.use_cases.futures_proxy import (
+    OpeningPriceWindow,
+    _anchor_offset_async,
+    _with_live_basis,
+    live_future_basis_async,
+    opening_price_window,
+)
 
 router = APIRouter(tags=["futures"])
 
@@ -101,4 +109,45 @@ def _response(
             "accepting": window.accepting,
             "waiting_reason": window.waiting_reason,
         }
+    )
+
+
+@router.get("/futures/{symbol}/live", response_model=FutureLiveResponse)
+async def get_future_live(symbol: str, request: Request, session: SessionPayload = Depends(require_session)) -> FutureLiveResponse:
+    """The ES / NQ basis in use (NinjaTrader's live one or the morning anchor's) for everyone, and the real last price from NinjaTrader for the
+    owner only (CME real-time data is for his personal use, docs/diseno-es-nq-en-vivo-ninjatrader-2026-11-06.txt section 6). RTY: the price only."""
+    future = normalize_live_future(symbol)
+    if future is None:
+        raise NotFoundError(f"{symbol.upper()} is not a live future (ES / NQ / RTY)")
+    container: Container = request.app.state.container
+    storage = container.async_market_storage
+    anchor = live = offset = None
+    source = None
+    proxy_symbol = PRICE_PROXY_SYMBOL_BY_FUTURE.get(future)
+    if proxy_symbol is not None:
+        anchor = await _anchor_offset_async(storage, future, proxy_symbol)
+        live = await live_future_basis_async(storage, future)
+        offset = _with_live_basis(future, anchor, live)
+        source = None if offset is None else ("anchor" if offset == anchor else "ninjatrader")
+    quote = None
+    if session.is_admin:
+        stored = await storage.get_futures_live_quote(future)
+        age = (datetime.now(UTC) - stored.received_at).total_seconds() if stored is not None else None
+        if stored is not None and age is not None and age <= QUOTE_FRESH.total_seconds():
+            quote = FutureLiveQuoteResponse(
+                contract=stored.contract,
+                last=float(stored.last),
+                bid=float(stored.bid) if stored.bid is not None else None,
+                ask=float(stored.ask) if stored.ask is not None else None,
+                time=stored.exchange_time.astimezone(UTC).isoformat().replace("+00:00", "Z"),
+                age_seconds=round(age, 1),
+            )
+    return FutureLiveResponse(
+        schema_version=SCHEMA_VERSION,
+        symbol=future,
+        offset=float(offset) if offset is not None else None,
+        offset_source=source,
+        live_basis=round(live, 2) if live is not None else None,
+        anchor_offset=float(anchor) if anchor is not None else None,
+        quote=quote,
     )

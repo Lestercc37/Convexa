@@ -320,6 +320,17 @@ export type MinuteFlowResponse = {
   minutes: { minute: string; calls_delta_flow: number; puts_delta_flow: number; classified_share: number | null }[];
 };
 
+export type FutureLiveQuote = { contract: string; last: number; bid: number | null; ask: number | null; time: string; age_seconds: number };
+export type FutureLiveResponse = {
+  schema_version: number;
+  symbol: string;
+  offset: number | null;
+  offset_source: "ninjatrader" | "anchor" | null;
+  live_basis: number | null;
+  anchor_offset: number | null;
+  quote: FutureLiveQuote | null;
+};
+
 export type PriceSource = { symbol: string; proxy: string; ratio: number; reason: string; since: string };
 export type PriceSourcesResponse = { schema_version: number; replaced: PriceSource[] };
 
