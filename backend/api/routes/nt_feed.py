@@ -15,8 +15,14 @@ Plain text, one fact per line, so the NinjaScript side needs no JSON library:
     level gamma_flip 7412.50           (one line per level; a level with no value is left out)
     heatmap 0dte_volume gamma 10       (view, figure, bucket seconds)
     strikes 7380.00 7385.00 ...
-    col 1762441210 1.23e+09 _ -4.5e+08 ...   (epoch seconds of the bucket start, then one value per strike; _ = none)
+    col 1762441210 1.23e+09 _ -4.5e+08 ...   (epoch seconds of the bucket start, then one value per strike of the LAST `strikes` line; _ = none)
     end
+
+Several sessions (2026-11-06, Lester: "que el heatmap esté permanentemente en NT sin cortarse por sesión"): `days` sessions back (today
+included), each one a `strikes` line followed by its `col` lines, each shifted by ITS OWN basis (a past day: that day's 09:31 anchor minus the
+index's first minute; today: the live basis), so nothing has to be thrown away when a strike list changes. The pressure works the same way
+(`pstrikes` then its `prow` lines), and before today's flow exists the latest sessions with flow are sent: the map never goes blank overnight
+or on a weekend. `since` / `psince` only ask for today's new columns / minutes.
 
 `since` (epoch seconds) asks only for the columns from that bucket on (the indicator's incremental poll, as the dashboard does).
 ES / NQ come from SPX / NDX shifted by futures_proxy.future_level_offset (NinjaTrader's live basis while fresh, else the 09:31 anchor);
@@ -24,8 +30,9 @@ RTY from IWM multiplied by the live RTY / IWM ratio from the 'Convexa Feed' bars
 
 from __future__ import annotations
 
+import statistics
 import time as clock
-from datetime import UTC, datetime, time, timedelta
+from datetime import UTC, date, datetime, time, timedelta
 from decimal import Decimal
 
 from fastapi import APIRouter, Header, HTTPException, Query, Request
@@ -51,7 +58,35 @@ SOURCE_SYMBOL = {"ES": "ES", "NQ": "NQ", "RTY": "IWM"}
 # The day's per-minute strike flow is one grouped query (SPX ~60 ms at midday, ~150 ms by the close, measured 2026-11-06): shared for a few
 # seconds by every chart asking for the same flow source and expirations.
 PRESSURE_CACHE_SECONDS = 5.0
-_pressure_cache: dict[tuple[str, str], tuple[float, list, list]] = {}
+_pressure_cache: dict[tuple[str, str, date], tuple[float, list, list]] = {}
+# A past session's heatmap never changes: kept for PAST_DAY_CACHE_SECONDS (the indicator re-reads everything every 5 minutes).
+PAST_DAY_CACHE_SECONDS = 600.0
+_past_heatmap_cache: dict[tuple[str, str, str, date], tuple[float, object]] = {}
+INDEX_OF = {"ES": "SPX", "NQ": "NDX", "RTY": "IWM"}
+
+
+def _recent_weekdays(today: date, count: int) -> list[date]:
+    """`count` weekdays ending with `today` (or the last weekday before a weekend), oldest first. Holidays simply have no data and are skipped."""
+    days: list[date] = []
+    day = today
+    while len(days) < count:
+        if day.weekday() < 5:
+            days.append(day)
+        day -= timedelta(days=1)
+    return sorted(days)
+
+
+async def _day_shift(storage, future: str, day: date, today: date, today_ratio: float, today_offset: float) -> tuple[float, float]:
+    """(ratio, offset) turning `day`'s index strikes into futures points: today the live basis; a past day its own 09:31 anchor minus the index's
+    first-minute median (the basis shrinks toward expiry, so today's would misplace older days by a few points); RTY always today's ratio."""
+    if day == today or future == "RTY":
+        return today_ratio, today_offset
+    anchor = await storage.get_future_price_anchor(future, day)
+    day_open = datetime.combine(day, time(9, 30), EASTERN_TIME)
+    readings = await storage.get_price_history(INDEX_OF[future], day_open, day_open + timedelta(seconds=59))
+    if anchor is None or not readings:
+        return today_ratio, today_offset
+    return 1.0, float(anchor) - statistics.median(float(reading.price) for reading in readings)
 
 
 def _num(value: Decimal | float | None, scale: float = 1.0) -> str | None:
@@ -75,6 +110,7 @@ async def nt_levels(
     pressure: bool = Query(default=False, description="add the options-flow pressure per strike and minute (blue heatmap)"),
     pexp: str = Query(default="0dte", pattern="^(0dte|0-2dte|all)$"),
     psince: int | None = Query(default=None, description="epoch seconds: only the pressure minutes from that one on"),
+    days: int = Query(default=2, ge=1, le=5, description="sessions sent on a full read (today included)"),
     x_convexa_key: str | None = Header(default=None),
 ) -> PlainTextResponse:
     if not _key_matches(x_convexa_key):
@@ -88,6 +124,7 @@ async def nt_levels(
     storage = container.async_market_storage
     symbol = SOURCE_SYMBOL[name]
     scale = 1.0
+    today_offset = 0.0
     lines = ["convexa 1", f"symbol {name}"]
 
     if name == "RTY":
@@ -104,6 +141,7 @@ async def nt_levels(
         if offset is None:
             raise HTTPException(status_code=409, detail=f"{name} has no basis yet: no 09:31 anchor and no fresh NinjaTrader bars")
         lines.append(f"basis {float(offset):.2f} {'anchor' if offset == anchor else 'ninjatrader'}")
+        today_offset = float(offset)
 
     gamma = await get_gamma_exposure_async(storage, symbol, view=view)
     snapshot = await build_market_snapshot_async(storage, symbol)
@@ -133,57 +171,97 @@ async def nt_levels(
     lines.append(f"dealer {'long_gamma' if gamma.net_gamma >= 0 else 'short_gamma'}")
 
     if heatmap:
-        now = datetime.now(UTC)
-        session_start = datetime.combine(now.astimezone(EASTERN_TIME).date(), time(8, 30), EASTERN_TIME)
-        start = datetime.fromtimestamp(since, UTC) if since is not None else session_start
-        start = max(start, session_start)
-        index_symbol = {"ES": "SPX", "NQ": "NDX", "RTY": "IWM"}[name]
-        fast_bucket = FAST_BUCKET_SECONDS.get(index_symbol, 10)
-        matrix = await get_gamma_heatmap_async(storage, symbol, view, metric, start, now, fast_bucket, "fast")
-        bucket = fast_bucket
-        if not matrix.columns:
-            matrix = await get_gamma_heatmap_async(storage, symbol, view, metric, start, now, CYCLE_BUCKET_SECONDS, "cycle")
-            bucket = CYCLE_BUCKET_SECONDS
-        lines.append(f"heatmap {view} {metric} {bucket}")
-        lines.append("strikes " + " ".join(_num(strike, scale) for strike in matrix.strikes))
-        for column in matrix.columns:
-            epoch = int(column.as_of.timestamp()) // bucket * bucket
-            lines.append(f"col {epoch} " + " ".join(_cell(value) for value in column.values))
+        lines.extend(await _heatmap_lines(storage, name, view, metric, since, days, scale, today_offset))
     if pressure:
-        lines.extend(await _pressure_lines(storage, name, scale, pexp, psince))
+        lines.extend(await _pressure_lines(storage, name, scale, today_offset, pexp, psince, days))
     lines.append("end")
     return PlainTextResponse("\n".join(lines) + "\n")
 
 
-async def _pressure_lines(storage, future: str, rty_ratio: float, pexp: str, psince: int | None) -> list[str]:
-    """`pressure <flow source> <expirations> <half life>`, `pstrikes` (the flow source's strikes in futures points) and one `prow <epoch> ...` per
-    minute since 09:30 (or since `psince`): the decayed signed flow per strike (use_cases/flow_pressure.py). ES reads SPX, NQ QQQ, RTY IWM."""
+async def _heatmap_lines(storage, future: str, view: str, metric: str, since: int | None, days: int, today_ratio: float, today_offset: float) -> list[str]:
+    """One `strikes` line + its `col` lines per session (oldest first), each shifted by that session's own basis. Today from the fast layer
+    (the cycle's minutes when it has none), past sessions from the cycle's minutes (cached). With `since`: today's new columns only."""
     now = datetime.now(UTC)
-    source = flow_source_for(future, None) if future != "RTY" else "IWM"
-    day_open = datetime.combine(now.astimezone(EASTERN_TIME).date(), time(9, 30), EASTERN_TIME)
+    index_symbol = INDEX_OF[future]
+    today = now.astimezone(EASTERN_TIME).date()
+    fast_bucket = FAST_BUCKET_SECONDS.get(index_symbol, 10)
+    lines = [f"heatmap {view} {metric} {fast_bucket}"]
+    for day in [today] if since is not None else _recent_weekdays(today, days):
+        start = datetime.combine(day, time(8, 30), EASTERN_TIME)
+        end = min(now, datetime.combine(day, time(16, 15), EASTERN_TIME))
+        if since is not None:
+            start = max(start, datetime.fromtimestamp(since, UTC))
+        if end <= start:
+            continue
+        if day == today:
+            matrix = await get_gamma_heatmap_async(storage, index_symbol, view, metric, start, end, fast_bucket, "fast")
+            bucket = fast_bucket
+            if not matrix.columns:
+                matrix = await get_gamma_heatmap_async(storage, index_symbol, view, metric, start, end, CYCLE_BUCKET_SECONDS, "cycle")
+                bucket = CYCLE_BUCKET_SECONDS
+        else:
+            key = (index_symbol, view, metric, day)
+            cached = _past_heatmap_cache.get(key)
+            if cached is not None and clock.monotonic() - cached[0] < PAST_DAY_CACHE_SECONDS:
+                matrix = cached[1]
+            else:
+                matrix = await get_gamma_heatmap_async(storage, index_symbol, view, metric, start, end, CYCLE_BUCKET_SECONDS, "cycle")
+                _past_heatmap_cache[key] = (clock.monotonic(), matrix)
+            bucket = CYCLE_BUCKET_SECONDS
+        if not matrix.columns:
+            continue
+        ratio, offset = await _day_shift(storage, future, day, today, today_ratio, today_offset)
+        lines.append("strikes " + " ".join(f"{float(strike) * ratio + offset:.2f}" for strike in matrix.strikes))
+        for column in matrix.columns:
+            epoch = int(column.as_of.timestamp()) // bucket * bucket
+            lines.append(f"col {epoch} " + " ".join(_cell(value) for value in column.values))
+    return lines
+
+
+async def _pressure_day(storage, source: str, pexp: str, day: date, now: datetime) -> tuple[list[float], list[tuple[datetime, list[float]]]]:
+    day_open = datetime.combine(day, time(9, 30), EASTERN_TIME)
     end = min(now, day_open + timedelta(hours=6, minutes=30))
     if end <= day_open:
-        return [f"pressure {source} {pexp} {HALF_LIFE_MINUTES:g}", "pstrikes"]
-    cached = _pressure_cache.get((source, pexp))
-    if cached is not None and clock.monotonic() - cached[0] < PRESSURE_CACHE_SECONDS:
-        strikes, minutes = cached[1], cached[2]
-    else:
-        traded = await storage.get_strike_flow_expirations(source, day_open, end)
-        expirations = pick_expirations(pexp, traded, day_open.date())
-        rows = await storage.get_strike_flow_minutes(source, day_open, end, expirations) if expirations != [] else []
-        strikes, minutes = pressure_matrix(rows, day_open, end + timedelta(minutes=1))
-        _pressure_cache[(source, pexp)] = (clock.monotonic(), strikes, minutes)
-    if future == "RTY":
-        ratio, offset = rty_ratio, 0.0  # an IWM strike x the live RTY / IWM ratio
-    else:
-        ratio, offset = await price_mapping(storage, future, source, now)
+        return [], []
+    cached = _pressure_cache.get((source, pexp, day))
+    # Today's matrix grows by the minute (shared for PRESSURE_CACHE_SECONDS); a past day's never changes.
+    ttl = PRESSURE_CACHE_SECONDS if day == now.astimezone(EASTERN_TIME).date() else PAST_DAY_CACHE_SECONDS
+    if cached is not None and clock.monotonic() - cached[0] < ttl:
+        return cached[1], cached[2]
+    traded = await storage.get_strike_flow_expirations(source, day_open, end)
+    expirations = pick_expirations(pexp, traded, day)
+    rows = await storage.get_strike_flow_minutes(source, day_open, end, expirations) if expirations != [] else []
+    strikes, minutes = pressure_matrix(rows, day_open, end + timedelta(minutes=1))
+    _pressure_cache[(source, pexp, day)] = (clock.monotonic(), strikes, minutes)
+    return strikes, minutes
+
+
+async def _pressure_lines(
+    storage, future: str, today_ratio: float, today_offset: float, pexp: str, psince: int | None, days: int
+) -> list[str]:
+    """`pressure <flow source> <expirations> <half life>`, then per session a `pstrikes` line (the flow source's strikes in futures points) and
+    one `prow <epoch> ...` per minute: the decayed signed flow per strike (use_cases/flow_pressure.py). ES reads SPX, NQ QQQ, RTY IWM. A full read
+    sends the last `days` sessions with flow (so the map is there before the open and on weekends); `psince` sends today's new minutes only."""
+    now = datetime.now(UTC)
+    today = now.astimezone(EASTERN_TIME).date()
+    source = flow_source_for(future, None) if future != "RTY" else "IWM"
     lines = [f"pressure {source} {pexp} {HALF_LIFE_MINUTES:g}"]
-    if ratio is None or not strikes:
-        lines.append("pstrikes")
-        return lines
-    lines.append("pstrikes " + " ".join(f"{strike * ratio + offset:.2f}" for strike in strikes))
-    first = datetime.fromtimestamp(psince, UTC) if psince is not None else day_open
-    for minute, values in minutes:
-        if minute >= first:
-            lines.append(f"prow {int(minute.timestamp())} " + " ".join(f"{value:.4g}" if value else "0" for value in values))
+    # The flow source's strikes -> futures points: ES = SPX strike + basis; NQ = QQQ strike x NDX / QQQ + basis; RTY = IWM strike x ratio.
+    if future == "RTY":
+        today_ratio_source, today_offset_source = today_ratio, 0.0
+    else:
+        mapped_ratio, _ = await price_mapping(storage, future, source, now)
+        if mapped_ratio is None:
+            return lines
+        today_ratio_source, today_offset_source = mapped_ratio, today_offset
+    for day in [today] if psince is not None else _recent_weekdays(today, days):
+        strikes, minutes = await _pressure_day(storage, source, pexp, day, now)
+        if not strikes:
+            continue
+        _, offset = await _day_shift(storage, future, day, today, 1.0, today_offset_source)
+        lines.append("pstrikes " + " ".join(f"{strike * today_ratio_source + offset:.2f}" for strike in strikes))
+        first = datetime.fromtimestamp(psince, UTC) if psince is not None else datetime.combine(day, time(9, 30), EASTERN_TIME)
+        for minute, values in minutes:
+            if minute >= first:
+                lines.append(f"prow {int(minute.timestamp())} " + " ".join(f"{value:.4g}" if value else "0" for value in values))
     return lines

@@ -9,6 +9,9 @@
 // price with the most options-flow PRESSURE (signed 0DTE delta flow decaying by half every 15 min, at or above the day's 90th percentile):
 // green bullish, red bearish, deeper = stronger, never white. A level price crosses and stays beyond for 5 minutes is cut (a gap) until
 // fresh pressure rebuilds it. The pressure is read every 10 s (only the new minutes after the first read).
+// Never cut by session (Lester 2026-11-06): the last `Days` sessions are kept, each with its own strike list and basis; a read is only ever
+// ADDED to what is held (a full read every 5 minutes replaces it whole), each column lasts until the next one, so nights and weekends keep
+// the last picture Convexa sent, and the lines move only when Convexa updates them.
 // It reads GET /api/v1/feeds/nt/{future} every 2 s (the first read brings the day, the next ones only the new columns; a full read again every
 // 5 minutes). ES / NQ use Convexa's live basis from 'Convexa Feed' (else the 09:31 anchor); RTY needs 'Convexa Feed' on an RTY chart.
 // Nothing from NinjaTrader is sent: this indicator only READS Convexa. The key is the anchor's (%USERPROFILE%\.convexa\ninjatrader_anchor_key.txt).
@@ -47,9 +50,8 @@ namespace NinjaTrader.NinjaScript.Indicators
         private const double FaintShare = 0.06;
 
         private readonly object gate = new object();
-        private double[] strikes = new double[0];
-        private readonly List<KeyValuePair<long, double[]>> columns = new List<KeyValuePair<long, double[]>>();
-        private readonly List<double> columnScales = new List<double>();
+        // epoch (bucket start, UTC) -> the column: its values, the strikes they belong to (futures points) and its own p98.
+        private SortedDictionary<long, HeatColumn> columns = new SortedDictionary<long, HeatColumn>();
         private readonly Dictionary<string, double> levels = new Dictionary<string, double>();
         private string basisText = "";
         private string requestKey = "";
@@ -60,8 +62,7 @@ namespace NinjaTrader.NinjaScript.Indicators
         private string future;
 
         // Pressure (style Presion): the flow source's strikes in futures points and one row per minute (epoch -> pressure per strike).
-        private double[] pressureStrikes = new double[0];
-        private readonly SortedDictionary<long, double[]> pressureRows = new SortedDictionary<long, double[]>();
+        private SortedDictionary<long, HeatColumn> pressureRows = new SortedDictionary<long, HeatColumn>();
         private double pressureP90, pressureP99;
         private DateTime lastPressureUtc = DateTime.MinValue;
         private string pressureKey = "";
@@ -71,6 +72,13 @@ namespace NinjaTrader.NinjaScript.Indicators
         private SharpDX.Direct2D1.SolidColorBrush[] positive, negative, projectedPositive, projectedNegative;
         private readonly Dictionary<string, SharpDX.Direct2D1.SolidColorBrush> levelBrushes = new Dictionary<string, SharpDX.Direct2D1.SolidColorBrush>();
         private SharpDX.DirectWrite.TextFormat labelFormat;
+
+        private class HeatColumn
+        {
+            public double[] Values;
+            public double[] Strikes;
+            public double Scale;
+        }
 
         protected override void OnStateChange()
         {
@@ -91,6 +99,7 @@ namespace NinjaTrader.NinjaScript.Indicators
                 Style = ConvexaStyle.Clasico;
                 FlowExpirations = ConvexaFlowExpirations.Dte0;
                 PressureLevelsPerSide = 3;
+                Days = 2;
                 Opacity = 60;
             }
             else if (State == State.DataLoaded)
@@ -144,7 +153,7 @@ namespace NinjaTrader.NinjaScript.Indicators
                     {
                         full = key != requestKey || columns.Count == 0 || (DateTime.UtcNow - lastFullUtc).TotalMinutes >= 5;
                         if (!full)
-                            since = columns[columns.Count - 1].Key;
+                            since = columns.Keys.Last();
                     }
                     string keyFile = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".convexa", "ninjatrader_anchor_key.txt");
                     if (!File.Exists(keyFile))
@@ -152,7 +161,7 @@ namespace NinjaTrader.NinjaScript.Indicators
                         Log("key file missing (" + keyFile + ").");
                         return;
                     }
-                    string url = Url + Uri.EscapeDataString(future) + "?view=" + ViewName(View) + "&metric=" + Metric + (full ? "" : "&since=" + since.ToString(CultureInfo.InvariantCulture)) + (ShowHeatmap ? "" : "&heatmap=false");
+                    string url = Url + Uri.EscapeDataString(future) + "?view=" + ViewName(View) + "&metric=" + Metric + (full ? "" : "&since=" + since.ToString(CultureInfo.InvariantCulture)) + (ShowHeatmap ? "" : "&heatmap=false") + "&days=" + Days.ToString(CultureInfo.InvariantCulture);
                     // The pressure changes by the minute: asked every 10 s, from its last minute on (that minute is rewritten while it is still running).
                     string pexp = FlowExpirations == ConvexaFlowExpirations.Dte0a2 ? "0-2dte" : FlowExpirations == ConvexaFlowExpirations.Todas ? "all" : "0dte";
                     bool pressureFull = false;
@@ -198,10 +207,10 @@ namespace NinjaTrader.NinjaScript.Indicators
         private void Apply(string body, string key, bool full, string pexp, bool pressureFull)
         {
             var newLevels = new Dictionary<string, double>();
-            double[] newPressureStrikes = null;
-            var newPressureRows = new List<KeyValuePair<long, double[]>>();
-            double[] newStrikes = null;
-            var newColumns = new List<KeyValuePair<long, double[]>>();
+            var newColumns = new SortedDictionary<long, HeatColumn>();
+            var newPressure = new SortedDictionary<long, HeatColumn>();
+            bool sawHeatmap = false, sawPressure = false;
+            double[] blockStrikes = null, blockPressureStrikes = null;
             string basis = "";
             foreach (string raw in body.Split('\n'))
             {
@@ -213,18 +222,25 @@ namespace NinjaTrader.NinjaScript.Indicators
                     newLevels[parts[1]] = double.Parse(parts[2], CultureInfo.InvariantCulture);
                 else if (parts[0] == "basis" || parts[0] == "basis_ratio")
                     basis = line;
+                else if (parts[0] == "heatmap")
+                    sawHeatmap = true;
+                else if (parts[0] == "pressure")
+                    sawPressure = true;
                 else if (parts[0] == "strikes")
-                    newStrikes = parts.Skip(1).Select(p => double.Parse(p, CultureInfo.InvariantCulture)).ToArray();
+                    blockStrikes = Numbers(parts);
                 else if (parts[0] == "pstrikes")
-                    newPressureStrikes = parts.Skip(1).Select(p => double.Parse(p, CultureInfo.InvariantCulture)).ToArray();
-                else if (parts[0] == "prow" && parts.Length >= 2)
-                    newPressureRows.Add(new KeyValuePair<long, double[]>(long.Parse(parts[1], CultureInfo.InvariantCulture),
-                        parts.Skip(2).Select(p => double.Parse(p, CultureInfo.InvariantCulture)).ToArray()));
-                else if (parts[0] == "col" && parts.Length >= 2)
+                    blockPressureStrikes = Numbers(parts);
+                else if (parts[0] == "col" && parts.Length >= 2 && blockStrikes != null)
                 {
-                    long epoch = long.Parse(parts[1], CultureInfo.InvariantCulture);
                     double[] values = parts.Skip(2).Select(p => p == "_" ? double.NaN : double.Parse(p, CultureInfo.InvariantCulture)).ToArray();
-                    newColumns.Add(new KeyValuePair<long, double[]>(epoch, values));
+                    if (values.Length == blockStrikes.Length)
+                        newColumns[long.Parse(parts[1], CultureInfo.InvariantCulture)] = new HeatColumn { Values = values, Strikes = blockStrikes, Scale = P98(values) };
+                }
+                else if (parts[0] == "prow" && parts.Length >= 2 && blockPressureStrikes != null)
+                {
+                    double[] values = parts.Skip(2).Select(p => double.Parse(p, CultureInfo.InvariantCulture)).ToArray();
+                    if (values.Length == blockPressureStrikes.Length)
+                        newPressure[long.Parse(parts[1], CultureInfo.InvariantCulture)] = new HeatColumn { Values = values, Strikes = blockPressureStrikes };
                 }
             }
             lock (gate)
@@ -233,54 +249,39 @@ namespace NinjaTrader.NinjaScript.Indicators
                 foreach (var pair in newLevels)
                     levels[pair.Key] = pair.Value;
                 basisText = basis;
-                if (newPressureStrikes != null)
-                    ApplyPressure(newPressureStrikes, newPressureRows, pexp, pressureFull);
-                if (newStrikes == null)
-                    return;
-                bool sameStrikes = strikes.Length == newStrikes.Length && strikes.SequenceEqual(newStrikes);
-                if (full || !sameStrikes)
+                if (sawHeatmap)
                 {
-                    // A full read, or the strike list changed: start again from what arrived (the next poll is full if it was partial).
-                    strikes = newStrikes;
-                    columns.Clear();
-                    columnScales.Clear();
-                    requestKey = full ? key : "";
-                    if (full)
-                        lastFullUtc = DateTime.UtcNow;
-                }
-                foreach (var column in newColumns)
-                {
-                    double scale = P98(column.Value);
-                    int at = columns.FindIndex(c => c.Key == column.Key);
-                    if (at >= 0)
+                    // A full read replaces the held picture only when it brought something (an empty answer never blanks the chart).
+                    if (full && newColumns.Count > 0)
                     {
-                        columns[at] = column;
-                        columnScales[at] = scale;
+                        columns = newColumns;
+                        requestKey = key;
+                        lastFullUtc = DateTime.UtcNow;
                     }
                     else
+                        foreach (var column in newColumns)
+                            columns[column.Key] = column.Value;
+                }
+                if (sawPressure)
+                {
+                    if (pressureFull && newPressure.Count > 0)
                     {
-                        columns.Add(column);
-                        columnScales.Add(scale);
+                        pressureRows = newPressure;
+                        pressureKey = pexp;
                     }
+                    else
+                        foreach (var row in newPressure)
+                            pressureRows[row.Key] = row.Value;
+                    double[] magnitudes = pressureRows.Values.SelectMany(v => v.Values).Where(v => v != 0).Select(Math.Abs).OrderBy(v => v).ToArray();
+                    pressureP90 = magnitudes.Length == 0 ? 0 : magnitudes[(int)Math.Floor(0.90 * (magnitudes.Length - 1))];
+                    pressureP99 = magnitudes.Length == 0 ? 0 : magnitudes[(int)Math.Floor(0.99 * (magnitudes.Length - 1))];
                 }
             }
         }
 
-        // Called under `gate`. A different strike list (the 0DTE chain widened, or a full read) starts the day again from what arrived.
-        private void ApplyPressure(double[] newStrikes, List<KeyValuePair<long, double[]>> rows, string pexp, bool full)
+        private static double[] Numbers(string[] parts)
         {
-            if (full || !pressureStrikes.SequenceEqual(newStrikes))
-            {
-                pressureStrikes = newStrikes;
-                pressureRows.Clear();
-                pressureKey = full ? pexp : "";
-            }
-            foreach (var row in rows)
-                if (row.Value.Length == pressureStrikes.Length)
-                    pressureRows[row.Key] = row.Value;
-            double[] magnitudes = pressureRows.Values.SelectMany(v => v).Where(v => v != 0).Select(Math.Abs).OrderBy(v => v).ToArray();
-            pressureP90 = magnitudes.Length == 0 ? 0 : magnitudes[(int)Math.Floor(0.90 * (magnitudes.Length - 1))];
-            pressureP99 = magnitudes.Length == 0 ? 0 : magnitudes[(int)Math.Floor(0.99 * (magnitudes.Length - 1))];
+            return parts.Skip(1).Select(p => double.Parse(p, CultureInfo.InvariantCulture)).ToArray();
         }
 
         private static double P98(double[] values)
@@ -406,7 +407,7 @@ namespace NinjaTrader.NinjaScript.Indicators
             {
                 if (Style == ConvexaStyle.Presion)
                     RenderPressureStyle(chartControl, chartScale);
-                else if (ShowHeatmap && strikes.Length > 1 && columns.Count > 0)
+                else if (ShowHeatmap && columns.Count > 0)
                     RenderHeatmap(chartControl, chartScale);
                 if (ShowLevels)
                     RenderLevels(chartControl, chartScale);
@@ -429,19 +430,28 @@ namespace NinjaTrader.NinjaScript.Indicators
         {
             float right = ChartPanel.X + ChartPanel.W;
             float left = ChartPanel.X;
-            var ys = strikes.Select(s => (float)chartScale.GetYByValue(s)).ToArray();
-            for (int c = 0; c < columns.Count; c++)
+            var ysByStrikes = new Dictionary<double[], float[]>();
+            long[] epochs = columns.Keys.ToArray();
+            for (int c = 0; c < epochs.Length; c++)
             {
-                float x = XOf(chartControl, columns[c].Key);
-                bool last = c == columns.Count - 1;
-                float next = last ? x + 4 : XOf(chartControl, columns[c + 1].Key);
+                HeatColumn column = columns[epochs[c]];
+                float x = XOf(chartControl, epochs[c]);
+                bool last = c == epochs.Length - 1;
+                // Each column lasts until the next one (overnight and weekends included: the last picture Convexa sent stays).
+                float next = last ? x + 4 : XOf(chartControl, epochs[c + 1]);
                 if (next <= x && !last)
                     continue; // several columns inside one bar: the later one paints it
                 if (next < left || x > right)
                     continue;
-                DrawColumn(columns[c].Value, columnScales[c], ys, x, Math.Max(1f, next - x), up, down, faint);
+                float[] ys;
+                if (!ysByStrikes.TryGetValue(column.Strikes, out ys))
+                {
+                    ys = column.Strikes.Select(v => (float)chartScale.GetYByValue(v)).ToArray();
+                    ysByStrikes[column.Strikes] = ys;
+                }
+                DrawColumn(column.Values, column.Scale, ys, x, Math.Max(1f, next - x), up, down, faint);
                 if (last && right > next)
-                    DrawColumn(columns[c].Value, columnScales[c], ys, next, right - next, projectedUp, projectedDown, faint);
+                    DrawColumn(column.Values, column.Scale, ys, next, right - next, projectedUp, projectedDown, faint);
             }
         }
 
@@ -474,10 +484,11 @@ namespace NinjaTrader.NinjaScript.Indicators
         {
             float left = ChartPanel.X, right = ChartPanel.X + ChartPanel.W;
             // 1. The blue ground: the gamma heatmap's own columns, as faint tiles.
-            if (ShowHeatmap && strikes.Length > 1 && columns.Count > 0)
+            if (ShowHeatmap && columns.Count > 0)
                 RenderHeatmapWith(chartControl, chartScale, blueTiles, blueTiles, blueTiles, blueTiles, 0.0);
-            // 2. The fixed bands across the chart.
-            float bandHalf = strikes.Length > 1 ? Math.Max(2f, HalfRow(strikes.Select(v => (float)chartScale.GetYByValue(v)).ToArray(), 0)) : 3f;
+            // 2. The fixed bands across the chart, as tall as one strike step of the latest column.
+            double[] latestStrikes = columns.Count > 0 ? columns[columns.Keys.Last()].Strikes : new double[0];
+            float bandHalf = latestStrikes.Length > 1 ? Math.Max(2f, HalfRow(latestStrikes.Select(v => (float)chartScale.GetYByValue(v)).ToArray(), 0)) : 3f;
             DrawBand(chartScale, "call_wall", bandCall, bandHalf, left, right);
             DrawBand(chartScale, "put_wall", bandPut, bandHalf, left, right);
             DrawBand(chartScale, "abs", bandAbs, bandHalf, left, right);
@@ -488,55 +499,69 @@ namespace NinjaTrader.NinjaScript.Indicators
                 RenderTarget.DrawLine(new SharpDX.Vector2(left, y), new SharpDX.Vector2(right, y), bandFlip, 2f);
             }
             // 3. The pressure: per minute the strongest PressureLevelsPerSide strikes above and below that minute's close, with their life.
-            if (pressureStrikes.Length == 0 || pressureRows.Count == 0 || pressureP90 <= 0 || ChartBars == null)
+            // The state of each level follows its PRICE (strike lists differ from day to day).
+            if (pressureRows.Count == 0 || pressureP90 <= 0 || ChartBars == null)
                 return;
-            var ys = pressureStrikes.Select(v => (float)chartScale.GetYByValue(v)).ToArray();
-            int n = pressureStrikes.Length;
-            var lit = new bool[n];        // drawn in the previous minute
-            var side = new int[n];        // +1 strike under the close when it lit, -1 over it
-            var beyond = new int[n];      // consecutive minutes on the other side
-            var cut = new bool[n];        // crossed: not drawn until its pressure drops under the threshold and comes back
+            var lit = new Dictionary<double, bool>();
+            var side = new Dictionary<double, int>();
+            var beyond = new Dictionary<double, int>();
+            var cut = new Dictionary<double, bool>();
+            var ysByStrikes = new Dictionary<double[], float[]>();
             long[] epochs = pressureRows.Keys.ToArray();
             for (int m = 0; m < epochs.Length; m++)
             {
-                double[] values = pressureRows[epochs[m]];
+                HeatColumn row = pressureRows[epochs[m]];
                 double close = CloseAt(chartControl, epochs[m]);
                 if (double.IsNaN(close))
                     continue;
                 float x = XOf(chartControl, epochs[m]);
                 bool last = m == epochs.Length - 1;
                 float next = last ? right : XOf(chartControl, epochs[m + 1]);
-                var above = Enumerable.Range(0, n).Where(i => pressureStrikes[i] > close && Math.Abs(values[i]) >= pressureP90).OrderByDescending(i => Math.Abs(values[i])).Take(PressureLevelsPerSide);
-                var below = Enumerable.Range(0, n).Where(i => pressureStrikes[i] <= close && Math.Abs(values[i]) >= pressureP90).OrderByDescending(i => Math.Abs(values[i])).Take(PressureLevelsPerSide);
+                double[] strikes = row.Strikes, values = row.Values;
+                int n = strikes.Length;
+                float[] ys;
+                if (!ysByStrikes.TryGetValue(strikes, out ys))
+                {
+                    ys = strikes.Select(v => (float)chartScale.GetYByValue(v)).ToArray();
+                    ysByStrikes[strikes] = ys;
+                }
+                var above = Enumerable.Range(0, n).Where(i => strikes[i] > close && Math.Abs(values[i]) >= pressureP90).OrderByDescending(i => Math.Abs(values[i])).Take(PressureLevelsPerSide);
+                var below = Enumerable.Range(0, n).Where(i => strikes[i] <= close && Math.Abs(values[i]) >= pressureP90).OrderByDescending(i => Math.Abs(values[i])).Take(PressureLevelsPerSide);
                 var chosen = new HashSet<int>(above.Concat(below));
                 for (int i = 0; i < n; i++)
                 {
+                    double k = strikes[i];
+                    bool wasLit = lit.ContainsKey(k) && lit[k];
+                    bool isCut = cut.ContainsKey(k) && cut[k];
                     if (Math.Abs(values[i]) < pressureP90)
                     {
-                        cut[i] = false; // faded: fresh pressure may rebuild it later
-                        lit[i] = false;
+                        cut[k] = false; // faded: fresh pressure may rebuild it later
+                        lit[k] = false;
                         continue;
                     }
-                    int now = close >= pressureStrikes[i] ? 1 : -1;
-                    if (lit[i] && now != side[i])
+                    int now = close >= k ? 1 : -1;
+                    int count = beyond.ContainsKey(k) ? beyond[k] : 0;
+                    if (wasLit && side.ContainsKey(k) && now != side[k])
                     {
-                        beyond[i]++;
-                        if (beyond[i] >= 5)
-                            cut[i] = true;
+                        count++;
+                        if (count >= 5)
+                            isCut = true;
                     }
                     else
-                        beyond[i] = 0;
-                    if (!chosen.Contains(i) || cut[i])
+                        count = 0;
+                    beyond[k] = count;
+                    cut[k] = isCut;
+                    if (!chosen.Contains(i) || isCut)
                     {
-                        lit[i] = lit[i] && !cut[i];
+                        lit[k] = wasLit && !isCut;
                         continue;
                     }
-                    if (!lit[i])
+                    if (!wasLit)
                     {
-                        side[i] = now;
-                        beyond[i] = 0;
+                        side[k] = now;
+                        beyond[k] = 0;
                     }
-                    lit[i] = true;
+                    lit[k] = true;
                     if (next < left || x > right || next <= x)
                         continue;
                     double share = pressureP99 > 0 ? Math.Min(1.0, Math.Abs(values[i]) / pressureP99) : 1.0;
@@ -646,6 +671,10 @@ namespace NinjaTrader.NinjaScript.Indicators
         [Range(1, 10)]
         [Display(Name = "Presion: niveles arriba y abajo", Order = 9, GroupName = "Convexa")]
         public int PressureLevelsPerSide { get; set; }
+
+        [Range(1, 5)]
+        [Display(Name = "Sesiones a mostrar", Order = 10, GroupName = "Convexa")]
+        public int Days { get; set; }
 
         [Display(Name = "Convexa URL", Order = 6, GroupName = "Convexa")]
         public string Url { get; set; }
