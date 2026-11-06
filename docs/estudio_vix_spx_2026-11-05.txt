@@ -1,0 +1,90 @@
+Estudio VIX -> SPX / NDX y niveles de gamma del VIX — jueves 2026-11-05 (después del cierre, solo lectura, solo datos guardados)
+=====================================================================================================================
+Script: docs/hm_vix_spx_study.py (inventario: docs/hm_vix_data_inventory.py). Salida completa guardada en el chat del 11-05.
+Contexto: el 11-05 el VIX subió de ~17 a ~28 y el SPX cayó ~280 (~ −25 puntos de SPX por punto de VIX). Lester vio en la Repetición
+(VIX 0DTE por Volumen) gamma de calls (verde) dominante desde la apertura, y el VIX se movió hacia allá; el ABS del VIX hizo de soporte/resistencia.
+Memoria previa: vix_gamma_flip_anomaly (el Flip del VIX está lejos del precio porque Black-Scholes se aplica igual que a una acción;
+por eso aquí NO se usa el Flip del VIX, solo ABS, walls y las bandas de mayor |gamma|).
+
+Datos
+-----
+- Precios por minuto (último precio de cada minuto, 09:30-16:00): 37 sesiones con >= 300 minutos de VIX, SPX y NDX (09-10 .. 11-05).
+- Gamma del VIX: vistas 0dte y 0dte_volume solo desde 10-26/10-27 (9 días); vista tactical (0-2 DTE) 29 días desde 09-25.
+  OJO: el VIX no tiene vencimientos diarios; su "0dte" es el vencimiento más cercano.
+
+PARTE 1 — Cuántos puntos se mueve el SPX / NDX por cada punto de VIX
+--------------------------------------------------------------------
+Pendiente = regresión por el origen; razón = cambio SPX / cambio VIX en ventanas donde el VIX se movió lo suficiente
+(5m >= 0.10, 15m >= 0.15, 60m >= 0.30, día >= 0.50). "Al revés" = % de ventanas en que SPX y VIX se movieron en sentido contrario.
+
+  SPX       n      pendiente  R²    razón mediana [p25, p75]   % por punto VIX   al revés
+  5 min   2843       −21.8   0.55     −32.0 [−45.8, −19.3]        −0.42 %          84 %
+  15 min   940       −23.3   0.62     −34.0 [−47.1, −22.0]        −0.45 %          82 %
+  60 min   211       −23.7   0.71     −31.2 [−44.3, −22.8]        −0.41 %          85 %
+  día       28       −29.5   0.96     −32.3 [−47.9, −28.9]        −0.42 %          85 %
+
+  NDX       n      pendiente  R²    razón mediana [p25, p75]   % por punto VIX   al revés
+  5 min   2841      −114.8   0.46    −167 [−258, −92]             −0.57 %          80 %
+  15 min   939      −123.7   0.53    −179 [−278, −99]             −0.62 %          76 %
+  60 min   210      −122.6   0.65    −179 [−240, −99]             −0.62 %          82 %
+  día       27      −143.0   0.86    −234 [−362, −143]            −0.82 %          81 %
+
+Depende MUCHO del nivel del VIX (ventanas de 15 min, razón mediana [p25, p75]):
+  VIX al empezar     SPX por punto VIX           NDX por punto VIX           n
+  < 17               −45 [−60, −33]              −237 [−370, −151]           86
+  17-20              −33 [−44, −22]              −182 [−267, −112]          126
+  20-25              −22 [−32, −16]              −106 [−173, −62]            51
+  > 25               −22 [−28, −16]              −120 [−130, −95]            13 (pocos)
+Con VIX alto, cada punto de VIX mueve menos puntos de SPX (el VIX se mueve más). Sube o baja: casi igual
+(SPX −32 cuando el VIX sube, −37 cuando baja, en 15 min).
+El 11-05 (VIX 17-28, +11 puntos, SPX −280 = −25 por punto) cae dentro de la banda 17-25.
+
+PARTE 2 — ¿El VIX reacciona a sus propios niveles?
+-------------------------------------------------
+Toque = el VIX llega a menos de 0.10 del nivel después de haber estado a 0.30 o más. A los 15 min: rebote = vuelve 0.15 o más hacia
+el lado de donde venía; cruce = queda 0.15 o más del otro lado. Control = el mismo nivel corrido ±0.5 / ±1.0 puntos.
+
+  vista (días)          nivel       toques  rebote   cruce  | control: toques  rebote  cruce
+  0dte (9)              ABS            15   53 %     27 %   |            68     34 %    38 %
+                        call wall       9   56 %     33 %   |            57     33 %    42 %
+                        3 bandas       35   49 %     29 %   |           137     37 %    38 %
+  0dte_volume (9)       ABS            18   50 %     17 %   |            57     39 %    40 %
+                        call wall      13   62 %     15 %   |            55     36 %    44 %
+                        3 bandas       31   42 %     26 %   |           131     35 %    34 %
+  tactical (29)         ABS            45   36 %     24 %   |           134     32 %    34 %
+                        call wall      25   28 %     36 %   |            95     36 %    39 %
+                        put wall       18   39 %      6 %   |            59     29 %    17 %
+                        3 bandas       72   40 %     26 %   |           288     33 %    31 %
+Escala del día (niveles del ciclo de las 10:00, a menos de 0.25):
+  tactical (28 días): cierre cerca del ABS 29 % vs control 12.5 %; mínimo del día cerca del put wall 25 % vs 12.5 %;
+  máximo cerca del call wall 0 % vs 6 %.
+  0dte / 0dte_volume (7-8 días): demasiado pocos días.
+Lectura honesta: en 0DTE / 0DTE por volumen el ABS y el call wall rebotan más que el control (50-62 % contra 34-39 %), lo que coincide
+con lo que vio Lester, pero son 9-18 toques en 9 días y es uno de ~20 cruces medidos: no es una prueba. Con 29 días (tactical) el rebote
+casi no se distingue del control; el ABS como imán del cierre (29 % vs 12.5 %) es el mismo patrón que ya se vio en SPX el 10-14.
+
+PARTE 3 — ¿La gamma de calls dominante a las 09:45 anticipa la dirección del VIX?
+--------------------------------------------------------------------------------
+Proporción calls = Σ gamma calls / (Σ calls + Σ |puts|) en el ciclo de las 09:44-09:45; si > 0.5 se predice VIX ARRIBA (y SPX abajo).
+  vista (días útiles)   VIX a las 11:00   VIX al cierre   SPX al cierre (al revés)
+  0dte_volume (6)            5/6               4/6               5/6
+  0dte (8)                   5/8               7/8               7/8
+  tactical (29)             17/29 (59 %)      15/29 (52 %)      14/29 (48 %)
+La otra medida (|gamma| arriba vs abajo del precio) no sirve (33-62 %).
+Lectura honesta: en las vistas 0DTE acierta bastante, pero son 6-8 días (7/8 ya incluye el 11-05) y en 0dte_volume dos días no tenían
+volumen todavía a las 09:44. Con los 29 días de la vista tactical es una moneda al aire. Hacen falta ~20 días de 0DTE para saberlo.
+
+PROPUESTA
+---------
+1. SÍ con los números de hoy: una pastilla "VIX → SPX" que usa solo la Parte 1 (es sólida: 37 sesiones, R² 0.55-0.96, 80-85 % en sentido contrario):
+     "VIX 19.4 · +1 pt VIX ≈ SPX −22 a −44 · NDX −112 a −267"   (banda p25-p75 de 15 min según el nivel actual del VIX)
+   y, opcional, el cambio del VIX en el día traducido: "VIX +7.5 hoy ≈ SPX −165 a −330 (real −222)".
+2. NO todavía: "VIX hacia X (nivel)". Los niveles del VIX no le ganan al control con suficientes datos (Parte 2).
+3. NO todavía: la señal de calls dominantes de las 09:45. Se vuelve a medir con 20 días de VIX 0DTE (aprox. el 2026-11-24), con la regla fija de arriba.
+
+Lo que no se pudo verificar
+---------------------------
+- Solo 9 días de vistas 0DTE del VIX; las partes 2 y 3 sobre esas vistas son anecdóticas.
+- El VIX no se usa como VXN para NDX (VXN no está guardado); para NDX la relación es más ruidosa (R² 0.46-0.86).
+- Muchas comparaciones a la vez (~30): un resultado "bueno" aislado puede ser suerte.
+- Minutos sin precio se rellenan con el último de hasta 3 minutos antes.

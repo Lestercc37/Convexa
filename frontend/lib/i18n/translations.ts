@@ -43,6 +43,11 @@ export type Translations = {
     label: string;
     title: (points: string, pct: string, low: string, high: string, iv: string) => string;
   };
+  vixBadge: {
+    perPoint: (target: string, low: number, high: number) => string;
+    today: (change: string, from: string, to: string) => string;
+    title: (target: string, low: number, high: number) => string;
+  };
   futureOpeningPrice: {
     label: string;
     saveButton: string;
