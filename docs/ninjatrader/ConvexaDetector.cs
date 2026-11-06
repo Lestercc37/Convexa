@@ -6,7 +6,9 @@
 //     300 % / 3 levels is the common convention (no rigorous public backtest exists: Convexa measures it on our own data).
 //   - ABSORPTION: aggressive selling into the same best bid adds up to AbsorptionVolume while the bid keeps refilling and price never trades
 //     below it for at least AbsorptionHoldSeconds (buyers absorb: side "buy"); the mirror on the ask (side "sell"). Level 1 is enough.
-//   - BIG TRADES: one print of BigTradeVolume or more.
+//   - BIG TRADES: one aggressive ORDER of BigTradeVolume or more. CME reports a sweeping order as many 1-3 lot prints in the same instant (Lester's
+//     Time & Sales, 2026-11-06), so consecutive prints of the same side less than 5 ms apart are added up into one order first (as NinjaTrader's
+//     and Bookmap's bubbles do); the order's price is its last print.
 // The aggressor side comes from the best bid / ask: at or above the ask = buy, at or below the bid = sell, in between = the tick rule.
 // Each event is drawn on this chart and sent to Convexa (POST /api/v1/feeds/futures-events), which draws it on SPX / SPY (ES), NDX / QQQ (NQ)
 // and IWM (RTY). Only the events leave NinjaTrader, never the tape. Live data only (it does not replay history).
@@ -50,6 +52,12 @@ namespace NinjaTrader.NinjaScript.Indicators
         private double bid, ask, lastPrice;
         private long bidSize, askSize;
         private bool lastWasBuy = true;
+
+        // The aggressive order being added up: consecutive same-side prints less than 5 ms apart.
+        private long orderVolume;
+        private bool orderBuy;
+        private double orderPrice;
+        private DateTime orderLastUtc = DateTime.MinValue;
 
         // The minute being built: price (in ticks) -> [aggressive buys, aggressive sells].
         private DateTime minuteUtc = DateTime.MinValue;
@@ -182,8 +190,15 @@ namespace NinjaTrader.NinjaScript.Indicators
             }
             cell[buy ? 0 : 1] += volume;
 
-            if (volume >= bigTradeVolume)
-                Emit(utc, "big_trade", buy ? "buy" : "sell", price, price, price, volume, (buy ? "B " : "S ") + volume);
+            // A new order: the other side, more than 5 ms later, or a price going back (a sweep only moves one way: up for buys, down for sells;
+            // this also keeps the grouping honest if the feed's times only carry whole seconds).
+            bool goesBack = orderBuy ? price < orderPrice : price > orderPrice;
+            if (orderVolume > 0 && (buy != orderBuy || goesBack || (utc - orderLastUtc).TotalMilliseconds > 5))
+                CloseOrder();
+            orderBuy = buy;
+            orderVolume += volume;
+            orderPrice = price;
+            orderLastUtc = utc;
 
             // Absorption: selling hits the bid (buyers absorb) / buying lifts the ask (sellers absorb).
             if (!buy)
@@ -206,6 +221,13 @@ namespace NinjaTrader.NinjaScript.Indicators
             if (askEpisode != null && price > askEpisode.Price)
                 askEpisode = null;
             CheckEpisodes(utc);
+        }
+
+        private void CloseOrder()
+        {
+            if (orderVolume >= bigTradeVolume)
+                Emit(orderLastUtc, "big_trade", orderBuy ? "buy" : "sell", orderPrice, orderPrice, orderPrice, orderVolume, (orderBuy ? "B " : "S ") + orderVolume);
+            orderVolume = 0;
         }
 
         // An episode is reported once it held long enough with enough volume and price left it in the absorbers' direction (or it went quiet
