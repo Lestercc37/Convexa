@@ -45,6 +45,7 @@ import { useLanguage, type Language } from "@/lib/i18n/language-context";
 import { RegimeCompactBadge } from "./regime-badge";
 import { VixTranslatorBadge } from "./vix-translator-badge";
 import { PriceSourceBadge } from "./price-source-badge";
+import { loadChartSettings, useChartSetting } from "@/lib/chart-settings";
 import { FuturesLiveBadge } from "./futures-live-badge";
 import { ExpectedMoveCompactBadge } from "./expected-move-badge";
 import { SessionClock } from "./session-clock";
@@ -202,7 +203,8 @@ export function Dashboard({ mode = "full", route, onRouteChange }: DashboardProp
   // request failed.
   const [error, setError] = useState<unknown>(null);
   const [showEnginesGuide, setShowEnginesGuide] = useState(false);
-  const [timeframe, setTimeframe] = useState<Timeframe>(route?.timeframe ?? "1m");
+  // Saved in the trader's template (lib/chart-settings.ts) unless a view link sets it.
+  const [timeframe, setTimeframe] = useChartSetting<Timeframe>("timeframe", "1m", route?.timeframe ?? undefined);
   // Day (default) or Semana: the last 5 trading dates as server-aggregated candles. Day mode is untouched by it.
   const [chartRange, setChartRange] = useState<"day" | "week">(route?.range ?? "day");
   // Keyed by symbol and timeframe so a response (or a leftover) for another one is never shown.
@@ -271,9 +273,20 @@ export function Dashboard({ mode = "full", route, onRouteChange }: DashboardProp
     // The app's windows have their own tabs (0DTE / 1DTE / 90 días): a saved web tab they do not have (0-2 DTE, 2DTE) falls back to 0DTE.
     const tabs = isChartOnly ? APP_GAMMA_VIEW_TABS : GAMMA_VIEW_TABS;
     const fromRoute = initialRoute?.gammaTab && tabs.some((tab) => tab.view === initialRoute.gammaTab) ? initialRoute.gammaTab : null;
-    const stored = fromRoute ?? readStoredGammaView(tabs);
-    if (stored) setGammaTab(stored);
-    setGammaWeight(readStoredGammaWeight());
+    const apply = () => {
+      const stored = fromRoute ?? readStoredGammaView(tabs);
+      if (stored) setGammaTab(stored);
+      setGammaWeight(readStoredGammaWeight());
+    };
+    apply();
+    // The template from the server (another device's last choice) once it arrives.
+    let alive = true;
+    void loadChartSettings().then(() => {
+      if (alive) apply();
+    });
+    return () => {
+      alive = false;
+    };
   }, [initialRoute, isChartOnly]);
 
   const gammaSourceSymbol = GAMMA_SOURCE_SYMBOL_BY_FUTURE[symbol] ?? symbol;

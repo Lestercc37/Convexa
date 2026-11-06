@@ -1,4 +1,5 @@
 import type { GammaView } from "@/lib/types";
+import { getChartSetting, setChartSetting } from "@/lib/chart-settings";
 
 // The dashboard's gamma tabs (Lester 2026-10-26): one listed expiration each, plus the combined 0-2 DTE view. Every option-based figure on screen
 // (levels, regime, profile, heatmap, level history) follows the selected tab; VWAP and Anchored VWAP come from the underlying's price and volume and do not.
@@ -39,6 +40,8 @@ export function effectiveGammaView(tab: GammaView, weight: GammaWeight): GammaVi
 
 export function readStoredGammaWeight(): GammaWeight {
   try {
+    const fromTemplate = getChartSetting("gammaWeight");
+    if (fromTemplate === "volume" || fromTemplate === "oi") return fromTemplate;
     return window.localStorage.getItem(WEIGHT_STORAGE_KEY) === "volume" ? "volume" : "oi";
   } catch {
     return "oi";
@@ -46,6 +49,7 @@ export function readStoredGammaWeight(): GammaWeight {
 }
 
 export function storeGammaWeight(weight: GammaWeight): void {
+  setChartSetting("gammaWeight", weight);
   try {
     window.localStorage.setItem(WEIGHT_STORAGE_KEY, weight);
   } catch {
@@ -77,7 +81,8 @@ export function listedExpirationForView(expirations: readonly string[], view: Ga
 
 export function readStoredGammaView(tabs: readonly { view: GammaView }[] = GAMMA_VIEW_TABS): GammaView | null {
   try {
-    const stored = window.localStorage.getItem(STORAGE_KEY);
+    const fromTemplate = getChartSetting("gammaTab");
+    const stored = typeof fromTemplate === "string" ? fromTemplate : window.localStorage.getItem(STORAGE_KEY);
     return tabs.some((tab) => tab.view === stored) ? (stored as GammaView) : null;
   } catch {
     return null;
@@ -85,6 +90,7 @@ export function readStoredGammaView(tabs: readonly { view: GammaView }[] = GAMMA
 }
 
 export function storeGammaView(view: GammaView): void {
+  setChartSetting("gammaTab", view);
   try {
     window.localStorage.setItem(STORAGE_KEY, view);
   } catch {

@@ -22,6 +22,7 @@ import {
 } from "lightweight-charts";
 import { getAlerts, getGammaHeatmap, getGammaHistory, getGammaProfile, getMinuteFlow, getOptionChain, getOptionChainExpirations, getOrderFlowEvents, getPriceCandles, getCubeMinimums } from "@/lib/api";
 import { OrderFlowEventsPrimitive } from "./order-flow-events-primitive";
+import { useChartSetting } from "@/lib/chart-settings";
 import { followsFastLayer, profileSource } from "@/lib/profile-source";
 import { flowBarsFromResponse } from "@/lib/minute-flow";
 import { buildCubes, DEFAULT_CUBE_FILTER, DEFAULT_CUBE_SIZING, type CubeSizing } from "@/lib/alert-cubes";
@@ -589,18 +590,20 @@ export function PriceChart({
   const sessionOpenSecondsRef = useRef(mostRecentSessionRange(Date.now()).openSeconds);
   const [levelMode, setLevelMode] = useState<LevelMode>("static");
   const [history, setHistory] = useState<GammaHistoryItem[]>([]);
-  const [showVwap, setShowVwap] = useState(true);
-  const [showAtr, setShowAtr] = useState(true);
-  const [showExpectedMove, setShowExpectedMove] = useState(true);
+  // The trader's template (lib/chart-settings.ts, 2026-11-06): every toggle below is saved per user and applies to every symbol; a shared
+  // view link (`layers`) still sets its own layers for that chart without touching the template.
+  const [showVwap, setShowVwap] = useChartSetting("vwap", true);
+  const [showAtr, setShowAtr] = useChartSetting("atr", true);
+  const [showExpectedMove, setShowExpectedMove] = useChartSetting("expectedMove", true);
   // The line of time and the live profile of the approved mockup (design 9 and 10): history on the left of AHORA, one live profile (a bar per strike) on its right,
   // aligned with the price axis. On by default; it replaces the old bottom GEX-by-strike view. The Smile dots ride on the same line.
-  const [showProfile, setShowProfile] = useState(layers ? layers.profile : true);
-  const [showSmile, setShowSmile] = useState(layers ? layers.smile : true);
+  const [showProfile, setShowProfile] = useChartSetting("profile", true, layers ? layers.profile : undefined);
+  const [showSmile, setShowSmile] = useChartSetting("smile", true, layers ? layers.smile : undefined);
   // The minute flow panes (calls and puts, under the candles, hidden by default): one histogram series each, in its own pane so the time axis and the crosshair are the candles'.
-  const [showFlow, setShowFlow] = useState(layers?.flow ?? false);
+  const [showFlow, setShowFlow] = useChartSetting("flow", false, layers ? layers.flow : undefined);
   // NinjaTrader's order-flow events on this symbol's future (order-flow-events-primitive.ts); on by default where a future maps here.
   const orderFlowSymbol = ORDER_FLOW_SYMBOLS.has(symbol.toUpperCase());
-  const [showOrderFlowEvents, setShowOrderFlowEvents] = useState(true);
+  const [showOrderFlowEvents, setShowOrderFlowEvents] = useChartSetting("orderFlowEvents", true);
   // The flow since the open, summarised from the poll the flow panes already make (no extra request) and shown in a line above the chart; the alerts half comes from the cubes' poll.
   const [openingFlow, setOpeningFlow] = useState<OpeningFlow | null>(null);
   const [openingAlerts, setOpeningAlerts] = useState<OpeningAlerts | null>(null);
@@ -632,7 +635,7 @@ export function PriceChart({
   const lastCloseRef = useRef<number | null>(candles.at(-1)?.close ?? null);
   const lastCandleTimeRef = useRef<number | null>(candles.at(-1)?.time ?? null);
   // Whale alerts as small squares on the chart (design 12.8 to 12.14); off by default until it is checked against live alerts.
-  const [showAlertCubes, setShowAlertCubes] = useState(layers?.cubes ?? false);
+  const [showAlertCubes, setShowAlertCubes] = useChartSetting("cubes", false, layers ? layers.cubes : undefined);
   // Minimum cube size per symbol (item 12b): the API's suggestion (about 40 cubes a session each, recomputed daily) unless the viewer typed their own, which this browser remembers per symbol.
   const [customCubeMins, setCustomCubeMins] = useState<Record<string, number>>({});
   const [cubeMinsLoaded, setCubeMinsLoaded] = useState(false);
@@ -643,10 +646,10 @@ export function PriceChart({
   const [cubeSizingLoaded, setCubeSizingLoaded] = useState(false);
   const cubeMin = effectiveCubeMin(symbol, customCubeMins, cubeSizing === "net" ? suggestedCubeMins.net : suggestedCubeMins.gross);
   const cubeMinDeq = cubeMin.value;
-  const [cubeShowFar, setCubeShowFar] = useState(DEFAULT_CUBE_FILTER.showFar);
+  const [cubeShowFar, setCubeShowFar] = useChartSetting("cubeShowFar", DEFAULT_CUBE_FILTER.showFar);
   // The neutral layers (lib/alert-cubes.ts CubeKind), off by default: big trades without a readable side and multi-leg packages.
-  const [showBigTrades, setShowBigTrades] = useState(false);
-  const [showPackages, setShowPackages] = useState(false);
+  const [showBigTrades, setShowBigTrades] = useChartSetting("bigTrades", false);
+  const [showPackages, setShowPackages] = useChartSetting("packages", false);
   const [cubeAlerts, setCubeAlerts] = useState<WhaleAlert[]>([]);
   const [hoveredCube, setHoveredCube] = useState<{ id: string; x: number; y: number } | null>(null);
   const cubesPrimitiveRef = useRef<AlertCubesPrimitive | null>(null);
@@ -661,14 +664,16 @@ export function PriceChart({
     [cubeAlerts, cubeMinDeq, cubeShowFar, cubeSizing, showBigTrades, showPackages],
   );
   // Gamma heatmap behind the candles (off by default): strike x time matrix read from /gamma/{symbol}/heatmap.
-  const [showHeatmap, setShowHeatmap] = useState(Boolean(layers?.heatmap));
+  const [showHeatmap, setShowHeatmap] = useChartSetting("heatmap", false, layers ? Boolean(layers.heatmap) : undefined);
   // Each minute coloured against its own distribution (history stays as painted), or one scale for the whole session (the chip "Escala del día").
-  const [dayScale, setDayScale] = useState(false);
-  const [heatmapMetric, setHeatmapMetric] = useState<GammaHeatmapMetric>(
-    layers?.heatmap && layers.heatmap !== "calls" && layers.heatmap !== "puts" ? layers.heatmap : "gamma",
+  const [dayScale, setDayScale] = useChartSetting("heatmapDayScale", false);
+  const [heatmapMetric, setHeatmapMetric] = useChartSetting<GammaHeatmapMetric>(
+    "heatmapMetric",
+    "gamma",
+    layers ? (layers.heatmap && layers.heatmap !== "calls" && layers.heatmap !== "puts" ? layers.heatmap : "gamma") : undefined,
   );
   // The sides view: call gamma and put gamma drawn apart (green / red, one scale), each switchable. Any side on replaces the single figure above until both are off again.
-  const [sideLayers, setSideLayers] = useState({ calls: layers?.heatmap === "calls", puts: layers?.heatmap === "puts" });
+  const [sideLayers, setSideLayers] = useChartSetting("heatmapSides", { calls: false, puts: false }, layers ? { calls: layers.heatmap === "calls", puts: layers.heatmap === "puts" } : undefined);
   const sidesOn = sideLayers.calls || sideLayers.puts;
   const [drawMode, setDrawMode] = useState(false);
   const [trendline, setTrendline] = useState<Trendline | null>(null);

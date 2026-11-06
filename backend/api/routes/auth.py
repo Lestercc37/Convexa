@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Request, Response
+import json
+
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 
 from backend.api.deps import require_session
 from backend.api.schemas import (
@@ -45,6 +47,29 @@ def login(body: LoginRequest, request: Request, response: Response) -> SessionUs
 def logout(response: Response) -> dict[str, bool]:
     response.delete_cookie(SESSION_COOKIE_NAME)
     return {"ok": True}
+
+
+# Each trader's chart template (Lester 2026-11-06): the page reads it once and writes it back a moment after every change. Any logged-in user,
+# only their own row. A JSON object of at most MAX_CHART_SETTINGS_BYTES; the page owns its keys (frontend lib/chart-settings.ts).
+MAX_CHART_SETTINGS_BYTES = 32_000
+
+
+@router.get("/me/chart-settings")
+def get_my_chart_settings(request: Request, session: SessionPayload = Depends(require_session)) -> dict:
+    container: Container = request.app.state.container
+    return {"schema_version": 1, "settings": container.storage.get_user_chart_settings(session.user_id) or {}}
+
+
+@router.put("/me/chart-settings")
+def put_my_chart_settings(body: dict, request: Request, session: SessionPayload = Depends(require_session)) -> dict:
+    settings = body.get("settings")
+    if not isinstance(settings, dict):
+        raise HTTPException(status_code=422, detail="settings must be a JSON object")
+    if len(json.dumps(settings)) > MAX_CHART_SETTINGS_BYTES:
+        raise HTTPException(status_code=413, detail=f"settings are limited to {MAX_CHART_SETTINGS_BYTES} bytes")
+    container: Container = request.app.state.container
+    container.storage.save_user_chart_settings(session.user_id, settings)
+    return {"schema_version": 1, "saved": True}
 
 
 @router.get("/me", response_model=SessionUserResponse)

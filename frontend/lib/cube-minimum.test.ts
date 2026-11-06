@@ -1,3 +1,4 @@
+import { resetChartSettingsForTests } from "@/lib/chart-settings";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
@@ -41,6 +42,8 @@ describe("storage", () => {
   it("round-trips per symbol and survives garbage and blocked storage", () => {
     saveCubeMins({ SPY: 2500, NDX: 20 });
     expect(loadCubeMins()).toEqual({ SPY: 2500, NDX: 20 });
+    // From here on, what this browser holds (the saved template would win otherwise).
+    resetChartSettingsForTests();
 
     window.localStorage.setItem(CUBE_MIN_STORAGE_KEY, JSON.stringify({ SPY: 2500, BAD: 0, "<x>": 5, QQQ: "7", NVDA: 1.5 }));
     expect(loadCubeMins()).toEqual({ SPY: 2500 });

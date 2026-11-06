@@ -1,3 +1,4 @@
+import { getChartSetting, setChartSetting } from "@/lib/chart-settings";
 // Exponential moving averages on the price chart (2026-10-22, Lester): any period, a colour per line, nothing fixed, so a new period never needs a deploy.
 
 // `width` (Lester 2026-10-22, item 8b): line thickness in pixels, chosen per line (fina 1 / normal 2 / gruesa 3 / muy gruesa 4); absent in lists saved before it existed = 1.
@@ -72,9 +73,10 @@ function isEmaConfig(value: unknown): value is EmaConfig {
 
 export function loadEmas(): EmaConfig[] {
   try {
-    const raw = window.localStorage.getItem(EMA_STORAGE_KEY);
-    if (!raw) return [];
-    const parsed: unknown = JSON.parse(raw);
+    const fromTemplate = getChartSetting("emas");
+    const raw = fromTemplate === undefined ? window.localStorage.getItem(EMA_STORAGE_KEY) : null;
+    if (fromTemplate === undefined && !raw) return [];
+    const parsed: unknown = fromTemplate !== undefined ? fromTemplate : JSON.parse(raw as string);
     if (!Array.isArray(parsed)) return [];
     const seen = new Set<number>();
     const emas: EmaConfig[] = [];
@@ -90,6 +92,7 @@ export function loadEmas(): EmaConfig[] {
 }
 
 export function saveEmas(emas: EmaConfig[]): void {
+  setChartSetting("emas", emas);
   try {
     window.localStorage.setItem(EMA_STORAGE_KEY, JSON.stringify(emas));
   } catch {

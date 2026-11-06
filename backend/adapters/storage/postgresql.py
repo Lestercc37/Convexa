@@ -1798,6 +1798,26 @@ class PostgreSQLStorage:
         with self.session_factory() as session:
             return [bar_from_row(row) for row in session.execute(text("SELECT symbol, contract, minute, open, high, low, close, volume, session, index_price, received_at FROM futures_live_bars WHERE symbol = :symbol AND minute >= :since ORDER BY minute, contract"), {"symbol": symbol.upper(), "since": since}).mappings()]
 
+    def get_user_chart_settings(self, user_id: int) -> dict | None:
+        with self.session_factory() as session:
+            row = session.execute(text("SELECT settings FROM user_chart_settings WHERE user_id = :user_id"), {"user_id": user_id}).first()
+            if row is None:
+                return None
+            value = row[0]
+            return value if isinstance(value, dict) else json.loads(value)
+
+    def save_user_chart_settings(self, user_id: int, settings: dict) -> None:
+        with self.session_factory.begin() as session:
+            session.execute(
+                text(
+                    """
+                    INSERT INTO user_chart_settings (user_id, settings, updated_at) VALUES (:user_id, CAST(:settings AS jsonb), now())
+                    ON CONFLICT (user_id) DO UPDATE SET settings = EXCLUDED.settings, updated_at = now()
+                    """
+                ),
+                {"user_id": user_id, "settings": json.dumps(settings)},
+            )
+
     def save_futures_events(self, events: list[FuturesEvent]) -> None:
         if not events:
             return
