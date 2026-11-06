@@ -203,6 +203,8 @@ export const es: Translations = {
     heatmapSidePuts: "Puts",
     heatmapDayScaleLabel: "Escala del día",
     heatmapDayScaleTitle: "Apagada: cada minuto se colorea contra sí mismo, el strike más fuerte de ese momento sale blanco y el historial se queda como se pintó. Encendida: una sola escala para toda la sesión.",
+    heatmapGrowingScaleLabel: "Escala por volumen (prueba ES)",
+    heatmapGrowingScaleTitle: "Cada minuto se colorea contra el OI 0DTE del mismo momento: a las 9:30 el mapa aparece completo pero tenue y cada nivel se enciende a medida que entra volumen. Brillo completo cuando el volumen llega a 10 veces el OI. Enciende Escala del día para volver a la escala de siempre.",
     heatmapSidesTitle: "Enciende o apaga cada lado: calls en verde, puts en rojo, con la misma escala",
     expectedMoveRangeLabel: "Movimiento Esperado",
     streamFallbackLabel: "Conexión en tiempo real perdida — actualizando cada 30s",

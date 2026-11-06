@@ -203,6 +203,8 @@ export const en: Translations = {
     heatmapSidePuts: "Puts",
     heatmapDayScaleLabel: "Day scale",
     heatmapDayScaleTitle: "Off: every minute is coloured against itself, the strongest strike of that moment reads white and the history stays as painted. On: one scale for the whole session.",
+    heatmapGrowingScaleLabel: "Volume scale (ES trial)",
+    heatmapGrowingScaleTitle: "Every minute is coloured against the 0DTE OI of the same moment: at 09:30 the whole map is there but faint, and each level lights up as volume comes in. Full brightness when volume reaches 10x the OI. Turn Day scale on for the usual scale.",
     heatmapSidesTitle: "Turn each side on or off: calls green, puts red, same scale",
     expectedMoveRangeLabel: "Expected Move",
     streamFallbackLabel: "Real-time connection lost — updating every 30s",

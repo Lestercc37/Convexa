@@ -37,8 +37,10 @@ export type HeatmapData = {
   /**
    * "column": every minute is coloured against ITS OWN distribution (its p98), so a column keeps the colours it was painted with for the rest of the session and the strongest strike of
    * each moment reads white, quiet or busy. "day": one scale for the whole matrix (`scale`, the API's p98 of the session; the old behaviour, and what a missing value means).
+   * "growing": one scale per column given in `columnScaleList` (lib/growing-scale.ts, ES 0DTE Volumen trial); a missing entry is the column's own p98.
    */
-  scaleMode?: "day" | "column";
+  scaleMode?: "day" | "column" | "growing";
+  columnScaleList?: (number | null)[];
 };
 
 export type HeatmapPalette = "gamma" | "unsigned" | "vanna" | "charm";
@@ -165,18 +167,24 @@ const COLUMN_SCALES = new WeakMap<HeatmapData, (number | null)[]>();
 export function columnScales(data: HeatmapData): (number | null)[] {
   const cached = COLUMN_SCALES.get(data);
   if (cached) return cached;
-  const scales = data.columns.map((column) => {
+  const scales = data.columns.map((column, index) => {
+    if (data.scaleMode === "growing") return data.columnScaleList?.[index] ?? columnP98(column.values, column.puts);
     if (data.scaleMode !== "column") return data.scale;
-    const magnitudes = [...column.values, ...(column.puts ?? [])]
-      .filter((value): value is number => value !== null && value !== undefined && Number.isFinite(value))
-      .map(Math.abs)
-      .sort((a, b) => a - b);
-    if (!magnitudes.length) return null;
-    const p98 = magnitudes[Math.min(magnitudes.length - 1, Math.floor(0.98 * magnitudes.length))];
-    return p98 > 0 ? p98 : null;
+    return columnP98(column.values, column.puts);
   });
   COLUMN_SCALES.set(data, scales);
   return scales;
+}
+
+/** The p98 of a column's magnitudes (calls and puts together in the sides view); null when it has nothing above zero. */
+export function columnP98(values: (number | null)[], puts?: (number | null)[]): number | null {
+  const magnitudes = [...values, ...(puts ?? [])]
+    .filter((value): value is number => value !== null && value !== undefined && Number.isFinite(value))
+    .map(Math.abs)
+    .sort((a, b) => a - b);
+  if (!magnitudes.length) return null;
+  const p98 = magnitudes[Math.min(magnitudes.length - 1, Math.floor(0.98 * magnitudes.length))];
+  return p98 > 0 ? p98 : null;
 }
 
 // The weaker side of a cell reaches this share of the scale and the cell is fully white.
