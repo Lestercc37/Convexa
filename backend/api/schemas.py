@@ -128,6 +128,19 @@ class VwapHistoryResponse(BaseModel):
     points: list[VwapPointResponse]
 
 
+class PriceSourceResponse(BaseModel):
+    symbol: str = Field(examples=["SPX"])
+    proxy: str = Field(examples=["SPY"])
+    ratio: float = Field(examples=[10.0296], description="index / proxy of the last healthy minutes, frozen when the episode started")
+    reason: str = Field(examples=["drift"], description="lag (index ticks stamped late), silent (no index tick for 60 s) or drift (index / proxy off the usual ratio)")
+    since: str = Field(examples=["2026-11-06T14:36:13Z"])
+
+
+class PriceSourcesResponse(BaseModel):
+    schema_version: int = Field(examples=[1])
+    replaced: list[PriceSourceResponse]
+
+
 class OptionContractResponse(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 

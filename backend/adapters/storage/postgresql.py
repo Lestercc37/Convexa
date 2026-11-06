@@ -37,6 +37,7 @@ from backend.domain.underlyings import ACTIVE_UNDERLYINGS_BY_SYMBOL
 from backend.domain.use_cases.market_hours import EASTERN_TIME
 from backend.domain.use_cases.trade_date import volume_rows_since
 from backend.domain.use_cases.flow import Moneyness, SymbolFlowPressure, WhaleAlert, WhaleAlertType
+from backend.domain.use_cases.index_stale_guard import IndexPriceFallback, fallback_from_row, fallback_params
 
 # See get_latest_chain_snapshot's own comment -- how far back its fast
 # path looks before falling back to an unbounded (and much slower) scan
@@ -1750,6 +1751,24 @@ class PostgreSQLStorage:
                 {"symbol": symbol.upper(), "session_date": session_date},
             ).mappings().first()
             return str(row["source"]) if row is not None else None
+
+    def save_index_price_fallback(self, status: IndexPriceFallback) -> None:
+        with self.session_factory.begin() as session:
+            session.execute(
+                text(
+                    """
+                    INSERT INTO index_price_fallback (symbol, proxy, active, ratio, reason, since, updated_at)
+                    VALUES (:symbol, :proxy, :active, :ratio, :reason, :since, :updated_at)
+                    ON CONFLICT (symbol) DO UPDATE SET proxy = EXCLUDED.proxy, active = EXCLUDED.active, ratio = EXCLUDED.ratio,
+                        reason = EXCLUDED.reason, since = EXCLUDED.since, updated_at = EXCLUDED.updated_at
+                    """
+                ),
+                fallback_params(status),
+            )
+
+    def get_index_price_fallbacks(self) -> list[IndexPriceFallback]:
+        with self.session_factory() as session:
+            return [fallback_from_row(row) for row in session.execute(text("SELECT symbol, proxy, active, ratio, reason, since, updated_at FROM index_price_fallback ORDER BY symbol")).mappings()]
 
     def get_future_price_anchor(self, symbol: str, session_date: date) -> Decimal | None:
         with self.session_factory() as session:

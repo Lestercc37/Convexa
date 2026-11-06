@@ -21,6 +21,7 @@ from backend.domain.entities import (
 )
 from backend.domain.ports import IStorage
 from backend.domain.use_cases.flow import SymbolFlowPressure, WhaleAlert
+from backend.domain.use_cases.index_stale_guard import IndexPriceFallback
 from backend.domain.use_cases.market_hours import EASTERN_TIME
 
 
@@ -188,3 +189,9 @@ class SyncStorageAsyncReadAdapter:
 
     async def get_future_price_anchor(self, symbol: str, session_date: date) -> Decimal | None:
         return self._storage.get_future_price_anchor(symbol, session_date)
+
+    async def save_index_price_fallback(self, status: IndexPriceFallback) -> None:
+        self._storage.save_index_price_fallback(status)
+
+    async def get_index_price_fallbacks(self) -> list[IndexPriceFallback]:
+        return self._storage.get_index_price_fallbacks()

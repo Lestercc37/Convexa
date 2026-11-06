@@ -34,6 +34,7 @@ from backend.domain.entities import (
 )
 from backend.domain.underlyings import ACTIVE_UNDERLYINGS_BY_SYMBOL
 from backend.domain.use_cases.flow import Moneyness, SymbolFlowPressure, WhaleAlert, WhaleAlertType
+from backend.domain.use_cases.index_stale_guard import IndexPriceFallback, fallback_from_row, fallback_params
 from backend.domain.use_cases.market_hours import EASTERN_TIME
 from backend.domain.use_cases.trade_date import volume_rows_since
 
@@ -1170,6 +1171,25 @@ class AsyncPostgreSQLStorage:
             )
             row = result.mappings().first()
             return Decimal(str(row["anchor_price"])) if row is not None else None
+
+    async def save_index_price_fallback(self, status: IndexPriceFallback) -> None:
+        async with self.session_factory.begin() as session:
+            await session.execute(
+                text(
+                    """
+                    INSERT INTO index_price_fallback (symbol, proxy, active, ratio, reason, since, updated_at)
+                    VALUES (:symbol, :proxy, :active, :ratio, :reason, :since, :updated_at)
+                    ON CONFLICT (symbol) DO UPDATE SET proxy = EXCLUDED.proxy, active = EXCLUDED.active, ratio = EXCLUDED.ratio,
+                        reason = EXCLUDED.reason, since = EXCLUDED.since, updated_at = EXCLUDED.updated_at
+                    """
+                ),
+                fallback_params(status),
+            )
+
+    async def get_index_price_fallbacks(self) -> list[IndexPriceFallback]:
+        async with self.session_factory() as session:
+            result = await session.execute(text("SELECT symbol, proxy, active, ratio, reason, since, updated_at FROM index_price_fallback ORDER BY symbol"))
+            return [fallback_from_row(row) for row in result.mappings()]
 
     async def _lookup_underlying_id(self, symbol: str) -> int | None:
         # Read-only counterpart to _ensure_underlying: reuses its cache but

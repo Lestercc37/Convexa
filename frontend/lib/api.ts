@@ -22,6 +22,7 @@ import type {
   ScreenerPresetSettingsUpdate,
   StrikeFlowResponse,
   UnderlyingsResponse,
+  PriceSourcesResponse,
   VwapHistoryResponse,
   CubeMinimumsResponse,
   WhaleAlertsResponse,
@@ -247,6 +248,11 @@ export function getMarketPriceHistory(symbol: string, signal?: AbortSignal) {
     `/market/${encodeURIComponent(symbol)}/history`,
     signal,
   );
+}
+
+// SPX / NDX written from SPY / QQQ while ThetaData's index feed lags (backend use_cases/index_stale_guard.py); empty the rest of the time.
+export function getPriceSources(signal?: AbortSignal) {
+  return getJson<PriceSourcesResponse>("/price-sources", signal);
 }
 
 export function getVwapHistory(symbol: string, signal?: AbortSignal) {

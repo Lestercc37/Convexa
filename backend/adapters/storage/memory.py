@@ -24,6 +24,7 @@ from backend.domain.entities import (
 )
 from backend.domain.underlyings import ACTIVE_UNDERLYINGS
 from backend.domain.use_cases.flow import SymbolFlowPressure, WhaleAlert
+from backend.domain.use_cases.index_stale_guard import IndexPriceFallback
 
 
 class InMemoryStorage:
@@ -49,6 +50,7 @@ class InMemoryStorage:
         self._volume_corrections: dict[str, int] = {}
         self._future_price_anchors: dict[tuple[str, date], Decimal] = {}
         self._future_price_anchor_saved_at: dict[tuple[str, date], datetime] = {}
+        self._index_price_fallbacks: dict[str, IndexPriceFallback] = {}
         self._future_price_anchor_source: dict[tuple[str, date], str] = {}
         self._whale_thresholds: dict[str, WhaleThreshold] = {
             underlying.symbol: WhaleThreshold(
@@ -327,3 +329,9 @@ class InMemoryStorage:
 
     def get_future_price_anchor_saved_at(self, symbol: str, session_date: date) -> datetime | None:
         return self._future_price_anchor_saved_at.get((symbol.upper(), session_date))
+
+    def save_index_price_fallback(self, status: IndexPriceFallback) -> None:
+        self._index_price_fallbacks[status.symbol.upper()] = status
+
+    def get_index_price_fallbacks(self) -> list[IndexPriceFallback]:
+        return sorted(self._index_price_fallbacks.values(), key=lambda status: status.symbol)

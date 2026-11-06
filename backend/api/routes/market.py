@@ -14,6 +14,8 @@ from backend.api.schemas import (
     ReplayDayResponse,
     ReplayDaysResponse,
     VwapHistoryResponse,
+    PriceSourceResponse,
+    PriceSourcesResponse,
 )
 from backend.api.serializers import (
     market_response,
@@ -24,6 +26,7 @@ from backend.api.serializers import (
 from backend.api.response_cache import TtlSingleFlight
 from backend.core.container import Container
 from backend.domain.entities import GammaView, PriceCandle
+from backend.domain.use_cases.index_stale_guard import STATUS_STALE
 from backend.domain.use_cases.read_models import MAX_SESSIONS_1M
 from backend.domain.use_cases.replay import ReplayDay, get_replay_day, get_replay_days
 from backend.domain.use_cases import (
@@ -45,6 +48,33 @@ def _market_cache(request: Request, container: Container) -> TtlSingleFlight[Mar
         held = (container, TtlSingleFlight(MARKET_CACHE_SECONDS))
         request.app.state.market_cache = held
     return held[1]
+
+
+@router.get(
+    "/price-sources",
+    response_model=PriceSourcesResponse,
+    summary="Indices whose price is currently derived from a proxy",
+    description=(
+        "SPX / NDX replaced by SPY / QQQ x the last good ratio while ThetaData's index feed lags (backend/domain/use_cases/index_stale_guard.py, "
+        "2026-11-06). Empty when every index is its own. ES / NQ follow SPX / NDX."
+    ),
+)
+async def get_price_sources(request: Request) -> PriceSourcesResponse:
+    container: Container = request.app.state.container
+    now = datetime.now(UTC)
+    replaced = [
+        PriceSourceResponse(
+            symbol=status.symbol,
+            proxy=status.proxy,
+            ratio=status.ratio,
+            reason=status.reason,
+            since=status.since.astimezone(UTC).isoformat().replace("+00:00", "Z"),
+        )
+        for status in await container.async_market_storage.get_index_price_fallbacks()
+        # A row the stream processor stopped refreshing is not trusted (it stopped mid-episode).
+        if status.active and now - status.updated_at <= STATUS_STALE
+    ]
+    return PriceSourcesResponse(schema_version=1, replaced=replaced)
 
 
 @router.get(
