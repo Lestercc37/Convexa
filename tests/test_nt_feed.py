@@ -83,13 +83,17 @@ def test_es_levels_and_heatmap_as_plain_text_lines(client) -> None:
     assert "basis 31.20 ninjatrader" in lines
     for expected in ("level gamma_flip 7412.50", "level call_wall 7450.00", "level put_wall 7400.00", "level abs 7425.00", "level avwap 7418.30", "level em_upper 7480.00", "dealer short_gamma"):
         assert expected in lines
-    # The fast layer had nothing: the cycle's one-minute columns are sent instead.
-    assert "heatmap 0dte_volume gamma 60" in lines
-    assert "strikes 7400.00 7405.00" in lines
+    # The fast layer had nothing: the cycle's one-minute columns are sent instead (the header names the fast bucket).
+    assert "heatmap 0dte_volume gamma 10" in lines
+    assert {call[5] for call in client.calls["heatmap"]} == {"fast", "cycle"}
+    # SPX strikes shifted by today's basis (+31.20); the previous session comes first, shifted by its own anchor (none here: today's).
+    assert "strikes 7431.20 7436.20" in lines
     col = next(line for line in lines if line.startswith("col "))
     assert col.endswith(" 1.23457e+09 _")
     assert lines[-1] == "end"
     assert client.calls["gamma"] == ("ES", "0dte_volume")
+    assert {call[0] for call in client.calls["heatmap"]} == {"SPX"}
+    assert len([line for line in lines if line.startswith("strikes ")]) == 2  # today and the previous session
 
 
 def test_since_asks_only_for_the_new_columns(client) -> None:
@@ -142,6 +146,6 @@ def test_es_pressure_rows_in_futures_points(client, monkeypatch) -> None:
     storage.minute_strike_flow.append(MinuteStrikeFlow(minute, "SPX", day_open.date(), 7400.0, "C", 80.0, 10, 0, 0, 0.0, 0.0))
     lines = client.get("/api/v1/feeds/nt/ES?pressure=true&heatmap=false", headers=KEY).text.splitlines()
     assert "pressure SPX 0dte 15" in lines
-    assert "pstrikes 7431.25" in lines
+    assert "pstrikes 7431.20" in lines
     rows = [line for line in lines if line.startswith("prow ")]
     assert rows[0].endswith(" 0") and rows[1].endswith(" 80")
