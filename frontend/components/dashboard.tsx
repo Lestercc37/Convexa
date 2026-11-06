@@ -46,6 +46,7 @@ import { RegimeCompactBadge } from "./regime-badge";
 import { VixTranslatorBadge } from "./vix-translator-badge";
 import { PriceSourceBadge } from "./price-source-badge";
 import { loadChartSettings, useChartSetting } from "@/lib/chart-settings";
+import { useAppFreshness } from "@/lib/app-freshness";
 import { FuturesLiveBadge } from "./futures-live-badge";
 import { ExpectedMoveCompactBadge } from "./expected-move-badge";
 import { SessionClock } from "./session-clock";
@@ -162,6 +163,8 @@ type DashboardProps = {
 };
 
 export function Dashboard({ mode = "full", route, onRouteChange }: DashboardProps = {}) {
+  // Reload by itself after the computer sleeps or when a new version is deployed (lib/app-freshness.ts, 2026-11-06).
+  useAppFreshness();
   const isChartOnly = mode === "chart";
   // The address the window opened with; only its starting values are used (later changes go the other way, through onRouteChange).
   const [initialRoute] = useState(route);
