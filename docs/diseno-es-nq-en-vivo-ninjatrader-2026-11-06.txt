@@ -1,0 +1,138 @@
+DISEÑO — ES/NQ EN VIVO DESDE NINJATRADER (y respaldo cuando ThetaData falla)
+Fecha: viernes 2026-11-06 (adelantado de las 16:47 por pedido de Lester, el día del atraso de índices de ThetaData).
+Estado: SOLO DISEÑO. No hay código ni despliegue. Construir la semana del 11-09 solo con el "sí" de Lester.
+
+------------------------------------------------------------------------------------------------------------------------
+0. POR QUÉ, EN UNA LÍNEA CADA COSA
+------------------------------------------------------------------------------------------------------------------------
+- Hoy (11-06), desde las 09:37, ThetaData mandó TODOS los índices (SPX, NDX, VIX, RUT) con 8-10 minutos de atraso. El ES de Convexa
+  (= SPX + ancla) quedó 20-34 puntos detrás de NinjaTrader. SPY, QQQ y las opciones llegaban bien. ThetaData lo confirmó en Discord
+  (09:46 "We are having delays").
+- Lester opera ES/NQ en NinjaTrader 8 (en la laptop, con datos CME en vivo). Ese feed no depende de ThetaData.
+- El indicador "Convexa Ancla" (11-04) ya demostró el camino: NinjaTrader -> túnel -> API con clave. El 11-06 a las 09:31:00 guardó
+  el ancla de ES solo (7400.25). El NQ (27155) fue rechazado por el chequeo: el SPX y el NDX de ThetaData ya venían mal desde el
+  primer minuto.
+- Lo que Lester pidió el 11-04 y el 11-05 y entra aquí: precios ES/NQ reales en Convexa, niveles del SPX/NDX pasados a ES/NQ con la
+  base en vivo (no fija desde la mañana), y absorción detectada en NinjaTrader que también se vea en Convexa.
+
+------------------------------------------------------------------------------------------------------------------------
+1. QUÉ MANDA EL INDICADOR (nuevo "Convexa Feed", o una segunda parte de "Convexa Ancla")
+------------------------------------------------------------------------------------------------------------------------
+- En los gráficos de 1 minuto de ES (o MES) y NQ (o MNQ), los mismos donde ya está el ancla.
+- Cada 1 segundo: el último precio (last), bid, ask y la hora de NinjaTrader en ET. No cada tick: como máximo 1 mensaje por segundo
+  por símbolo, y solo si el precio cambió o pasaron 5 s (latido).
+- Al cerrar cada vela de 1 minuto: open/high/low/close/volumen de esa vela, con su hora de INICIO (NinjaTrader marca la vela con la
+  hora de cierre; esto ya se resolvió en el ancla).
+- Con mercado extendido también (pre y post), marcado "eth" para que el gráfico de la sesión regular no lo mezcle.
+- Contrato: el nombre maestro (ES / NQ, y MES/MNQ cuentan como ES/NQ) más el vencimiento ("ES 12-26"). El servidor decide qué
+  contrato es "el del día" con la misma regla del ancla (vencimiento el tercer viernes, cambio 8 días antes: 2026-12-10).
+- Envíos agrupados: un POST cada 1 s con lo pendiente de los dos símbolos (~1 mensaje/s en total, ~2 KB). Nunca bloquea el gráfico
+  de NinjaTrader (igual que el ancla, Task.Run). Si un envío falla, se descarta: el siguiente segundo trae el precio nuevo. Las
+  velas de 1 minuto que fallen se reintentan hasta 10 minutos.
+- No pone órdenes. Solo lee las velas y el precio. La clave sale del mismo archivo %USERPROFILE%\.convexa\ninjatrader_anchor_key.txt
+  (nunca escrita en el indicador ni impresa).
+
+------------------------------------------------------------------------------------------------------------------------
+2. SERVIDOR
+------------------------------------------------------------------------------------------------------------------------
+Entrada: POST /api/v1/feeds/futures-live (por el túnel, como el ancla; la API sigue atada a localhost). Misma clave X-Convexa-Key.
+  Valida: símbolo ES/NQ/MES/MNQ, hora a menos de 30 s de la del servidor (si no: se marca "reloj desfasado" y no se usa en vivo),
+  precio dentro de ±3 % del último bueno.
+
+Guardado (tabla nueva, no market_snapshots, para que nada de lo actual lea esto sin querer):
+  futures_live_bars(symbol, contract, minute_start, open, high, low, close, volume, session 'rth'|'eth', received_at)  — 1 fila/min.
+  El último precio de cada segundo vive en memoria del API (y una fila "latest" por símbolo, actualizada cada 5 s, para que un
+  reinicio no deje el gráfico vacío). ~780 filas por día por símbolo en RTH+ETH: nada para el disco (V: crece +0.9 GB/día hoy).
+
+Base en vivo (lo más útil para los niveles):
+  basis_ES(minuto) = close ES del minuto − SPX del mismo minuto (y NQ − NDX). Se calcula SOLO con minutos donde los dos están
+  frescos (ver 3). Se suaviza con la mediana de los últimos 5 minutos buenos. Si no hay ninguno, se usa el ancla de la mañana como hoy.
+
+------------------------------------------------------------------------------------------------------------------------
+3. DETECTOR DE ÍNDICE ATRASADO (la lección de hoy; no necesita NinjaTrader)
+------------------------------------------------------------------------------------------------------------------------
+- Cada ciclo se compara la hora del último precio del SPX/NDX de ThetaData con la del SPY/QQQ, y la razón SPX/SPY contra la de los
+  últimos 30 minutos buenos (hoy saltó de 10.029 a 9.986-10.039; ayer se movió ±0.002).
+- Índice "atrasado" si: su hora va más de 20 s detrás de la del SPY, o la razón se aleja más de 0.05 % de la mediana durante 2
+  minutos seguidos.
+- Mientras esté atrasado:
+    SPX = SPY × razón buena de antes (y NDX = QQQ × razón); con NinjaTrader encendido, mejor: SPX = ES en vivo − base buena.
+    Una etiqueta visible en el gráfico: "SPX calculado (ThetaData atrasado)". Alerta por Telegram una sola vez.
+    El gamma/Flip/muros siguen con las opciones de ThetaData (llegaban bien); solo cambia el precio que se usa como spot.
+- Vuelve solo cuando el índice está 3 minutos seguidos fresco y alineado.
+- Riesgo: el SPY también puede fallar; si los dos fallan, no se inventa nada, se muestra "sin precio fresco".
+
+------------------------------------------------------------------------------------------------------------------------
+4. QUÉ LEE EL GRÁFICO DE ES/NQ
+------------------------------------------------------------------------------------------------------------------------
+- Con NinjaTrader fresco (último precio < 10 s): velas REALES de ES/NQ (las de futures_live_bars + la vela en formación con el
+  precio de cada segundo). Etiqueta pequeña "ES real (NinjaTrader)".
+- Sin NinjaTrader (cerrado, laptop dormida, > 10 s sin datos): lo de hoy, SPX/NDX + ancla, con etiqueta "ES aproximado (SPX + ancla)".
+  El cambio de uno a otro no borra el gráfico: las velas reales que ya llegaron se quedan; lo que falta se rellena con el aproximado.
+- Niveles (Flip, muros, ABS, heatmap, perfil): siguen saliendo del SPX/NDX, pero pasados a ES/NQ con la BASE EN VIVO del punto 2,
+  no con el ancla fija. Diferencia esperada: la base se mueve pocos puntos en el día, pero hoy el ancla quedó corrida ~5-7 puntos
+  por el SPX malo del primer minuto (09:30 Convexa 7371.85 vs S&P público 7378.56).
+- Heatmap de ES: igual que ahora (strikes del SPX corridos), solo cambia el corrimiento (base en vivo). Las alertas de ES/NQ también.
+- VWAP de ES: con velas reales se puede calcular el VWAP de ES de verdad (volumen de CME). Opcional, fase 2.
+
+------------------------------------------------------------------------------------------------------------------------
+5. ABSORCIÓN (lo de 11-04/11-05) — tres caminos y recomendación
+------------------------------------------------------------------------------------------------------------------------
+A) Todo en Convexa: NinjaTrader manda cada operación con su lado (agresor). Mucho tráfico (cientos/s en la apertura) por el túnel,
+   y los datos CME salen de su PC. NO recomendado.
+B) Todo en NinjaTrader: el indicador LEE de Convexa los niveles y las bandas brillantes del heatmap (cada 2 s, ~5 KB) y detecta la
+   absorción ahí mismo, sin retraso de ticks. Los datos CME nunca salen de NinjaTrader. Dibujar el heatmap completo dentro de
+   NinjaTrader (SharpDX) es posible pero es mucho trabajo.
+C) Híbrido (RECOMENDADO): como B para detectar (NinjaTrader lee niveles + bandas de Convexa y mira los ticks con agresor), pero
+   cuando detecta un evento manda SOLO el evento a Convexa (hora, precio, tipo "absorción vendedora en banda 7650", tamaños), y el
+   servidor lo pasa a SPX/NDX con la base en vivo y lo pinta en los gráficos abiertos en ~1-2 s. El heatmap se queda en Convexa.
+   Regla de partida (de su ejemplo del 11-04 11:00-11:32): zona alrededor de la banda brillante (no la línea exacta; ese día giró
+   7-8 puntos ANTES), varias burbujas vendedoras grandes que no rompen el mínimo, y después una compra agresiva grande en el mínimo.
+   Usa la vista que él tiene abierta (OI o Volumen). Se mide antes de creerle: 20+ sesiones grabadas.
+
+------------------------------------------------------------------------------------------------------------------------
+6. LICENCIA DE DATOS CME (importante)
+------------------------------------------------------------------------------------------------------------------------
+- Los datos en vivo de CME que recibe NinjaTrader son para el uso personal de Lester. Mostrarlos a otros usuarios de Convexa sería
+  redistribuirlos, y eso necesita otra licencia (de pago). No proponemos comprarla.
+- Por eso: las velas reales de ES/NQ y el último precio se muestran SOLO a su usuario. Los demás siguen viendo el aproximado
+  (SPX/NDX + base), que sale de ThetaData.
+- Lo que sí se puede compartir: los niveles y eventos calculados (un "evento de absorción en 7650" no es el dato crudo de CME).
+  Esto es mi lectura, no una opinión legal; si el equipo crece, conviene confirmarlo con NinjaTrader/CME.
+
+------------------------------------------------------------------------------------------------------------------------
+7. FALLAS Y QUÉ PASA
+------------------------------------------------------------------------------------------------------------------------
+- NinjaTrader cerrado / PC dormida / sin internet: > 10 s sin datos -> aproximado con etiqueta. Nada se rompe.
+- Reloj de la laptop corrido: los mensajes con > 30 s de diferencia se guardan como velas pero no se usan en vivo.
+- Rollover DEC -> MAR (10-12-2026): el servidor acepta los dos contratos ±3 días del cambio y usa el del día; si llegan los dos, el
+  de mayor volumen. La base salta (~+50/+60 ES): por eso se mide por contrato, nunca mezclando.
+- Túnel caído: lo mismo que NinjaTrader cerrado.
+- Clave inválida: 401, el indicador lo imprime en NinjaScript Output.
+- ThetaData atrasado (hoy): punto 3. NinjaTrader atrasado: se ve en su hora contra la del servidor.
+
+------------------------------------------------------------------------------------------------------------------------
+8. CARGA
+------------------------------------------------------------------------------------------------------------------------
+- ~1 POST/s (dos símbolos juntos) + 2 velas/min. El API hoy atiende ~3.3 req/min de fondo más los gráficos; esto suma ~60 req/min
+  muy livianas (< 1 ms cada una). El túnel y el CPU (29 % a las 09:33 hoy) no lo notan.
+- En NinjaTrader: un temporizador de 1 s y una petición HTTP en segundo plano; no toca el hilo del gráfico.
+
+------------------------------------------------------------------------------------------------------------------------
+9. PRUEBAS
+------------------------------------------------------------------------------------------------------------------------
+- Unitarias del servidor: validación, contrato del día y rollover, base en vivo (mediana, solo minutos frescos), detector de índice
+  atrasado con los datos REALES de hoy 11-06 (debe saltar ~09:37) y de ayer 11-05 (no debe saltar nunca).
+- Frontend: etiqueta real/aproximado, cambio sin borrar velas, solo el usuario de Lester ve las velas reales.
+- Indicador: compilar contra las DLL de NT8 (como el ancla), modo "dry run" que manda sin guardar.
+- En vivo: un día con NinjaTrader abierto: comparar cada minuto vela real vs aproximado y la base; cerrar NinjaTrader 2 minutos a
+  propósito y ver el cambio a aproximado y de vuelta.
+
+------------------------------------------------------------------------------------------------------------------------
+10. PASOS (después del "sí")
+------------------------------------------------------------------------------------------------------------------------
+Fase 1 (lun-mar): detector de índice atrasado + respaldo SPY/QQQ (sirve aunque NinjaTrader esté cerrado). Desplegar tras el cierre.
+Fase 2 (mar-mié): endpoint + tabla + indicador "Convexa Feed" + velas reales solo para Lester + base en vivo para los niveles de ES/NQ.
+Fase 3 (después, con medición): eventos de absorción (camino C).
+Lo que Lester hace UNA vez: copiar el .cs nuevo a Documents\NinjaTrader 8\bin\Custom\Indicators\, F5 en el NinjaScript Editor, y
+agregarlo a los gráficos de 1 minuto de ES y NQ (como hizo con el ancla). La clave ya está en su PC.

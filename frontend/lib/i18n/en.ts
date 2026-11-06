@@ -41,6 +41,11 @@ export const en: Translations = {
   regimeBadge: {
     ariaLabel: "Gamma regime",
   },
+  priceSourceBadge: {
+    label: (index, proxy) => `${index} ≈ ${proxy}`,
+    title: (index, proxy, ratio, since) =>
+      `ThetaData has been delivering ${index} late since ${since} (ET). Meanwhile Convexa computes ${index} from ${proxy} × ${ratio} (the ratio of the last good minutes); ES / NQ, the fast layer and the 0DTE heatmap use that price. It goes back by itself once ThetaData catches up.`,
+  },
   vixBadge: {
     perPoint: (target, low, high) => `+1 ≈ ${target} −${low} to −${high}`,
     today: (change, from, to) => ` · today ${change} ≈ ${from} to ${to}`,

@@ -41,6 +41,11 @@ export const es: Translations = {
   regimeBadge: {
     ariaLabel: "Régimen gamma",
   },
+  priceSourceBadge: {
+    label: (index, proxy) => `${index} ≈ ${proxy}`,
+    title: (index, proxy, ratio, since) =>
+      `ThetaData está entregando el ${index} atrasado desde las ${since} (ET). Mientras dure, Convexa calcula el ${index} con el ${proxy} × ${ratio} (la relación de los minutos buenos anteriores); el ES / NQ, la capa rápida y el heatmap 0DTE usan ese precio. Vuelve solo cuando ThetaData se pone al día.`,
+  },
   vixBadge: {
     perPoint: (target, low, high) => `+1 ≈ ${target} −${low} a −${high}`,
     today: (change, from, to) => ` · hoy ${change} ≈ ${from} a ${to}`,

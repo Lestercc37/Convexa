@@ -43,6 +43,10 @@ export type Translations = {
     label: string;
     title: (points: string, pct: string, low: string, high: string, iv: string) => string;
   };
+  priceSourceBadge: {
+    label: (index: string, proxy: string) => string;
+    title: (index: string, proxy: string, ratio: string, since: string) => string;
+  };
   vixBadge: {
     perPoint: (target: string, low: number, high: number) => string;
     today: (change: string, from: string, to: string) => string;

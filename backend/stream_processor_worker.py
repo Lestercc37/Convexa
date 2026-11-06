@@ -103,6 +103,7 @@ import collections
 import json
 import logging
 import time
+from dataclasses import replace
 from datetime import date, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
@@ -119,6 +120,7 @@ from backend.core.stream_processor_relay import StreamProcessorRelayClient
 from backend.core.whale_alerts_relay import WhaleAlertsRelayServer
 from backend.domain.entities import OptionQuoteMinute, QuoteEvent, UnderlyingTradeEvent
 from backend.domain.underlyings import ACTIVE_UNDERLYINGS
+from backend.domain.use_cases.index_stale_guard import STATUS_HEARTBEAT, IndexPriceFallback, IndexStaleGuard
 from backend.domain.use_cases.large_prints import LargePrintRecorder
 from backend.domain.use_cases.market_hours import EASTERN_TIME, is_market_open
 from backend.domain.use_cases.minute_flow import MINUTE_FLOW_SYMBOLS, MULTI_LEG_CONDITIONS, MinuteFlowRecorder
@@ -229,6 +231,9 @@ class _ProcessorState:
         self._pending_prices: dict[str, UnderlyingTradeEvent] = {}
         self._price_writers: dict[str, asyncio.Task[None]] = {}
         self._price_write_slots = asyncio.Semaphore(PRICE_WRITE_CONCURRENCY)
+        # SPX / NDX replaced by SPY / QQQ while ThetaData's index feed lags (use_cases/index_stale_guard.py, 2026-11-06).
+        self.index_guard = IndexStaleGuard()
+        self.index_guard_enabled = True
 
     def roll_if_due(self, now: datetime | None = None) -> None:
         """Rolls the counters the moment the trade date changes (20:15 ET), checked on every option
@@ -390,6 +395,20 @@ class _ProcessorState:
                 logger.exception("Stream processor worker: persisting the %s price failed", symbol)
 
 
+def _guard_allows(state: _ProcessorState, parsed) -> bool:
+    """The stale-index guard on one underlying trade (2026-11-06): False drops a lagging SPX / NDX tick (its proxy stands in); a SPY / QQQ trade
+    also writes the index it stands in for while that index lags. Only prints that can set the last price count. The tick itself still feeds
+    everything else (stream VWAP, large prints) when allowed."""
+    event = parsed.event
+    if not state.index_guard_enabled or not state.index_guard.watches(event.symbol) or not sets_last_price(event):
+        return True
+    if event.symbol in ("SPX", "NDX"):
+        return state.index_guard.observe_index(event.symbol, event.price, parsed.exchange_ts, event.as_of)
+    for index, price in state.index_guard.observe_proxy(event.symbol, event.price, event.as_of):
+        state.schedule_price_write(replace(event, symbol=index, price=price, condition=None, exchange=None))
+    return True
+
+
 def _handle_raw_frame(state: _ProcessorState, raw: str) -> None:
     """Parses one raw WS frame and publishes the result directly to
     wherever it's actually consumed -- see this module's own docstring.
@@ -428,6 +447,8 @@ def _handle_raw_frame(state: _ProcessorState, raw: str) -> None:
                             state.minute_flow.observe_trade(parsed.event, parsed.exchange_ts)
             elif security_type in ("STOCK", "INDEX"):
                 parsed_underlying = parse_underlying_trade_message(message, _SYMBOLS)
+                if parsed_underlying is not None and not _guard_allows(state, parsed_underlying):
+                    parsed_underlying = None
                 if parsed_underlying is not None:
                     # Fire-and-forget on purpose: persist_if_due does a
                     # real async Postgres read+write when due (most
@@ -581,6 +602,45 @@ async def _flush_minute_flow_periodically(container, state: _ProcessorState, str
             )
             written = strikes_written = 0
             last_log = time.monotonic()
+
+
+async def _publish_index_fallback_periodically(container, state: _ProcessorState) -> None:
+    """Every 5 s: logs each stale-index episode starting / ending and keeps its row in index_price_fallback (written at every change and every
+    STATUS_HEARTBEAT while open, so a row the processor stopped refreshing is not trusted). Never raises: a failed write is retried next time."""
+    open_since: dict[str, datetime] = {}
+    last_written: dict[str, datetime] = {}
+    pending: dict[str, IndexPriceFallback] = {}
+    while True:
+        await asyncio.sleep(5)
+        now = datetime.now(EASTERN_TIME)
+        for change in state.index_guard.drain_changes():
+            if change.active:
+                open_since[change.symbol] = change.at
+                logger.warning(
+                    "Stream processor worker: %s index feed is stale (%s): writing %s x %.5f in its place until it recovers",
+                    change.symbol, change.reason, change.proxy, change.ratio,
+                )
+            else:
+                logger.warning("Stream processor worker: %s index feed recovered, writing its own ticks again", change.symbol)
+            pending[change.symbol] = IndexPriceFallback(
+                change.symbol, change.proxy, change.active, change.ratio, change.reason, open_since.get(change.symbol, change.at), now
+            )
+            if not change.active:
+                open_since.pop(change.symbol, None)
+        for symbol, since in open_since.items():
+            if symbol not in pending and now - last_written.get(symbol, since) >= STATUS_HEARTBEAT:
+                stored = state.index_guard.status(symbol, since, now)
+                if stored is not None:
+                    pending[symbol] = stored
+        for symbol, status in list(pending.items()):
+            try:
+                await container.async_market_storage.save_index_price_fallback(status)
+                last_written[symbol] = now
+                del pending[symbol]
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.exception("Stream processor worker: saving the %s index fallback state failed, retrying in 5 s", symbol)
 
 
 async def _flush_strike_flow_periodically(container, state: _ProcessorState) -> None:
@@ -744,10 +804,12 @@ async def run() -> None:
         storage=container.async_market_storage,
     )
     state = _ProcessorState(whale_alerts_relay, price_use_case)
+    state.index_guard_enabled = container.settings.index_stale_guard_enabled
     await _resume_cumulative_volume(container, state)
     export_task = asyncio.create_task(_export_volume_periodically(container, state))
     frame_mix_task = asyncio.create_task(_log_frame_mix_periodically(state))
     stream_vwap_task = asyncio.create_task(_log_stream_vwap_periodically(state))
+    index_fallback_task = asyncio.create_task(_publish_index_fallback_periodically(container, state)) if state.index_guard_enabled else None
     state.minute_quotes_enabled = container.settings.option_quote_minutes_enabled
     minute_quotes_task = (
         asyncio.create_task(_record_option_quote_minutes_periodically(container, state))
@@ -801,6 +863,8 @@ async def run() -> None:
     finally:
         frame_mix_task.cancel()
         stream_vwap_task.cancel()
+        if index_fallback_task is not None:
+            index_fallback_task.cancel()
         if minute_quotes_task is not None:
             minute_quotes_task.cancel()
         if large_prints_task is not None:
