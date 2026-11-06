@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, time
 from decimal import Decimal
 from typing import Literal
 
@@ -16,6 +16,8 @@ from backend.api.schemas import (
     VwapHistoryResponse,
     PriceSourceResponse,
     PriceSourcesResponse,
+    OrderFlowEventResponse,
+    OrderFlowEventsResponse,
 )
 from backend.api.serializers import (
     market_response,
@@ -26,6 +28,8 @@ from backend.api.serializers import (
 from backend.api.response_cache import TtlSingleFlight
 from backend.core.container import Container
 from backend.domain.entities import GammaView, PriceCandle
+from backend.domain.use_cases.futures_events import future_for_symbol
+from backend.domain.use_cases.market_hours import EASTERN_TIME
 from backend.domain.use_cases.index_stale_guard import STATUS_STALE
 from backend.domain.use_cases.read_models import MAX_SESSIONS_1M
 from backend.domain.use_cases.replay import ReplayDay, get_replay_day, get_replay_days
@@ -48,6 +52,38 @@ def _market_cache(request: Request, container: Container) -> TtlSingleFlight[Mar
         held = (container, TtlSingleFlight(MARKET_CACHE_SECONDS))
         request.app.state.market_cache = held
     return held[1]
+
+
+@router.get(
+    "/order-flow-events/{symbol}",
+    response_model=OrderFlowEventsResponse,
+    summary="Absorption / stacked imbalance / big trade events from the futures, on this symbol's chart",
+    description=(
+        "Detected in the owner's NinjaTrader on ES / NQ / RTY (backend/domain/use_cases/futures_events.py) and translated when they arrived: "
+        "ES -> SPX and SPY, NQ -> NDX and QQQ, RTY -> IWM. Defaults to today's session (ET). Other symbols: always empty."
+    ),
+)
+async def get_order_flow_events(
+    symbol: str, request: Request, start: datetime | None = None, end: datetime | None = None
+) -> OrderFlowEventsResponse:
+    container: Container = request.app.state.container
+    symbol = symbol.upper()
+    future = future_for_symbol(symbol)
+    end = end or datetime.now(UTC)
+    start = start or datetime.combine(end.astimezone(EASTERN_TIME).date(), time(0, 0), EASTERN_TIME)
+    events = []
+    if future is not None:
+        for event in await container.async_market_storage.get_futures_events(future, start, end):
+            price = event.translated.get(symbol)
+            if price is None:
+                continue
+            events.append(
+                OrderFlowEventResponse(
+                    at=event.at.astimezone(UTC).isoformat().replace("+00:00", "Z"), type=event.type, side=event.side, price=float(price),
+                    future=event.future, future_price=float(event.price), volume=event.volume, detail=event.detail,
+                )
+            )
+    return OrderFlowEventsResponse(schema_version=1, symbol=symbol, events=events)
 
 
 @router.get(
