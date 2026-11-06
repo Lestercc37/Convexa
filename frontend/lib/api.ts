@@ -109,6 +109,15 @@ async function putJson<T>(path: string, body: unknown, signal?: AbortSignal): Pr
 
 export type SessionUser = { username: string; is_admin: boolean };
 
+// The trader's chart template (lib/chart-settings.ts; backend auth.py /me/chart-settings).
+export function getChartSettings(signal?: AbortSignal) {
+  return getJson<{ schema_version: number; settings: Record<string, unknown> }>("/auth/me/chart-settings", signal);
+}
+
+export function putChartSettings(settings: Record<string, unknown>, signal?: AbortSignal) {
+  return putJson<{ schema_version: number; saved: boolean }>("/auth/me/chart-settings", { settings }, signal);
+}
+
 export function login(username: string, password: string, signal?: AbortSignal) {
   return postJson<SessionUser>("/auth/login", { username, password }, signal);
 }

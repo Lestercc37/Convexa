@@ -4,6 +4,7 @@ import { TickMarkType } from "lightweight-charts";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { MinuteCandle } from "@/lib/candles";
 import { renderWithLanguage } from "@/lib/i18n/test-utils";
+import { resetChartSettingsForTests } from "@/lib/chart-settings";
 import { mostRecentSessionRange, regularSessionRange } from "@/lib/market-session";
 import type { AtrRange, ExpectedMove, GammaResponse } from "@/lib/types";
 import { derivedMetricsFixture } from "@/test/fixtures";
@@ -132,6 +133,7 @@ beforeAll(() => {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  resetChartSettingsForTests();
   chartMocks.attachedCountdowns.length = 0;
   chartMocks.timeScaleRange = { from: 0, to: 100 };
   chartMocks.timeScaleWidth = 1000;
@@ -1112,9 +1114,23 @@ describe("PriceChart", () => {
     unmount();
 
     window.localStorage.clear();
+    resetChartSettingsForTests(); // a fresh page: no template in memory either
     renderWithLanguage(<PriceChart symbol="SPY" candles={candlesWithRange} gamma={gamma} gammaView="tactical" />);
     await user.click(screen.getByLabelText("Alertas"));
     await waitFor(() => expect(screen.getByLabelText("Tamaño mínimo de las alertas (contratos-delta)")).toHaveValue("200")); // no suggestion for SPY here
+  });
+
+  it("keeps the trader's choices when the symbol changes (the chart is rebuilt from the saved template)", async () => {
+    chartMocks.getGammaHeatmap.mockResolvedValue({ schema_version: 1, symbol: "SPY", view: "tactical", metric: "gamma", bucket_seconds: 60, strikes: [550], columns: [], scale_p98: 1 });
+    const user = userEvent.setup();
+    const { unmount } = renderWithLanguage(<PriceChart symbol="SPY" candles={candlesWithRange} gamma={gamma} gammaView="tactical" />);
+    await user.click(screen.getByLabelText("Heatmap"));
+    await user.click(screen.getByRole("button", { name: "Abs." }));
+    unmount();
+    chartMocks.getGammaHeatmap.mockClear();
+    renderWithLanguage(<PriceChart symbol="QQQ" candles={candlesWithRange} gamma={gamma} gammaView="tactical" />);
+    expect(screen.getByLabelText("Heatmap")).toBeChecked();
+    await waitFor(() => expect(chartMocks.getGammaHeatmap).toHaveBeenCalledWith("QQQ", expect.objectContaining({ metric: "absolute_gamma" }), expect.any(AbortSignal)));
   });
 
   it("keeps the gamma heatmap off until the toggle is checked, then attaches a primitive fed by the heatmap endpoint", async () => {

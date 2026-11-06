@@ -1,3 +1,4 @@
+import { getChartSetting, setChartSetting } from "@/lib/chart-settings";
 // Minimum size of the alert cubes, per symbol (item 12b, Lester 2026-10-22): the API suggests one per symbol (about 40 cubes a session each, recomputed daily) and the viewer can type
 // their own, which this browser remembers per symbol. Sizes are delta-equivalent contracts (contracts x |delta|).
 
@@ -29,9 +30,10 @@ export function effectiveCubeMin(
 
 export function loadCubeMins(): Record<string, number> {
   try {
-    const raw = window.localStorage.getItem(CUBE_MIN_STORAGE_KEY);
-    if (!raw) return {};
-    const parsed: unknown = JSON.parse(raw);
+    const fromTemplate = getChartSetting("cubeMins");
+    const raw = fromTemplate === undefined ? window.localStorage.getItem(CUBE_MIN_STORAGE_KEY) : null;
+    if (fromTemplate === undefined && !raw) return {};
+    const parsed: unknown = fromTemplate !== undefined ? fromTemplate : JSON.parse(raw as string);
     if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return {};
     const out: Record<string, number> = {};
     for (const [symbol, value] of Object.entries(parsed as Record<string, unknown>)) {
@@ -45,6 +47,7 @@ export function loadCubeMins(): Record<string, number> {
 }
 
 export function saveCubeMins(values: Record<string, number>): void {
+  setChartSetting("cubeMins", values);
   try {
     window.localStorage.setItem(CUBE_MIN_STORAGE_KEY, JSON.stringify(values));
   } catch {
@@ -57,6 +60,8 @@ export const CUBE_SIZING_STORAGE_KEY = "convexa.cube-sizing.v1";
 
 export function loadCubeSizing(): "net" | "gross" {
   try {
+    const fromTemplate = getChartSetting("cubeSizing");
+    if (fromTemplate === "gross" || fromTemplate === "net") return fromTemplate;
     return window.localStorage.getItem(CUBE_SIZING_STORAGE_KEY) === "gross" ? "gross" : "net";
   } catch {
     return "net";
@@ -64,6 +69,7 @@ export function loadCubeSizing(): "net" | "gross" {
 }
 
 export function saveCubeSizing(sizing: "net" | "gross"): void {
+  setChartSetting("cubeSizing", sizing);
   try {
     window.localStorage.setItem(CUBE_SIZING_STORAGE_KEY, sizing);
   } catch {

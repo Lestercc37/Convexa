@@ -56,6 +56,7 @@ class InMemoryStorage:
         self._futures_live_quotes: dict[str, FuturesLiveQuote] = {}
         self._futures_live_bars: dict[tuple[str, str, datetime], FuturesLiveBar] = {}
         self._futures_events: list[FuturesEvent] = []
+        self._user_chart_settings: dict[int, dict] = {}
         self._future_price_anchor_source: dict[tuple[str, date], str] = {}
         self._whale_thresholds: dict[str, WhaleThreshold] = {
             underlying.symbol: WhaleThreshold(
@@ -350,6 +351,12 @@ class InMemoryStorage:
     def save_futures_live_bars(self, bars: list[FuturesLiveBar]) -> None:
         for bar in bars:
             self._futures_live_bars[(bar.symbol, bar.contract, bar.minute)] = bar
+
+    def get_user_chart_settings(self, user_id: int) -> dict | None:
+        return self._user_chart_settings.get(user_id)
+
+    def save_user_chart_settings(self, user_id: int, settings: dict) -> None:
+        self._user_chart_settings[user_id] = dict(settings)
 
     def save_futures_events(self, events: list[FuturesEvent]) -> None:
         self._futures_events.extend(events)

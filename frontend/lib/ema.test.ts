@@ -1,3 +1,4 @@
+import { resetChartSettingsForTests } from "@/lib/chart-settings";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
@@ -82,6 +83,8 @@ describe("storage", () => {
     ];
     saveEmas(emas);
     expect(loadEmas()).toEqual(emas);
+    // From here on, what this browser holds (the saved template would win otherwise).
+    resetChartSettingsForTests();
 
     window.localStorage.setItem(EMA_STORAGE_KEY, "not json");
     expect(loadEmas()).toEqual([]);
