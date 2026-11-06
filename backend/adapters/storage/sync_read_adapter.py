@@ -94,6 +94,15 @@ class SyncStorageAsyncReadAdapter:
     async def get_strike_flow_expirations(self, underlying: str, start: datetime, end: datetime) -> list[date]:
         return sorted({row.expiration for row in self.minute_strike_flow if row.symbol == underlying.upper() and start <= row.minute < end})
 
+    async def get_strike_flow_minutes(
+        self, underlying: str, start: datetime, end: datetime, expirations: list[date] | None
+    ) -> list[tuple[datetime, float, float]]:
+        return [
+            (row.minute, row.strike, row.delta_flow)
+            for row in self.minute_strike_flow
+            if row.symbol == underlying.upper() and start <= row.minute < end and (expirations is None or row.expiration in expirations)
+        ]
+
     async def get_strike_flow_summary(
         self, underlying: str, start: datetime, end: datetime, expirations: list[date] | None
     ) -> list[StrikeFlowSummary]:

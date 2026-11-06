@@ -24,6 +24,7 @@ RTY from IWM multiplied by the live RTY / IWM ratio from the 'Convexa Feed' bars
 
 from __future__ import annotations
 
+import time as clock
 from datetime import UTC, datetime, time, timedelta
 from decimal import Decimal
 
@@ -33,11 +34,13 @@ from fastapi.responses import PlainTextResponse
 from backend.api.routes.futures_anchor_feed import _key_matches
 from backend.core.container import Container
 from backend.domain.entities import GammaView
+from backend.domain.use_cases.flow_pressure import HALF_LIFE_MINUTES, pressure_matrix
 from backend.domain.use_cases.futures_live import live_ratio, normalize_live_future
 from backend.domain.use_cases.futures_proxy import _anchor_offset_async, _with_live_basis, live_future_basis_async
 from backend.domain.use_cases.gamma import get_gamma_exposure_async
 from backend.domain.use_cases.market_hours import EASTERN_TIME
 from backend.domain.use_cases.read_models import build_market_snapshot_async, get_gamma_heatmap_async
+from backend.domain.use_cases.strike_flow import flow_source_for, pick_expirations, price_mapping
 
 router = APIRouter(tags=["feeds"])
 
@@ -45,6 +48,10 @@ HEATMAP_METRICS = ("gamma", "absolute_gamma", "delta", "vanna", "charm", "call_g
 FAST_BUCKET_SECONDS = {"NDX": 30}
 CYCLE_BUCKET_SECONDS = 60
 SOURCE_SYMBOL = {"ES": "ES", "NQ": "NQ", "RTY": "IWM"}
+# The day's per-minute strike flow is one grouped query (SPX ~60 ms at midday, ~150 ms by the close, measured 2026-11-06): shared for a few
+# seconds by every chart asking for the same flow source and expirations.
+PRESSURE_CACHE_SECONDS = 5.0
+_pressure_cache: dict[tuple[str, str], tuple[float, list, list]] = {}
 
 
 def _num(value: Decimal | float | None, scale: float = 1.0) -> str | None:
@@ -65,6 +72,9 @@ async def nt_levels(
     metric: str = Query(default="gamma"),
     since: int | None = Query(default=None, description="epoch seconds: only the heatmap columns from that bucket on"),
     heatmap: bool = Query(default=True),
+    pressure: bool = Query(default=False, description="add the options-flow pressure per strike and minute (blue heatmap)"),
+    pexp: str = Query(default="0dte", pattern="^(0dte|0-2dte|all)$"),
+    psince: int | None = Query(default=None, description="epoch seconds: only the pressure minutes from that one on"),
     x_convexa_key: str | None = Header(default=None),
 ) -> PlainTextResponse:
     if not _key_matches(x_convexa_key):
@@ -139,5 +149,41 @@ async def nt_levels(
         for column in matrix.columns:
             epoch = int(column.as_of.timestamp()) // bucket * bucket
             lines.append(f"col {epoch} " + " ".join(_cell(value) for value in column.values))
+    if pressure:
+        lines.extend(await _pressure_lines(storage, name, scale, pexp, psince))
     lines.append("end")
     return PlainTextResponse("\n".join(lines) + "\n")
+
+
+async def _pressure_lines(storage, future: str, rty_ratio: float, pexp: str, psince: int | None) -> list[str]:
+    """`pressure <flow source> <expirations> <half life>`, `pstrikes` (the flow source's strikes in futures points) and one `prow <epoch> ...` per
+    minute since 09:30 (or since `psince`): the decayed signed flow per strike (use_cases/flow_pressure.py). ES reads SPX, NQ QQQ, RTY IWM."""
+    now = datetime.now(UTC)
+    source = flow_source_for(future, None) if future != "RTY" else "IWM"
+    day_open = datetime.combine(now.astimezone(EASTERN_TIME).date(), time(9, 30), EASTERN_TIME)
+    end = min(now, day_open + timedelta(hours=6, minutes=30))
+    if end <= day_open:
+        return [f"pressure {source} {pexp} {HALF_LIFE_MINUTES:g}", "pstrikes"]
+    cached = _pressure_cache.get((source, pexp))
+    if cached is not None and clock.monotonic() - cached[0] < PRESSURE_CACHE_SECONDS:
+        strikes, minutes = cached[1], cached[2]
+    else:
+        traded = await storage.get_strike_flow_expirations(source, day_open, end)
+        expirations = pick_expirations(pexp, traded, day_open.date())
+        rows = await storage.get_strike_flow_minutes(source, day_open, end, expirations) if expirations != [] else []
+        strikes, minutes = pressure_matrix(rows, day_open, end + timedelta(minutes=1))
+        _pressure_cache[(source, pexp)] = (clock.monotonic(), strikes, minutes)
+    if future == "RTY":
+        ratio, offset = rty_ratio, 0.0  # an IWM strike x the live RTY / IWM ratio
+    else:
+        ratio, offset = await price_mapping(storage, future, source, now)
+    lines = [f"pressure {source} {pexp} {HALF_LIFE_MINUTES:g}"]
+    if ratio is None or not strikes:
+        lines.append("pstrikes")
+        return lines
+    lines.append("pstrikes " + " ".join(f"{strike * ratio + offset:.2f}" for strike in strikes))
+    first = datetime.fromtimestamp(psince, UTC) if psince is not None else day_open
+    for minute, values in minutes:
+        if minute >= first:
+            lines.append(f"prow {int(minute.timestamp())} " + " ".join(f"{value:.4g}" if value else "0" for value in values))
+    return lines
