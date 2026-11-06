@@ -1,0 +1,45 @@
+ESTUDIO PRE-REGISTRADO — ORDER FLOW (NinjaTrader) + GAMMA (Convexa)
+Escrito el viernes 2026-11-06 ~14:35 ET, ANTES de mirar ningún resultado. Pedido por Lester ("algo bien robusto", 2026-11-06).
+Las reglas de abajo no se cambian después de ver los números. Lo que se pruebe fuera de esto se marca como EXPLORATORIO.
+
+1. DATOS
+- Order flow: exportado por 'Convexa Detector' (Order Flow+ Volumetric de 1 minuto) desde el NinjaTrader de Lester:
+  V:\Convexa\hist\nt_export\{ES,NQ}_{día}.csv, 2026-10-07 .. 2026-11-06 (contrato DEC26). Solo sesión regular 09:30-16:00 ET.
+- Convexa: la gamma neta por strike de la vista TÁCTICA (0-2 DTE; la única con historia en todo el período) del último ciclo guardado a
+  cada minuto (gamma_aggregate_items), SPX para ES y NDX para NQ. El precio del índice del mismo minuto (market_snapshots).
+- Diferencia futuro-índice POR MINUTO: cierre del futuro − último precio del índice dentro de ese minuto (mediana móvil de 5 minutos).
+  Minutos con el índice reemplazado o sin precio: fuera.
+
+2. EVENTOS (las mismas reglas que el indicador; tamaños = los automáticos del indicador)
+- E1 imbalance apilado comprador: >= 3 precios seguidos con compras >= 3 × ventas del precio de abajo y >= 30 contratos (NQ 15).
+- E2 imbalance apilado vendedor: el espejo.
+- E3 absorción compradora en la vela: ventas en el mínimo >= 150 (NQ 60) y cierre en la mitad de arriba.
+- E4 absorción vendedora: el espejo en el máximo.
+- Un minuto puede tener varios eventos; si un mismo tipo se repite en minutos seguidos, cuenta solo el primero de cada racha.
+
+3. CONTEXTO "BANDA BRILLANTE"
+- Banda brillante del minuto = strike del índice con |gamma neta| >= 0.5 × la mayor |gamma neta| de ese ciclo (vista táctica).
+- Evento "en banda" = el precio del evento (pasado al índice con la diferencia del minuto) a <= 10 puntos de una banda brillante en SPX
+  (NQ: <= 40 puntos de NDX). Lester 11-04: el giro ocurrió 7-8 puntos ANTES de la banda, por eso una zona y no la línea.
+- Evento "lejos" = a más de 2 veces esa distancia de cualquier banda brillante. Lo intermedio no entra en la comparación principal.
+
+4. RESULTADO
+- Retorno direccional del futuro: (cierre a t+h − cierre del minuto del evento) × (+1 compra / −1 venta), en puntos y en múltiplos del
+  rango medio de 1 minuto de ese día (para juntar ES y NQ). h = 5, 15 (PRINCIPAL) y 30 minutos. Eventos sin t+h dentro de la sesión: fuera.
+- También: % de eventos con retorno direccional > 0 a 15 minutos.
+
+5. HIPÓTESIS PRINCIPAL (una sola)
+- H1: los eventos compradores (E1 + E3) y vendedores (E2 + E4), juntando ES y NQ, tienen MAYOR retorno direccional a 15 minutos cuando
+  están "en banda" que cuando están "lejos".
+- Prueba: diferencia de medias (en múltiplos de rango), intervalo de confianza del 95 % por bootstrap por DÍA (se remuestrean días
+  completos, 5.000 repeticiones). H1 se acepta solo si el intervalo queda entero por encima de 0.
+
+6. SECUNDARIAS (se reportan, no deciden)
+- Cada evento por separado y cada futuro por separado; h = 5 y 30.
+- Eventos en banda A FAVOR del lado de la banda (compra con la banda debajo del precio = soporte; venta con la banda arriba) contra EN CONTRA.
+- Línea base: retorno direccional de minutos al azar del mismo día (debe ser ~0).
+
+7. LO QUE NO ENTRA (exploratorio más adelante)
+- Presión del flujo de opciones: el flujo por strike del SPX existe solo desde 2026-10-30 (5 sesiones en el período): se mira aparte.
+- Vistas 0DTE (OI / Volumen): pocas sesiones guardadas.
+- Absorción con relleno del bid/ask y órdenes grandes: necesitan la cinta en vivo, no están en el export.
