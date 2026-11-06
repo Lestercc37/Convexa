@@ -343,6 +343,9 @@ namespace NinjaTrader.NinjaScript.Indicators
             ordersToday++;
             if (orderVolume >= OrderLogMin)
                 LogOrder(dayEt);
+            // While the day's histogram is warming up (a reload starts it again) nothing is marked: the floor alone flooded the chart.
+            if (BigTradeVolume <= 0 && ordersToday <= 300)
+                threshold = long.MaxValue;
             if (orderVolume >= threshold)
                 Emit(orderLastUtc, "big_trade", orderBuy ? "buy" : "sell", orderPrice, orderPrice, orderPrice, orderVolume,
                     (orderBuy ? "B " : "S ") + orderVolume + " (>= " + threshold + ")");
