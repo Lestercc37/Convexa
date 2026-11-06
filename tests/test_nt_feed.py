@@ -97,7 +97,13 @@ def test_es_levels_and_heatmap_as_plain_text_lines(client) -> None:
 
 
 def test_since_asks_only_for_the_new_columns(client) -> None:
-    since = int((NOW - timedelta(seconds=30)).timestamp())
+    from backend.domain.use_cases.market_hours import EASTERN_TIME
+
+    # A moment inside today's heatmap window (08:30-16:15 ET): after 16:15 there are, correctly, no new columns to ask for.
+    window_start = datetime.combine(NOW.astimezone(EASTERN_TIME).date(), datetime.min.time(), EASTERN_TIME).replace(hour=8, minute=31)
+    if NOW < window_start:
+        pytest.skip("before 08:31 ET today's heatmap window has not started")
+    since = int(min(NOW - timedelta(seconds=30), window_start + timedelta(hours=7)).timestamp())
     client.get(f"/api/v1/feeds/nt/ES?since={since}", headers=KEY)
     starts = {call[3] for call in client.calls["heatmap"]}
     assert starts == {datetime.fromtimestamp(since, UTC)}
