@@ -114,14 +114,14 @@ def is_front(contract: str, day: date) -> bool:
     return contract_month(contract) == (expiry.year, expiry.month)
 
 
-def live_basis(bars: list[FuturesLiveBar], now: datetime) -> tuple[float, int, datetime] | None:
+def live_basis(bars: list[FuturesLiveBar], now: datetime, fresh: timedelta | None = LIVE_BASIS_FRESH) -> tuple[float, int, datetime] | None:
     """(median close - index price, bars used, newest bar minute) of the last LIVE_BASIS_BARS front regular-hours bars with an index price,
-    or None when the newest of them is older than LIVE_BASIS_FRESH. `bars` in any order."""
+    or None when the newest of them is older than `fresh` (None: any age, the LAST KNOWN basis). `bars` in any order."""
     usable = sorted(
         (bar for bar in bars if bar.index_price is not None and bar.session == "rth" and is_front(bar.contract, bar.minute.date())),
         key=lambda bar: bar.minute,
     )[-LIVE_BASIS_BARS:]
-    if not usable or now - (usable[-1].minute + timedelta(minutes=1)) > LIVE_BASIS_FRESH:
+    if not usable or (fresh is not None and now - (usable[-1].minute + timedelta(minutes=1)) > fresh):
         return None
     return statistics.median(float(bar.close - bar.index_price) for bar in usable), len(usable), usable[-1].minute
 

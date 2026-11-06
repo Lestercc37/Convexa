@@ -561,7 +561,7 @@ class FutureLiveResponse(BaseModel):
     schema_version: int = Field(examples=[1])
     symbol: str = Field(examples=["ES"])
     offset: Number | None = Field(default=None, description="future - index in use right now (ES / NQ); None before the anchor and without NinjaTrader")
-    offset_source: Literal["ninjatrader", "anchor"] | None = None
+    offset_source: Literal["ninjatrader", "anchor", "ninjatrader_last"] | None = None
     live_basis: Number | None = Field(default=None, description="median close - index of the last fresh NinjaTrader bars")
     anchor_offset: Number | None = Field(default=None, description="anchor - the index's first minute")
     quote: FutureLiveQuoteResponse | None = Field(default=None, description="the real last price: ONLY for the owner (CME data for his personal use), while fresh")

@@ -37,7 +37,8 @@ export function FuturesLiveBadge({ symbol }: { symbol: string }) {
 
   if (!wanted || !live || (live.offset === null && !live.quote)) return null;
   const basis = live.offset !== null ? signedPoints(live.offset) : null;
-  const source = live.offset_source === "ninjatrader" ? t.futuresLiveBadge.sourceLive : t.futuresLiveBadge.sourceAnchor;
+  const source =
+    live.offset_source === "ninjatrader" ? t.futuresLiveBadge.sourceLive : live.offset_source === "ninjatrader_last" ? t.futuresLiveBadge.sourceLast : t.futuresLiveBadge.sourceAnchor;
   const title = t.futuresLiveBadge.title(
     future,
     live.live_basis !== null ? signedPoints(live.live_basis) : "—",

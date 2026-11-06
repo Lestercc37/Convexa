@@ -131,3 +131,16 @@ def test_the_real_last_price_is_only_for_the_owner(feed) -> None:
     assert teammate["quote"] is None
     assert feed.get("/api/v1/futures/CL/live").status_code == 404
 
+
+
+def test_without_anchor_or_fresh_bars_the_last_known_basis_is_used(feed) -> None:
+    # 2026-11-06: NQ had no 09:31 anchor; after the close 'Convexa Niveles' got 409 all evening. The last known NinjaTrader basis fills in.
+    futures_proxy._last_basis_cache.clear()
+    storage = feed.app.state.container.storage
+    now = datetime.now(UTC)
+    contract = "ES 12-26" if is_front("ES 12-26", now.date()) else "ES 03-27"
+    old = (now - timedelta(hours=20)).replace(second=0, microsecond=0)
+    storage.save_futures_live_bars([_bar(old - timedelta(minutes=i), "7431", "7400", contract=contract) for i in range(5)])
+    body = feed.get("/api/v1/futures/ES/live").json()
+    assert body["offset"] == 31.0 and body["offset_source"] == "ninjatrader_last" and body["live_basis"] is None
+    futures_proxy._last_basis_cache.clear()

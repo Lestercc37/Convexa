@@ -43,7 +43,7 @@ from backend.core.container import Container
 from backend.domain.entities import GammaView
 from backend.domain.use_cases.flow_pressure import HALF_LIFE_MINUTES, pressure_matrix
 from backend.domain.use_cases.futures_live import live_ratio, normalize_live_future
-from backend.domain.use_cases.futures_proxy import _anchor_offset_async, _with_live_basis, live_future_basis_async
+from backend.domain.use_cases.futures_proxy import resolve_future_offset_async
 from backend.domain.use_cases.gamma import get_gamma_exposure_async
 from backend.domain.use_cases.market_hours import EASTERN_TIME
 from backend.domain.use_cases.read_models import build_market_snapshot_async, get_gamma_heatmap_async
@@ -135,12 +135,10 @@ async def nt_levels(
         lines.append(f"basis_ratio {scale:.6f} ninjatrader")
     else:
         index = {"ES": "SPX", "NQ": "NDX"}[name]
-        anchor = await _anchor_offset_async(storage, name, index)
-        live = await live_future_basis_async(storage, name)
-        offset = _with_live_basis(name, anchor, live)
+        offset, source, _, _ = await resolve_future_offset_async(storage, name, index)
         if offset is None:
-            raise HTTPException(status_code=409, detail=f"{name} has no basis yet: no 09:31 anchor and no fresh NinjaTrader bars")
-        lines.append(f"basis {float(offset):.2f} {'anchor' if offset == anchor else 'ninjatrader'}")
+            raise HTTPException(status_code=409, detail=f"{name} has no basis yet: no 09:31 anchor and no NinjaTrader bars")
+        lines.append(f"basis {float(offset):.2f} {source}")
         today_offset = float(offset)
 
     gamma = await get_gamma_exposure_async(storage, symbol, view=view)

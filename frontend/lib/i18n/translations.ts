@@ -48,6 +48,7 @@ export type Translations = {
     basis: (basis: string, source: string) => string;
     sourceLive: string;
     sourceAnchor: string;
+    sourceLast: string;
     title: (future: string, live: string, anchor: string) => string;
   };
   priceSourceBadge: {

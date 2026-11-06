@@ -16,9 +16,7 @@ from backend.domain.use_cases import PRICE_PROXY_SYMBOL_BY_FUTURE
 from backend.domain.use_cases.errors import NotFoundError, OpeningPriceNotOpenYetError
 from backend.domain.use_cases.futures_proxy import (
     OpeningPriceWindow,
-    _anchor_offset_async,
-    _with_live_basis,
-    live_future_basis_async,
+    resolve_future_offset_async,
     opening_price_window,
 )
 
@@ -125,10 +123,7 @@ async def get_future_live(symbol: str, request: Request, session: SessionPayload
     source = None
     proxy_symbol = PRICE_PROXY_SYMBOL_BY_FUTURE.get(future)
     if proxy_symbol is not None:
-        anchor = await _anchor_offset_async(storage, future, proxy_symbol)
-        live = await live_future_basis_async(storage, future)
-        offset = _with_live_basis(future, anchor, live)
-        source = None if offset is None else ("anchor" if offset == anchor else "ninjatrader")
+        offset, source, anchor, live = await resolve_future_offset_async(storage, future, proxy_symbol)
     quote = None
     if session.is_admin:
         stored = await storage.get_futures_live_quote(future)
