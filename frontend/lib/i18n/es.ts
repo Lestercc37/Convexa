@@ -41,6 +41,12 @@ export const es: Translations = {
   regimeBadge: {
     ariaLabel: "Régimen gamma",
   },
+  vixBadge: {
+    perPoint: (target, low, high) => `+1 ≈ ${target} −${low} a −${high}`,
+    today: (change, from, to) => ` · hoy ${change} ≈ ${from} a ${to}`,
+    title: (target, low, high) =>
+      `Con el VIX en este nivel, cada punto que sube el VIX ha movido el ${target} entre ${low} y ${high} puntos a la baja (y al revés cuando baja), en ventanas de 15 minutos: la mitad central de los casos de 37 sesiones (estudio del 5 de noviembre). El ${target} se movió en sentido contrario al VIX el 82-85 % de las veces. "Hoy" traduce el cambio del VIX desde la apertura con la banda del nivel de apertura. Es una referencia, no un objetivo.`,
+  },
   expectedMoveBadge: {
     label: "MOV. ESP.",
     title: (points, pct, low, high, iv) =>
