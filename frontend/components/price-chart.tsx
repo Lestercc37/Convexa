@@ -17,6 +17,7 @@ import {
   type IPriceLine,
   type ISeriesApi,
   type LineWidth,
+  type Time,
   type UTCTimestamp,
 } from "lightweight-charts";
 import { getAlerts, getGammaHeatmap, getGammaHistory, getGammaProfile, getMinuteFlow, getOptionChain, getOptionChainExpirations, getPriceCandles, getCubeMinimums } from "@/lib/api";
@@ -58,6 +59,7 @@ import {
 } from "./live-profile-primitive";
 import { HEATMAP_METRIC_TABS } from "@/lib/heatmap-metrics";
 import { growingScales, usesGrowingScale } from "@/lib/growing-scale";
+import { projectsSession, sessionSlots } from "@/lib/heatmap-projection";
 import { LIVE_LEVELS_POLLING_INTERVAL_MS, POLLING_INTERVAL_MS } from "@/lib/polling";
 import { currentExpirations, smilePointsFromChain } from "@/lib/volatility-smile-data";
 import type { ChartLayerPreset } from "@/lib/view-route";
@@ -160,7 +162,7 @@ export function cappedRange(
 }
 
 /** fitContent() now, then (the library applies the new spacing a moment later) the spacing cap; the measured numbers go to the flight recorder (convexaChartLog) so the fit can be checked numerically. */
-function fitCandles(chart: IChartApi, stillWanted: () => boolean, reservedPx: () => number): void {
+function fitCandles(chart: IChartApi, stillWanted: () => boolean, reservedPx: () => number, sessionSpan?: () => SessionSpan | null): void {
   chart.timeScale().fitContent();
   window.setTimeout(() => {
     if (!stillWanted()) return;
@@ -168,6 +170,17 @@ function fitCandles(chart: IChartApi, stillWanted: () => boolean, reservedPx: ()
       const timeScale = chart.timeScale();
       const range = timeScale.getVisibleLogicalRange();
       const width = timeScale.width();
+      // ES with the heatmap painted to the close (lib/heatmap-projection.ts): fitContent() stops at the last real candle (it ignores trailing empty slots,
+      // measured on lightweight-charts 5.2 on 2026-11-06), so the whole 09:30-16:00 span is set by hand, the profile strip kept free at its right.
+      const span = sessionSpan?.() ?? null;
+      const first = span ? timeScale.timeToIndex(span.first as Time, true) : null;
+      const last = span ? timeScale.timeToIndex(span.last as Time, true) : null;
+      if (first !== null && last !== null && last > first && width > reservedPx()) {
+        const spacing = (width - reservedPx()) / (last - first + 1);
+        timeScale.setVisibleLogicalRange({ from: first - 0.5, to: last + 0.5 + reservedPx() / spacing });
+        recordChartEvent("fit", { bars: last - first + 1, spacing: Math.round(spacing * 10) / 10, width, capped: false });
+        return;
+      }
       const next = cappedRange(range, width, reservedPx());
       recordChartEvent("fit", { bars: range ? Math.round((range.to - range.from) * 10) / 10 : null, spacing: range && width > 0 ? Math.round((width / (range.to - range.from)) * 10) / 10 : null, width, capped: next !== null });
       if (next) timeScale.setVisibleLogicalRange(next);
@@ -181,6 +194,16 @@ function fitCandles(chart: IChartApi, stillWanted: () => boolean, reservedPx: ()
 // Gamma levels, VWAP, ATR bands) — a user-drawn annotation, not something
 // Convexa calculated.
 const TRENDLINE_COLOR = "#e6e6e6";
+
+// The ES session projection (lib/heatmap-projection.ts): 09:30-16:00 and the candle step of each timeframe.
+type SessionSpan = { first: number; last: number };
+const SESSION_SECONDS = 6.5 * 3600;
+const TIMEFRAME_STEP_SECONDS: Record<Timeframe, number> = { "1m": 60, "5m": 300, "15m": 900, "1h": 3600 };
+
+/** The last candle slot before the close of the session that opens at `openSeconds`. */
+function lastSessionSlot(openSeconds: number, timeframe: Timeframe): number {
+  return sessionSlots(openSeconds, openSeconds + SESSION_SECONDS, TIMEFRAME_STEP_SECONDS[timeframe]).at(-1) ?? openSeconds;
+}
 
 // The profile's own fast-layer read (heatmap off, 0DTE tab): the last minute of columns, and a minute's pause when the fast layer has nothing.
 const FAST_TAIL_WINDOW_MS = 60_000;
@@ -593,6 +616,8 @@ export function PriceChart({
   // Whether the heatmap's latest load came from the fast layer, and the fast layer's last columns read for the profile alone when the heatmap is off
   // (0DTE tabs only, see lib/profile-source.ts).
   const [heatmapFast, setHeatmapFast] = useState(false);
+  // The 09:30-16:00 slots the ES chart is fitted to while its heatmap is painted to the close (null otherwise).
+  const sessionSpanRef = useRef<SessionSpan | null>(null);
   const [fastTailProfile, setFastTailProfile] = useState<ProfileBar[] | null>(null);
   // The width the chart currently keeps free at the right of the time scale for the profile column (0 = none), and whether the column is on.
   const reservedRightPxRef = useRef(0);
@@ -733,7 +758,7 @@ export function PriceChart({
         mergePriceRange(original(), referenceLevelsRef.current),
     });
     series.setData(withSessionOpenAnchor(initialCandlesRef.current, sessionOpenSecondsRef.current));
-    fitCandles(chart, () => chartRef.current === chart && !userAdjustedRef.current, () => reservedRightPxRef.current);
+    fitCandles(chart, () => chartRef.current === chart && !userAdjustedRef.current, () => reservedRightPxRef.current, () => sessionSpanRef.current);
     chartRef.current = chart;
     seriesRef.current = series;
 
@@ -782,7 +807,7 @@ export function PriceChart({
       if (width > 0 && (!hasRefitAfterRealSizeRef.current || (!userAdjustedRef.current && width !== lastFitWidthRef.current))) {
         hasRefitAfterRealSizeRef.current = true;
         lastFitWidthRef.current = width;
-        fitCandles(chart, () => chartRef.current === chart && !userAdjustedRef.current, () => reservedRightPxRef.current);
+        fitCandles(chart, () => chartRef.current === chart && !userAdjustedRef.current, () => reservedRightPxRef.current, () => sessionSpanRef.current);
       }
       // Works around a real, confirmed lightweight-charts (5.2.0) resize bug
       // -- live, 2026-09-23: after some resizes, the candlestick series and
@@ -942,7 +967,7 @@ export function PriceChart({
     ) {
       if (chartRef.current) {
         const chart = chartRef.current;
-        fitCandles(chart, () => chartRef.current === chart && !userAdjustedRef.current, () => reservedRightPxRef.current);
+        fitCandles(chart, () => chartRef.current === chart && !userAdjustedRef.current, () => reservedRightPxRef.current, () => sessionSpanRef.current);
       }
     }
   }, [candles]);
@@ -972,7 +997,7 @@ export function PriceChart({
     if (reserved === reservedRightPxRef.current) return;
     reservedRightPxRef.current = reserved;
     chart.applyOptions({ timeScale: { rightOffsetPixels: reserved } });
-    fitCandles(chart, () => chartRef.current === chart, () => reservedRightPxRef.current);
+    fitCandles(chart, () => chartRef.current === chart, () => reservedRightPxRef.current, () => sessionSpanRef.current);
   }, [showProfile]);
 
   // What the profile shows follows the heatmap's figure while the heatmap is on (net gamma otherwise). On the 0DTE tabs it follows the fast layer
@@ -1337,9 +1362,11 @@ export function PriceChart({
           fast = loaded.fast;
           const oi = await openInterest;
           if (controller.signal.aborted) return;
-          const data: HeatmapData = oi
+          const scaled: HeatmapData = oi
             ? { ...loaded.data, scaleMode: "growing", columnScaleList: growingScales(loaded.data, oi.data) }
             : { ...loaded.data, scaleMode: dayScale ? "day" : "column" };
+          // ES (trial, lib/heatmap-projection.ts): the latest column is stretched to the close; start is an hour before the open.
+          const data: HeatmapData = projectsSession(symbol) ? { ...scaled, projectUntil: lastSessionSlot(start.getTime() / 1000 + 3600, timeframe) } : scaled;
           primitive.setData(data);
           setHeatmapProfile(profileBarsFromHeatmap(data));
           setHeatmapFast(loaded.fast);
@@ -1361,7 +1388,26 @@ export function PriceChart({
       setHeatmapProfile(null);
       setHeatmapFast(false);
     };
-  }, [showHeatmap, sidesOn, symbol, gammaView, heatmapMetric, dayScale]);
+  }, [showHeatmap, sidesOn, symbol, gammaView, heatmapMetric, dayScale, timeframe]);
+
+  // ES (trial, lib/heatmap-projection.ts): empty slots up to 16:00 on an invisible series of their own, so the time axis spans the whole session and the heatmap
+  // can be painted to the close; the candle series and its live updates are untouched. Only while the heatmap is on.
+  const sessionProjected = showHeatmap && !sidesOn && projectsSession(symbol);
+  useEffect(() => {
+    const chart = chartRef.current;
+    if (!chart || !sessionProjected) return;
+    const open = mostRecentSessionRange(Date.now()).openSeconds;
+    const slots = sessionSlots(open, open + SESSION_SECONDS, TIMEFRAME_STEP_SECONDS[timeframe]);
+    const spacer = chart.addSeries(LineSeries, { lineVisible: false, pointMarkersVisible: false, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false });
+    spacer.setData(slots.map((time) => ({ time: time as UTCTimestamp })));
+    sessionSpanRef.current = slots.length ? { first: slots[0], last: slots[slots.length - 1] } : null;
+    if (!userAdjustedRef.current) fitCandles(chart, () => chartRef.current === chart && !userAdjustedRef.current, () => reservedRightPxRef.current, () => sessionSpanRef.current);
+    return () => {
+      sessionSpanRef.current = null;
+      // On unmount the chart is already removed (see the EMA series above).
+      if (chartRef.current === chart) chart.removeSeries(spacer);
+    };
+  }, [sessionProjected, symbol, timeframe]);
 
   // The sides view: ONE heatmap primitive that draws call gamma (green) and put gamma (red) from two requests with the same shared scale (the larger p98); a cell strong on both sides fades to
   // white (sidesRgb), never amber. The live profile shows both as a green and a red bar per strike. A failed poll keeps what is drawn.
