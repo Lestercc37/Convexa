@@ -1074,7 +1074,7 @@ export function Dashboard({ mode = "full", route, onRouteChange }: DashboardProp
                       // The countdown belongs to the candle being formed: the week view has daily candles.
                       candleCountdown={!isWeek}
                       streamStatus={streamStatus}
-                      layers={isChartOnly ? layerPreset(initialRoute?.layer ?? null) : undefined}
+                      layers={isChartOnly && initialRoute?.layer ? layerPreset(initialRoute.layer) : undefined}
                       variant={isChartOnly ? "v2" : "classic"}
                     />
                   </ChartErrorBoundary>

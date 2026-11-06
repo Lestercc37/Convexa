@@ -7,6 +7,7 @@ import { renderWithLanguage } from "@/lib/i18n/test-utils";
 import { MARKET_POLLING_INTERVAL_MS, POLLING_INTERVAL_MS } from "@/lib/polling";
 import { derivedMetricsFixture } from "@/test/fixtures";
 import { Dashboard } from "./dashboard";
+import { resetChartSettingsForTests } from "@/lib/chart-settings";
 
 const apiMocks = vi.hoisted(() => ({
   getAlerts: vi.fn(),
@@ -237,6 +238,7 @@ function marketFor(symbol: string) {
 }
 
 beforeEach(() => {
+  resetChartSettingsForTests();
   vi.clearAllMocks();
   // jsdom's localStorage persists across tests within this file (it's
   // one shared `window`, not reset per-test) -- without clearing it, a
@@ -658,6 +660,20 @@ describe("Dashboard", () => {
     await waitFor(() =>
       expect(onRouteChange).toHaveBeenLastCalledWith(expect.objectContaining({ symbol: "QQQ", timeframe: "5m", range: "day", layer: "heatmap-delta" })),
     );
+  });
+
+  it("the app's chart window (no layer in the address) keeps the trader's template across symbols", async () => {
+    // Lester 2026-11-06: the desktop app opens /vista/grafico; a fixed all-off preset there reset every toggle on each symbol switch.
+    const user = userEvent.setup();
+    const first = renderWithLanguage(<Dashboard mode="chart" route={{ symbol: "SPY", timeframe: null, range: null, gammaTab: null, layer: null }} onRouteChange={vi.fn()} />);
+    await screen.findByLabelText("Chart de velas para SPY");
+    await user.click(screen.getByRole("button", { name: /^Gamma/ }));
+    await user.click(screen.getByLabelText("Heatmap"));
+    first.unmount();
+    renderWithLanguage(<Dashboard mode="chart" route={{ symbol: "SPY", timeframe: null, range: null, gammaTab: null, layer: null }} onRouteChange={vi.fn()} />);
+    await screen.findByLabelText("Chart de velas para SPY");
+    await user.click(screen.getByRole("button", { name: /^Gamma/ }));
+    expect(screen.getByLabelText("Heatmap")).toBeChecked();
   });
 
   it("chart mode has the app's tabs 0DTE / 1DTE / 90 días (no 0-2 DTE), and a saved web-only tab falls back to 0DTE", async () => {
