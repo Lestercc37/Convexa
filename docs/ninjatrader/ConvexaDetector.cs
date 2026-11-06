@@ -1,17 +1,23 @@
 // Convexa Detector — NinjaTrader 8 indicator (Lester 2026-11-06).
 //
-// Watches the live tape of the chart's instrument (ES / NQ / RTY, or the micros) and finds:
-//   - STACKED IMBALANCES: when each minute closes, its footprint (aggressive buys and sells per price) is checked diagonally: buys at a price
-//     >= Ratio x sells one tick below (and the mirror), with at least MinImbalanceVolume; StackCount or more such prices in a row = one event.
+// Reads NinjaTrader's Order Flow+ VOLUMETRIC data of the chart's instrument as a hidden 1-minute series (AddVolumetric: the chart itself stays
+// a normal candle chart, nothing has to be read there; Lester 2026-11-06) plus the live tape, and finds:
+//   - STACKED IMBALANCES: each closed minute's footprint (aggressive buys and sells per price, from Volumetric) is checked diagonally: buys at
+//     a price >= Ratio x sells one tick below (and the mirror), with at least MinImbalanceVolume; StackCount or more in a row = one event.
 //     300 % / 3 levels is the common convention (no rigorous public backtest exists: Convexa measures it on our own data).
+//   - ABSORPTION IN THE BAR (Volumetric, history too): at the minute's low, sells >= BarAbsorptionVolume and the minute closes in its upper
+//     half (buyers absorbed; side "buy"), or the mirror at the high.
 //   - ABSORPTION: aggressive selling into the same best bid adds up to AbsorptionVolume while the bid keeps refilling and price never trades
 //     below it for at least AbsorptionHoldSeconds (buyers absorb: side "buy"); the mirror on the ask (side "sell"). Level 1 is enough.
 //   - BIG TRADES: one aggressive ORDER of BigTradeVolume or more. CME reports a sweeping order as many 1-3 lot prints in the same instant (Lester's
 //     Time & Sales, 2026-11-06), so consecutive prints of the same side less than 5 ms apart are added up into one order first (as NinjaTrader's
 //     and Bookmap's bubbles do); the order's price is its last print.
 // The aggressor side comes from the best bid / ask: at or above the ask = buy, at or below the bid = sell, in between = the tick rule.
-// Each event is drawn on this chart and sent to Convexa (POST /api/v1/feeds/futures-events), which draws it on SPX / SPY (ES), NDX / QQQ (NQ)
-// and IWM (RTY). Only the events leave NinjaTrader, never the tape. Live data only (it does not replay history).
+// Live events are drawn on this chart and sent to Convexa (POST /api/v1/feeds/futures-events), which draws them on SPX / SPY (ES), NDX / QQQ
+// (NQ) and IWM (RTY). Only the events leave NinjaTrader, never the tape.
+// EXPORT (ExportDays > 0): every minute of the last ExportDays days loaded on the chart is written, footprint included, to
+// Documents\Convexa\nt_export\<future>_<yyyyMMdd>.csv (one file per ET day), for Convexa's study of what happens after each pattern near the
+// gamma bands. The chart must have at least that many days loaded (Data Series > Days to load). Requires Order Flow+.
 // Sizes left at 0 take the instrument's default (see AutoSizes). Key: the anchor's (%USERPROFILE%\.convexa\ninjatrader_anchor_key.txt).
 //
 // Install: copy to Documents\NinjaTrader 8\bin\Custom\Indicators\, F5 in the NinjaScript Editor, add "Convexa Detector" to the ES and NQ
@@ -59,9 +65,11 @@ namespace NinjaTrader.NinjaScript.Indicators
         private double orderPrice;
         private DateTime orderLastUtc = DateTime.MinValue;
 
-        // The minute being built: price (in ticks) -> [aggressive buys, aggressive sells].
-        private DateTime minuteUtc = DateTime.MinValue;
-        private readonly Dictionary<long, long[]> footprint = new Dictionary<long, long[]>();
+        private int barAbsorptionVolume;
+        private static readonly TimeZoneInfo Eastern = TimeZoneInfo.FindSystemTimeZoneById("Eastern Standard Time");
+        // Export: one open file per ET day.
+        private StreamWriter exportWriter;
+        private DateTime exportDay = DateTime.MinValue;
 
         // One absorption episode per side: the price being hit, volume, refills, start and last hit.
         private Episode bidEpisode, askEpisode;
@@ -82,7 +90,7 @@ namespace NinjaTrader.NinjaScript.Indicators
             {
                 Name = "Convexa Detector";
                 Description = "Absorption, stacked imbalances and big trades on the live tape; drawn here and sent to Convexa.";
-                Calculate = Calculate.OnEachTick;
+                Calculate = Calculate.OnBarClose; // the tape comes through OnMarketData whatever this is
                 IsOverlay = true;
                 DisplayInDataBox = false;
                 PaintPriceMarkers = false;
@@ -95,6 +103,13 @@ namespace NinjaTrader.NinjaScript.Indicators
                 AbsorptionHoldSeconds = 10;
                 BigTradeVolume = 0;
                 DrawOnChart = true;
+                BarAbsorptionVolume = 0;
+                ExportDays = 0;
+            }
+            else if (State == State.Configure)
+            {
+                // The Order Flow+ footprint as a hidden series: 1-minute bars, bid/ask delta, one tick per level.
+                AddVolumetric(Instrument.FullName, BarsPeriodType.Minute, 1, VolumetricDeltaType.BidAsk, 1);
             }
             else if (State == State.DataLoaded)
             {
@@ -105,14 +120,17 @@ namespace NinjaTrader.NinjaScript.Indicators
                 imbalanceVolume = MinImbalanceVolume > 0 ? MinImbalanceVolume : auto[0];
                 absorptionVolume = AbsorptionVolume > 0 ? AbsorptionVolume : auto[1];
                 bigTradeVolume = BigTradeVolume > 0 ? BigTradeVolume : auto[2];
+                barAbsorptionVolume = BarAbsorptionVolume > 0 ? BarAbsorptionVolume : auto[3];
             }
             else if (State == State.Realtime)
             {
+                CloseExport();
                 if (timer == null)
                     timer = new Timer(_ => Flush(), null, 1000, 1000);
             }
             else if (State == State.Terminated)
             {
+                CloseExport();
                 if (timer != null)
                 {
                     timer.Dispose();
@@ -121,21 +139,97 @@ namespace NinjaTrader.NinjaScript.Indicators
             }
         }
 
-        // [min volume per imbalanced level per minute, absorption volume at one price, big trade]: starting points to be measured, not rules.
+        // [min volume per imbalanced level per minute, live absorption volume at one price, big trade, bar absorption at the extreme]:
+        // starting points to be measured, not rules.
         private static int[] AutoSizes(string name)
         {
             switch (name)
             {
-                case "NQ": return new[] { 15, 120, 50 };
-                case "RTY": return new[] { 10, 80, 30 };
-                case "MES": return new[] { 60, 600, 200 };
-                case "MNQ": return new[] { 30, 240, 100 };
-                case "M2K": return new[] { 20, 160, 60 };
-                default: return new[] { 30, 300, 100 }; // ES
+                case "NQ": return new[] { 15, 120, 50, 60 };
+                case "RTY": return new[] { 10, 80, 30, 40 };
+                case "MES": return new[] { 60, 600, 200, 300 };
+                case "MNQ": return new[] { 30, 240, 100, 120 };
+                case "M2K": return new[] { 20, 160, 60, 80 };
+                default: return new[] { 30, 300, 100, 150 }; // ES
             }
         }
 
-        protected override void OnBarUpdate() { }
+        // Each closed 1-minute Volumetric bar: stacked imbalances, absorption in the bar, and the export line (history included).
+        protected override void OnBarUpdate()
+        {
+            if (BarsInProgress != 1 || CurrentBars[1] < 0)
+                return;
+            var volumetric = BarsArray[1].BarsType as NinjaTrader.NinjaScript.BarsTypes.VolumetricBarsType;
+            if (volumetric == null)
+                return;
+            var bar = volumetric.Volumes[CurrentBars[1]];
+            double low = Lows[1][0], high = Highs[1][0];
+            long lowKey = (long)Math.Round(low / tick), highKey = (long)Math.Round(high / tick);
+            if (highKey < lowKey || highKey - lowKey > 2000)
+                return;
+            // price (ticks) -> [aggressive buys (at the ask), aggressive sells (at the bid)]
+            var footprint = new Dictionary<long, long[]>();
+            for (long k = lowKey; k <= highKey; k++)
+            {
+                double price = k * tick;
+                long buys = bar.GetAskVolumeForPrice(price), sells = bar.GetBidVolumeForPrice(price);
+                if (buys > 0 || sells > 0)
+                    footprint[k] = new[] { buys, sells };
+            }
+            DateTime closeUtc = TimeZoneInfo.ConvertTimeToUtc(DateTime.SpecifyKind(Times[1][0], DateTimeKind.Unspecified), Core.Globals.GeneralOptions.TimeZoneInfo);
+            DateTime startUtc = closeUtc.AddMinutes(-1);
+            bool live = State == State.Realtime;
+            CheckImbalances(footprint, startUtc, live);
+            CheckBarAbsorption(footprint, lowKey, highKey, Closes[1][0], startUtc, live);
+            if (ExportDays > 0 && !live && (DateTime.UtcNow - startUtc).TotalDays <= ExportDays)
+            {
+                double poc;
+                bar.GetMaximumVolume(null, out poc);
+                Export(startUtc, bar.TotalVolume, bar.BarDelta, bar.MaxSeenDelta, bar.MinSeenDelta, poc, footprint);
+            }
+        }
+
+        private void CheckBarAbsorption(Dictionary<long, long[]> footprint, long lowKey, long highKey, double close, DateTime startUtc, bool live)
+        {
+            if (highKey - lowKey < 2)
+                return;
+            double middle = (lowKey + highKey) * tick / 2;
+            long[] atLow, atHigh;
+            if (footprint.TryGetValue(lowKey, out atLow) && atLow[1] >= barAbsorptionVolume && close > middle)
+                Emit(startUtc.AddMinutes(1), "absorption", "buy", lowKey * tick, lowKey * tick, lowKey * tick, atLow[1], "bar: sells " + atLow[1] + " at the low", live);
+            if (footprint.TryGetValue(highKey, out atHigh) && atHigh[0] >= barAbsorptionVolume && close < middle)
+                Emit(startUtc.AddMinutes(1), "absorption", "sell", highKey * tick, highKey * tick, highKey * tick, atHigh[0], "bar: buys " + atHigh[0] + " at the high", live);
+        }
+
+        private void Export(DateTime startUtc, long totalVolume, long delta, long maxDelta, long minDelta, double poc, Dictionary<long, long[]> footprint)
+        {
+            DateTime dayEt = TimeZoneInfo.ConvertTimeFromUtc(startUtc, Eastern).Date;
+            if (exportWriter == null || dayEt != exportDay)
+            {
+                CloseExport();
+                string folder = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), "Convexa", "nt_export");
+                Directory.CreateDirectory(folder);
+                string file = Path.Combine(folder, master + "_" + dayEt.ToString("yyyyMMdd", CultureInfo.InvariantCulture) + ".csv");
+                exportWriter = new StreamWriter(file, false, Encoding.UTF8);
+                exportWriter.WriteLine("minute_utc,contract,open,high,low,close,volume,delta,max_delta,min_delta,poc,footprint");
+                exportDay = dayEt;
+            }
+            string cells = string.Join("|", footprint.OrderBy(f => f.Key).Select(f => (f.Key * tick).ToString("0.00", CultureInfo.InvariantCulture) + ":" + f.Value[1] + ":" + f.Value[0]));
+            exportWriter.WriteLine(string.Format(CultureInfo.InvariantCulture, "{0},{1},{2},{3},{4},{5},{6},{7},{8},{9},{10},{11}",
+                startUtc.ToString("yyyy-MM-ddTHH:mm:ssZ", CultureInfo.InvariantCulture), contract, Opens[1][0], Highs[1][0], Lows[1][0], Closes[1][0],
+                totalVolume, delta, maxDelta, minDelta, poc, cells));
+        }
+
+        private void CloseExport()
+        {
+            if (exportWriter != null)
+            {
+                exportWriter.Flush();
+                exportWriter.Dispose();
+                exportWriter = null;
+                Print("Convexa Detector: export written up to " + exportDay.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture) + " (Documents\\Convexa\\nt_export)");
+            }
+        }
 
         protected override void OnMarketData(MarketDataEventArgs e)
         {
@@ -172,23 +266,6 @@ namespace NinjaTrader.NinjaScript.Indicators
             lastWasBuy = buy;
             lastPrice = price;
             long volume = e.Volume;
-
-            DateTime minute = new DateTime(utc.Year, utc.Month, utc.Day, utc.Hour, utc.Minute, 0, DateTimeKind.Utc);
-            if (minute != minuteUtc)
-            {
-                if (minuteUtc != DateTime.MinValue)
-                    CheckImbalances(minuteUtc);
-                footprint.Clear();
-                minuteUtc = minute;
-            }
-            long key = (long)Math.Round(price / tick);
-            long[] cell;
-            if (!footprint.TryGetValue(key, out cell))
-            {
-                cell = new long[2];
-                footprint[key] = cell;
-            }
-            cell[buy ? 0 : 1] += volume;
 
             // A new order: the other side, more than 5 ms later, or a price going back (a sweep only moves one way: up for buys, down for sells;
             // this also keeps the grouping honest if the feed's times only carry whole seconds).
@@ -271,20 +348,20 @@ namespace NinjaTrader.NinjaScript.Indicators
                 string.Format(CultureInfo.InvariantCulture, "refills {0}, held {1:0} s", episode.Refills, held));
         }
 
-        private void CheckImbalances(DateTime minute)
+        private void CheckImbalances(Dictionary<long, long[]> footprint, DateTime minute, bool live)
         {
             if (footprint.Count < 2)
                 return;
             List<long> prices = footprint.Keys.OrderBy(k => k).ToList();
-            FindStacks(prices, minute, true);
-            FindStacks(prices, minute, false);
+            FindStacks(footprint, prices, minute, true, live);
+            FindStacks(footprint, prices, minute, false, live);
         }
 
-        private void FindStacks(List<long> prices, DateTime minute, bool buySide)
+        private void FindStacks(Dictionary<long, long[]> footprint, List<long> prices, DateTime minute, bool buySide, bool live)
         {
             long runStart = -1, runEnd = -1, runVolume = 0;
             double runRatio = 0;
-            foreach (long p in Enumerable.Range(0, (int)(prices[prices.Count - 1] - prices[0] + 1)).Select(i => prices[0] + i))
+            for (long p = prices[0]; p <= prices[prices.Count - 1]; p++)
             {
                 long[] here, other;
                 footprint.TryGetValue(p, out here);
@@ -300,57 +377,64 @@ namespace NinjaTrader.NinjaScript.Indicators
                 }
                 else if (imbalanced)
                 {
-                    CloseRun(runStart, runEnd, runVolume, runRatio, minute, buySide);
+                    CloseRun(runStart, runEnd, runVolume, runRatio, minute, buySide, live);
                     runStart = runEnd = p;
                     runVolume = mine;
                     runRatio = mine / (double)Math.Max(theirs, 1);
                 }
                 else
                 {
-                    CloseRun(runStart, runEnd, runVolume, runRatio, minute, buySide);
+                    CloseRun(runStart, runEnd, runVolume, runRatio, minute, buySide, live);
                     runStart = runEnd = -1;
                     runVolume = 0;
                 }
             }
-            CloseRun(runStart, runEnd, runVolume, runRatio, minute, buySide);
+            CloseRun(runStart, runEnd, runVolume, runRatio, minute, buySide, live);
         }
 
-        private void CloseRun(long start, long end, long volume, double ratio, DateTime minute, bool buySide)
+        private void CloseRun(long start, long end, long volume, double ratio, DateTime minute, bool buySide, bool live)
         {
             if (start < 0 || end - start + 1 < StackCount)
                 return;
             double low = start * tick, high = end * tick;
             Emit(minute.AddMinutes(1), "stacked_imbalance", buySide ? "buy" : "sell", (low + high) / 2, low, high, volume,
-                string.Format(CultureInfo.InvariantCulture, "{0} levels, min {1:0}%", end - start + 1, ratio * 100));
+                string.Format(CultureInfo.InvariantCulture, "{0} levels, min {1:0}%", end - start + 1, ratio * 100), live);
         }
 
-        private void Emit(DateTime utc, string type, string side, double price, double low, double high, long volume, string detail)
+        // `live` events go to Convexa; history (Volumetric bars of past minutes) is only drawn for today and written by the export.
+        private void Emit(DateTime utc, string type, string side, double price, double low, double high, long volume, string detail, bool live = true)
         {
+            bool today = TimeZoneInfo.ConvertTimeFromUtc(utc, Eastern).Date == TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, Eastern).Date;
+            if (!live && !today)
+                return;
             string json = string.Format(
                 CultureInfo.InvariantCulture,
                 "{{\"symbol\":\"{0}\",\"contract\":\"{1}\",\"time\":\"{2}\",\"type\":\"{3}\",\"side\":\"{4}\",\"price\":{5},\"price_low\":{6},\"price_high\":{7},\"volume\":{8},\"detail\":\"{9}\"}}",
                 master, contract, utc.ToString("yyyy-MM-ddTHH:mm:ss.fffZ", CultureInfo.InvariantCulture), type, side, price, low, high, volume, detail);
-            lock (gate)
-            {
-                pending.Add(json);
-                if (pending.Count > 500)
-                    pending.RemoveRange(0, pending.Count - 500);
-            }
+            if (live)
+                lock (gate)
+                {
+                    pending.Add(json);
+                    if (pending.Count > 500)
+                        pending.RemoveRange(0, pending.Count - 500);
+                }
             if (!DrawOnChart)
                 return;
             string tag = "cvx" + (drawn++).ToString(CultureInfo.InvariantCulture);
             Brush brush = side == "buy" ? Brushes.LimeGreen : Brushes.Red;
+            // Anchored by time, not by bars ago: events come from the hidden Volumetric series and from the tape, not from the chart's own bars.
+            DateTime at = TimeZoneInfo.ConvertTimeFromUtc(utc, Core.Globals.GeneralOptions.TimeZoneInfo);
             if (type == "absorption")
-                Draw.Diamond(this, tag, false, 0, price, brush);
+                Draw.Diamond(this, tag, false, at, price, brush);
             else if (type == "stacked_imbalance")
             {
                 if (side == "buy")
-                    Draw.TriangleUp(this, tag, false, 0, low - 2 * tick, brush);
+                    Draw.TriangleUp(this, tag, false, at, low - 2 * tick, brush);
                 else
-                    Draw.TriangleDown(this, tag, false, 0, high + 2 * tick, brush);
+                    Draw.TriangleDown(this, tag, false, at, high + 2 * tick, brush);
             }
             else
-                Draw.Dot(this, tag, false, 0, price, side == "buy" ? Brushes.DeepSkyBlue : Brushes.Orange);
+                Draw.Dot(this, tag, false, at, price, side == "buy" ? Brushes.DeepSkyBlue : Brushes.Orange);
         }
 
         private void Flush()
@@ -438,6 +522,14 @@ namespace NinjaTrader.NinjaScript.Indicators
         [Range(0, 1000000)]
         [Display(Name = "Big trade (0 = auto)", Order = 6, GroupName = "Convexa")]
         public int BigTradeVolume { get; set; }
+
+        [Range(0, 1000000)]
+        [Display(Name = "Bar absorption at the extreme (0 = auto)", Order = 9, GroupName = "Convexa")]
+        public int BarAbsorptionVolume { get; set; }
+
+        [Range(0, 365)]
+        [Display(Name = "Exportar dias (0 = no)", Order = 10, GroupName = "Convexa")]
+        public int ExportDays { get; set; }
 
         [Display(Name = "Draw on this chart", Order = 7, GroupName = "Convexa")]
         public bool DrawOnChart { get; set; }
