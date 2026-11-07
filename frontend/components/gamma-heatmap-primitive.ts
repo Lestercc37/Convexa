@@ -552,6 +552,22 @@ class GammaHeatmapRenderer implements IPrimitivePaneRenderer {
 
   draw(target: DrawTarget): void {
     target.useBitmapCoordinateSpace((scope) => {
+      // Test doubles of the canvas have no save / restore: draw at full strength there.
+      const canSave = typeof scope.context.save === "function" && typeof scope.context.restore === "function";
+      if (canSave) {
+        scope.context.save();
+        scope.context.globalAlpha = this.source.opacity;
+      }
+      try {
+        this.drawScope(scope);
+      } finally {
+        if (canSave) scope.context.restore();
+      }
+    });
+  }
+
+  private drawScope(scope: Parameters<Parameters<DrawTarget["useBitmapCoordinateSpace"]>[0]>[0]): void {
+    {
       const { series, chart, data } = this.source;
       if (!series || !chart || !data || !data.columns.length || !data.strikes.length) return;
       if (this.source.smooth && this.drawSmooth(scope)) return;
@@ -592,7 +608,7 @@ class GammaHeatmapRenderer implements IPrimitivePaneRenderer {
           }
         }
       });
-    });
+    }
   }
 }
 
@@ -604,9 +620,12 @@ export class GammaHeatmapPrimitive implements ISeriesPrimitive<Time> {
   private readonly view: IPrimitivePaneView;
   /** Smooth drawing (scaled and blurred, like the prototype) instead of one sharp rectangle per cell. The chart turns it on; it falls back to the sharp cells when it cannot run. */
   readonly smooth: boolean;
+  /** Multiplies the whole map's opacity (the trader's "Opacidad" slider, 2026-11-06: the candles were hard to see through it). */
+  opacity = 1;
 
-  constructor(options: { smooth?: boolean } = {}) {
+  constructor(options: { smooth?: boolean; opacity?: number } = {}) {
     this.smooth = options.smooth ?? false;
+    this.opacity = options.opacity ?? 1;
     const renderer = new GammaHeatmapRenderer(this);
     this.view = { zOrder: () => "bottom", renderer: () => renderer };
   }
@@ -629,6 +648,11 @@ export class GammaHeatmapPrimitive implements ISeriesPrimitive<Time> {
 
   setData(data: HeatmapData | null): void {
     this.data = data;
+    this.requestUpdate?.();
+  }
+
+  setOpacity(opacity: number): void {
+    this.opacity = Math.max(0.05, Math.min(1, opacity));
     this.requestUpdate?.();
   }
 }

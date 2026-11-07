@@ -667,6 +667,11 @@ export function PriceChart({
   const [showHeatmap, setShowHeatmap] = useChartSetting("heatmap", false, layers ? Boolean(layers.heatmap) : undefined);
   // Each minute coloured against its own distribution (history stays as painted), or one scale for the whole session (the chip "Escala del día").
   const [dayScale, setDayScale] = useChartSetting("heatmapDayScale", false);
+  // The heatmap's opacity in % (2026-11-06: at full strength it hid the candles); the candles get a dark outline while the map is on.
+  const [heatmapOpacity, setHeatmapOpacity] = useChartSetting("heatmapOpacity", 70);
+  const heatmapOpacityRef = useRef(heatmapOpacity / 100);
+  heatmapOpacityRef.current = heatmapOpacity / 100;
+  const heatmapPrimitivesRef = useRef(new Set<object>());
   const [heatmapMetric, setHeatmapMetric] = useChartSetting<GammaHeatmapMetric>(
     "heatmapMetric",
     "gamma",
@@ -995,6 +1000,7 @@ export function PriceChart({
     return () => {
       if (profilePrimitiveRef.current === primitive) profilePrimitiveRef.current = null;
       // On unmount the chart is already removed: detaching would ask it for a redraw, and that frame then fails with "Object is disposed".
+      heatmapPrimitivesRef.current.delete(primitive);
       if (seriesRef.current === series) series.detachPrimitive(primitive);
     };
   }, [showProfile]);
@@ -1384,8 +1390,9 @@ export function PriceChart({
   useEffect(() => {
     const series = seriesRef.current;
     if (!showHeatmap || sidesOn || !series) return;
-    const primitive = new GammaHeatmapPrimitive({ smooth: true });
+    const primitive = new GammaHeatmapPrimitive({ smooth: true, opacity: heatmapOpacityRef.current });
     series.attachPrimitive(primitive);
+    heatmapPrimitivesRef.current.add(primitive);
     const controller = new AbortController();
     let timer: number | undefined;
     // Self-rescheduling poll: every 10 s while the fast layer feeds the map, every 15 s on the cycle's own one-minute columns.
@@ -1424,11 +1431,21 @@ export function PriceChart({
     return () => {
       controller.abort();
       window.clearTimeout(timer);
+      heatmapPrimitivesRef.current.delete(primitive);
       if (seriesRef.current === series) series.detachPrimitive(primitive);
       setHeatmapProfile(null);
       setHeatmapFast(false);
     };
   }, [showHeatmap, sidesOn, symbol, gammaView, heatmapMetric, dayScale, timeframe]);
+
+  // The opacity slider applies to the maps already drawn; the candles get a dark outline while a heatmap is on so they stand out of it.
+  useEffect(() => {
+    for (const primitive of heatmapPrimitivesRef.current) if (primitive instanceof GammaHeatmapPrimitive) primitive.setOpacity(heatmapOpacity / 100);
+  }, [heatmapOpacity]);
+  useEffect(() => {
+    const series = seriesRef.current as (ISeriesApi<"Candlestick"> & { applyOptions?: (options: object) => void }) | null;
+    series?.applyOptions?.(showHeatmap ? { borderVisible: true, borderUpColor: "#0b0f17", borderDownColor: "#0b0f17" } : { borderVisible: false });
+  }, [showHeatmap, symbol]);
 
   // ES (trial, lib/heatmap-projection.ts): empty slots up to 16:00 on an invisible series of their own, so the time axis spans the whole session and the heatmap
   // can be painted to the close; the candle series and its live updates are untouched. Only while the heatmap is on.
@@ -1459,8 +1476,9 @@ export function PriceChart({
     const layers: SideLayer[] = [];
     if (sideLayers.calls) layers.push({ key: "calls", metric: "call_gamma" });
     if (sideLayers.puts) layers.push({ key: "puts", metric: "put_gamma" });
-    const primitive = new GammaHeatmapPrimitive({ smooth: true });
+    const primitive = new GammaHeatmapPrimitive({ smooth: true, opacity: heatmapOpacityRef.current });
     series.attachPrimitive(primitive);
+    heatmapPrimitivesRef.current.add(primitive);
     const latest: { calls: HeatmapData | null; puts: HeatmapData | null } = { calls: null, puts: null };
     const render = () => {
       primitive.setData(mergeSides(latest.calls, latest.puts));
@@ -1492,6 +1510,7 @@ export function PriceChart({
     return () => {
       controller.abort();
       window.clearTimeout(timer);
+      heatmapPrimitivesRef.current.delete(primitive);
       if (seriesRef.current === series) series.detachPrimitive(primitive);
       setHeatmapProfile(null);
     };
@@ -1803,6 +1822,7 @@ export function PriceChart({
     const interval = window.setInterval(() => primitive.refresh(), 1000);
     return () => {
       window.clearInterval(interval);
+      heatmapPrimitivesRef.current.delete(primitive);
       if (seriesRef.current === series) series.detachPrimitive(primitive);
     };
   }, [candleCountdown, timeframe, symbol]);
@@ -1909,6 +1929,10 @@ export function PriceChart({
               <label title={t.priceChart.heatmapDayScaleTitle}>
                 <input type="checkbox" checked={dayScale} onChange={(event) => setDayScale(event.target.checked)} />
                 {t.priceChart.heatmapDayScaleLabel}
+              </label>
+              <label title={t.priceChart.heatmapOpacityTitle}>
+                {t.priceChart.heatmapOpacityLabel}
+                <input type="range" min={20} max={100} step={5} value={heatmapOpacity} onChange={(event) => setHeatmapOpacity(Number(event.target.value))} aria-label={t.priceChart.heatmapOpacityLabel} />
               </label>
               {!dayScale && usesGrowingScale(symbol, gammaView) && <span title={t.priceChart.heatmapGrowingScaleTitle}>{t.priceChart.heatmapGrowingScaleLabel}</span>}
               <label title={t.priceChart.heatmapSidesTitle}>
@@ -2154,6 +2178,12 @@ export function PriceChart({
               <label className="chart-toggle" title={t.priceChart.heatmapDayScaleTitle}>
                 <input type="checkbox" checked={dayScale} onChange={(event) => setDayScale(event.target.checked)} />
                 {t.priceChart.heatmapDayScaleLabel}
+              </label>
+            )}
+            {showHeatmap && (
+              <label className="chart-toggle" title={t.priceChart.heatmapOpacityTitle}>
+                {t.priceChart.heatmapOpacityLabel}
+                <input type="range" min={20} max={100} step={5} value={heatmapOpacity} onChange={(event) => setHeatmapOpacity(Number(event.target.value))} aria-label={t.priceChart.heatmapOpacityLabel} />
               </label>
             )}
             {showHeatmap && !dayScale && usesGrowingScale(symbol, gammaView) && (
