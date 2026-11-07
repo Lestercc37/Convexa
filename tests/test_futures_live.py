@@ -35,6 +35,8 @@ def _bar(minute: datetime, close: str, index: str | None, contract: str = "ES 12
 def test_names_contracts_and_the_front_contract() -> None:
     assert [normalize_live_future(n) for n in ("ES", "MES 12-26", "nq", "MNQ", "RTY 12-26", "M2K", "CL 12-26")] == ["ES", "ES", "NQ", "NQ", "RTY", "RTY", None]
     assert contract_month("ES 12-26") == (2026, 12)
+    assert contract_month("NQ DEC26") == (2026, 12) and contract_month("MES MAR27") == (2027, 3)  # NinjaTrader's own naming
+    assert is_front("NQ DEC26", date(2026, 11, 6))
     assert contract_month("ES") is None
     # Dec 2026 is front until its roll on 2026-12-10 (8 days before the 18th), then Mar 2027.
     assert is_front("ES 12-26", date(2026, 11, 6)) and not is_front("ES 03-27", date(2026, 11, 6))
