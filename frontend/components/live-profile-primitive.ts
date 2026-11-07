@@ -92,9 +92,17 @@ export function sideBarsFromHeatmaps(calls: HeatmapData | null, puts: HeatmapDat
   });
 }
 
-/** One bar per strike: its latest stored value within the last few columns of the heatmap (a strike with none is left out). */
+/**
+ * One bar per strike: its latest stored value within the last few columns of the heatmap (a strike with none is left out). Columns where every
+ * value is zero are skipped: at 16:00 the 0DTE options expire and the fast layer's last column is all zeros (IWM 2026-11-06 after the close: the
+ * profile went blank with the heatmap on); the last real picture stays.
+ */
 export function profileBarsFromHeatmap(data: HeatmapData): ProfileBar[] {
-  const recent = data.columns.slice(-RECENT_COLUMNS);
+  const recent: HeatmapData["columns"] = [];
+  for (let index = data.columns.length - 1; index >= 0 && recent.length < RECENT_COLUMNS; index -= 1) {
+    const column = data.columns[index];
+    if (column.values.some((value) => value !== null && value !== undefined && Number.isFinite(value) && value !== 0)) recent.unshift(column);
+  }
   const bars: ProfileBar[] = [];
   data.strikes.forEach((strike, index) => {
     for (let offset = recent.length - 1; offset >= 0; offset -= 1) {

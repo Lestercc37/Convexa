@@ -85,6 +85,21 @@ describe("profileBarsFromHeatmap", () => {
     expect(profileBarsFromHeatmap({ strikes: [100], scale: 1, columns: [{ time: 1, values: [-4] }] })).toEqual([{ strike: 100, net: -4, absolute: 4 }]);
     expect(profileBarsFromHeatmap({ strikes: [100], scale: 1, columns: [] })).toEqual([]);
   });
+
+  it("skips all-zero columns (0DTE expired at 16:00: IWM 2026-11-06), so the last real picture stays", () => {
+    const bars = profileBarsFromHeatmap({
+      strikes: [100, 105],
+      scale: 1,
+      columns: [
+        { time: 1, values: [-5, 2] },
+        { time: 2, values: [0, 0] },
+      ],
+    });
+    expect(bars).toEqual([
+      { strike: 100, net: -5, absolute: 5 },
+      { strike: 105, net: 2, absolute: 2 },
+    ]);
+  });
 });
 
 describe("profileScale", () => {
