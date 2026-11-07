@@ -14,8 +14,8 @@
 // strikes light up GREEN under the price of that moment (support) and RED / ORANGE above it (resistance).
 // Style Lineas (2026-11-06 21:20-22:10) was tried and removed: Lester, "eso no es un heatmap".
 // GEX profile (same day): a bar per strike in a strip at the right of the chart (the chart's right margin is widened to hold it), the latest
-// value of each strike, square-root length on the p98, the SAME colours (green under the last price, red above), the dollar figure inside
-// each bar, the strongest strike outlined in white.
+// value of each strike, square-root length on the p98, Convexa's classic colours (green positive / red negative, white at the top, as on the
+// web; 22:20 Lester: 'la version del clasico'), the dollar figure inside each bar, the strongest strike outlined in yellow.
 // Never cut by session (Lester 2026-11-06): the last `Days` sessions are kept, each with its own strike list and basis; a read is only ever
 // ADDED to what is held (a full read every 5 minutes replaces it whole), each column lasts until the next one, so nights and weekends keep
 // the last picture Convexa sent, and the lines move only when Convexa updates them.
@@ -91,7 +91,7 @@ namespace NinjaTrader.NinjaScript.Indicators
 
         // The profile's ramps and text; where the plot ends (the profile strip starts there).
         private SharpDX.Direct2D1.SolidColorBrush[] profileUp, profileDown;
-        private SharpDX.Direct2D1.SolidColorBrush lineLabel, profileAxis;
+        private SharpDX.Direct2D1.SolidColorBrush lineLabel, profileAxis, profileDark;
         private float plotRight;
         private bool marginAsked;
 
@@ -363,16 +363,11 @@ namespace NinjaTrader.NinjaScript.Indicators
             ground = Brush(3, 9, 36, Math.Min(1.0, alpha + 0.3));
             ClearColumnBrushes();
             bandFlip = Brush(243, 201, 105, 1);
-            // The profile: green for support (under the price), red for resistance (above), dark to bright with the strength.
+            // The profile: Convexa's classic ramps by sign (the figure's own colours), dark to white with the strength.
             lineLabel = Brush(255, 255, 255, 0.95);
-            profileUp = new SharpDX.Direct2D1.SolidColorBrush[RampSteps];
-            profileDown = new SharpDX.Direct2D1.SolidColorBrush[RampSteps];
-            for (int i = 0; i < RampSteps; i++)
-            {
-                double t = (i + 1) / (double)RampSteps;
-                profileUp[i] = Brush(14 + 36 * t, 80 + 150 * t, 45 + 60 * t, 0.92);
-                profileDown[i] = Brush(95 + 150 * t, 22 + 45 * t, 28 + 32 * t, 0.92);
-            }
+            profileDark = Brush(11, 15, 23, 1);
+            profileUp = Ramp(PositiveStops(), 0.95);
+            profileDown = Ramp(NegativeStops(), 0.95);
             profileAxis = Brush(209, 212, 220, 0.7);
             labelFormat = new SharpDX.DirectWrite.TextFormat(Core.Globals.DirectWriteFactory, "Segoe UI", 11f);
         }
@@ -432,10 +427,10 @@ namespace NinjaTrader.NinjaScript.Indicators
                     foreach (var brush in set)
                         brush.Dispose();
             blueTiles = pressureUp = pressureDown = profileUp = profileDown = null;
-            foreach (var brush in new[] { lineLabel, profileAxis })
+            foreach (var brush in new[] { lineLabel, profileAxis, profileDark })
                 if (brush != null)
                     brush.Dispose();
-            lineLabel = profileAxis = null;
+            lineLabel = profileAxis = profileDark = null;
             foreach (var brush in new[] { bandCall, bandPut, bandAbs, bandFlip })
                 if (brush != null)
                     brush.Dispose();
@@ -743,7 +738,7 @@ namespace NinjaTrader.NinjaScript.Indicators
         }
 
         // GEX profile: per strike its latest value in the last 12 columns; bars from the price axis towards the candles (square root on the p98),
-        // green under the last price (support) and red above (resistance), the dollar figure inside, the strongest strike outlined in white.
+        // Convexa's classic colours by sign, the dollar figure inside, the strongest strike outlined in yellow.
         private void RenderProfile(ChartScale chartScale)
         {
             float stripLeft = plotRight, stripRight = ChartPanel.X + ChartPanel.W;
@@ -776,18 +771,18 @@ namespace NinjaTrader.NinjaScript.Indicators
                     continue;
                 double share = Math.Min(1.0, Math.Abs(pair.Value) / scale);
                 float width = Math.Max(2f, (float)Math.Sqrt(share) * maxBar);
-                bool support = pair.Key <= price;
-                var brushes = support ? profileUp : profileDown;
+                var brushes = pair.Value >= 0 ? profileUp : profileDown;
+                bool light = Math.Sqrt(share) >= 0.75; // the ramp turns white at the top: dark text there
                 var rect = new SharpDX.RectangleF(rightEdge - width, y - thickness / 2, width, thickness);
                 RenderTarget.FillRectangle(rect, brushes[Math.Min(RampSteps - 1, (int)(Math.Sqrt(share) * RampSteps))]);
                 if (pair.Key == strongest)
-                    RenderTarget.DrawRectangle(rect, lineLabel, 2f);
+                    RenderTarget.DrawRectangle(rect, levelBrushes["gamma_flip"], 2f);
                 if (roomForText && (share >= 0.05 || pair.Key == strongest))
                 {
                     // inside the bar when it is long enough, otherwise just left of it
                     string text = Money(pair.Value);
                     float textX = width >= 64 ? rightEdge - width + 4 : rightEdge - width - 62;
-                    RenderTarget.DrawText(text, labelFormat, new SharpDX.RectangleF(Math.Max(stripLeft + 2, textX), y - 7.5f, 70, 14), width >= 64 ? lineLabel : profileAxis);
+                    RenderTarget.DrawText(text, labelFormat, new SharpDX.RectangleF(Math.Max(stripLeft + 2, textX), y - 7.5f, 70, 14), width >= 64 ? (light ? profileDark : lineLabel) : profileAxis);
                 }
             }
             var dashes = new SharpDX.Direct2D1.StrokeStyle(RenderTarget.Factory, new SharpDX.Direct2D1.StrokeStyleProperties { DashStyle = SharpDX.Direct2D1.DashStyle.Dash });
