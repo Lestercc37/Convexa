@@ -12,10 +12,7 @@
 // Smooth, behind the candles (Lester 2026-11-06, with his mock-up): the indicator draws BEHIND the bars (SetZOrder) and every column is ONE
 // vertical gradient through all its strikes (Direct2D interpolates between them: no squares). Style Presion: deep blue ground; strong gamma
 // strikes light up GREEN under the price of that moment (support) and RED / ORANGE above it (resistance).
-// Style Lineas (Lester 2026-11-06, Bookmap next to it; 22:00 "demasiado ruido"): NO history. Near-black ground and only the levels of NOW:
-// the LinesPerSide strongest strikes under the last price (GREEN, support) and above it (RED, resistance), as clean lines across the plot with
-// their dollar figure; the strongest of all thicker with a white core. The map is terrain, not an entry signal: a strike's PLACE never lags,
-// only its strength does (10-60 s). No bubbles, candles untouched.
+// Style Lineas (2026-11-06 21:20-22:10) was tried and removed: Lester, "eso no es un heatmap".
 // GEX profile (same day): a bar per strike in a strip at the right of the chart (the chart's right margin is widened to hold it), the latest
 // value of each strike, square-root length on the p98, the SAME colours (green under the last price, red above), the dollar figure inside
 // each bar, the strongest strike outlined in white.
@@ -47,7 +44,7 @@ using NinjaTrader.NinjaScript;
 // Outside the NinjaScript namespace, as NinjaTrader recommends for enums used as properties (its generated code references them).
 public enum ConvexaView { Dte0Volumen, Dte0OI, Dte0a2, Dte1, Dte2, Dias90 }
 public enum ConvexaMetric { gamma, absolute_gamma, delta, vanna, charm, call_gamma, put_gamma, total_gamma }
-public enum ConvexaStyle { Clasico, Presion, Lineas }
+public enum ConvexaStyle { Clasico, Presion }
 public enum ConvexaFlowExpirations { Dte0, Dte0a2, Todas }
 
 namespace NinjaTrader.NinjaScript.Indicators
@@ -92,12 +89,9 @@ namespace NinjaTrader.NinjaScript.Indicators
         private const int PressureMinStreak = 3;
         private readonly Dictionary<int, SharpDX.Direct2D1.LinearGradientBrush> pressureBrushes = new Dictionary<int, SharpDX.Direct2D1.LinearGradientBrush>();
 
-        // Lineas: line brushes per strength step (core and glow), the near-black ground; the profile's ramps; where the plot ends (the profile strip
-        // starts there).
-        private const int LineSteps = 6;
-        private const double LineMinShare = 0.25;
-        private SharpDX.Direct2D1.SolidColorBrush[] lineCore, lineGlow, lineCoreDown, lineGlowDown, profileUp, profileDown;
-        private SharpDX.Direct2D1.SolidColorBrush lineGround, lineLabel, profileAxis;
+        // The profile's ramps and text; where the plot ends (the profile strip starts there).
+        private SharpDX.Direct2D1.SolidColorBrush[] profileUp, profileDown;
+        private SharpDX.Direct2D1.SolidColorBrush lineLabel, profileAxis;
         private float plotRight;
         private bool marginAsked;
 
@@ -137,7 +131,6 @@ namespace NinjaTrader.NinjaScript.Indicators
                 Days = 2;
                 Opacity = 60;
                 ShowProfile = true;
-                LinesPerSide = 3;
                 ProfileWidth = 220;
             }
             else if (State == State.DataLoaded)
@@ -370,20 +363,7 @@ namespace NinjaTrader.NinjaScript.Indicators
             ground = Brush(3, 9, 36, Math.Min(1.0, alpha + 0.3));
             ClearColumnBrushes();
             bandFlip = Brush(243, 201, 105, 1);
-            // Lineas and the profile: green for support (under the price), red for resistance (above), dark to bright with the strength.
-            lineCore = new SharpDX.Direct2D1.SolidColorBrush[LineSteps];
-            lineGlow = new SharpDX.Direct2D1.SolidColorBrush[LineSteps];
-            lineCoreDown = new SharpDX.Direct2D1.SolidColorBrush[LineSteps];
-            lineGlowDown = new SharpDX.Direct2D1.SolidColorBrush[LineSteps];
-            for (int i = 0; i < LineSteps; i++)
-            {
-                double t = i / (double)(LineSteps - 1);
-                lineCore[i] = Brush(20 + 40 * t, 110 + 125 * t, 60 + 50 * t, 0.55 + 0.45 * t);
-                lineGlow[i] = Brush(20 + 40 * t, 110 + 125 * t, 60 + 50 * t, 0.10 + 0.08 * t);
-                lineCoreDown[i] = Brush(150 + 105 * t, 30 + 40 * t, 35 + 25 * t, 0.55 + 0.45 * t);
-                lineGlowDown[i] = Brush(150 + 105 * t, 30 + 40 * t, 35 + 25 * t, 0.10 + 0.08 * t);
-            }
-            lineGround = Brush(15, 18, 24, 1);
+            // The profile: green for support (under the price), red for resistance (above), dark to bright with the strength.
             lineLabel = Brush(255, 255, 255, 0.95);
             profileUp = new SharpDX.Direct2D1.SolidColorBrush[RampSteps];
             profileDown = new SharpDX.Direct2D1.SolidColorBrush[RampSteps];
@@ -447,15 +427,15 @@ namespace NinjaTrader.NinjaScript.Indicators
                     foreach (var brush in set)
                         brush.Dispose();
             positive = negative = projectedPositive = projectedNegative = null;
-            foreach (var set in new[] { blueTiles, pressureUp, pressureDown, lineCore, lineGlow, lineCoreDown, lineGlowDown, profileUp, profileDown })
+            foreach (var set in new[] { blueTiles, pressureUp, pressureDown, profileUp, profileDown })
                 if (set != null)
                     foreach (var brush in set)
                         brush.Dispose();
-            blueTiles = pressureUp = pressureDown = lineCore = lineGlow = lineCoreDown = lineGlowDown = profileUp = profileDown = null;
-            foreach (var brush in new[] { lineGround, lineLabel, profileAxis })
+            blueTiles = pressureUp = pressureDown = profileUp = profileDown = null;
+            foreach (var brush in new[] { lineLabel, profileAxis })
                 if (brush != null)
                     brush.Dispose();
-            lineGround = lineLabel = profileAxis = null;
+            lineLabel = profileAxis = null;
             foreach (var brush in new[] { bandCall, bandPut, bandAbs, bandFlip })
                 if (brush != null)
                     brush.Dispose();
@@ -492,8 +472,6 @@ namespace NinjaTrader.NinjaScript.Indicators
                     KeepProfileMargin(chartControl, (int)profile);
                 if (Style == ConvexaStyle.Presion)
                     RenderPressureStyle(chartControl, chartScale);
-                else if (Style == ConvexaStyle.Lineas)
-                    RenderLines(chartControl, chartScale);
                 else if (ShowHeatmap && columns.Count > 0)
                     RenderSmoothColumns(chartControl, chartScale, false);
                 if (ShowProfile && columns.Count > 0)
@@ -742,7 +720,7 @@ namespace NinjaTrader.NinjaScript.Indicators
             }
         }
 
-        // Per strike its latest value within the last 12 columns (what the profile and the Lineas style show).
+        // Per strike its latest value within the last 12 columns (what the profile shows).
         private SortedDictionary<double, double> LatestByStrike()
         {
             var latest = new SortedDictionary<double, double>();
@@ -751,44 +729,6 @@ namespace NinjaTrader.NinjaScript.Indicators
                     if (!double.IsNaN(column.Values[i]))
                         latest[column.Strikes[i]] = column.Values[i];
             return latest;
-        }
-
-        // Style Lineas: the levels of now only (see the header).
-        private void RenderLines(ChartControl chartControl, ChartScale chartScale)
-        {
-            float left = ChartPanel.X, right = plotRight;
-            RenderTarget.FillRectangle(new SharpDX.RectangleF(left, ChartPanel.Y, ChartPanel.W, ChartPanel.H), lineGround);
-            if (!ShowHeatmap || columns.Count == 0 || ChartBars == null || ChartBars.Bars.Count == 0)
-                return;
-            double price = ChartBars.Bars.GetClose(ChartBars.Bars.Count - 1);
-            SortedDictionary<double, double> latest = LatestByStrike();
-            if (latest.Count == 0)
-                return;
-            var below = latest.Where(p => p.Key <= price).OrderByDescending(p => Math.Abs(p.Value)).Take(LinesPerSide).ToList();
-            var above = latest.Where(p => p.Key > price).OrderByDescending(p => Math.Abs(p.Value)).Take(LinesPerSide).ToList();
-            var chosen = below.Concat(above).ToList();
-            if (chosen.Count == 0)
-                return;
-            double strongest = latest.OrderByDescending(p => Math.Abs(p.Value)).First().Key;
-            double biggest = Math.Abs(latest[strongest]);
-            foreach (var pair in chosen)
-            {
-                float y = (float)chartScale.GetYByValue(pair.Key);
-                if (y < ChartPanel.Y || y > ChartPanel.Y + ChartPanel.H)
-                    continue;
-                bool support = pair.Key <= price;
-                bool top = pair.Key == strongest;
-                double share = biggest > 0 ? Math.Abs(pair.Value) / biggest : 1;
-                int step = top ? LineSteps - 1 : Math.Max(1, Math.Min(LineSteps - 2, (int)(Math.Sqrt(share) * (LineSteps - 1))));
-                float core = top ? 5f : 1.5f + 0.5f * step;
-                float glow = core * (top ? 2.6f : 2.2f);
-                RenderTarget.FillRectangle(new SharpDX.RectangleF(left, y - glow / 2, right - left, glow), support ? lineGlow[step] : lineGlowDown[step]);
-                RenderTarget.FillRectangle(new SharpDX.RectangleF(left, y - core / 2, right - left, core), support ? lineCore[step] : lineCoreDown[step]);
-                if (top)
-                    RenderTarget.DrawLine(new SharpDX.Vector2(left, y), new SharpDX.Vector2(right, y), lineLabel, 1f);
-                string text = (top ? "Máx. gamma " : "") + pair.Key.ToString("0.##", CultureInfo.InvariantCulture) + "  " + Money(pair.Value);
-                RenderTarget.DrawText(text, labelFormat, new SharpDX.RectangleF(left + 8, y - 16, 260, 14), top ? lineLabel : (support ? lineCore[LineSteps - 1] : lineCoreDown[LineSteps - 1]));
-            }
         }
 
         // Dollars, short: -$242.5B, $12.3M.
@@ -1053,7 +993,7 @@ namespace NinjaTrader.NinjaScript.Indicators
         public int Opacity { get; set; }
 
         [NinjaScriptProperty]
-        [Display(Name = "Estilo (Clasico / Presion / Lineas)", Order = 7, GroupName = "Convexa")]
+        [Display(Name = "Estilo (Clasico / Presion)", Order = 7, GroupName = "Convexa")]
         public ConvexaStyle Style { get; set; }
 
         [Display(Name = "Presion: vencimientos del flujo", Order = 8, GroupName = "Convexa")]
@@ -1066,10 +1006,6 @@ namespace NinjaTrader.NinjaScript.Indicators
         [Range(1, 5)]
         [Display(Name = "Sesiones a mostrar", Order = 10, GroupName = "Convexa")]
         public int Days { get; set; }
-
-        [Range(1, 8)]
-        [Display(Name = "Lineas: niveles arriba y abajo", Order = 13, GroupName = "Convexa")]
-        public int LinesPerSide { get; set; }
 
         [Display(Name = "Perfil GEX", Order = 11, GroupName = "Convexa")]
         public bool ShowProfile { get; set; }
