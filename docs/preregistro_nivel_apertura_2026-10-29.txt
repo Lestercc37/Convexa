@@ -1,0 +1,57 @@
+PREREGISTRO: NIVELES DE LA APERTURA COMO PUNTO DE SALIDA (y 4 pruebas más)
+Escrito el 2026-10-30, antes de mirar ningún resultado. Aprobado por Lester el 2026-10-26, 10-27, 10-29 y 10-30.
+Las reglas, las métricas y los umbrales de abajo NO se cambian después de ver los datos. Si algo hay que cambiar, se anota como "desvío" con fecha y motivo.
+
+0. DATOS Y MUESTRA (común a todas las pruebas)
+- Símbolos: SPX, NDX, SPY, QQQ, IWM (los niveles de ES/NQ son los de SPX/NDX desplazados: mismas conclusiones).
+- Sesiones: todas las guardadas con perfil por strike desde la apertura (22 sesiones tácticas desde el 2026-09-25 al 10-26 cuando se escribió el plan; se suman las nuevas hasta el día de la corrida). Se excluyen días con huecos de más de 10 minutos en precios o en ciclos entre 09:30 y 10:00 (se listan).
+- Fuente de niveles: gamma_aggregates / gamma_aggregate_items tal como se guardaron ese día (vista táctica 0-2 DTE, y 0DTE / 0dte_volume donde existan). Para días anteriores al delta por strike (#278, ~10-16) se reconstruye desde las fotos guardadas de la cadena.
+- Precio: market_snapshots (SPX/NDX: el índice; ETFs: el precio guardado).
+- Distancia en Z (Lester 2026-10-29): Z = (S − K) / (S · σ · √T); S = precio, K = strike, σ = IV ATM del vencimiento de la vista a esa hora, T = años hasta el vencimiento (misma función que _time_to_expiration_years). Z es una DISTANCIA en "movimientos esperados que quedan hasta el cierre", no una probabilidad. Cada distancia se informa en puntos, en ATR y en Z.
+- Grupos de Z: |Z| < 0,5 · 0,5–1 · 1–1,5 · > 1,5.
+
+1. PRUEBA PRINCIPAL: LOS NIVELES MÁS BRILLANTES A LAS 09:35 COMO PUNTO DE SALIDA
+Hipótesis (Lester 10-26): los strikes más brillantes del heatmap a las 09:35 (delta, ABS y lados de gamma) son buenos objetivos de salida para una entrada en la apertura: el precio los alcanza durante el día más que a strikes cualquiera a la misma distancia.
+- Niveles: a las 09:35, para cada capa (delta, ABS, calls, puts), los 3 strikes con mayor |valor| por encima del precio y los 3 por debajo, dentro de la ventana de ±1,25 ATR del heatmap.
+- Métricas por nivel: (1) ¿lo toca el precio ese día? (a menos de 0,05 % del strike); (2) hora del primer toque; (3) cuánto lo pasa (máximo exceso después del toque, en puntos y en Z); (4) ¿el máximo / mínimo del día termina cerca? (a menos de 0,25 ATR).
+- Como objetivo de salida de una entrada a las 09:35 en esa dirección: tasa de acierto, tiempo hasta el objetivo, y el peor movimiento en contra antes de llegar.
+- Comparaciones (líneas base): (a) strikes al azar a la MISMA distancia en Z del mismo lado; (b) los bordes del movimiento esperado (EMC / EMP); (c) objetivos fijos en puntos (SPX 10/20/30, NDX 50/100/150, ETFs 1/2/3 $).
+- Resultado esperado = tabla de probabilidad tipo pronóstico del tiempo ("70 % de tocar 715 hoy") por: rango de brillo (1º, 2º, 3º), grupo de Z, lado (arriba / abajo) y hora. Se verifica la CALIBRACIÓN: los casos marcados ~70 % deben ocurrir ~70 % de las veces (curva de calibración, error de Brier).
+- Se acepta como "útil" si, en al menos 3 de 5 símbolos, el nivel más brillante supera a la base (a) por ≥ 10 puntos porcentuales de tasa de toque en el mismo grupo de Z, con un intervalo de confianza (bootstrap por día, 1.000 réplicas) que no cruza cero.
+- Además: la banda oscura de gamma neta cerca de cero (entre verde y rojo) como zona de rebote: ¿el precio rebota en ella (toca y se aleja ≥ 0,15 %) más que en bandas de igual ancho al azar?
+- Segunda versión (después): la misma prueba con OI + flujo con lado por strike (minute_strike_flow desde el 10-30 y el relleno de 22 sesiones de NDX/IWM).
+- Lester 10-26: busca el PUNTO DE SALIDA, no el giro. Los giros son secundarios.
+
+2. PRUEBA (a): "PAREDES JUNTAS = DÍA ESTRECHO"
+Hipótesis (Lester 10-27): cuando la Call Wall y la Put Wall (vista táctica, OI) están a ≤ 2 escalones de strike durante ≥ 25 % de la sesión (o desde una hora fija, 10:30), el día es más estrecho y el precio queda pegado al punto medio.
+- Métricas: rango del día (máx − mín) y rango desde las 10:30; % del resto de la sesión que el precio pasa a ≤ 1,5 escalones del punto medio de las paredes.
+- Base: días con paredes separadas (> 2 escalones) del mismo símbolo.
+- Cuidado con la causalidad inversa: un día quieto junta las paredes. Por eso la condición se mide hasta las 10:30 y el resultado solo después de las 10:30.
+- Primer vistazo (10-27, no cuenta): SPY 5 días, rango medio 4,47 vs 8,35; QQQ no lo confirmó.
+
+3. PRUEBA (b): PAREDES TAL COMO SON vs PAREDES FORZADAS A CADA LADO
+- (1) Call Wall y Put Wall como se calculan hoy (gamma neta), y (2) forzadas: Call Wall = mayor gamma neta positiva POR ENCIMA del precio, Put Wall = la más negativa POR DEBAJO.
+- Métricas: las de la prueba 1 (toque, exceso, objetivo de salida) y de reacción (rebote ≥ 0,15 % tras tocar).
+- El ABS NO se toca en esta prueba.
+
+4. PRUEBA (c): "CAMBIO DE ABS = EL PRECIO VA AHÍ"
+Hipótesis (Lester 10-27): cuando el ABS guardado pasa a un strike nuevo, el precio tiende a ir a ese strike.
+- Eventos: cada cambio del ABS a un strike nuevo, por vista (táctica, 0dte, 0dte_volume) y dirección (nuevo ABS arriba / abajo del precio).
+- Para evitar la causalidad inversa (el precio que se acerca agranda el strike), solo cuentan los cambios donde el nuevo ABS está a ≥ 1 escalón de strike del precio en ese momento.
+- Métrica: ¿el precio lo toca en 15 y en 30 minutos? Base: strikes al azar a la misma distancia (en Z) y del mismo lado.
+- Primer vistazo (10-27, no cuenta): SPX táctico, cambios a 7700 arriba del precio → tocados 3 de 4; a 7650 abajo → 0 de 5. El ABS de volumen de SPY quedó siempre a < $1,2 (sin información).
+
+5. PRUEBA (d): EL FLIP SE ACERCA Y, AL CAMBIAR DE SIGNO, EL PRECIO VA HACIA AHÍ
+Hipótesis (Lester 2026-10-30): "el Gamma Flip muchas veces viene acercándose al precio y justo después cambia de signo y el precio se va en esa dirección".
+- Antecedente: las pruebas de adelanto del Flip del 10-16 (pruebas 4, 5 y 6) NO encontraron adelanto. Esta prueba se define para poder FALLAR.
+- Evento "acercamiento": la distancia |precio − Flip| en Z baja al menos 50 % en 15 minutos y termina por debajo de 0,3 Z.
+- Evento "cambio de signo": el régimen (gamma neta de la ventana amplia) cambia de signo dentro de los 10 minutos siguientes al acercamiento.
+- Resultado: dirección del precio en los 15 y 30 minutos siguientes al cambio. La predicción de Lester es: régimen que pasa a negativo → el precio baja; a positivo → sube. Se mide el % de aciertos y el movimiento medio a favor.
+- Base: (1) los mismos minutos del día sin el evento (dirección al azar = 50 %); (2) cambios de signo SIN acercamiento previo.
+- Se acepta si el % de aciertos es ≥ 60 % con al menos 30 eventos en total y un intervalo de confianza (binomial 95 %) que no incluye el 50 %. Con menos de 30 eventos: "sin conclusión", se repite con más sesiones.
+- Cuidado: el Flip se mueve CON el precio (la gamma depende de la distancia); por eso el evento usa la gamma de la ventana amplia y se reporta también cuántas veces el "cambio de signo" fue solo el precio cruzando un Flip quieto.
+
+6. QUÉ SE ENTREGA
+- Una tabla por prueba y por símbolo, con número de casos, tasas, intervalos de confianza y la base.
+- Para la prueba 1, la tabla de probabilidades tipo pronóstico del tiempo y su curva de calibración.
+- Todo de solo lectura, fuera del horario de mercado. Nada se convierte en alerta o señal sin otro sí de Lester.
