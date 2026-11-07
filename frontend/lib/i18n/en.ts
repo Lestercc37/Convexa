@@ -216,8 +216,6 @@ export const en: Translations = {
     heatmapSideCalls: "Calls",
     heatmapSidePuts: "Puts",
     heatmapDayScaleLabel: "Day scale",
-    heatmapOpacityLabel: "Opacity",
-    heatmapOpacityTitle: "How much the heatmap covers: lower shows the candles better. Saved in your template.",
     orderFlowEventsLabel: "NT absorption",
     orderFlowEventsTitle: "What your NinjaTrader detects on the future (ES → SPX/SPY, NQ → NDX/QQQ, RTY → IWM), at this chart's price: diamond = absorption, triangle = stacked imbalances (up buyers, down sellers), dot = big trade. Green buyers win, red sellers win; blue/orange = big buy/sell.",
     heatmapDayScaleTitle: "Off: every minute is coloured against itself, the strongest strike of that moment reads white and the history stays as painted. On: one scale for the whole session.",
