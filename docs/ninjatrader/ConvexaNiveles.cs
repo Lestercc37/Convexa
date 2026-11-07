@@ -12,6 +12,11 @@
 // Smooth, behind the candles (Lester 2026-11-06, with his mock-up): the indicator draws BEHIND the bars (SetZOrder) and every column is ONE
 // vertical gradient through all its strikes (Direct2D interpolates between them: no squares). Style Presion: deep blue ground; strong gamma
 // strikes light up GREEN under the price of that moment (support) and RED / ORANGE above it (resistance).
+// Style Lineas (Lester 2026-11-06 21:20, Bookmap next to it): near-black ground, ONE thin horizontal line per strike, thicker and brighter
+// (blue -> yellow -> orange) the more gamma it holds, kept as one long line while its strength holds; the 3 strongest strikes carry their
+// figure. No bubbles, the candles untouched.
+// GEX profile (same day): a bar per strike in a strip at the right of the chart (the chart's right margin is widened to hold it), the latest
+// value of each strike, flat side at the price axis, square-root length on the p98 like Convexa's live profile.
 // Never cut by session (Lester 2026-11-06): the last `Days` sessions are kept, each with its own strike list and basis; a read is only ever
 // ADDED to what is held (a full read every 5 minutes replaces it whole), each column lasts until the next one, so nights and weekends keep
 // the last picture Convexa sent, and the lines move only when Convexa updates them.
@@ -40,7 +45,7 @@ using NinjaTrader.NinjaScript;
 // Outside the NinjaScript namespace, as NinjaTrader recommends for enums used as properties (its generated code references them).
 public enum ConvexaView { Dte0Volumen, Dte0OI, Dte0a2, Dte1, Dte2, Dias90 }
 public enum ConvexaMetric { gamma, absolute_gamma, delta, vanna, charm, call_gamma, put_gamma, total_gamma }
-public enum ConvexaStyle { Clasico, Presion }
+public enum ConvexaStyle { Clasico, Presion, Lineas }
 public enum ConvexaFlowExpirations { Dte0, Dte0a2, Todas }
 
 namespace NinjaTrader.NinjaScript.Indicators
@@ -85,6 +90,20 @@ namespace NinjaTrader.NinjaScript.Indicators
         private const int PressureMinStreak = 3;
         private readonly Dictionary<int, SharpDX.Direct2D1.LinearGradientBrush> pressureBrushes = new Dictionary<int, SharpDX.Direct2D1.LinearGradientBrush>();
 
+        // Lineas: line brushes per strength step (core and glow), the near-black ground; the profile's ramps; where the plot ends (the profile strip
+        // starts there).
+        private const int LineSteps = 8;
+        private SharpDX.Direct2D1.SolidColorBrush[] lineCore, lineGlow, profileUp, profileDown;
+        private SharpDX.Direct2D1.SolidColorBrush lineGround, lineLabel, profileAxis;
+        private float plotRight;
+        private bool marginAsked;
+
+        private class LineRun
+        {
+            public float X0, X1, Y, StepPx;
+            public int Step;
+        }
+
         private class PressureRun
         {
             public float X0, X1, Y, Half;
@@ -120,6 +139,8 @@ namespace NinjaTrader.NinjaScript.Indicators
                 PressureLevelsPerSide = 3;
                 Days = 2;
                 Opacity = 60;
+                ShowProfile = true;
+                ProfileWidth = 220;
             }
             else if (State == State.DataLoaded)
             {
@@ -184,7 +205,7 @@ namespace NinjaTrader.NinjaScript.Indicators
                         Log("key file missing (" + keyFile + ").");
                         return;
                     }
-                    string url = Url + Uri.EscapeDataString(future) + "?view=" + ViewName(View) + "&metric=" + Metric + (full ? "" : "&since=" + since.ToString(CultureInfo.InvariantCulture)) + (ShowHeatmap ? "" : "&heatmap=false") + "&days=" + Days.ToString(CultureInfo.InvariantCulture);
+                    string url = Url + Uri.EscapeDataString(future) + "?view=" + ViewName(View) + "&metric=" + Metric + (full ? "" : "&since=" + since.ToString(CultureInfo.InvariantCulture)) + (ShowHeatmap || ShowProfile ? "" : "&heatmap=false") + "&days=" + Days.ToString(CultureInfo.InvariantCulture);
                     // The pressure changes by the minute: asked every 10 s, from its last minute on (that minute is rewritten while it is still running).
                     string pexp = FlowExpirations == ConvexaFlowExpirations.Dte0a2 ? "0-2dte" : FlowExpirations == ConvexaFlowExpirations.Todas ? "all" : "0dte";
                     bool pressureFull = false;
@@ -351,6 +372,24 @@ namespace NinjaTrader.NinjaScript.Indicators
             ground = Brush(3, 9, 36, Math.Min(1.0, alpha + 0.3));
             ClearColumnBrushes();
             bandFlip = Brush(243, 201, 105, 1);
+            // Lineas: Bookmap-like ramp, dim blue -> blue -> cyan -> yellow -> orange -> red-orange.
+            double[][] lineRamp =
+            {
+                new double[] { 22, 48, 110, 0.55 }, new double[] { 28, 80, 160, 0.65 }, new double[] { 40, 130, 205, 0.75 }, new double[] { 90, 190, 215, 0.82 },
+                new double[] { 225, 205, 90, 0.88 }, new double[] { 245, 170, 45, 0.93 }, new double[] { 248, 125, 30, 0.97 }, new double[] { 252, 85, 25, 1.0 },
+            };
+            lineCore = new SharpDX.Direct2D1.SolidColorBrush[LineSteps];
+            lineGlow = new SharpDX.Direct2D1.SolidColorBrush[LineSteps];
+            for (int i = 0; i < LineSteps; i++)
+            {
+                lineCore[i] = Brush(lineRamp[i][0], lineRamp[i][1], lineRamp[i][2], lineRamp[i][3]);
+                lineGlow[i] = Brush(lineRamp[i][0], lineRamp[i][1], lineRamp[i][2], 0.16 + 0.02 * i);
+            }
+            lineGround = Brush(15, 18, 24, 1);
+            lineLabel = Brush(250, 170, 60, 1);
+            profileUp = Ramp(PositiveStops(), 0.95);
+            profileDown = Ramp(NegativeStops(), 0.95);
+            profileAxis = Brush(209, 212, 220, 0.7);
             labelFormat = new SharpDX.DirectWrite.TextFormat(Core.Globals.DirectWriteFactory, "Segoe UI", 11f);
         }
 
@@ -404,11 +443,15 @@ namespace NinjaTrader.NinjaScript.Indicators
                     foreach (var brush in set)
                         brush.Dispose();
             positive = negative = projectedPositive = projectedNegative = null;
-            foreach (var set in new[] { blueTiles, pressureUp, pressureDown })
+            foreach (var set in new[] { blueTiles, pressureUp, pressureDown, lineCore, lineGlow, profileUp, profileDown })
                 if (set != null)
                     foreach (var brush in set)
                         brush.Dispose();
-            blueTiles = pressureUp = pressureDown = null;
+            blueTiles = pressureUp = pressureDown = lineCore = lineGlow = profileUp = profileDown = null;
+            foreach (var brush in new[] { lineGround, lineLabel, profileAxis })
+                if (brush != null)
+                    brush.Dispose();
+            lineGround = lineLabel = profileAxis = null;
             foreach (var brush in new[] { bandCall, bandPut, bandAbs, bandFlip })
                 if (brush != null)
                     brush.Dispose();
@@ -439,10 +482,18 @@ namespace NinjaTrader.NinjaScript.Indicators
                 return;
             lock (gate)
             {
+                float profile = ShowProfile ? Math.Min(ProfileWidth, ChartPanel.W / 3f) : 0f;
+                plotRight = ChartPanel.X + ChartPanel.W - profile;
+                if (ShowProfile)
+                    KeepProfileMargin(chartControl, (int)profile);
                 if (Style == ConvexaStyle.Presion)
                     RenderPressureStyle(chartControl, chartScale);
+                else if (Style == ConvexaStyle.Lineas)
+                    RenderLines(chartControl, chartScale);
                 else if (ShowHeatmap && columns.Count > 0)
                     RenderSmoothColumns(chartControl, chartScale, false);
+                if (ShowProfile && columns.Count > 0)
+                    RenderProfile(chartScale);
                 if (ShowLevels)
                     RenderLevels(chartControl, chartScale);
             }
@@ -516,9 +567,9 @@ namespace NinjaTrader.NinjaScript.Indicators
 
         private void RenderPressureStyle(ChartControl chartControl, ChartScale chartScale)
         {
-            float left = ChartPanel.X, right = ChartPanel.X + ChartPanel.W;
+            float left = ChartPanel.X, right = plotRight;
             // 1. The blue ground: the gamma heatmap's own columns, as faint tiles.
-            RenderTarget.FillRectangle(new SharpDX.RectangleF(left, ChartPanel.Y, right - left, ChartPanel.H), ground);
+            RenderTarget.FillRectangle(new SharpDX.RectangleF(left, ChartPanel.Y, ChartPanel.W, ChartPanel.H), ground);
             if (ShowHeatmap && columns.Count > 0)
                 RenderSmoothColumns(chartControl, chartScale, true);
             // 2. The fixed bands across the chart, as tall as one strike step of the latest column.
@@ -665,6 +716,159 @@ namespace NinjaTrader.NinjaScript.Indicators
             RenderTarget.FillRectangle(new SharpDX.RectangleF(x0, run.Y - half, x1 - x0, half * 2), brush);
         }
 
+        // The chart's right margin is widened once so the candles stop before the profile strip (never narrowed: the trader's own margin wins).
+        private void KeepProfileMargin(ChartControl chartControl, int width)
+        {
+            if (marginAsked || chartControl == null)
+                return;
+            marginAsked = true;
+            int wanted = width + 12;
+            try
+            {
+                if (chartControl.Properties.BarMarginRight < wanted)
+                    chartControl.Dispatcher.InvokeAsync(() =>
+                    {
+                        chartControl.Properties.BarMarginRight = wanted;
+                        chartControl.InvalidateVisual();
+                    });
+            }
+            catch (Exception error)
+            {
+                Log("right margin not set: " + error.Message);
+            }
+        }
+
+        // Style Lineas: per strike one line through the columns, split only when its strength moves by 2+ steps (no flicker), never past the plot.
+        private void RenderLines(ChartControl chartControl, ChartScale chartScale)
+        {
+            float left = ChartPanel.X, right = plotRight;
+            RenderTarget.FillRectangle(new SharpDX.RectangleF(left, ChartPanel.Y, ChartPanel.W, ChartPanel.H), lineGround);
+            if (!ShowHeatmap || columns.Count == 0)
+                return;
+            var runs = new Dictionary<double, LineRun>();
+            var ysByStrikes = new Dictionary<double[], float[]>();
+            long[] epochs = columns.Keys.ToArray();
+            for (int c = 0; c < epochs.Length; c++)
+            {
+                HeatColumn column = columns[epochs[c]];
+                if (column.Strikes.Length < 2 || column.Scale <= 0)
+                    continue;
+                float x = XOf(chartControl, epochs[c]);
+                float next = c == epochs.Length - 1 ? right : Math.Min(right, XOf(chartControl, epochs[c + 1]));
+                if (next <= x)
+                    continue;
+                float[] ys;
+                if (!ysByStrikes.TryGetValue(column.Strikes, out ys))
+                {
+                    ys = column.Strikes.Select(v => (float)chartScale.GetYByValue(v)).ToArray();
+                    ysByStrikes[column.Strikes] = ys;
+                }
+                var seen = new HashSet<double>();
+                for (int i = 0; i < column.Strikes.Length; i++)
+                {
+                    double value = column.Values[i];
+                    double share = double.IsNaN(value) ? 0 : Math.Min(1.0, Math.Abs(value) / column.Scale);
+                    int step = Math.Min(LineSteps - 1, (int)(share * LineSteps));
+                    if (share < 0.12)
+                        continue;
+                    double k = column.Strikes[i];
+                    seen.Add(k);
+                    LineRun run;
+                    if (runs.TryGetValue(k, out run) && Math.Abs(run.X1 - x) < 1.5f && Math.Abs(run.Step - step) <= 1)
+                    {
+                        run.X1 = next;
+                        continue;
+                    }
+                    if (run != null)
+                        DrawLineRun(run, left, right);
+                    runs[k] = new LineRun { X0 = x, X1 = next, Y = ys[i], StepPx = HalfRow(ys, i) * 2, Step = step };
+                }
+                foreach (double k in runs.Keys.Where(k => !seen.Contains(k)).ToList())
+                {
+                    DrawLineRun(runs[k], left, right);
+                    runs.Remove(k);
+                }
+            }
+            foreach (LineRun run in runs.Values)
+                DrawLineRun(run, left, right);
+            // The 3 strongest strikes of the latest column carry their figure, at the right end of the plot.
+            HeatColumn latest = columns[epochs[epochs.Length - 1]];
+            foreach (int i in Enumerable.Range(0, latest.Strikes.Length).Where(i => !double.IsNaN(latest.Values[i])).OrderByDescending(i => Math.Abs(latest.Values[i])).Take(3))
+            {
+                float y = (float)chartScale.GetYByValue(latest.Strikes[i]);
+                if (y < ChartPanel.Y || y > ChartPanel.Y + ChartPanel.H)
+                    continue;
+                RenderTarget.DrawText(Compact(latest.Values[i]), labelFormat, new SharpDX.RectangleF(right - 62, y - 15, 60, 14), lineLabel);
+            }
+        }
+
+        private void DrawLineRun(LineRun run, float left, float right)
+        {
+            float x0 = Math.Max(left, run.X0), x1 = Math.Min(right, run.X1);
+            if (x1 - x0 < 1f)
+                return;
+            float core = Math.Max(1.5f, Math.Min(run.StepPx * 0.55f, 1.5f + 1.1f * run.Step));
+            float glow = Math.Min(run.StepPx * 0.95f, core * 2.8f);
+            RenderTarget.FillRectangle(new SharpDX.RectangleF(x0, run.Y - glow / 2, x1 - x0, glow), lineGlow[run.Step]);
+            RenderTarget.FillRectangle(new SharpDX.RectangleF(x0, run.Y - core / 2, x1 - x0, core), lineCore[run.Step]);
+        }
+
+        private static string Compact(double value)
+        {
+            double a = Math.Abs(value);
+            string sign = value < 0 ? "-" : "+";
+            if (a >= 1e9) return sign + (a / 1e9).ToString("0.0", CultureInfo.InvariantCulture) + "B";
+            if (a >= 1e6) return sign + (a / 1e6).ToString("0.0", CultureInfo.InvariantCulture) + "M";
+            if (a >= 1e3) return sign + (a / 1e3).ToString("0.0", CultureInfo.InvariantCulture) + "K";
+            return sign + a.ToString("0.##", CultureInfo.InvariantCulture);
+        }
+
+        // GEX profile: per strike its latest value in the last 12 columns; bars from the price axis towards the candles (square root on the p98),
+        // green positive / red negative like Convexa's profile; a dashed line marks where the strip starts.
+        private void RenderProfile(ChartScale chartScale)
+        {
+            float stripLeft = plotRight, stripRight = ChartPanel.X + ChartPanel.W;
+            if (stripRight - stripLeft < 40)
+                return;
+            var latest = new SortedDictionary<double, double>();
+            foreach (HeatColumn column in columns.Values.Skip(Math.Max(0, columns.Count - 12)))
+                for (int i = 0; i < column.Strikes.Length; i++)
+                    if (!double.IsNaN(column.Values[i]))
+                        latest[column.Strikes[i]] = column.Values[i];
+            if (latest.Count == 0)
+                return;
+            double[] magnitudes = latest.Values.Select(Math.Abs).Where(v => v > 0).OrderBy(v => v).ToArray();
+            if (magnitudes.Length == 0)
+                return;
+            double top = magnitudes[Math.Min(magnitudes.Length - 1, (int)Math.Floor(0.98 * magnitudes.Length))];
+            float[] ys = latest.Keys.Select(k => (float)chartScale.GetYByValue(k)).ToArray();
+            var gaps = new List<float>();
+            for (int i = 1; i < ys.Length; i++)
+                if (Math.Abs(ys[i] - ys[i - 1]) > 0)
+                    gaps.Add(Math.Abs(ys[i] - ys[i - 1]));
+            gaps.Sort();
+            float rowStep = gaps.Count > 0 ? gaps[gaps.Count / 2] : 6f;
+            float thickness = Math.Max(1f, Math.Min(rowStep * 0.78f, 18f));
+            float maxBar = stripRight - stripLeft - 18f, rightEdge = stripRight - 4f;
+            int index = 0;
+            foreach (var pair in latest)
+            {
+                float y = ys[index++];
+                if (y < ChartPanel.Y - 20 || y > ChartPanel.Y + ChartPanel.H + 20)
+                    continue;
+                double share = Math.Min(1.0, Math.Abs(pair.Value) / top);
+                float width = (float)Math.Sqrt(share) * maxBar;
+                if (width < 1f)
+                    continue;
+                var brushes = pair.Value >= 0 ? profileUp : profileDown;
+                RenderTarget.FillRectangle(new SharpDX.RectangleF(rightEdge - width, y - thickness / 2, width, thickness), brushes[Math.Min(RampSteps - 1, (int)(Math.Sqrt(share) * RampSteps))]);
+            }
+            var dashes = new SharpDX.Direct2D1.StrokeStyle(RenderTarget.Factory, new SharpDX.Direct2D1.StrokeStyleProperties { DashStyle = SharpDX.Direct2D1.DashStyle.Dash });
+            RenderTarget.DrawLine(new SharpDX.Vector2(stripLeft, ChartPanel.Y), new SharpDX.Vector2(stripLeft, ChartPanel.Y + ChartPanel.H), profileAxis, 1f, dashes);
+            dashes.Dispose();
+            RenderTarget.DrawText("PERFIL GEX · " + Metric, labelFormat, new SharpDX.RectangleF(stripLeft + 8, ChartPanel.Y + ChartPanel.H - 18, stripRight - stripLeft - 10, 14), profileAxis);
+        }
+
         private void ClearColumnBrushes()
         {
             foreach (var entry in columnBrushes.Values)
@@ -681,7 +885,7 @@ namespace NinjaTrader.NinjaScript.Indicators
                 ClearColumnBrushes();
                 brushStyleKey = styleKey;
             }
-            float left = ChartPanel.X, right = ChartPanel.X + ChartPanel.W;
+            float left = ChartPanel.X, right = plotRight;
             long[] epochs = columns.Keys.ToArray();
             var used = new HashSet<long>();
             for (int c = 0; c < epochs.Length; c++)
@@ -794,7 +998,7 @@ namespace NinjaTrader.NinjaScript.Indicators
         private void RenderLevels(ChartControl chartControl, ChartScale chartScale)
         {
             float left = ChartPanel.X;
-            float right = ChartPanel.X + ChartPanel.W;
+            float right = plotRight;
             foreach (var level in levels)
             {
                 string group = level.Key.StartsWith("em_") ? "em" : level.Key.StartsWith("atr_") ? "atr" : level.Key;
@@ -862,7 +1066,7 @@ namespace NinjaTrader.NinjaScript.Indicators
         public int Opacity { get; set; }
 
         [NinjaScriptProperty]
-        [Display(Name = "Estilo (Clasico / Presion)", Order = 7, GroupName = "Convexa")]
+        [Display(Name = "Estilo (Clasico / Presion / Lineas)", Order = 7, GroupName = "Convexa")]
         public ConvexaStyle Style { get; set; }
 
         [Display(Name = "Presion: vencimientos del flujo", Order = 8, GroupName = "Convexa")]
@@ -875,6 +1079,13 @@ namespace NinjaTrader.NinjaScript.Indicators
         [Range(1, 5)]
         [Display(Name = "Sesiones a mostrar", Order = 10, GroupName = "Convexa")]
         public int Days { get; set; }
+
+        [Display(Name = "Perfil GEX", Order = 11, GroupName = "Convexa")]
+        public bool ShowProfile { get; set; }
+
+        [Range(80, 400)]
+        [Display(Name = "Perfil GEX: ancho (px)", Order = 12, GroupName = "Convexa")]
+        public int ProfileWidth { get; set; }
 
         [Display(Name = "Convexa URL", Order = 6, GroupName = "Convexa")]
         public string Url { get; set; }
