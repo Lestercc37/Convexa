@@ -107,6 +107,32 @@ async function putJson<T>(path: string, body: unknown, signal?: AbortSignal): Pr
   return (await response.json()) as T;
 }
 
+async function deleteRequest(path: string, signal?: AbortSignal): Promise<void> {
+  const response = await fetch(`${API_PREFIX}${path}`, { method: "DELETE", cache: "no-store", signal });
+  if (!response.ok) throw await apiErrorFrom(response, path);
+}
+
+// EMA cross alerts by Telegram (backend/api/routes/ema_alerts.py): each user's own rules and their linked chat.
+export type EmaAlertRule = { id: number; symbol: string; timeframe: string; fast_period: number; slow_period: number; direction: "up" | "down" | "both" };
+export type EmaAlertsState = { telegram_linked: boolean; bot_username: string; rules: EmaAlertRule[] };
+export type TelegramLinkCode = { code: string; expires_in_seconds: number; bot_username: string; link: string };
+
+export function getEmaAlerts(signal?: AbortSignal) {
+  return getJson<EmaAlertsState>("/ema-alerts", signal);
+}
+
+export function addEmaAlert(rule: { symbol: string; timeframe: string; fast_period: number; slow_period: number; direction?: "up" | "down" | "both" }) {
+  return postJson<EmaAlertRule>("/ema-alerts", { direction: "both", ...rule });
+}
+
+export function deleteEmaAlert(id: number) {
+  return deleteRequest(`/ema-alerts/${id}`);
+}
+
+export function newTelegramLinkCode() {
+  return postJson<TelegramLinkCode>("/ema-alerts/telegram/code", {});
+}
+
 export type SessionUser = { username: string; is_admin: boolean };
 
 // The trader's chart template (lib/chart-settings.ts; backend auth.py /me/chart-settings).

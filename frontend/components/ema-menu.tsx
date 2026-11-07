@@ -4,16 +4,19 @@ import { useEffect, useRef, useState } from "react";
 
 import { EMA_WIDTHS, addEma, EMA_MAX_LINES, EMA_MAX_PERIOD, EMA_MIN_PERIOD, type EmaConfig } from "@/lib/ema";
 import { useLanguage } from "@/lib/i18n/language-context";
+import { EmaTelegramAlerts } from "./ema-telegram-alerts";
 
 type EmaMenuProps = {
   emas: EmaConfig[];
   /** Ids of lines whose period is longer than the bars available (still converging from their first value). */
   convergingIds: ReadonlySet<string>;
   onChange: (emas: EmaConfig[]) => void;
+  /** The chart's symbol and timeframe, for the Telegram cross alerts section (none = the section is not shown). */
+  alertsFor?: { symbol: string; timeframe: string };
 };
 
 // The "EMAs" sub-menu of the chart: type any period to add a line, a checkbox shows or hides it, a colour picker changes its colour, the cross removes it. Starts empty: nothing is fixed.
-export function EmaMenu({ emas, convergingIds, onChange }: EmaMenuProps) {
+export function EmaMenu({ emas, convergingIds, onChange, alertsFor }: EmaMenuProps) {
   const { t } = useLanguage();
   const [open, setOpen] = useState(false);
   const [draft, setDraft] = useState("");
@@ -141,6 +144,7 @@ export function EmaMenu({ emas, convergingIds, onChange }: EmaMenuProps) {
               ))}
             </ul>
           )}
+          {alertsFor && <EmaTelegramAlerts symbol={alertsFor.symbol} timeframe={alertsFor.timeframe} />}
         </div>
       )}
     </div>
