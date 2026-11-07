@@ -364,7 +364,7 @@ describe("profile figures and their change (Lester 2026-11-06)", () => {
     drawView(primitive, 0, context, WIDTH);
     const texts = ops.filter((entry) => entry.op === "fillText").map((entry) => [entry.args[0], entry.fillStyle]);
     expect(texts).toContainEqual(["-$100", "rgba(240, 242, 247, 0.96)"]);
-    expect(texts).toContainEqual(["▼ -$10", "#ff5c60"]); // -100 now vs -90 before
+    expect(texts).toContainEqual(["▲ +$10", "#22c55e"]); // -100 now vs -90 before: bigger, so it gained importance (Lester 2026-11-07)
     expect(texts.filter(([text]) => String(text).startsWith("▲") || String(text).startsWith("▼"))).toHaveLength(1); // 100: no change; 110: no reference
     expect(ops.filter((entry) => entry.op === "fillRect")).toHaveLength(3); // the bars; the pills use roundRect
   });
