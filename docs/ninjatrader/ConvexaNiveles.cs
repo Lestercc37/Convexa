@@ -9,6 +9,9 @@
 // price with the most options-flow PRESSURE (signed 0DTE delta flow decaying by half every 15 min, at or above the day's 90th percentile):
 // green bullish, red bearish, deeper = stronger, never white. A level price crosses and stays beyond for 5 minutes is cut (a gap) until
 // fresh pressure rebuilds it. The pressure is read every 10 s (only the new minutes after the first read).
+// Smooth, behind the candles (Lester 2026-11-06, with his mock-up): the indicator draws BEHIND the bars (SetZOrder) and every column is ONE
+// vertical gradient through all its strikes (Direct2D interpolates between them: no squares). Style Presion: deep blue ground; strong gamma
+// strikes light up GREEN under the price of that moment (support) and RED / ORANGE above it (resistance).
 // Never cut by session (Lester 2026-11-06): the last `Days` sessions are kept, each with its own strike list and basis; a read is only ever
 // ADDED to what is held (a full read every 5 minutes replaces it whole), each column lasts until the next one, so nights and weekends keep
 // the last picture Convexa sent, and the lines move only when Convexa updates them.
@@ -72,6 +75,11 @@ namespace NinjaTrader.NinjaScript.Indicators
         private SharpDX.Direct2D1.SolidColorBrush[] positive, negative, projectedPositive, projectedNegative;
         private readonly Dictionary<string, SharpDX.Direct2D1.SolidColorBrush> levelBrushes = new Dictionary<string, SharpDX.Direct2D1.SolidColorBrush>();
         private SharpDX.DirectWrite.TextFormat labelFormat;
+        // One gradient brush per heatmap column (built once, re-positioned every frame), keyed by the column's epoch.
+        private readonly Dictionary<long, KeyValuePair<HeatColumn, SharpDX.Direct2D1.LinearGradientBrush>> columnBrushes =
+            new Dictionary<long, KeyValuePair<HeatColumn, SharpDX.Direct2D1.LinearGradientBrush>>();
+        private string brushStyleKey = "";
+        private SharpDX.Direct2D1.SolidColorBrush ground;
 
         private class HeatColumn
         {
@@ -105,6 +113,10 @@ namespace NinjaTrader.NinjaScript.Indicators
             else if (State == State.DataLoaded)
             {
                 future = Instrument.MasterInstrument.Name;
+            }
+            else if (State == State.Historical)
+            {
+                SetZOrder(-1); // behind the candles: NinjaTrader draws indicators on top of the bars otherwise
             }
             else if (State == State.Realtime)
             {
@@ -325,6 +337,8 @@ namespace NinjaTrader.NinjaScript.Indicators
             bandCall = Brush(34, 197, 94, 0.45);
             bandPut = Brush(239, 68, 68, 0.45);
             bandAbs = Brush(29, 78, 216, 0.6);
+            ground = Brush(6, 18, 72, Math.Min(1.0, alpha + 0.25));
+            ClearColumnBrushes();
             bandFlip = Brush(243, 201, 105, 1);
             labelFormat = new SharpDX.DirectWrite.TextFormat(Core.Globals.DirectWriteFactory, "Segoe UI", 11f);
         }
@@ -388,6 +402,12 @@ namespace NinjaTrader.NinjaScript.Indicators
                 if (brush != null)
                     brush.Dispose();
             bandCall = bandPut = bandAbs = bandFlip = null;
+            if (ground != null)
+            {
+                ground.Dispose();
+                ground = null;
+            }
+            ClearColumnBrushes();
             foreach (var brush in levelBrushes.Values)
                 brush.Dispose();
             levelBrushes.Clear();
@@ -408,7 +428,7 @@ namespace NinjaTrader.NinjaScript.Indicators
                 if (Style == ConvexaStyle.Presion)
                     RenderPressureStyle(chartControl, chartScale);
                 else if (ShowHeatmap && columns.Count > 0)
-                    RenderHeatmap(chartControl, chartScale);
+                    RenderSmoothColumns(chartControl, chartScale, false);
                 if (ShowLevels)
                     RenderLevels(chartControl, chartScale);
             }
@@ -484,8 +504,9 @@ namespace NinjaTrader.NinjaScript.Indicators
         {
             float left = ChartPanel.X, right = ChartPanel.X + ChartPanel.W;
             // 1. The blue ground: the gamma heatmap's own columns, as faint tiles.
+            RenderTarget.FillRectangle(new SharpDX.RectangleF(left, ChartPanel.Y, right - left, ChartPanel.H), ground);
             if (ShowHeatmap && columns.Count > 0)
-                RenderHeatmapWith(chartControl, chartScale, blueTiles, blueTiles, blueTiles, blueTiles, 0.0);
+                RenderSmoothColumns(chartControl, chartScale, true);
             // 2. The fixed bands across the chart, as tall as one strike step of the latest column.
             double[] latestStrikes = columns.Count > 0 ? columns[columns.Keys.Last()].Strikes : new double[0];
             float bandHalf = latestStrikes.Length > 1 ? Math.Max(2f, HalfRow(latestStrikes.Select(v => (float)chartScale.GetYByValue(v)).ToArray(), 0)) : 3f;
@@ -570,6 +591,112 @@ namespace NinjaTrader.NinjaScript.Indicators
                     RenderTarget.FillRectangle(new SharpDX.RectangleF(x, ys[i] - half, next - x, half * 2), brushes[Math.Min(RampSteps - 1, (int)(share * RampSteps))]);
                 }
             }
+        }
+
+        private void ClearColumnBrushes()
+        {
+            foreach (var entry in columnBrushes.Values)
+                entry.Value.Dispose();
+            columnBrushes.Clear();
+        }
+
+        // Each visible column painted with one vertical gradient through its strikes; the last one stretched to the right edge, softer.
+        private void RenderSmoothColumns(ChartControl chartControl, ChartScale chartScale, bool pressureStyle)
+        {
+            string styleKey = (pressureStyle ? "P" : "C") + Metric + Opacity;
+            if (styleKey != brushStyleKey)
+            {
+                ClearColumnBrushes();
+                brushStyleKey = styleKey;
+            }
+            float left = ChartPanel.X, right = ChartPanel.X + ChartPanel.W;
+            long[] epochs = columns.Keys.ToArray();
+            var used = new HashSet<long>();
+            for (int c = 0; c < epochs.Length; c++)
+            {
+                HeatColumn column = columns[epochs[c]];
+                if (column.Strikes.Length < 2 || column.Scale <= 0)
+                    continue;
+                float x = XOf(chartControl, epochs[c]);
+                bool last = c == epochs.Length - 1;
+                float next = last ? right : XOf(chartControl, epochs[c + 1]);
+                if (next <= x || next < left || x > right)
+                    continue;
+                KeyValuePair<HeatColumn, SharpDX.Direct2D1.LinearGradientBrush> entry;
+                if (!columnBrushes.TryGetValue(epochs[c], out entry) || !ReferenceEquals(entry.Key, column))
+                {
+                    if (entry.Value != null)
+                        entry.Value.Dispose();
+                    var brush = ColumnBrush(column, pressureStyle ? CloseAt(chartControl, epochs[c]) : double.NaN, pressureStyle);
+                    if (brush == null)
+                        continue;
+                    entry = new KeyValuePair<HeatColumn, SharpDX.Direct2D1.LinearGradientBrush>(column, brush);
+                    columnBrushes[epochs[c]] = entry;
+                }
+                used.Add(epochs[c]);
+                float yLow = (float)chartScale.GetYByValue(column.Strikes[0]);
+                float yHigh = (float)chartScale.GetYByValue(column.Strikes[column.Strikes.Length - 1]);
+                entry.Value.StartPoint = new SharpDX.Vector2(x, yLow);
+                entry.Value.EndPoint = new SharpDX.Vector2(x, yHigh);
+                // A strike step above and below the range so the outermost strikes fade instead of ending in a hard edge.
+                float pad = Math.Abs(yLow - yHigh) / Math.Max(1, column.Strikes.Length - 1);
+                entry.Value.Opacity = last && right > x + 4 ? 0.85f : 1f;
+                RenderTarget.FillRectangle(new SharpDX.RectangleF(x, Math.Min(yLow, yHigh) - pad, next - x + 0.75f, Math.Abs(yLow - yHigh) + 2 * pad), entry.Value);
+            }
+            // Free the brushes of columns no longer on screen (a long session holds thousands of columns).
+            if (columnBrushes.Count > used.Count + 200)
+                foreach (long epoch in columnBrushes.Keys.Where(k => !used.Contains(k)).ToList())
+                {
+                    columnBrushes[epoch].Value.Dispose();
+                    columnBrushes.Remove(epoch);
+                }
+        }
+
+        private SharpDX.Direct2D1.LinearGradientBrush ColumnBrush(HeatColumn column, double priceThen, bool pressureStyle)
+        {
+            double low = column.Strikes[0], high = column.Strikes[column.Strikes.Length - 1];
+            if (high <= low)
+                return null;
+            var stops = new List<SharpDX.Direct2D1.GradientStop>();
+            for (int i = 0; i < column.Strikes.Length; i++)
+            {
+                double value = column.Values[i];
+                double share = double.IsNaN(value) ? 0 : Math.Min(1.0, Math.Abs(value) / column.Scale);
+                float position = (float)((column.Strikes[i] - low) / (high - low));
+                stops.Add(new SharpDX.Direct2D1.GradientStop { Position = position, Color = pressureStyle ? PressureColor(share, column.Strikes[i], priceThen) : ClassicColor(share, value) });
+            }
+            using (var collection = new SharpDX.Direct2D1.GradientStopCollection(RenderTarget, stops.ToArray()))
+                return new SharpDX.Direct2D1.LinearGradientBrush(RenderTarget,
+                    new SharpDX.Direct2D1.LinearGradientBrushProperties { StartPoint = new SharpDX.Vector2(0, 0), EndPoint = new SharpDX.Vector2(0, 1) }, collection);
+        }
+
+        // Style Presion: deep blue -> royal blue for weak strikes; strong ones green under the price of that moment (support), red / orange above.
+        private SharpDX.Color4 PressureColor(double share, double strike, double priceThen)
+        {
+            double alpha = Math.Max(0.05, Math.Min(1.0, Opacity / 100.0));
+            if (share < 0.35)
+                return Mix(new[] { 8.0, 24, 86 }, new[] { 28.0, 92, 205 }, share / 0.35, alpha);
+            double t = (share - 0.35) / 0.65;
+            bool support = !double.IsNaN(priceThen) && strike <= priceThen;
+            double[] mid = support ? new[] { 30.0, 190, 90 } : new[] { 235.0, 70, 40 };
+            double[] top = support ? new[] { 190.0, 255, 120 } : new[] { 255.0, 205, 60 };
+            return t < 0.6 ? Mix(new[] { 28.0, 92, 205 }, mid, t / 0.6, Math.Min(1.0, alpha + 0.2)) : Mix(mid, top, (t - 0.6) / 0.4, Math.Min(1.0, alpha + 0.3));
+        }
+
+        // Style Clasico: Convexa's ramps (green positive / red negative; blue, purple or orange for the unsigned figures), transparent when weak.
+        private SharpDX.Color4 ClassicColor(double share, double value)
+        {
+            double alpha = Math.Max(0.05, Math.Min(1.0, Opacity / 100.0));
+            if (double.IsNaN(value) || share < FaintShare)
+                return new SharpDX.Color4(0, 0, 0, 0);
+            double[][] stops = value >= 0 ? PositiveStops() : NegativeStops();
+            return share < 0.6 ? Mix(stops[0], stops[1], share / 0.6, alpha) : Mix(stops[1], stops[2], (share - 0.6) / 0.4, alpha);
+        }
+
+        private static SharpDX.Color4 Mix(double[] a, double[] b, double t, double alpha)
+        {
+            t = Math.Max(0, Math.Min(1, t));
+            return new SharpDX.Color4((float)((a[0] + (b[0] - a[0]) * t) / 255), (float)((a[1] + (b[1] - a[1]) * t) / 255), (float)((a[2] + (b[2] - a[2]) * t) / 255), (float)alpha);
         }
 
         private void DrawBand(ChartScale chartScale, string key, SharpDX.Direct2D1.SolidColorBrush brush, float half, float left, float right)
