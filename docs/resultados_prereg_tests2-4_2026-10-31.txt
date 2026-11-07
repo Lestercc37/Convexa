@@ -1,0 +1,482 @@
+RESULTADOS PRUEBAS 2, 3 Y 4 DEL PREREGISTRO (docs/preregistro_nivel_apertura_2026-10-29.txt) - corrida 2026-10-31, solo lectura
+Scripts: docs/hm_prereg_test2_walls_together.py, docs/hm_prereg_test3_forced_walls.py, docs/hm_prereg_test4_abs_change.py
+
+##############################################################################################################
+PRUEBA 2 (a) DEL PREREGISTRO: "PAREDES JUNTAS = DÍA ESTRECHO" — corrida 2026-10-31, solo lectura
+==============================================================================================================
+DESVÍOS Y ACLARACIONES (2026-10-31, escritos antes de leer los resultados):
+ D1. Escalón de strike: el salto más común entre strikes guardados vecinos a ±0,5 ATR del precio en el ciclo de las 09:35 (NDX e IWM mezclan
+     escalones; cuenta el cercano al dinero).
+ D2. "≥ 25 % de la sesión": se mide sobre los ciclos tácticos de 09:30 a 10:30 (el preregistro pide medir la condición solo hasta las 10:30).
+     Variante: juntas en el último ciclo antes de las 10:30 (la "hora fija"). Ciclos con una pared nula cuentan como "no juntas".
+ D3. Punto medio: el de las paredes vigentes en cada lectura de precio después de las 10:30 (variante: congelado a las 10:30).
+     % de tiempo = % de lecturas de precio (llegan ~1 por segundo, parejas en el tiempo).
+ D4. El rango se informa en puntos y en ATR; las comparaciones entre días usan ATR (cada día tiene distinta volatilidad).
+ D5. Los días de mercado se toman todos (también 09-25, primer día táctico); exclusión solo por huecos > 10 min de 09:30 a 10:00.
+
+DÍAS EXCLUIDOS:
+  SPX 2026-09-25: max gap prices 0.5 min, cycles 30.0 min (09:30-10:00)
+  NDX 2026-09-25: max gap prices 0.5 min, cycles 30.0 min (09:30-10:00)
+  SPY 2026-09-25: max gap prices 0.2 min, cycles 30.0 min (09:30-10:00)
+  QQQ 2026-09-25: max gap prices 0.3 min, cycles 30.0 min (09:30-10:00)
+  IWM 2026-09-25: max gap prices 0.3 min, cycles 30.0 min (09:30-10:00)
+
+POR DÍA: sím fecha | escalón | % ciclos juntas 09:30-10:30 | juntas 10:30 | rango 09:30-10:30 (ATR) | rango después 10:30 (pts / ATR) | % cerca del medio (vigente / congelado) | % ciclos con pared nula
+  SPX 2026-09-28 | 5 |   0.0 % | no | 0.33 | 57.55 / 0.84 |  10.7 /   0.0 |  0.0 %
+  SPX 2026-09-29 | 5 |   0.0 % | no | 0.34 | 33.03 / 0.47 |   0.0 /   0.0 |  0.0 %
+  SPX 2026-09-30 | 5 |   0.0 % | no | 0.46 | 64.56 / 0.93 |   6.2 /   1.1 |  0.0 %
+  SPX 2026-10-01 | 5 |   0.0 % | no | 0.77 | 66.67 / 0.94 |  23.1 /  14.3 |  0.0 %
+  SPX 2026-10-02 | 5 |   0.0 % | no | 0.48 | 54.16 / 0.78 |   6.2 /   0.5 |  0.6 %
+  SPX 2026-10-05 | 5 |   0.0 % | no | 0.41 | 48.21 / 0.68 |   0.0 /   0.0 |  0.0 %
+  SPX 2026-10-06 | 5 |   0.0 % | no | 0.40 | 30.75 / 0.42 |   0.0 /   0.0 |  0.0 %
+  SPX 2026-10-07 | 5 |   0.0 % | no | 0.36 | 43.68 / 0.63 |  15.0 /  29.7 |  0.0 %
+  SPX 2026-10-08 | 5 |   0.0 % | no | 0.33 | 66.53 / 1.00 |  26.6 /  11.1 |  0.0 %
+  SPX 2026-10-09 | 5 |   0.0 % | no | 0.25 | 33.63 / 0.49 |   1.0 /   0.0 |  8.5 %
+  SPX 2026-10-12 | 5 |   0.0 % | no | 0.30 | 21.85 / 0.35 |  74.1 /  88.4 |  0.0 %
+  SPX 2026-10-13 | 5 |   0.0 % | no | 0.30 | 26.50 / 0.42 |  89.0 /  53.5 |  0.0 %
+  SPX 2026-10-14 | 5 |   0.0 % | no | 0.62 | 67.09 / 1.12 |  15.4 /  15.4 |  0.0 %
+  SPX 2026-10-15 | 5 |   0.0 % | no | 0.56 | 58.32 / 0.91 |  16.3 /  54.0 |  0.0 %
+  SPX 2026-10-16 | 5 |   0.0 % | no | 0.40 | 119.76 / 1.82 |  10.3 /   4.7 |  4.3 %
+  SPX 2026-10-19 | 5 |   0.0 % | no | 0.46 | 42.73 / 0.62 |   8.4 /   2.4 |  0.0 %
+  SPX 2026-10-20 | 5 |   0.0 % | no | 1.05 | 44.25 / 0.62 |  62.9 /  76.9 |  0.0 %
+  SPX 2026-10-21 | 5 |   0.0 % | no | 0.41 | 51.61 / 0.72 |   5.7 /  18.1 |  0.0 %
+  SPX 2026-10-22 | 5 |   0.0 % | no | 0.64 | 45.77 / 0.64 |   0.3 /   0.0 |  0.0 %
+  SPX 2026-10-23 | 5 |   0.0 % | no | 0.35 | 41.29 / 0.56 |   1.3 /  10.8 |  0.3 %
+  SPX 2026-10-26 | 5 |   0.0 % | no | 0.60 | 35.39 / 0.49 |   3.5 /   0.0 |  0.0 %
+  SPX 2026-10-27 | 5 |   0.0 % | no | 0.44 | 45.61 / 0.63 |   1.7 /   0.1 |  0.0 %
+  SPX 2026-10-28 | 5 |   0.0 % | no | 0.33 | 36.06 / 0.49 |   3.4 /   0.0 |  0.0 %
+  SPX 2026-10-29 | 5 |   0.0 % | no | 0.40 | 41.27 / 0.58 |   0.0 /   0.0 |  0.0 %
+  SPX 2026-10-30 | 5 |   0.0 % | no | 0.58 | 99.76 / 1.41 |   0.0 /   nan | 63.5 %
+  NDX 2026-09-28 | 10 |   0.0 % | no | 0.61 | 355.20 / 0.91 |   0.0 /   0.0 |  0.0 %
+  NDX 2026-09-29 | 10 |   0.0 % | no | 0.34 | 194.05 / 0.47 |  21.4 /   0.0 |  0.0 %
+  NDX 2026-09-30 | 10 |   0.0 % | no | 0.48 | 202.80 / 0.50 |  16.3 /   0.6 |  0.0 %
+  NDX 2026-10-01 | 10 |   0.0 % | no | 0.62 | 332.91 / 0.83 |  14.0 /  11.1 |  0.0 %
+  NDX 2026-10-02 | 10 |   0.0 % | no | 0.53 | 269.53 / 0.68 |   0.0 /   0.0 |  0.0 %
+  NDX 2026-10-05 | 10 |   0.0 % | no | 0.46 | 170.72 / 0.43 |   0.0 /   0.0 |  0.0 %
+  NDX 2026-10-06 | 10 |   0.0 % | no | 0.30 | 145.85 / 0.36 |   0.0 /   0.0 |  0.0 %
+  NDX 2026-10-07 | 10 |   0.0 % | no | 0.35 | 202.89 / 0.52 |  16.4 /   9.1 |  0.0 %
+  NDX 2026-10-08 | 10 |   0.0 % | no | 0.55 | 558.46 / 1.50 |   0.5 /   0.0 |  0.0 %
+  NDX 2026-10-09 | 10 |   0.0 % | no | 0.45 | 121.51 / 0.31 |  27.1 /  16.3 |  0.0 %
+  NDX 2026-10-12 | 10 |   0.0 % | no | 0.52 | 133.68 / 0.38 |  20.7 /   0.0 |  0.0 %
+  NDX 2026-10-13 | 10 |   0.0 % | no | 0.65 | 175.27 / 0.51 |   0.0 /   0.0 |  0.0 %
+  NDX 2026-10-14 | 10 |   0.0 % | no | 0.58 | 436.02 / 1.28 |   0.0 /   2.5 |  0.0 %
+  NDX 2026-10-15 | 10 |   0.0 % | no | 0.67 | 430.82 / 1.17 |   0.0 /   0.0 |  0.0 %
+  NDX 2026-10-16 | 10 |   0.0 % | no | 0.59 | 668.49 / 1.71 |   3.0 /   0.3 |  0.0 %
+  NDX 2026-10-19 | 10 |   0.0 % | no | 0.50 | 276.35 / 0.67 |  14.9 /   0.0 |  0.0 %
+  NDX 2026-10-20 | 10 |   0.0 % | no | 1.09 | 241.82 / 0.55 |   1.8 /   7.1 |  0.0 %
+  NDX 2026-10-21 | 10 |   0.0 % | no | 0.33 | 277.65 / 0.61 |   4.5 /   0.0 |  0.0 %
+  NDX 2026-10-22 | 10 |   0.0 % | no | 0.52 | 344.72 / 0.74 |   0.0 /   0.0 |  0.0 %
+  NDX 2026-10-23 | 10 |   0.0 % | no | 0.41 | 220.68 / 0.44 |   2.3 /   0.2 |  0.0 %
+  NDX 2026-10-26 | 10 |   0.0 % | no | 0.40 | 268.25 / 0.54 |   2.0 /   0.1 |  0.0 %
+  NDX 2026-10-27 | 10 |   0.0 % | no | 0.37 | 272.24 / 0.53 |   4.6 /   0.0 |  0.0 %
+  NDX 2026-10-28 | 10 |   0.0 % | no | 0.35 | 215.12 / 0.41 |   0.8 /   0.0 |  0.0 %
+  NDX 2026-10-29 | 10 |   0.0 % | no | 0.43 | 246.81 / 0.50 |   0.6 /   0.6 |  0.0 %
+  NDX 2026-10-30 | 10 |   0.0 % | no | 0.47 | 589.31 / 1.14 |   0.0 /   0.0 |  0.0 %
+  SPY 2026-09-28 | 1 |   0.0 % | no | 0.22 | 7.61 / 1.11 |  42.5 /  43.0 |  0.0 %
+  SPY 2026-09-29 | 1 |   0.0 % | no | 0.33 | 3.35 / 0.48 |  78.2 /  84.1 |  0.0 %
+  SPY 2026-09-30 | 1 |   0.0 % | no | 0.43 | 6.37 / 0.91 |   0.2 /  38.5 |  0.0 %
+  SPY 2026-10-01 | 1 |   0.0 % | no | 0.74 | 6.72 / 0.94 |  60.1 /  66.1 |  0.0 %
+  SPY 2026-10-02 | 1 |   0.0 % | no | 0.46 | 8.81 / 1.26 |  25.2 /  96.7 |  0.6 %
+  SPY 2026-10-05 | 1 |   0.0 % | no | 0.47 | 7.16 / 1.00 |   4.7 /   1.3 |  0.0 %
+  SPY 2026-10-06 | 1 |   0.0 % | no | 0.37 | 7.01 / 0.96 |   0.0 /   0.0 |  0.0 %
+  SPY 2026-10-07 | 1 |   0.0 % | no | 0.30 | 29.80 / 4.29 |  61.7 /  19.4 |  0.0 %
+  SPY 2026-10-08 | 1 |   0.0 % | no | 0.31 | 6.95 / 1.04 |  74.1 /  32.0 |  0.0 %
+  SPY 2026-10-09 | 1 |   0.0 % | no | 0.24 | 5.57 / 0.82 |  38.5 /   0.0 |  0.8 %
+  SPY 2026-10-12 | 1 |   0.0 % | no | 0.28 | 2.11 / 0.34 |  95.3 /  99.1 |  0.0 %
+  SPY 2026-10-13 | 1 |  34.2 % | sí | 0.25 | 2.83 / 0.45 |  84.8 /  89.4 |  0.0 %
+  SPY 2026-10-14 | 1 |   0.0 % | no | 0.62 | 11.16 / 1.87 |   0.0 /   0.0 |  0.0 %
+  SPY 2026-10-15 | 1 |   0.0 % | no | 0.56 | 5.86 / 0.92 |  66.5 /  72.0 |  0.0 %
+  SPY 2026-10-16 | 1 |   0.0 % | no | 0.43 | 12.48 / 1.91 |   8.6 /   2.6 |  5.5 %
+  SPY 2026-10-19 | 1 |   0.0 % | no | 0.46 | 4.28 / 0.62 |  51.7 /   0.1 |  0.0 %
+  SPY 2026-10-20 | 1 |   0.0 % | no | 1.06 | 4.42 / 0.63 |  57.0 /  64.9 |  0.0 %
+  SPY 2026-10-21 | 1 |   0.0 % | no | 0.41 | 5.11 / 0.72 |  37.0 /  37.0 |  0.0 %
+  SPY 2026-10-22 | 1 |   3.6 % | sí | 0.63 | 5.25 / 0.74 |   0.0 /   0.0 |  6.8 %
+  SPY 2026-10-23 | 1 |   0.0 % | no | 0.36 | 4.11 / 0.56 |  64.3 /  39.4 |  0.0 %
+  SPY 2026-10-26 | 1 |   3.3 % | no | 0.57 | 3.57 / 0.50 |  95.3 /   0.0 |  0.0 %
+  SPY 2026-10-27 | 1 |  93.2 % | sí | 0.43 | 4.51 / 0.62 |  63.3 /  14.8 |  0.0 %
+  SPY 2026-10-28 | 1 |   0.0 % | no | 0.34 | 3.73 / 0.51 |  70.3 /  62.1 |  0.0 %
+  SPY 2026-10-29 | 1 |   0.0 % | no | 0.37 | 4.12 / 0.58 |  52.3 /  52.3 |  0.0 %
+  SPY 2026-10-30 | 1 |   0.0 % | no | 0.58 | 10.00 / 1.41 |   0.1 /   0.0 | 35.7 %
+  QQQ 2026-09-28 | 1 |   0.0 % | no | 0.61 | 12.77 / 1.34 |   0.1 /   0.0 |  0.0 %
+  QQQ 2026-09-29 | 1 |   0.0 % | no | 0.39 | 30.87 / 3.10 |  76.3 /   1.6 |  0.0 %
+  QQQ 2026-09-30 | 1 |   0.0 % | no | 0.48 | 7.11 / 0.72 |   0.2 /   0.5 |  0.0 %
+  QQQ 2026-10-01 | 1 |   0.0 % | no | 0.64 | 8.56 / 0.88 |  62.7 /  18.1 |  0.0 %
+  QQQ 2026-10-02 | 1 |   0.0 % | no | 0.54 | 12.41 / 1.27 |   9.8 /  41.9 |  0.6 %
+  QQQ 2026-10-05 | 1 |   0.0 % | no | 0.48 | 7.56 / 0.77 |   0.2 /   0.0 |  0.0 %
+  QQQ 2026-10-06 | 1 |   0.0 % | no | 0.30 | 6.97 / 0.70 |   0.0 /   0.0 |  0.0 %
+  QQQ 2026-10-07 | 1 |   0.0 % | no | 0.35 | 7.91 / 0.83 |  26.9 /  36.8 |  0.0 %
+  QQQ 2026-10-08 | 1 |   0.0 % | no | 0.55 | 14.71 / 1.61 |   3.9 /   3.2 |  0.4 %
+  QQQ 2026-10-09 | 1 |   0.0 % | no | 0.46 | 26.44 / 2.72 |  20.7 /   0.0 |  0.8 %
+  QQQ 2026-10-12 | 1 |   0.0 % | no | 0.54 | 6.38 / 0.75 |   0.0 /  16.0 |  0.0 %
+  QQQ 2026-10-13 | 1 |   0.0 % | no | 0.63 | 34.60 / 4.09 |  33.1 /  41.8 |  0.0 %
+  QQQ 2026-10-14 | 1 |   0.0 % | no | 0.59 | 17.19 / 2.07 |   0.0 /   0.0 |  1.6 %
+  QQQ 2026-10-15 | 1 |   0.0 % | no | 0.67 | 10.69 / 1.19 |  11.4 /  22.5 |  2.9 %
+  QQQ 2026-10-16 | 1 |   0.0 % | no | 0.63 | 16.30 / 1.71 |   0.0 /   0.0 | 28.4 %
+  QQQ 2026-10-19 | 1 |   0.0 % | no | 0.51 | 6.68 / 0.66 |   0.1 /  14.0 |  0.0 %
+  QQQ 2026-10-20 | 1 |   0.0 % | no | 1.10 | 5.90 / 0.55 |  29.8 /  51.6 |  0.0 %
+  QQQ 2026-10-21 | 1 |   0.0 % | no | 0.34 | 6.81 / 0.61 |   0.0 /   0.0 |  0.0 %
+  QQQ 2026-10-22 | 1 |   0.0 % | no | 0.52 | 8.38 / 0.74 |   0.0 /   0.0 | 47.3 %
+  QQQ 2026-10-23 | 1 |  88.9 % | sí | 0.41 | 5.43 / 0.45 |  27.5 /   0.0 |  0.0 %
+  QQQ 2026-10-26 | 1 |   0.0 % | no | 0.41 | 6.58 / 0.55 |   0.5 /   0.0 |  0.0 %
+  QQQ 2026-10-27 | 1 |   0.0 % | no | 0.37 | 6.59 / 0.53 |   6.0 /   6.0 |  0.0 %
+  QQQ 2026-10-28 | 1 |   0.0 % | no | 0.35 | 5.37 / 0.43 |   8.3 /   8.0 |  0.0 %
+  QQQ 2026-10-29 | 1 |   0.0 % | no | 0.44 | 6.06 / 0.51 |   0.0 /   0.0 |  0.0 %
+  QQQ 2026-10-30 | 1 |   0.0 % | no | 0.47 | 14.46 / 1.15 |   0.0 /   5.4 | 23.0 %
+  IWM 2026-09-28 | 1 |   0.0 % | no | 0.65 | 2.97 / 0.82 |   0.9 /   0.9 |  0.0 %
+  IWM 2026-09-29 | 1 |   0.0 % | no | 0.50 | 2.44 / 0.66 |  37.5 /   0.0 |  0.0 %
+  IWM 2026-09-30 | 1 |   3.8 % | no | 0.34 | 2.33 / 0.64 |   1.7 /   0.0 |  0.0 %
+  IWM 2026-10-01 | 1 |   0.0 % | no | 0.76 | 4.55 / 1.26 |  40.0 /  84.5 |  0.6 %
+  IWM 2026-10-02 | 1 | 100.0 % | sí | 0.36 | 6.17 / 1.67 |  97.4 /   3.8 |  0.0 %
+  IWM 2026-10-05 | 1 |   0.0 % | no | 0.70 | 2.80 / 0.73 |  32.1 /  15.3 |  9.5 %
+  IWM 2026-10-06 | 1 |   0.0 % | no | 0.74 | 3.86 / 1.00 |  63.0 /  22.5 |  0.0 %
+  IWM 2026-10-07 | 1 |  86.8 % | no | 0.39 | 26.56 / 7.17 |   0.1 /   0.0 | 10.9 %
+  IWM 2026-10-08 | 1 |   0.0 % | no | 0.33 | 3.31 / 0.89 |  35.3 /  39.0 |  0.0 %
+  IWM 2026-10-09 | 1 |  64.9 % | sí | 0.42 | 3.87 / 1.04 |  97.6 /  99.2 |  0.0 %
+  IWM 2026-10-12 | 1 | 100.0 % | sí | 0.31 | 1.02 / 0.27 |  78.8 / 100.0 |  0.0 %
+  IWM 2026-10-13 | 1 |  44.7 % | no | 0.68 | 1.98 / 0.55 |  76.3 /  91.4 |  0.0 %
+  IWM 2026-10-14 | 1 |   0.0 % | no | 0.52 | 11.31 / 3.29 |   nan /   nan | 100.0 %
+  IWM 2026-10-15 | 1 |   0.0 % | no | 0.73 | 2.67 / 0.73 |   0.0 /   nan | 98.3 %
+  IWM 2026-10-16 | 1 |   0.0 % | no | 0.40 | 5.59 / 1.49 |  28.8 /   0.0 | 37.5 %
+  IWM 2026-10-19 | 1 |  66.1 % | sí | 0.47 | 1.81 / 0.46 |  61.1 /  41.2 |  0.0 %
+  IWM 2026-10-20 | 1 |   0.0 % | no | 1.20 | 2.08 / 0.54 |   4.3 /  14.8 |  3.1 %
+  IWM 2026-10-21 | 1 |   0.0 % | no | 0.44 | 2.20 / 0.54 |  61.3 / 100.0 |  0.0 %
+  IWM 2026-10-22 | 1 |   0.0 % | no | 0.64 | 2.36 / 0.61 |   0.5 /   0.0 |  0.0 %
+  IWM 2026-10-23 | 1 |   0.0 % | no | 0.54 | 2.58 / 0.69 |  18.1 /  95.5 |  0.0 %
+  IWM 2026-10-26 | 1 |   0.0 % | no | 0.72 | 2.13 / 0.58 |  99.0 / 100.0 |  0.0 %
+  IWM 2026-10-27 | 1 |   0.0 % | no | 0.34 | 2.81 / 0.77 |  15.0 /  15.0 |  0.0 %
+  IWM 2026-10-28 | 1 |   0.0 % | no | 0.36 | 2.33 / 0.65 |  62.6 /  39.7 |  0.0 %
+  IWM 2026-10-29 | 0.5 |   0.0 % | no | 0.78 | 2.47 / 0.71 |   0.0 /   nan | 87.4 %
+  IWM 2026-10-30 | 1 |  13.8 % | no | 0.77 | 3.76 / 1.04 |  15.1 /  11.3 | 12.2 %
+
+CONDICIÓN PRINCIPAL: paredes a ≤ 2 escalones durante ≥ 25 % de los ciclos 09:30-10:30
+   sím   juntas n separadas n | rango después 10:30 (ATR) juntas / separadas, dif [IC 95 %] | % cerca del medio juntas / separadas, dif [IC 95 %] | rango antes (ATR)
+   SPX          0          25 |   nan /  0.74    n/a                              |   nan /  15.2    n/a                          | nan / 0.46
+   NDX          0          25 |   nan /  0.71    n/a                              |   nan /   6.0    n/a                          | nan / 0.50
+   SPY          2          23 |  0.54 /  1.05  -0.51 [-0.95, -0.20]               |  74.1 /  42.8  +31.3 pp [+13.2, +51.8]        | 0.34 / 0.46
+   QQQ          1          24 |  0.45 /  1.23  -0.78 [-1.16, -0.45]               |  27.5 /  12.1  +15.4 pp [+7.1, +22.5]         | 0.41 / 0.52
+   IWM          6          19 |  1.86 /  0.93  +0.93 [-0.51, +3.00]               |  68.6 /  28.6  +39.9 pp [+8.5, +65.5]         | 0.44 / 0.60
+   TODOS        9         116 |  1.41 /  0.93  +0.48 [-0.44, +1.94]               |  65.2 /  20.2  +45.0 pp [+24.1, +64.1]        | 0.41 / 0.50
+
+VARIANTE HORA FIJA: paredes a ≤ 2 escalones en el último ciclo antes de las 10:30
+   sím   juntas n separadas n | rango después 10:30 (ATR) juntas / separadas, dif [IC 95 %] | % cerca del medio juntas / separadas, dif [IC 95 %] | rango antes (ATR)
+   SPX          0          25 |   nan /  0.74    n/a                              |   nan /  15.2    n/a                          | nan / 0.46
+   NDX          0          25 |   nan /  0.71    n/a                              |   nan /   6.0    n/a                          | nan / 0.50
+   SPY          3          22 |  0.61 /  1.06  -0.46 [-0.86, -0.14]               |  49.4 /  44.7  +4.7 pp [-44.1, +41.0]         | 0.44 / 0.45
+   QQQ          1          24 |  0.45 /  1.23  -0.78 [-1.20, -0.44]               |  27.5 /  12.1  +15.4 pp [+6.7, +22.6]         | 0.41 / 0.52
+   IWM          4          21 |  0.86 /  1.21  -0.35 [-1.24, +0.44]               |  83.7 /  29.6  +54.2 pp [+34.3, +73.1]        | 0.39 / 0.60
+   TODOS        8         117 |  0.71 /  0.98  -0.27 [-0.57, +0.08]               |  63.8 /  20.7  +43.2 pp [+18.7, +64.9]        | 0.41 / 0.50
+
+Lectura: se espera rango después de las 10:30 MENOR y % cerca del medio MAYOR en los días 'juntas'. 'Rango antes' muestra si esos días ya
+venían quietos (causalidad inversa): por eso el resultado se mide solo después de las 10:30.
+Primer vistazo del 10-27 (no cuenta): SPY 5 días, rango medio 4,47 vs 8,35; QQQ no lo confirmó.
+
+##############################################################################################################
+... SPX done
+... NDX done
+... SPY done
+... QQQ done
+... IWM done
+
+PRUEBA 3 (b) DEL PREREGISTRO: PAREDES TAL COMO SON vs FORZADAS A CADA LADO — corrida 2026-10-31, solo lectura
+==============================================================================================================
+DESVÍOS Y ACLARACIONES (2026-10-31, escritos antes de leer los resultados):
+ D1. Las forzadas se rearman desde los items guardados del MISMO ciclo táctico (gamma neta = call + put por strike, la ventana estrecha que
+     guarda la vista); "por encima / por debajo" usa el último precio guardado antes del ciclo.
+ D2. σ para el exceso en Z: IV ATM del vencimiento más cercano en la primera foto de cadena con IV entre 09:33 y 10:00 (en la prueba 1 solo se
+     usaba la de las 09:35 y el 09-28 quedó fuera); T al ciclo de las 09:35.
+ D3. Objetivo de salida: las paredes del primer ciclo ≥ 09:35, en la dirección en que están respecto del precio de entrada. Una pared guardada
+     del lado "equivocado" (Call Wall por debajo del precio) se evalúa igual, como objetivo hacia abajo; abajo se informa cuántas veces pasa.
+ D4. Reacción: cada tramo en que la pared queda en el mismo strike; se juzga el primer toque dentro del tramo que llega desde afuera
+     (si el tramo empieza con el precio ya en el nivel, no se juzga). Ventana de 30 min aunque pase el final del tramo.
+ D5. Sin base al azar en esta prueba: el preregistro compara (1) contra (2).
+
+DÍAS EXCLUIDOS:
+  SPX 2026-09-25: max gap prices 0.5 min, cycles 30.0 min (09:30-10:00)
+  SPX 2026-09-28: no ATM IV 09:33-10:00
+  NDX 2026-09-25: max gap prices 0.5 min, cycles 30.0 min (09:30-10:00)
+  NDX 2026-09-28: no ATM IV 09:33-10:00
+  SPY 2026-09-25: max gap prices 0.2 min, cycles 30.0 min (09:30-10:00)
+  SPY 2026-09-28: no ATM IV 09:33-10:00
+  QQQ 2026-09-25: max gap prices 0.3 min, cycles 30.0 min (09:30-10:00)
+  QQQ 2026-09-28: no ATM IV 09:33-10:00
+  IWM 2026-09-25: max gap prices 0.3 min, cycles 30.0 min (09:30-10:00)
+  IWM 2026-09-28: no ATM IV 09:33-10:00
+
+SESIONES USADAS
+  SPX 2026-09-29 cycle 09:35:21 price 7681.49 ATR 70.02 IV 0.187 (chain 09:35:21) 1-Z 38.94 pts
+  SPX 2026-09-30 cycle 09:35:51 price 7694.15 ATR 69.79 IV 0.183 (chain 09:33:30) 1-Z 38.01 pts
+  SPX 2026-10-01 cycle 09:35:51 price 7672.19 ATR 70.86 IV 0.205 (chain 09:33:25) 1-Z 42.59 pts
+  SPX 2026-10-02 cycle 09:35:29 price 7735.74 ATR 69.62 IV 0.181 (chain 09:33:13) 1-Z 37.93 pts
+  SPX 2026-10-05 cycle 09:35:28 price 7737.41 ATR 71.30 IV 0.165 (chain 09:33:13) 1-Z 34.57 pts
+  SPX 2026-10-06 cycle 09:35:37 price 7810.66 ATR 73.04 IV 0.145 (chain 09:33:32) 1-Z 30.71 pts
+  SPX 2026-10-07 cycle 09:35:44 price 7780.67 ATR 69.58 IV 0.163 (chain 09:34:01) 1-Z 34.40 pts
+  SPX 2026-10-08 cycle 09:35:08 price 7780.78 ATR 66.76 IV 0.155 (chain 09:33:30) 1-Z 32.54 pts
+  SPX 2026-10-09 cycle 09:36:12 price 7790.68 ATR 68.47 IV 0.146 (chain 09:34:26) 1-Z 30.75 pts
+  SPX 2026-10-12 cycle 09:35:21 price 7816 ATR 63.22 IV 0.120 (chain 09:33:47) 1-Z 25.35 pts
+  SPX 2026-10-13 cycle 09:35:22 price 7800.8 ATR 63.13 IV 0.118 (chain 09:33:54) 1-Z 25.00 pts
+  SPX 2026-10-14 cycle 09:35:42 price 7773.22 ATR 60.15 IV 0.163 (chain 09:34:14) 1-Z 34.32 pts
+  SPX 2026-10-15 cycle 09:35:22 price 7683.16 ATR 64.13 IV 0.218 (chain 09:33:46) 1-Z 45.35 pts
+  SPX 2026-10-16 cycle 09:35:40 price 7747.98 ATR 65.95 IV 0.130 (chain 09:34:08) 1-Z 27.15 pts
+  SPX 2026-10-19 cycle 09:35:53 price 7700.25 ATR 69.40 IV 0.189 (chain 09:33:46) 1-Z 39.36 pts
+  SPX 2026-10-20 cycle 09:35:50 price 7678.05 ATR 71.23 IV 0.193 (chain 09:33:43) 1-Z 39.98 pts
+  SPX 2026-10-21 cycle 09:35:26 price 7729.41 ATR 71.88 IV 0.181 (chain 09:33:28) 1-Z 37.93 pts
+  SPX 2026-10-22 cycle 09:35:43 price 7695.15 ATR 71.39 IV 0.208 (chain 09:33:36) 1-Z 43.23 pts
+  SPX 2026-10-23 cycle 09:35:06 price 7623.2 ATR 73.64 IV 0.260 (chain 09:33:11) 1-Z 53.59 pts
+  SPX 2026-10-26 cycle 09:35:39 price 7653.63 ATR 72.19 IV 0.215 (chain 09:33:34) 1-Z 44.50 pts
+  SPX 2026-10-27 cycle 09:35:24 price 7699.22 ATR 72.76 IV 0.165 (chain 09:33:23) 1-Z 34.28 pts
+  SPX 2026-10-28 cycle 09:35:05 price 7739.72 ATR 73.03 IV 0.234 (chain 09:34:09) 1-Z 49.06 pts
+  SPX 2026-10-29 cycle 09:35:02 price 7700.4 ATR 70.86 IV 0.210 (chain 09:33:59) 1-Z 43.82 pts
+  SPX 2026-10-30 cycle 09:35:19 price 7620.49 ATR 70.70 IV 0.238 (chain 09:33:31) 1-Z 49.04 pts
+  NDX 2026-09-29 cycle 09:35:09 price 30332.4 ATR 408.63 IV 0.259 (chain 09:33:01) 1-Z 212.37 pts
+  NDX 2026-09-30 cycle 09:35:39 price 30464.2 ATR 406.14 IV 0.277 (chain 09:33:23) 1-Z 228.27 pts
+  NDX 2026-10-01 cycle 09:35:48 price 30523 ATR 399.56 IV 0.295 (chain 09:33:32) 1-Z 243.24 pts
+  NDX 2026-10-02 cycle 09:35:10 price 30873 ATR 397.55 IV 0.255 (chain 09:33:16) 1-Z 213.27 pts
+  NDX 2026-10-05 cycle 09:35:21 price 30912.5 ATR 398.64 IV 0.232 (chain 09:35:21) 1-Z 194.01 pts
+  NDX 2026-10-06 cycle 09:35:48 price 31235.4 ATR 404.04 IV 0.215 (chain 09:33:23) 1-Z 181.65 pts
+  NDX 2026-10-07 cycle 09:35:43 price 30991.2 ATR 389.92 IV 0.229 (chain 09:34:09) 1-Z 191.65 pts
+  NDX 2026-10-08 cycle 09:35:02 price 31028.8 ATR 373.50 IV 0.213 (chain 09:33:29) 1-Z 179.28 pts
+  NDX 2026-10-09 cycle 09:36:08 price 30886.5 ATR 396.91 IV 0.225 (chain 09:34:20) 1-Z 188.18 pts
+  NDX 2026-10-12 cycle 09:35:19 price 30743.6 ATR 347.46 IV 0.207 (chain 09:33:52) 1-Z 171.83 pts
+  NDX 2026-10-13 cycle 09:35:29 price 30418.3 ATR 345.77 IV 0.214 (chain 09:33:51) 1-Z 176.48 pts
+  NDX 2026-10-14 cycle 09:35:51 price 30312.2 ATR 339.61 IV 0.284 (chain 09:34:17) 1-Z 232.36 pts
+  NDX 2026-10-15 cycle 09:35:19 price 29510.1 ATR 366.99 IV 0.378 (chain 09:33:49) 1-Z 301.57 pts
+  NDX 2026-10-16 cycle 09:35:44 price 29738.9 ATR 390.08 IV 0.283 (chain 09:34:11) 1-Z 227.84 pts
+  NDX 2026-10-19 cycle 09:35:57 price 29561.5 ATR 414.02 IV 0.298 (chain 09:33:52) 1-Z 238.52 pts
+  NDX 2026-10-20 cycle 09:35:46 price 29316.7 ATR 443.09 IV 0.336 (chain 09:33:47) 1-Z 266.05 pts
+  NDX 2026-10-21 cycle 09:35:29 price 29704.3 ATR 458.20 IV 0.299 (chain 09:33:25) 1-Z 240.03 pts
+  NDX 2026-10-22 cycle 09:35:45 price 29332.4 ATR 465.09 IV 0.366 (chain 09:33:42) 1-Z 290.62 pts
+  NDX 2026-10-23 cycle 09:35:08 price 28864.4 ATR 497.34 IV 0.453 (chain 09:33:10) 1-Z 353.90 pts
+  NDX 2026-10-26 cycle 09:35:44 price 29089.3 ATR 498.50 IV 0.373 (chain 09:33:35) 1-Z 293.65 pts
+  NDX 2026-10-27 cycle 09:35:28 price 29447.9 ATR 510.07 IV 0.277 (chain 09:33:24) 1-Z 220.55 pts
+  NDX 2026-10-28 cycle 09:35:14 price 29768.7 ATR 519.09 IV 0.353 (chain 09:34:07) 1-Z 284.64 pts
+  NDX 2026-10-29 cycle 09:35:06 price 29279.3 ATR 492.42 IV 0.363 (chain 09:33:57) 1-Z 287.42 pts
+  NDX 2026-10-30 cycle 09:35:25 price 28536.2 ATR 516.36 IV 0.422 (chain 09:33:36) 1-Z 325.47 pts
+  SPY 2026-09-29 cycle 09:36:48 price 765.528 ATR 7.04 IV 0.186 (chain 09:34:47) 1-Z 3.85 pts
+  SPY 2026-09-30 cycle 09:35:13 price 766.774 ATR 7.02 IV 0.191 (chain 09:35:13) 1-Z 3.97 pts
+  SPY 2026-10-01 cycle 09:35:09 price 764.714 ATR 7.12 IV 0.209 (chain 09:35:09) 1-Z 4.33 pts
+  SPY 2026-10-02 cycle 09:36:47 price 770.649 ATR 7.00 IV 0.186 (chain 09:34:45) 1-Z 3.86 pts
+  SPY 2026-10-05 cycle 09:36:56 price 770.625 ATR 7.16 IV 0.164 (chain 09:34:37) 1-Z 3.42 pts
+  SPY 2026-10-06 cycle 09:35:17 price 778.3 ATR 7.33 IV 0.147 (chain 09:35:17) 1-Z 3.10 pts
+  SPY 2026-10-07 cycle 09:35:22 price 775.505 ATR 6.95 IV 0.163 (chain 09:33:44) 1-Z 3.42 pts
+  SPY 2026-10-08 cycle 09:36:20 price 774.91 ATR 6.66 IV 0.158 (chain 09:33:07) 1-Z 3.31 pts
+  SPY 2026-10-09 cycle 09:35:47 price 776.529 ATR 6.81 IV 0.149 (chain 09:34:01) 1-Z 3.12 pts
+  SPY 2026-10-12 cycle 09:35:00 price 778.84 ATR 6.26 IV 0.125 (chain 09:33:30) 1-Z 2.63 pts
+  SPY 2026-10-13 cycle 09:35:10 price 777.6 ATR 6.25 IV 0.120 (chain 09:33:31) 1-Z 2.52 pts
+  SPY 2026-10-14 cycle 09:35:28 price 774.865 ATR 5.96 IV 0.167 (chain 09:33:53) 1-Z 3.51 pts
+  SPY 2026-10-15 cycle 09:35:03 price 765.61 ATR 6.36 IV 0.222 (chain 09:33:29) 1-Z 4.60 pts
+  SPY 2026-10-16 cycle 09:35:18 price 772.42 ATR 6.53 IV 0.162 (chain 09:33:52) 1-Z 3.39 pts
+  SPY 2026-10-19 cycle 09:35:45 price 766.94 ATR 6.89 IV 0.197 (chain 09:33:39) 1-Z 4.08 pts
+  SPY 2026-10-20 cycle 09:35:40 price 765.489 ATR 7.07 IV 0.203 (chain 09:33:34) 1-Z 4.20 pts
+  SPY 2026-10-21 cycle 09:35:18 price 770.27 ATR 7.13 IV 0.203 (chain 09:33:17) 1-Z 4.23 pts
+  SPY 2026-10-22 cycle 09:35:35 price 767.03 ATR 7.07 IV 0.212 (chain 09:33:29) 1-Z 4.40 pts
+  SPY 2026-10-23 cycle 09:35:00 price 759.855 ATR 7.30 IV 0.275 (chain 09:33:00) 1-Z 5.65 pts
+  SPY 2026-10-26 cycle 09:35:32 price 762.788 ATR 7.18 IV 0.221 (chain 09:33:24) 1-Z 4.55 pts
+  SPY 2026-10-27 cycle 09:35:18 price 767.41 ATR 7.25 IV 0.172 (chain 09:33:13) 1-Z 3.57 pts
+  SPY 2026-10-28 cycle 09:35:00 price 771.28 ATR 7.28 IV 0.280 (chain 09:33:57) 1-Z 5.84 pts
+  SPY 2026-10-29 cycle 09:36:04 price 767.772 ATR 7.09 IV 0.241 (chain 09:33:48) 1-Z 5.01 pts
+  SPY 2026-10-30 cycle 09:35:13 price 759.8 ATR 7.11 IV 0.240 (chain 09:33:22) 1-Z 4.94 pts
+  QQQ 2026-09-29 cycle 09:36:50 price 737.55 ATR 9.97 IV 0.266 (chain 09:34:38) 1-Z 5.30 pts
+  QQQ 2026-09-30 cycle 09:35:11 price 741.65 ATR 9.94 IV 0.299 (chain 09:35:11) 1-Z 6.01 pts
+  QQQ 2026-10-01 cycle 09:35:07 price 742.974 ATR 9.78 IV 0.294 (chain 09:35:07) 1-Z 5.91 pts
+  QQQ 2026-10-02 cycle 09:36:50 price 750.58 ATR 9.74 IV 0.264 (chain 09:34:40) 1-Z 5.36 pts
+  QQQ 2026-10-05 cycle 09:36:57 price 751.63 ATR 9.77 IV 0.232 (chain 09:34:44) 1-Z 4.72 pts
+  QQQ 2026-10-06 cycle 09:35:12 price 760.305 ATR 9.91 IV 0.210 (chain 09:35:12) 1-Z 4.32 pts
+  QQQ 2026-10-07 cycle 09:35:23 price 754.37 ATR 9.53 IV 0.235 (chain 09:33:54) 1-Z 4.80 pts
+  QQQ 2026-10-08 cycle 09:36:22 price 754.08 ATR 9.15 IV 0.217 (chain 09:33:10) 1-Z 4.41 pts
+  QQQ 2026-10-09 cycle 09:35:45 price 751.334 ATR 9.71 IV 0.230 (chain 09:34:03) 1-Z 4.67 pts
+  QQQ 2026-10-12 cycle 09:35:03 price 747.544 ATR 8.53 IV 0.209 (chain 09:33:35) 1-Z 4.22 pts
+  QQQ 2026-10-13 cycle 09:35:05 price 740.08 ATR 8.46 IV 0.217 (chain 09:33:29) 1-Z 4.36 pts
+  QQQ 2026-10-14 cycle 09:35:36 price 737.405 ATR 8.31 IV 0.286 (chain 09:33:55) 1-Z 5.70 pts
+  QQQ 2026-10-15 cycle 09:35:15 price 718.21 ATR 8.96 IV 0.380 (chain 09:33:27) 1-Z 7.38 pts
+  QQQ 2026-10-16 cycle 09:35:22 price 724.26 ATR 9.52 IV 0.279 (chain 09:35:22) 1-Z 5.46 pts
+  QQQ 2026-10-19 cycle 09:35:44 price 718.675 ATR 10.08 IV 0.306 (chain 09:33:39) 1-Z 5.95 pts
+  QQQ 2026-10-20 cycle 09:35:39 price 713.23 ATR 10.76 IV 0.350 (chain 09:33:36) 1-Z 6.74 pts
+  QQQ 2026-10-21 cycle 09:35:17 price 722.25 ATR 11.13 IV 0.338 (chain 09:33:20) 1-Z 6.60 pts
+  QQQ 2026-10-22 cycle 09:35:34 price 714.2 ATR 11.27 IV 0.373 (chain 09:33:31) 1-Z 7.21 pts
+  QQQ 2026-10-23 cycle 09:35:58 price 701.75 ATR 12.04 IV 0.481 (chain 09:33:02) 1-Z 9.13 pts
+  QQQ 2026-10-26 cycle 09:35:32 price 707.55 ATR 12.06 IV 0.382 (chain 09:33:25) 1-Z 7.32 pts
+  QQQ 2026-10-27 cycle 09:35:21 price 716.51 ATR 12.36 IV 0.285 (chain 09:33:15) 1-Z 5.52 pts
+  QQQ 2026-10-28 cycle 09:35:06 price 724.12 ATR 12.55 IV 0.411 (chain 09:33:59) 1-Z 8.06 pts
+  QQQ 2026-10-29 cycle 09:36:07 price 713.055 ATR 11.94 IV 0.413 (chain 09:33:49) 1-Z 7.96 pts
+  QQQ 2026-10-30 cycle 09:35:15 price 694.33 ATR 12.56 IV 0.430 (chain 09:33:24) 1-Z 8.08 pts
+  IWM 2026-09-29 cycle 09:36:53 price 280.154 ATR 3.71 IV 0.268 (chain 09:34:40) 1-Z 2.02 pts
+  IWM 2026-09-30 cycle 09:35:09 price 279.75 ATR 3.66 IV 0.258 (chain 09:35:09) 1-Z 1.95 pts
+  IWM 2026-10-01 cycle 09:35:12 price 278.23 ATR 3.60 IV 0.291 (chain 09:35:12) 1-Z 2.19 pts
+  IWM 2026-10-02 cycle 09:36:58 price 283.005 ATR 3.70 IV 0.295 (chain 09:34:50) 1-Z 2.25 pts
+  IWM 2026-10-05 cycle 09:37:01 price 280.97 ATR 3.83 IV 0.239 (chain 09:34:41) 1-Z 1.81 pts
+  IWM 2026-10-06 cycle 09:35:10 price 284.35 ATR 3.85 IV 0.227 (chain 09:35:10) 1-Z 1.75 pts
+  IWM 2026-10-07 cycle 09:35:27 price 278.6 ATR 3.70 IV 0.255 (chain 09:33:47) 1-Z 1.92 pts
+  IWM 2026-10-08 cycle 09:36:25 price 275.92 ATR 3.70 IV 0.249 (chain 09:33:13) 1-Z 1.86 pts
+  IWM 2026-10-09 cycle 09:35:50 price 277.99 ATR 3.73 IV 0.240 (chain 09:34:11) 1-Z 1.81 pts
+  IWM 2026-10-12 cycle 09:35:01 price 278.53 ATR 3.74 IV 0.212 (chain 09:33:31) 1-Z 1.60 pts
+  IWM 2026-10-13 cycle 09:35:14 price 278.29 ATR 3.59 IV 0.211 (chain 09:33:35) 1-Z 1.59 pts
+  IWM 2026-10-14 cycle 09:35:30 price 274.167 ATR 3.44 IV 0.299 (chain 09:33:59) 1-Z 2.21 pts
+  IWM 2026-10-15 cycle 09:35:09 price 271.4 ATR 3.67 IV 0.314 (chain 09:33:33) 1-Z 2.30 pts
+  IWM 2026-10-16 cycle 09:35:24 price 275.37 ATR 3.76 IV 0.250 (chain 09:33:56) 1-Z 1.86 pts
+  IWM 2026-10-19 cycle 09:35:46 price 271.96 ATR 3.96 IV 0.256 (chain 09:33:48) 1-Z 1.88 pts
+  IWM 2026-10-20 cycle 09:35:43 price 272.145 ATR 3.86 IV 0.285 (chain 09:33:40) 1-Z 2.10 pts
+  IWM 2026-10-21 cycle 09:35:21 price 276.94 ATR 4.08 IV 0.270 (chain 09:33:21) 1-Z 2.02 pts
+  IWM 2026-10-22 cycle 09:35:36 price 276.03 ATR 3.88 IV 0.294 (chain 09:33:32) 1-Z 2.20 pts
+  IWM 2026-10-23 cycle 09:36:00 price 274.41 ATR 3.75 IV 0.345 (chain 09:33:06) 1-Z 2.56 pts
+  IWM 2026-10-26 cycle 09:35:30 price 276.15 ATR 3.69 IV 0.295 (chain 09:33:26) 1-Z 2.21 pts
+  IWM 2026-10-27 cycle 09:35:20 price 277.65 ATR 3.63 IV 0.249 (chain 09:33:19) 1-Z 1.87 pts
+  IWM 2026-10-28 cycle 09:35:03 price 280.42 ATR 3.57 IV 0.434 (chain 09:33:58) 1-Z 3.29 pts
+  IWM 2026-10-29 cycle 09:35:00 price 283.36 ATR 3.50 IV 0.303 (chain 09:33:53) 1-Z 2.33 pts
+  IWM 2026-10-30 cycle 09:35:16 price 282.47 ATR 3.61 IV 0.327 (chain 09:33:24) 1-Z 2.50 pts
+
+COINCIDENCIA guardada = forzada (% de ciclos) y pared guardada del lado equivocado del precio (% de ciclos)
+   SPX: Call coincide  87.0 %  Put coincide  89.4 %  |  Call Wall ≤ precio  13.6 %  Put Wall ≥ precio  10.6 %
+   NDX: Call coincide  73.7 %  Put coincide  76.2 %  |  Call Wall ≤ precio  26.3 %  Put Wall ≥ precio  23.8 %
+   SPY: Call coincide  87.5 %  Put coincide  83.3 %  |  Call Wall ≤ precio  12.8 %  Put Wall ≥ precio  16.7 %
+   QQQ: Call coincide  82.4 %  Put coincide  71.9 %  |  Call Wall ≤ precio  18.6 %  Put Wall ≥ precio  28.1 %
+   IWM: Call coincide  90.9 %  Put coincide  62.2 %  |  Call Wall ≤ precio  10.1 %  Put Wall ≥ precio  39.9 %
+
+OBJETIVO DE SALIDA (paredes del ciclo de las 09:35): acierto, minutos (mediana), peor en contra (mediana, pts), exceso (mediana, Z), máx/mín cerca
+   SPX   call | guardada: n= 24 acierto  50.0 % min   54.6 contra   14.69 exceso 0.16 Z cerca  50.0 % | forzada: n= 24 acierto  45.8 % min   54.6 contra   15.46 exceso 0.16 Z cerca  50.0 % | toque guardada − forzada +4.2 pp [+0.0, +12.5]
+   SPX   put  | guardada: n= 24 acierto  37.5 % min   46.8 contra   18.93 exceso 0.16 Z cerca  54.2 % | forzada: n= 24 acierto  37.5 % min   54.9 contra   18.93 exceso 0.19 Z cerca  54.2 % | toque guardada − forzada +0.0 pp [+0.0, +0.0]
+   NDX   call | guardada: n= 24 acierto  45.8 % min   84.1 contra  116.41 exceso 0.25 Z cerca  54.2 % | forzada: n= 24 acierto  41.7 % min   89.9 contra  107.33 exceso 0.32 Z cerca  50.0 % | toque guardada − forzada +4.2 pp [+0.0, +12.5]
+   NDX   put  | guardada: n= 24 acierto  54.2 % min   25.6 contra   79.99 exceso 0.48 Z cerca  41.7 % | forzada: n= 24 acierto  45.8 % min    5.6 contra  126.00 exceso 0.48 Z cerca  41.7 % | toque guardada − forzada +8.3 pp [+0.0, +20.8]
+   SPY   call | guardada: n= 24 acierto  33.3 % min   42.3 contra    2.03 exceso 0.60 Z cerca  33.3 % | forzada: n= 24 acierto  33.3 % min   38.4 contra    1.86 exceso 0.54 Z cerca  37.5 % | toque guardada − forzada +0.0 pp [+0.0, +0.0]
+   SPY   put  | guardada: n= 24 acierto  45.8 % min    0.6 contra    1.42 exceso 0.42 Z cerca  45.8 % | forzada: n= 24 acierto  45.8 % min   27.3 contra    1.59 exceso 0.50 Z cerca  37.5 % | toque guardada − forzada +0.0 pp [-12.5, +12.5]
+   QQQ   call | guardada: n= 24 acierto  37.5 % min   99.2 contra    2.83 exceso 0.41 Z cerca  54.2 % | forzada: n= 24 acierto  29.2 % min  134.5 contra    2.89 exceso 0.41 Z cerca  54.2 % | toque guardada − forzada +8.3 pp [+0.0, +20.8]
+   QQQ   put  | guardada: n= 24 acierto  50.0 % min   36.6 contra    2.83 exceso 1.15 Z cerca  29.2 % | forzada: n= 24 acierto  37.5 % min   51.7 contra    3.94 exceso 1.33 Z cerca  33.3 % | toque guardada − forzada +12.5 pp [+0.0, +25.0]
+   IWM   call | guardada: n= 22 acierto  27.3 % min  136.4 contra    1.54 exceso 0.84 Z cerca  22.7 % | forzada: n= 22 acierto  27.3 % min  136.4 contra    1.54 exceso 0.84 Z cerca  22.7 % | toque guardada − forzada +0.0 pp [+0.0, +0.0]
+   IWM   put  | guardada: n= 24 acierto  58.3 % min   15.3 contra    0.70 exceso 1.01 Z cerca  33.3 % | forzada: n= 24 acierto  50.0 % min   23.6 contra    0.71 exceso 1.11 Z cerca  33.3 % | toque guardada − forzada +8.3 pp [+0.0, +20.8]
+   TODOS call | guardada: n=118 acierto  39.0 % min   74.3 contra    4.75 exceso 0.34 Z cerca  43.2 % | forzada: n=118 acierto  35.6 % min   84.1 contra    5.49 exceso 0.41 Z cerca  43.2 % | toque guardada − forzada +3.4 pp [+0.8, +6.8]
+   TODOS put  | guardada: n=120 acierto  49.2 % min   20.5 contra    3.55 exceso 0.59 Z cerca  40.8 % | forzada: n=120 acierto  43.3 % min   28.7 contra    3.68 exceso 0.82 Z cerca  40.0 % | toque guardada − forzada +5.8 pp [+1.7, +10.0]
+
+REACCIÓN EN TODA LA SESIÓN (cada tramo de pared): tramos, tocados, rebote / cruce entre los tocados
+   SPX   call | guardada: tramos  807 tocados   40 rebote  30.0 % cruce  10.0 % | forzada: tramos  888 tocados   49 rebote  32.7 % cruce   2.0 % | rebote guardada − forzada (por día) +0.3 pp [-15.6, +18.1]
+   SPX   put  | guardada: tramos  762 tocados   32 rebote  37.5 % cruce  28.1 % | forzada: tramos  804 tocados   35 rebote  37.1 % cruce  25.7 % | rebote guardada − forzada (por día) -1.4 pp [-16.3, +10.4]
+   NDX   call | guardada: tramos  343 tocados   27 rebote  40.7 % cruce  29.6 % | forzada: tramos  483 tocados   43 rebote  48.8 % cruce  25.6 % | rebote guardada − forzada (por día) -2.6 pp [-20.7, +13.2]
+   NDX   put  | guardada: tramos  710 tocados   56 rebote  37.5 % cruce  26.8 % | forzada: tramos  852 tocados   63 rebote  44.4 % cruce  17.5 % | rebote guardada − forzada (por día) -6.6 pp [-24.3, +9.8]
+   SPY   call | guardada: tramos  557 tocados   34 rebote  29.4 % cruce  20.6 % | forzada: tramos  619 tocados   28 rebote  46.4 % cruce  10.7 % | rebote guardada − forzada (por día) -12.0 pp [-27.7, +0.9]
+   SPY   put  | guardada: tramos  392 tocados   25 rebote  40.0 % cruce   8.0 % | forzada: tramos  485 tocados   34 rebote  55.9 % cruce   5.9 % | rebote guardada − forzada (por día) -10.0 pp [-27.4, +4.2]
+   QQQ   call | guardada: tramos  601 tocados   42 rebote  69.0 % cruce   9.5 % | forzada: tramos  603 tocados   36 rebote  55.6 % cruce  19.4 % | rebote guardada − forzada (por día) +13.5 pp [+0.2, +28.2]
+   QQQ   put  | guardada: tramos  540 tocados   30 rebote  56.7 % cruce  26.7 % | forzada: tramos  610 tocados   48 rebote  58.3 % cruce  31.2 % | rebote guardada − forzada (por día) -13.6 pp [-35.3, +7.0]
+   IWM   call | guardada: tramos  667 tocados   18 rebote  61.1 % cruce   5.6 % | forzada: tramos  650 tocados   14 rebote  71.4 % cruce   0.0 % | rebote guardada − forzada (por día) -5.4 pp [-18.8, +2.5]
+   IWM   put  | guardada: tramos  510 tocados   41 rebote  68.3 % cruce  19.5 % | forzada: tramos  514 tocados   35 rebote  71.4 % cruce  14.3 % | rebote guardada − forzada (por día) +1.0 pp [-18.3, +23.7]
+   TODOS call | guardada: tramos 2975 tocados  161 rebote  45.3 % cruce  14.9 % | forzada: tramos 3243 tocados  170 rebote  47.1 % cruce  12.9 % | rebote guardada − forzada (por día) -0.1 pp [-8.8, +10.4]
+   TODOS put  | guardada: tramos 2914 tocados  184 rebote  47.8 % cruce  22.8 % | forzada: tramos 3265 tocados  215 rebote  52.6 % cruce  19.5 % | rebote guardada − forzada (por día) -6.1 pp [-12.8, +1.4]
+
+##############################################################################################################
+... SPX done (385 events)
+... NDX done (387 events)
+... SPY done (249 events)
+... QQQ done (296 events)
+... IWM done (161 events)
+
+PRUEBA 4 (c) DEL PREREGISTRO: "CAMBIO DE ABS = EL PRECIO VA AHÍ" — corrida 2026-10-31, solo lectura
+==============================================================================================================
+DESVÍOS Y ACLARACIONES (2026-10-31, escritos antes de leer los resultados):
+ D1. Evento = el ABS guardado del ciclo es un strike distinto del ciclo anterior (cualquier cambio, también volver a uno anterior); se informa
+     aparte cuántos vuelven al strike previo en ≤ 5 min (parpadeo).
+ D2. Solo eventos entre 09:31 y 15:30, para que la ventana de 30 min quepa en la sesión (el preregistro no lo dice).
+ D3. Escalón de strike: el salto más común entre strikes tácticos guardados a ±0,5 ATR del precio a las 09:35 (NDX/IWM mezclan escalones).
+     Mismo escalón para las vistas 0dte y 0dte_volume.
+ D4. Z = |ABS − precio| / (precio · σ · √T): σ = IV ATM del vencimiento más cercano en la primera foto de cadena con IV de 09:33-10:00;
+     T del vencimiento a la hora del evento (_time_to_expiration_years, con su piso de 1 hora).
+ D5. Base "strikes al azar a la misma Z": 40 sorteos por evento de una hora de ciclo al azar (09:35-15:30) del mismo símbolo y vista,
+     nivel a la misma Z y del mismo lado, redondeado al escalón y a ≥ 1 escalón del precio; se usa la tasa de toque media de los sorteos.
+ D6. Vistas 0dte y 0dte_volume: solo existen del 10-26 al 10-30 (5 días); se informan igual, con pocos días.
+
+DÍAS EXCLUIDOS:
+  SPX 2026-09-25: no prices or cycles
+  SPX 2026-09-28: no strike step or no ATM IV 09:33-10:00
+  NDX 2026-09-25: no prices or cycles
+  NDX 2026-09-28: no strike step or no ATM IV 09:33-10:00
+  SPY 2026-09-25: no prices or cycles
+  SPY 2026-09-28: no strike step or no ATM IV 09:33-10:00
+  QQQ 2026-09-25: no prices or cycles
+  QQQ 2026-09-28: no strike step or no ATM IV 09:33-10:00
+  IWM 2026-09-25: no prices or cycles
+  IWM 2026-09-28: no strike step or no ATM IV 09:33-10:00
+
+CAMBIOS DESCARTADOS: a < 1 escalón del precio: 802, fuera de 09:31-15:30: 470
+
+SESIONES USADAS: SPX 2026-09-29 step 5 IV 0.187; SPX 2026-09-30 step 5 IV 0.183; SPX 2026-10-01 step 5 IV 0.205; SPX 2026-10-02 step 5 IV 0.181; SPX 2026-10-05 step 5 IV 0.165; SPX 2026-10-06 step 5 IV 0.145; SPX 2026-10-07 step 5 IV 0.160; SPX 2026-10-08 step 5 IV 0.155; SPX 2026-10-09 step 5 IV 0.145; SPX 2026-10-12 step 5 IV 0.120; SPX 2026-10-13 step 5 IV 0.116; SPX 2026-10-14 step 5 IV 0.163; SPX 2026-10-15 step 5 IV 0.221; SPX 2026-10-16 step 5 IV 0.130; SPX 2026-10-19 step 5 IV 0.189; SPX 2026-10-20 step 5 IV 0.193; SPX 2026-10-21 step 5 IV 0.181; SPX 2026-10-22 step 5 IV 0.207; SPX 2026-10-23 step 5 IV 0.260; SPX 2026-10-26 step 5 IV 0.215; SPX 2026-10-27 step 5 IV 0.165; SPX 2026-10-28 step 5 IV 0.234; SPX 2026-10-29 step 5 IV 0.210; SPX 2026-10-30 step 5 IV 0.235; NDX 2026-09-29 step 10 IV 0.257; NDX 2026-09-30 step 10 IV 0.273; NDX 2026-10-01 step 10 IV 0.292; NDX 2026-10-02 step 10 IV 0.255; NDX 2026-10-05 step 10 IV 0.232; NDX 2026-10-06 step 10 IV 0.215; NDX 2026-10-07 step 10 IV 0.227; NDX 2026-10-08 step 10 IV 0.211; NDX 2026-10-09 step 10 IV 0.224; NDX 2026-10-12 step 10 IV 0.207; NDX 2026-10-13 step 10 IV 0.214; NDX 2026-10-14 step 10 IV 0.277; NDX 2026-10-15 step 10 IV 0.378; NDX 2026-10-16 step 10 IV 0.240; NDX 2026-10-19 step 10 IV 0.297; NDX 2026-10-20 step 10 IV 0.332; NDX 2026-10-21 step 10 IV 0.299; NDX 2026-10-22 step 10 IV 0.365; NDX 2026-10-23 step 10 IV 0.452; NDX 2026-10-26 step 10 IV 0.373; NDX 2026-10-27 step 10 IV 0.278; NDX 2026-10-28 step 10 IV 0.353; NDX 2026-10-29 step 10 IV 0.363; NDX 2026-10-30 step 10 IV 0.421; SPY 2026-09-29 step 1 IV 0.189; SPY 2026-09-30 step 1 IV 0.191; SPY 2026-10-01 step 1 IV 0.209; SPY 2026-10-02 step 1 IV 0.186; SPY 2026-10-05 step 1 IV 0.164; SPY 2026-10-06 step 1 IV 0.147; SPY 2026-10-07 step 1 IV 0.169; SPY 2026-10-08 step 1 IV 0.158; SPY 2026-10-09 step 1 IV 0.149; SPY 2026-10-12 step 1 IV 0.125; SPY 2026-10-13 step 1 IV 0.120; SPY 2026-10-14 step 1 IV 0.167; SPY 2026-10-15 step 1 IV 0.222; SPY 2026-10-16 step 1 IV 0.162; SPY 2026-10-19 step 1 IV 0.197; SPY 2026-10-20 step 1 IV 0.196; SPY 2026-10-21 step 1 IV 0.203; SPY 2026-10-22 step 1 IV 0.212; SPY 2026-10-23 step 1 IV 0.275; SPY 2026-10-26 step 1 IV 0.221; SPY 2026-10-27 step 1 IV 0.172; SPY 2026-10-28 step 1 IV 0.280; SPY 2026-10-29 step 1 IV 0.241; SPY 2026-10-30 step 1 IV 0.240; QQQ 2026-09-29 step 1 IV 0.266; QQQ 2026-09-30 step 1 IV 0.299; QQQ 2026-10-01 step 1 IV 0.294; QQQ 2026-10-02 step 1 IV 0.264; QQQ 2026-10-05 step 1 IV 0.232; QQQ 2026-10-06 step 1 IV 0.210; QQQ 2026-10-07 step 1 IV 0.235; QQQ 2026-10-08 step 1 IV 0.214; QQQ 2026-10-09 step 1 IV 0.226; QQQ 2026-10-12 step 1 IV 0.209; QQQ 2026-10-13 step 1 IV 0.217; QQQ 2026-10-14 step 1 IV 0.283; QQQ 2026-10-15 step 1 IV 0.380; QQQ 2026-10-16 step 1 IV 0.279; QQQ 2026-10-19 step 1 IV 0.302; QQQ 2026-10-20 step 1 IV 0.343; QQQ 2026-10-21 step 1 IV 0.338; QQQ 2026-10-22 step 1 IV 0.373; QQQ 2026-10-23 step 1 IV 0.481; QQQ 2026-10-26 step 1 IV 0.382; QQQ 2026-10-27 step 1 IV 0.287; QQQ 2026-10-28 step 1 IV 0.411; QQQ 2026-10-29 step 1 IV 0.416; QQQ 2026-10-30 step 1 IV 0.427; IWM 2026-09-29 step 1 IV 0.268; IWM 2026-09-30 step 1 IV 0.258; IWM 2026-10-01 step 1 IV 0.291; IWM 2026-10-02 step 1 IV 0.307; IWM 2026-10-05 step 1 IV 0.239; IWM 2026-10-06 step 1 IV 0.227; IWM 2026-10-07 step 1 IV 0.255; IWM 2026-10-08 step 1 IV 0.249; IWM 2026-10-09 step 1 IV 0.240; IWM 2026-10-12 step 1 IV 0.212; IWM 2026-10-13 step 1 IV 0.211; IWM 2026-10-14 step 1 IV 0.299; IWM 2026-10-15 step 1 IV 0.314; IWM 2026-10-16 step 1 IV 0.250; IWM 2026-10-19 step 1 IV 0.256; IWM 2026-10-20 step 1 IV 0.285; IWM 2026-10-21 step 1 IV 0.270; IWM 2026-10-22 step 1 IV 0.294; IWM 2026-10-23 step 1 IV 0.345; IWM 2026-10-26 step 1 IV 0.295; IWM 2026-10-27 step 1 IV 0.249; IWM 2026-10-28 step 1 IV 0.434; IWM 2026-10-29 step 0.5 IV 0.303; IWM 2026-10-30 step 1 IV 0.327
+
+VISTA tactical: tocado en 15 / 30 min vs base a la misma Z (diferencia en pp, IC 95 % bootstrap por día)
+   SPX nuevo ABS arriba               n= 144 días=20 |Z| med 0.83 parpadeo   56 % | 15 min:  12.5 % vs base  11.9 % dif  +0.6 [ -5.7,  +8.2] | 30 min:  22.2 % vs  19.6 % dif  +2.6 [ -8.2, +14.2]
+   SPX nuevo ABS abajo                n= 149 días=20 |Z| med 0.79 parpadeo   62 % | 15 min:  11.4 % vs base   9.3 % dif  +2.1 [ -5.1, +10.1] | 30 min:  14.8 % vs  16.0 % dif  -1.2 [-11.4,  +8.5]
+   SPX ambos                          n= 293 días=21 |Z| med 0.79 parpadeo   59 % | 15 min:  11.9 % vs base  10.6 % dif  +1.4 [ -4.2,  +7.8] | 30 min:  18.4 % vs  17.8 % dif  +0.7 [ -6.2,  +9.3]
+   NDX nuevo ABS arriba               n= 126 días=20 |Z| med 0.59 parpadeo   50 % | 15 min:  29.4 % vs base  22.6 % dif  +6.8 [ -2.2, +15.5] | 30 min:  33.3 % vs  29.5 % dif  +3.8 [ -5.3, +14.1]
+   NDX nuevo ABS abajo                n= 133 días=19 |Z| med 0.37 parpadeo   54 % | 15 min:  37.6 % vs base  30.5 % dif  +7.0 [ +1.3, +15.5] | 30 min:  44.4 % vs  39.6 % dif  +4.7 [ -3.1, +13.0]
+   NDX ambos                          n= 259 días=21 |Z| med 0.46 parpadeo   52 % | 15 min:  33.6 % vs base  26.7 % dif  +6.9 [ +2.0, +12.3] | 30 min:  39.0 % vs  34.7 % dif  +4.3 [ -2.3, +11.1]
+   SPY nuevo ABS arriba               n= 100 días=17 |Z| med 0.85 parpadeo   51 % | 15 min:   7.0 % vs base   6.2 % dif  +0.9 [ -4.1,  +7.0] | 30 min:  12.0 % vs  12.5 % dif  -0.5 [ -7.4,  +5.7]
+   SPY nuevo ABS abajo                n=  93 días=18 |Z| med 0.99 parpadeo   60 % | 15 min:   4.3 % vs base   7.0 % dif  -2.7 [ -7.4,  +1.7] | 30 min:   9.7 % vs  13.6 % dif  -4.0 [-11.4,  +3.0]
+   SPY ambos                          n= 193 días=22 |Z| med 0.90 parpadeo   55 % | 15 min:   5.7 % vs base   6.6 % dif  -0.9 [ -4.6,  +3.3] | 30 min:  10.9 % vs  13.0 % dif  -2.2 [ -8.0,  +3.6]
+   QQQ nuevo ABS arriba               n= 120 días=21 |Z| med 0.64 parpadeo   44 % | 15 min:  15.8 % vs base   9.7 % dif  +6.2 [ -0.4, +14.6] | 30 min:  20.0 % vs  18.2 % dif  +1.8 [ -7.2, +12.6]
+   QQQ nuevo ABS abajo                n= 107 días=18 |Z| med 0.65 parpadeo   50 % | 15 min:  12.1 % vs base  10.6 % dif  +1.6 [ -8.1, +14.6] | 30 min:  17.8 % vs  19.0 % dif  -1.3 [-12.1, +13.1]
+   QQQ ambos                          n= 227 días=22 |Z| med 0.64 parpadeo   47 % | 15 min:  14.1 % vs base  10.1 % dif  +4.0 [ -1.8, +12.0] | 30 min:  18.9 % vs  18.6 % dif  +0.4 [ -7.1,  +9.4]
+   IWM nuevo ABS arriba               n=  72 días=15 |Z| med 1.15 parpadeo   54 % | 15 min:  11.1 % vs base   3.5 % dif  +7.6 [ -3.3, +24.0] | 30 min:  13.9 % vs   6.3 % dif  +7.6 [ -4.7, +25.8]
+   IWM nuevo ABS abajo                n=  44 días= 8 |Z| med 0.89 parpadeo   50 % | 15 min:   2.3 % vs base   1.5 % dif  +0.7 [ -2.0,  +5.7] | 30 min:  11.4 % vs   3.4 % dif  +8.0 [ -2.0, +25.7]
+   IWM ambos                          n= 116 días=19 |Z| med 1.01 parpadeo   53 % | 15 min:   7.8 % vs base   2.8 % dif  +5.0 [ -1.5, +15.4] | 30 min:  12.9 % vs   5.2 % dif  +7.7 [ -1.4, +21.4]
+   TODOS nuevo ABS arriba             n= 562 días=24 |Z| med 0.74 parpadeo   51 % | 15 min:  15.8 % vs base  11.7 % dif  +4.1 [ -0.7,  +9.7] | 30 min:  21.4 % vs  18.6 % dif  +2.8 [ -2.8,  +8.7]
+   TODOS nuevo ABS abajo              n= 526 días=24 |Z| med 0.73 parpadeo   56 % | 15 min:  16.2 % vs base  13.9 % dif  +2.3 [ -1.6,  +6.1] | 30 min:  21.7 % vs  21.1 % dif  +0.6 [ -4.4,  +5.6]
+   TODOS ambos                        n=1088 días=24 |Z| med 0.73 parpadeo   54 % | 15 min:  16.0 % vs base  12.8 % dif  +3.2 [ -0.2,  +6.5] | 30 min:  21.5 % vs  19.8 % dif  +1.7 [ -2.5,  +5.9]
+
+VISTA 0dte: tocado en 15 / 30 min vs base a la misma Z (diferencia en pp, IC 95 % bootstrap por día)
+   SPX nuevo ABS arriba               n=  16 días= 3 |Z| med 0.86 parpadeo   62 % | 15 min:  18.8 % vs base  10.3 % dif  +8.4 [ -7.5, +26.7] | 30 min:  25.0 % vs  17.5 % dif  +7.5 [-17.5, +31.2]
+   SPX nuevo ABS abajo                n=  37 días= 3 |Z| med 0.57 parpadeo   65 % | 15 min:  40.5 % vs base  16.7 % dif +23.9 [ +9.8, +69.3] | 30 min:  51.4 % vs  24.5 % dif +26.9 [+16.4, +54.6]
+   SPX ambos                          n=  53 días= 3 |Z| med 0.72 parpadeo   64 % | 15 min:  34.0 % vs base  14.8 % dif +19.2 [+13.6, +31.7] | 30 min:  43.4 % vs  22.4 % dif +21.0 [+19.3, +23.3]
+   NDX nuevo ABS arriba               n=  12 días= 3 |Z| med 0.35 parpadeo   50 % | 15 min:  33.3 % vs base  27.1 % dif  +6.2 [ -2.5, +10.6] | 30 min:  33.3 % vs  37.9 % dif  -4.6 [-13.3,  -1.3]
+   NDX nuevo ABS abajo                n=  24 días= 3 |Z| med 0.31 parpadeo   58 % | 15 min:  54.2 % vs base  41.2 % dif +12.9 [ +4.8, +75.0] | 30 min:  66.7 % vs  51.1 % dif +15.5 [ +8.1, +58.8]
+   NDX ambos                          n=  36 días= 3 |Z| med 0.32 parpadeo   56 % | 15 min:  47.2 % vs base  36.5 % dif +10.7 [ +4.4, +28.5] | 30 min:  55.6 % vs  46.7 % dif  +8.8 [ +7.4, +15.5]
+   SPY nuevo ABS arriba               n=  16 días= 2 |Z| med 0.87 parpadeo   62 % | 15 min:   0.0 % vs base   2.3 % dif  -2.3 [ -3.4,  -1.2] | 30 min:   6.2 % vs   6.6 % dif  -0.3 [ -4.7,  +4.1]
+   SPY nuevo ABS abajo                n=  32 días= 3 |Z| med 0.50 parpadeo   59 % | 15 min:  34.4 % vs base   9.4 % dif +25.0 [ +0.0, +36.4] | 30 min:  46.9 % vs  17.2 % dif +29.7 [ -0.6, +35.5]
+   SPY ambos                          n=  48 días= 4 |Z| med 0.67 parpadeo   60 % | 15 min:  22.9 % vs base   7.0 % dif +15.9 [ -0.8, +34.1] | 30 min:  33.3 % vs  13.6 % dif +19.7 [ -3.3, +30.8]
+   QQQ nuevo ABS arriba               n=  21 días= 4 |Z| med 0.56 parpadeo   67 % | 15 min:   0.0 % vs base   8.8 % dif  -8.8 [-12.5,  -7.4] | 30 min:   4.8 % vs  19.6 % dif -14.9 [-23.1,  -9.8]
+   QQQ nuevo ABS abajo                n=  32 días= 4 |Z| med 0.71 parpadeo   59 % | 15 min:   6.2 % vs base   4.0 % dif  +2.3 [ -3.2,  +9.8] | 30 min:  15.6 % vs   7.0 % dif  +8.7 [ -5.4, +30.7]
+   QQQ ambos                          n=  53 días= 4 |Z| med 0.61 parpadeo   62 % | 15 min:   3.8 % vs base   5.9 % dif  -2.1 [ -7.2,  +2.1] | 30 min:  11.3 % vs  12.0 % dif  -0.7 [-11.3, +15.6]
+   IWM nuevo ABS arriba               n=  13 días= 2 |Z| med 0.84 parpadeo   77 % | 15 min:  15.4 % vs base   2.3 % dif +13.1 [ +0.0, +21.2] | 30 min:  15.4 % vs   6.2 % dif  +9.2 [ -0.5, +15.3]
+   IWM nuevo ABS abajo                n=  17 días= 3 |Z| med 0.81 parpadeo   53 % | 15 min:   0.0 % vs base   1.5 % dif  -1.5 [ -2.5,  -0.3] | 30 min:   5.9 % vs   3.8 % dif  +2.1 [ -7.5, +10.9]
+   IWM ambos                          n=  30 días= 4 |Z| med 0.84 parpadeo   63 % | 15 min:   6.7 % vs base   1.8 % dif  +4.8 [ -0.9,  +8.7] | 30 min:  10.0 % vs   4.8 % dif  +5.2 [ -1.7,  +9.0]
+   TODOS nuevo ABS arriba             n=  78 días= 4 |Z| med 0.68 parpadeo   64 % | 15 min:  11.5 % vs base   9.5 % dif  +2.0 [ -3.7,  +5.6] | 30 min:  15.4 % vs  17.1 % dif  -1.7 [ -5.1,  +4.8]
+   TODOS nuevo ABS abajo              n= 142 días= 4 |Z| med 0.55 parpadeo   60 % | 15 min:  28.9 % vs base  14.5 % dif +14.4 [ +3.8, +32.6] | 30 min:  39.4 % vs  20.9 % dif +18.5 [ +7.1, +30.0]
+   TODOS ambos                        n= 220 días= 4 |Z| med 0.58 parpadeo   61 % | 15 min:  22.7 % vs base  12.7 % dif +10.0 [ +3.9, +19.9] | 30 min:  30.9 % vs  19.6 % dif +11.4 [ +2.9, +20.8]
+
+VISTA 0dte_volume: tocado en 15 / 30 min vs base a la misma Z (diferencia en pp, IC 95 % bootstrap por día)
+   SPX nuevo ABS arriba               n=  16 días= 3 |Z| med 0.35 parpadeo   88 % | 15 min:  37.5 % vs base  28.0 % dif  +9.5 [-25.0, +31.7] | 30 min:  37.5 % vs  38.0 % dif  -0.5 [-36.0, +22.5]
+   SPX nuevo ABS abajo                n=  23 días= 4 |Z| med 0.31 parpadeo   70 % | 15 min:  47.8 % vs base  34.7 % dif +13.2 [-11.4, +44.5] | 30 min:  78.3 % vs  48.7 % dif +29.6 [ +6.9, +46.3]
+   SPX ambos                          n=  39 días= 4 |Z| med 0.34 parpadeo   77 % | 15 min:  43.6 % vs base  31.9 % dif +11.7 [ -4.1, +38.0] | 30 min:  61.5 % vs  44.3 % dif +17.2 [ +8.9, +31.0]
+   NDX nuevo ABS arriba               n=  56 días= 4 |Z| med 0.31 parpadeo   48 % | 15 min:  39.3 % vs base  35.9 % dif  +3.4 [-13.0, +18.8] | 30 min:  46.4 % vs  44.1 % dif  +2.3 [-11.2, +18.7]
+   NDX nuevo ABS abajo                n=  36 días= 4 |Z| med 0.19 parpadeo   47 % | 15 min:  58.3 % vs base  53.3 % dif  +5.0 [-19.0, +29.0] | 30 min:  63.9 % vs  62.4 % dif  +1.5 [-23.2, +34.1]
+   NDX ambos                          n=  92 días= 4 |Z| med 0.24 parpadeo   48 % | 15 min:  46.7 % vs base  42.7 % dif  +4.0 [ -3.0, +11.1] | 30 min:  53.3 % vs  51.3 % dif  +2.0 [ -3.6, +10.3]
+   SPY nuevo ABS arriba               n=   6 días= 3 |Z| med 0.70 parpadeo   33 % | 15 min:  16.7 % vs base   5.0 % dif +11.7 [ -4.4, +90.0] | 30 min:  33.3 % vs  15.0 % dif +18.3 [ -5.0, +70.0]
+   SPY nuevo ABS abajo                n=   2 días= 1 |Z| med 1.11 parpadeo   50 % | 15 min:   0.0 % vs base   0.0 % dif  +0.0 [ +0.0,  +0.0] | 30 min:   0.0 % vs   3.8 % dif  -3.8 [ -3.8,  -3.8]
+   SPY ambos                          n=   8 días= 3 |Z| med 0.70 parpadeo   38 % | 15 min:  12.5 % vs base   3.8 % dif  +8.8 [ -2.9, +90.0] | 30 min:  25.0 % vs  12.2 % dif +12.8 [ -5.0, +70.0]
+   QQQ nuevo ABS arriba               n=  11 días= 3 |Z| med 0.48 parpadeo   55 % | 15 min:   9.1 % vs base  10.7 % dif  -1.6 [-27.5, +75.0] | 30 min:  18.2 % vs  19.3 % dif  -1.1 [-50.0, +52.5]
+   QQQ nuevo ABS abajo                n=   5 días= 2 |Z| med 0.25 parpadeo   40 % | 15 min:  40.0 % vs base  22.5 % dif +17.5 [+10.8, +27.5] | 30 min:  40.0 % vs  41.5 % dif  -1.5 [-11.7, +13.8]
+   QQQ ambos                          n=  16 días= 4 |Z| med 0.41 parpadeo   50 % | 15 min:  18.8 % vs base  14.4 % dif  +4.4 [ -6.6, +49.4] | 30 min:  25.0 % vs  26.2 % dif  -1.2 [-24.4, +20.4]
+   IWM nuevo ABS arriba               n=  14 días= 2 |Z| med 0.41 parpadeo   57 % | 15 min:   7.1 % vs base   2.7 % dif  +4.5 [ -1.2,  +5.4] | 30 min:  14.3 % vs   5.7 % dif  +8.6 [ +2.1, +47.5]
+   IWM nuevo ABS abajo                n=   1 días= 1 |Z| med 0.70 parpadeo    0 % | 15 min:   0.0 % vs base   2.5 % dif  -2.5 [ -2.5,  -2.5] | 30 min: 100.0 % vs   7.5 % dif +92.5 [+92.5, +92.5]
+   IWM ambos                          n=  15 días= 3 |Z| med 0.41 parpadeo   53 % | 15 min:   6.7 % vs base   2.7 % dif  +4.0 [ -2.5,  +5.4] | 30 min:  20.0 % vs   5.8 % dif +14.2 [ +2.1, +92.5]
+   TODOS nuevo ABS arriba             n= 103 días= 4 |Z| med 0.38 parpadeo   55 % | 15 min:  30.1 % vs base  25.7 % dif  +4.4 [ -4.1, +26.5] | 30 min:  36.9 % vs  33.6 % dif  +3.3 [ -5.3, +21.0]
+   TODOS nuevo ABS abajo              n=  67 días= 4 |Z| med 0.26 parpadeo   54 % | 15 min:  50.7 % vs base  42.3 % dif  +8.5 [-12.9, +34.9] | 30 min:  65.7 % vs  53.6 % dif +12.1 [ -9.2, +37.4]
+   TODOS ambos                        n= 170 días= 4 |Z| med 0.34 parpadeo   55 % | 15 min:  38.2 % vs base  32.2 % dif  +6.0 [ +0.8, +13.7] | 30 min:  48.2 % vs  41.5 % dif  +6.8 [ +2.6, +17.5]
+
+SIN PARPADEO (el ABS no vuelve al strike anterior en ≤ 5 min), todas las vistas por separado, todos los símbolos:
+   tactical sin parpadeo              n= 505 días=24 |Z| med 0.70 parpadeo    0 % | 15 min:  19.2 % vs base  13.1 % dif  +6.1 [ +2.6,  +9.8] | 30 min:  25.5 % vs  20.3 % dif  +5.3 [ +1.5,  +9.4]
+   0dte sin parpadeo                  n=  85 días= 4 |Z| med 0.60 parpadeo    0 % | 15 min:  23.5 % vs base  13.4 % dif +10.2 [ +5.9, +18.5] | 30 min:  31.8 % vs  19.5 % dif +12.2 [ +6.0, +20.6]
+   0dte_volume sin parpadeo           n=  77 días= 4 |Z| med 0.27 parpadeo    0 % | 15 min:  48.1 % vs base  34.9 % dif +13.1 [ +4.5, +22.6] | 30 min:  58.4 % vs  44.2 % dif +14.2 [ +2.8, +22.9]
+
+Primer vistazo del 10-27 (no cuenta): SPX táctico, cambios a 7700 arriba del precio → tocados 3 de 4; a 7650 abajo → 0 de 5.
+
+##############################################################################################################
+DESVÍOS Y NOTAS ANOTADOS DESPUÉS DE LA CORRIDA (2026-10-31, escritos al leer la salida; no cambian ningún número de arriba)
+ E1. Días: 09-25 queda fuera en las 3 pruebas (el primer ciclo táctico de ese día llegó ~10:00: hueco de 30 min). 09-28 queda fuera en las
+     pruebas 3 y 4 porque ninguna foto de cadena de 09:33-10:00 tenía IV ATM utilizable (igual que en la prueba 1). Prueba 2: 25 días por
+     símbolo; pruebas 3 y 4: 24.
+ E2. Prueba 2: con escalón de 5 (SPX) y de 10 (NDX) las paredes NUNCA estuvieron a ≤ 2 escalones en ningún día; para SPX y NDX la prueba
+     queda "sin conclusión" (no "falla"). En total solo 9 días "juntas" (SPY 2, QQQ 1, IWM 6): muy pocos para concluir. El preregistro no fija
+     un umbral de aceptación para esta prueba.
+ E3. Prueba 2, lectura: en SPY y QQQ los días "juntas" tuvieron menos rango después de las 10:30 (−0,51 y −0,78 ATR; 2 y 1 días). En IWM, al
+     revés (+0,93 ATR, 6 días). El "% cerca del medio" más alto en los días juntas es en parte mecánico: si las paredes están juntas, su punto
+     medio suele quedar al lado del precio de las 10:30.
+ E4. Prueba 3: el preregistro no fija un umbral de aceptación. Las forzadas coinciden con las guardadas en el 62-91 % de los ciclos; donde
+     coinciden todos los días, el intervalo sale [+0,0, +0,0] (no hay diferencia que medir).
+ E5. Prueba 4: el preregistro no fija un umbral de aceptación. La línea "sin parpadeo" se programó ANTES de la corrida (está en el script),
+     pero no estaba en el preregistro: es exploratoria. Las vistas 0dte y 0dte_volume tienen solo 4 días con eventos: los intervalos por día
+     con 3-4 días son poco fiables; sirve como pista, no como resultado.
+ E6. Prueba 4: se descartaron 802 cambios de ABS a menos de 1 escalón del precio (regla del preregistro) y 470 fuera de 09:31-15:30 (D2).

@@ -1,0 +1,371 @@
+... SPX done (48 rank-1 ABS levels)
+... NDX done (48 rank-1 ABS levels)
+... SPY done (48 rank-1 ABS levels)
+... QQQ done (48 rank-1 ABS levels)
+... IWM done (48 rank-1 ABS levels)
+
+PRUEBA 1 DEL PREREGISTRO (docs/preregistro_nivel_apertura_2026-10-29.txt) — corrida 2026-10-31, solo lectura
+==============================================================================================================
+DESVÍOS Y ACLARACIONES (2026-10-31, escritos antes de leer los resultados):
+ D1. Delta por strike: guardado solo desde el 2026-10-19 (no ~10-16). Del 09-28 al 10-16 se reconstruye desde la foto de cadena del mismo ciclo:
+     suma de delta x OI por strike de los vencimientos de hoy a hoy+2 días de calendario (la regla táctica guardada esos días). El factor
+     100 x precio no cambia el orden del brillo. Abajo se mide cuánto coincide la reconstrucción con lo guardado en los días que tienen ambos.
+ D2. Ventana: ±1,25 ATR (ATR 14 días de daily_bars, como el heatmap) cortada a los strikes que la vista táctica guardó ese ciclo; strikes
+     fuera de lo guardado no existen en los datos (IWM guarda ~11 strikes).
+ D3. σ de Z: IV ATM (promedio call/put, sin IV=0) del vencimiento MÁS CERCANO de la vista táctica (0DTE todos los días) en la foto de cadena
+     del ciclo de las 09:35; T = _time_to_expiration_years de ese vencimiento. La vista táctica mezcla hasta 3 vencimientos; se usa el primero.
+ D4. Base (a) "strikes al azar a la misma Z": todos los demás strikes de la ventana de esa capa (no top 3), mismo día, mismo lado y mismo
+     grupo de Z; se usa su tasa media (= infinitos sorteos). Se muestra también la |Z| media de cada grupo para ver si la distancia sesga.
+ D5. Criterio "útil": se evalúa por capa; nivel 1º de brillo menos base (a) del mismo día/lado/grupo de Z; bootstrap por día (1.000).
+ D6. Calibración: la probabilidad de cada nivel = su tasa de toque en la celda (rango x grupo de Z x lado, todas las capas y símbolos)
+     calculada SIN ese día (dejar un día fuera); Brier comparado con un pronóstico solo por grupo de Z.
+ D7. EMC/EMP: recalculados con las mismas funciones del pill en vivo (réplica de varianza del vencimiento más cercano, ancla = primer precio
+     de la sesión) sobre la foto de cadena de las 09:35.
+ D8. Vistas 0dte / 0dte_volume: solo 4 días (10-27 a 10-30); no se analizan aparte (muy pocos casos).
+ D9. Banda oscura: pares de strikes vecinos de la ventana donde la gamma neta (call + put) cambia de signo; comparación = pares vecinos sin
+     cambio de signo (mismo ancho de un escalón). Toque = el precio entra en la banda viniendo de afuera; rebote = vuelve ≥ 0,15 % hacia su
+     lado en 30 min; cruce = sale ≥ 0,15 % por el otro lado.
+
+DÍAS EXCLUIDOS (huecos > 10 min entre 09:30 y 10:00, o sin datos):
+  SPX 2026-09-28: no ATM IV in the cycle's chain snapshot
+  NDX 2026-09-28: no ATM IV in the cycle's chain snapshot
+  SPY 2026-09-28: no ATM IV in the cycle's chain snapshot
+  QQQ 2026-09-28: no ATM IV in the cycle's chain snapshot
+  IWM 2026-09-28: no ATM IV in the cycle's chain snapshot
+
+SESIONES USADAS
+  SPX 2026-09-29 cycle 09:35:21 price 7681.49 ATR 70.02 IV 0.187 T 6.41 h 1-Z = 38.94 pts window strikes 35 delta rebuilt EMC 7740.12 EMP 7659.08
+  SPX 2026-09-30 cycle 09:35:51 price 7694.15 ATR 69.79 IV 0.178 T 6.40 h 1-Z = 37.06 pts window strikes 35 delta rebuilt EMC 7728.95 EMP 7649.03
+  SPX 2026-10-01 cycle 09:35:51 price 7672.19 ATR 70.86 IV 0.209 T 6.40 h 1-Z = 43.26 pts window strikes 36 delta rebuilt EMC 7710.97 EMP 7621.97
+  SPX 2026-10-02 cycle 09:35:29 price 7735.74 ATR 69.62 IV 0.181 T 6.41 h 1-Z = 37.93 pts window strikes 35 delta rebuilt EMC 7768.43 EMP 7684.05
+  SPX 2026-10-05 cycle 09:35:28 price 7737.41 ATR 71.30 IV 0.161 T 6.41 h 1-Z = 33.67 pts window strikes 36 delta rebuilt EMC 7767.44 EMP 7694.78
+  SPX 2026-10-06 cycle 09:35:37 price 7810.66 ATR 73.04 IV 0.142 T 6.41 h 1-Z = 29.99 pts window strikes 37 delta rebuilt EMC 7838.64 EMP 7773.28
+  SPX 2026-10-07 cycle 09:35:44 price 7780.67 ATR 69.58 IV 0.163 T 6.40 h 1-Z = 34.34 pts window strikes 35 delta rebuilt EMC 7830.1 EMP 7755.86
+  SPX 2026-10-08 cycle 09:35:08 price 7780.78 ATR 66.76 IV 0.158 T 6.41 h 1-Z = 33.27 pts window strikes 33 delta rebuilt EMC 7814.71 EMP 7742.19
+  SPX 2026-10-09 cycle 09:36:12 price 7790.68 ATR 68.47 IV 0.144 T 6.40 h 1-Z = 30.29 pts window strikes 34 delta rebuilt EMC 7820.02 EMP 7752.7
+  SPX 2026-10-12 cycle 09:35:21 price 7816 ATR 63.22 IV 0.116 T 6.41 h 1-Z = 24.63 pts window strikes 32 delta rebuilt EMC 7840.66 EMP 7785.42
+  SPX 2026-10-13 cycle 09:35:22 price 7800.8 ATR 63.13 IV 0.117 T 6.41 h 1-Z = 24.77 pts window strikes 31 delta rebuilt EMC 7822.9 EMP 7767.64
+  SPX 2026-10-14 cycle 09:35:42 price 7773.22 ATR 60.15 IV 0.160 T 6.40 h 1-Z = 33.60 pts window strikes 30 delta rebuilt EMC 7809.44 EMP 7738.92
+  SPX 2026-10-15 cycle 09:35:22 price 7683.16 ATR 64.13 IV 0.217 T 6.41 h 1-Z = 45.03 pts window strikes 32 delta rebuilt EMC 7735.93 EMP 7638.69
+  SPX 2026-10-16 cycle 09:35:40 price 7747.98 ATR 65.95 IV 0.129 T 6.41 h 1-Z = 27.07 pts window strikes 33 delta rebuilt EMC 7781.23 EMP 7709.41
+  SPX 2026-10-19 cycle 09:35:53 price 7700.25 ATR 69.40 IV 0.188 T 6.40 h 1-Z = 39.23 pts window strikes 35 delta stored EMC 7745.56 EMP 7659.98
+  SPX 2026-10-20 cycle 09:35:50 price 7678.05 ATR 71.23 IV 0.191 T 6.40 h 1-Z = 39.55 pts window strikes 36 delta stored EMC 7721.61 EMP 7636.41
+  SPX 2026-10-21 cycle 09:35:26 price 7729.41 ATR 71.88 IV 0.181 T 6.41 h 1-Z = 37.93 pts window strikes 36 delta stored EMC 7777.49 EMP 7695.37
+  SPX 2026-10-22 cycle 09:35:43 price 7695.15 ATR 71.39 IV 0.208 T 6.40 h 1-Z = 43.23 pts window strikes 35 delta stored EMC 7740.32 EMP 7648.92
+  SPX 2026-10-23 cycle 09:35:06 price 7623.2 ATR 73.64 IV 0.261 T 6.41 h 1-Z = 53.92 pts window strikes 37 delta stored EMC 7693.44 EMP 7580.92
+  SPX 2026-10-26 cycle 09:35:39 price 7653.63 ATR 72.19 IV 0.212 T 6.41 h 1-Z = 43.97 pts window strikes 36 delta stored EMC 7686.33 EMP 7593.07
+  SPX 2026-10-27 cycle 09:35:24 price 7699.22 ATR 72.76 IV 0.160 T 6.41 h 1-Z = 33.26 pts window strikes 37 delta stored EMC 7735.9 EMP 7663.04
+  SPX 2026-10-28 cycle 09:35:05 price 7739.72 ATR 73.03 IV 0.234 T 6.42 h 1-Z = 48.99 pts window strikes 37 delta stored EMC 7786.37 EMP 7684.75
+  SPX 2026-10-29 cycle 09:35:02 price 7700.4 ATR 70.86 IV 0.211 T 6.42 h 1-Z = 43.98 pts window strikes 35 delta stored EMC 7744.89 EMP 7654.33
+  SPX 2026-10-30 cycle 09:35:19 price 7620.49 ATR 70.70 IV 0.241 T 6.41 h 1-Z = 49.62 pts window strikes 35 delta stored EMC 7683.05 EMP 7579.09
+  NDX 2026-09-29 cycle 09:35:09 price 30332.4 ATR 408.63 IV 0.269 T 6.41 h 1-Z = 220.41 pts window strikes 123 delta rebuilt EMC 30642.66 EMP 30181.92
+  NDX 2026-09-30 cycle 09:35:39 price 30464.2 ATR 406.14 IV 0.268 T 6.41 h 1-Z = 220.82 pts window strikes 122 delta rebuilt EMC 30651.72 EMP 30191.64
+  NDX 2026-10-01 cycle 09:35:48 price 30523 ATR 399.56 IV 0.291 T 6.40 h 1-Z = 240.35 pts window strikes 120 delta rebuilt EMC 30783.82 EMP 30283.38
+  NDX 2026-10-02 cycle 09:35:10 price 30873 ATR 397.55 IV 0.255 T 6.41 h 1-Z = 213.27 pts window strikes 118 delta rebuilt EMC 31102.42 EMP 30635.86
+  NDX 2026-10-05 cycle 09:35:21 price 30912.5 ATR 398.64 IV 0.232 T 6.41 h 1-Z = 194.01 pts window strikes 120 delta rebuilt EMC 31049.91 EMP 30639.23
+  NDX 2026-10-06 cycle 09:35:48 price 31235.4 ATR 404.04 IV 0.207 T 6.40 h 1-Z = 174.60 pts window strikes 121 delta rebuilt EMC 31442.6 EMP 31068.2
+  NDX 2026-10-07 cycle 09:35:43 price 30991.2 ATR 389.92 IV 0.229 T 6.40 h 1-Z = 192.15 pts window strikes 117 delta rebuilt EMC 31178.88 EMP 30773.62
+  NDX 2026-10-08 cycle 09:35:02 price 31028.8 ATR 373.50 IV 0.222 T 6.42 h 1-Z = 186.30 pts window strikes 112 delta rebuilt EMC 31182.22 EMP 30788.24
+  NDX 2026-10-09 cycle 09:36:08 price 30886.5 ATR 396.91 IV 0.225 T 6.40 h 1-Z = 188.18 pts window strikes 119 delta rebuilt EMC 31098.26 EMP 30701.88
+  NDX 2026-10-12 cycle 09:35:19 price 30743.6 ATR 347.46 IV 0.207 T 6.41 h 1-Z = 171.83 pts window strikes 105 delta rebuilt EMC 30979.49 EMP 30612.59
+  NDX 2026-10-13 cycle 09:35:29 price 30418.3 ATR 345.77 IV 0.213 T 6.41 h 1-Z = 174.99 pts window strikes 104 delta rebuilt EMC 30591.05 EMP 30217.35
+  NDX 2026-10-14 cycle 09:35:51 price 30312.2 ATR 339.61 IV 0.284 T 6.40 h 1-Z = 232.36 pts window strikes 102 delta rebuilt EMC 30551.55 EMP 30080.51
+  NDX 2026-10-15 cycle 09:35:19 price 29510.1 ATR 366.99 IV 0.378 T 6.41 h 1-Z = 301.57 pts window strikes 109 delta rebuilt EMC 29838.11 EMP 29215.31
+  NDX 2026-10-16 cycle 09:35:44 price 29738.9 ATR 390.08 IV 0.280 T 6.40 h 1-Z = 225.07 pts window strikes 117 delta rebuilt EMC 30042.17 EMP 29552.03
+  NDX 2026-10-19 cycle 09:35:57 price 29561.5 ATR 414.02 IV 0.298 T 6.40 h 1-Z = 238.52 pts window strikes 124 delta stored EMC 29791.4 EMP 29287.22
+  NDX 2026-10-20 cycle 09:35:46 price 29316.7 ATR 443.09 IV 0.332 T 6.40 h 1-Z = 263.24 pts window strikes 133 delta stored EMC 29663.28 EMP 29124.64
+  NDX 2026-10-21 cycle 09:35:29 price 29704.3 ATR 458.20 IV 0.299 T 6.41 h 1-Z = 240.03 pts window strikes 137 delta stored EMC 29962.37 EMP 29451.63
+  NDX 2026-10-22 cycle 09:35:45 price 29332.4 ATR 465.09 IV 0.356 T 6.40 h 1-Z = 282.69 pts window strikes 139 delta stored EMC 29593.14 EMP 29015.46
+  NDX 2026-10-23 cycle 09:35:08 price 28864.4 ATR 497.34 IV 0.453 T 6.41 h 1-Z = 353.90 pts window strikes 149 delta stored EMC 29211.83 EMP 28483.81
+  NDX 2026-10-26 cycle 09:35:44 price 29089.3 ATR 498.50 IV 0.368 T 6.40 h 1-Z = 289.60 pts window strikes 150 delta stored EMC 29351.74 EMP 28751.42
+  NDX 2026-10-27 cycle 09:35:28 price 29447.9 ATR 510.07 IV 0.277 T 6.41 h 1-Z = 220.55 pts window strikes 153 delta stored EMC 29645.41 EMP 29168.97
+  NDX 2026-10-28 cycle 09:35:14 price 29768.7 ATR 519.09 IV 0.350 T 6.41 h 1-Z = 281.78 pts window strikes 156 delta stored EMC 30019.88 EMP 29444.2
+  NDX 2026-10-29 cycle 09:35:06 price 29279.3 ATR 492.42 IV 0.363 T 6.41 h 1-Z = 287.42 pts window strikes 148 delta stored EMC 29718.48 EMP 29123.88
+  NDX 2026-10-30 cycle 09:35:25 price 28536.2 ATR 516.36 IV 0.425 T 6.41 h 1-Z = 328.13 pts window strikes 135 delta stored EMC 28945.66 EMP 28264.18
+  SPY 2026-09-29 cycle 09:36:48 price 765.528 ATR 7.04 IV 0.184 T 6.39 h 1-Z = 3.79 pts window strikes 18 delta rebuilt EMC 770.89 EMP 762.73
+  SPY 2026-09-30 cycle 09:35:13 price 766.774 ATR 7.02 IV 0.191 T 6.41 h 1-Z = 3.97 pts window strikes 17 delta rebuilt EMC 770.76 EMP 762.12
+  SPY 2026-10-01 cycle 09:35:09 price 764.714 ATR 7.12 IV 0.206 T 6.41 h 1-Z = 4.26 pts window strikes 18 delta rebuilt EMC 768.98 EMP 759.7
+  SPY 2026-10-02 cycle 09:36:47 price 770.649 ATR 7.00 IV 0.191 T 6.39 h 1-Z = 3.97 pts window strikes 18 delta rebuilt EMC 774.93 EMP 766.21
+  SPY 2026-10-05 cycle 09:36:56 price 770.625 ATR 7.16 IV 0.164 T 6.38 h 1-Z = 3.42 pts window strikes 18 delta rebuilt EMC 773.37 EMP 765.9
+  SPY 2026-10-06 cycle 09:35:17 price 778.3 ATR 7.33 IV 0.147 T 6.41 h 1-Z = 3.10 pts window strikes 18 delta rebuilt EMC 781.57 EMP 774.75
+  SPY 2026-10-07 cycle 09:35:22 price 775.505 ATR 6.95 IV 0.164 T 6.41 h 1-Z = 3.44 pts window strikes 18 delta rebuilt EMC 779.56 EMP 771.94
+  SPY 2026-10-08 cycle 09:36:20 price 774.91 ATR 6.66 IV 0.158 T 6.39 h 1-Z = 3.30 pts window strikes 17 delta rebuilt EMC 778.57 EMP 771.21
+  SPY 2026-10-09 cycle 09:35:47 price 776.529 ATR 6.81 IV 0.144 T 6.40 h 1-Z = 3.03 pts window strikes 17 delta rebuilt EMC 779.72 EMP 772.8
+  SPY 2026-10-12 cycle 09:35:00 price 778.84 ATR 6.26 IV 0.125 T 6.42 h 1-Z = 2.63 pts window strikes 15 delta rebuilt EMC 781.76 EMP 775.8
+  SPY 2026-10-13 cycle 09:35:10 price 777.6 ATR 6.25 IV 0.118 T 6.41 h 1-Z = 2.48 pts window strikes 16 delta rebuilt EMC 780.2 EMP 774.48
+  SPY 2026-10-14 cycle 09:35:28 price 774.865 ATR 5.96 IV 0.167 T 6.41 h 1-Z = 3.51 pts window strikes 15 delta rebuilt EMC 778.6 EMP 771.26
+  SPY 2026-10-15 cycle 09:35:03 price 765.61 ATR 6.36 IV 0.226 T 6.42 h 1-Z = 4.68 pts window strikes 16 delta rebuilt EMC 771.37 EMP 761.13
+  SPY 2026-10-16 cycle 09:35:18 price 772.42 ATR 6.53 IV 0.161 T 6.41 h 1-Z = 3.37 pts window strikes 16 delta rebuilt EMC 776.93 EMP 769.61
+  SPY 2026-10-19 cycle 09:35:45 price 766.94 ATR 6.89 IV 0.196 T 6.40 h 1-Z = 4.06 pts window strikes 17 delta stored EMC 771.67 EMP 762.76
+  SPY 2026-10-20 cycle 09:35:40 price 765.489 ATR 7.07 IV 0.201 T 6.41 h 1-Z = 4.15 pts window strikes 18 delta stored EMC 770.32 EMP 761.54
+  SPY 2026-10-21 cycle 09:35:18 price 770.27 ATR 7.13 IV 0.197 T 6.41 h 1-Z = 4.10 pts window strikes 18 delta stored EMC 775.55 EMP 766.75
+  SPY 2026-10-22 cycle 09:35:35 price 767.03 ATR 7.07 IV 0.209 T 6.41 h 1-Z = 4.33 pts window strikes 17 delta stored EMC 771.0 EMP 761.78
+  SPY 2026-10-23 cycle 09:35:00 price 759.855 ATR 7.30 IV 0.277 T 6.42 h 1-Z = 5.69 pts window strikes 18 delta stored EMC 765.87 EMP 753.85
+  SPY 2026-10-26 cycle 09:35:32 price 762.788 ATR 7.18 IV 0.219 T 6.41 h 1-Z = 4.52 pts window strikes 18 delta stored EMC 767.12 EMP 757.42
+  SPY 2026-10-27 cycle 09:35:18 price 767.41 ATR 7.25 IV 0.166 T 6.41 h 1-Z = 3.44 pts window strikes 18 delta stored EMC 771.14 EMP 763.68
+  SPY 2026-10-28 cycle 09:35:00 price 771.28 ATR 7.28 IV 0.279 T 6.42 h 1-Z = 5.83 pts window strikes 18 delta stored EMC 777.4 EMP 765.46
+  SPY 2026-10-29 cycle 09:36:04 price 767.772 ATR 7.09 IV 0.242 T 6.40 h 1-Z = 5.02 pts window strikes 18 delta stored EMC 774.03 EMP 763.55
+  SPY 2026-10-30 cycle 09:35:13 price 759.8 ATR 7.11 IV 0.243 T 6.41 h 1-Z = 4.99 pts window strikes 18 delta stored EMC 766.71 EMP 756.07
+  QQQ 2026-09-29 cycle 09:36:50 price 737.55 ATR 9.97 IV 0.264 T 6.39 h 1-Z = 5.25 pts window strikes 25 delta rebuilt EMC 745.77 EMP 734.49
+  QQQ 2026-09-30 cycle 09:35:11 price 741.65 ATR 9.94 IV 0.299 T 6.41 h 1-Z = 6.01 pts window strikes 25 delta rebuilt EMC 746.56 EMP 733.82
+  QQQ 2026-10-01 cycle 09:35:07 price 742.974 ATR 9.78 IV 0.294 T 6.41 h 1-Z = 5.92 pts window strikes 25 delta rebuilt EMC 748.83 EMP 736.33
+  QQQ 2026-10-02 cycle 09:36:50 price 750.58 ATR 9.74 IV 0.262 T 6.39 h 1-Z = 5.32 pts window strikes 24 delta rebuilt EMC 757.09 EMP 745.53
+  QQQ 2026-10-05 cycle 09:36:57 price 751.63 ATR 9.77 IV 0.227 T 6.38 h 1-Z = 4.61 pts window strikes 24 delta rebuilt EMC 754.49 EMP 744.33
+  QQQ 2026-10-06 cycle 09:35:12 price 760.305 ATR 9.91 IV 0.210 T 6.41 h 1-Z = 4.32 pts window strikes 25 delta rebuilt EMC 765.2 EMP 755.8
+  QQQ 2026-10-07 cycle 09:35:23 price 754.37 ATR 9.53 IV 0.231 T 6.41 h 1-Z = 4.72 pts window strikes 24 delta rebuilt EMC 758.83 EMP 748.77
+  QQQ 2026-10-08 cycle 09:36:22 price 754.08 ATR 9.15 IV 0.218 T 6.39 h 1-Z = 4.45 pts window strikes 23 delta rebuilt EMC 758.74 EMP 749.16
+  QQQ 2026-10-09 cycle 09:35:45 price 751.334 ATR 9.71 IV 0.227 T 6.40 h 1-Z = 4.62 pts window strikes 24 delta rebuilt EMC 757.57 EMP 747.53
+  QQQ 2026-10-12 cycle 09:35:03 price 747.544 ATR 8.53 IV 0.204 T 6.42 h 1-Z = 4.12 pts window strikes 22 delta rebuilt EMC 754.23 EMP 745.21
+  QQQ 2026-10-13 cycle 09:35:05 price 740.08 ATR 8.46 IV 0.215 T 6.42 h 1-Z = 4.31 pts window strikes 21 delta rebuilt EMC 744.11 EMP 734.95
+  QQQ 2026-10-14 cycle 09:35:36 price 737.405 ATR 8.31 IV 0.284 T 6.41 h 1-Z = 5.66 pts window strikes 20 delta rebuilt EMC 743.9 EMP 732.11
+  QQQ 2026-10-15 cycle 09:35:15 price 718.21 ATR 8.96 IV 0.380 T 6.41 h 1-Z = 7.38 pts window strikes 22 delta rebuilt EMC 726.24 EMP 710.78
+  QQQ 2026-10-16 cycle 09:35:22 price 724.26 ATR 9.52 IV 0.279 T 6.41 h 1-Z = 5.46 pts window strikes 24 delta rebuilt EMC 731.37 EMP 719.61
+  QQQ 2026-10-19 cycle 09:35:44 price 718.675 ATR 10.08 IV 0.306 T 6.40 h 1-Z = 5.95 pts window strikes 25 delta stored EMC 725.93 EMP 713.21
+  QQQ 2026-10-20 cycle 09:35:39 price 713.23 ATR 10.76 IV 0.342 T 6.41 h 1-Z = 6.60 pts window strikes 27 delta stored EMC 722.17 EMP 708.37
+  QQQ 2026-10-21 cycle 09:35:17 price 722.25 ATR 11.13 IV 0.329 T 6.41 h 1-Z = 6.43 pts window strikes 28 delta stored EMC 729.02 EMP 715.38
+  QQQ 2026-10-22 cycle 09:35:34 price 714.2 ATR 11.27 IV 0.364 T 6.41 h 1-Z = 7.04 pts window strikes 28 delta stored EMC 720.91 EMP 706.45
+  QQQ 2026-10-23 cycle 09:35:58 price 701.75 ATR 12.04 IV 0.478 T 6.40 h 1-Z = 9.07 pts window strikes 30 delta stored EMC 711.62 EMP 692.64
+  QQQ 2026-10-26 cycle 09:35:32 price 707.55 ATR 12.06 IV 0.379 T 6.41 h 1-Z = 7.25 pts window strikes 30 delta stored EMC 714.73 EMP 699.39
+  QQQ 2026-10-27 cycle 09:35:21 price 716.51 ATR 12.36 IV 0.274 T 6.41 h 1-Z = 5.31 pts window strikes 30 delta stored EMC 720.91 EMP 709.31
+  QQQ 2026-10-28 cycle 09:35:06 price 724.12 ATR 12.55 IV 0.408 T 6.41 h 1-Z = 8.00 pts window strikes 31 delta stored EMC 732.33 EMP 715.93
+  QQQ 2026-10-29 cycle 09:36:07 price 713.055 ATR 11.94 IV 0.412 T 6.40 h 1-Z = 7.95 pts window strikes 29 delta stored EMC 724.83 EMP 708.21
+  QQQ 2026-10-30 cycle 09:35:15 price 694.33 ATR 12.56 IV 0.430 T 6.41 h 1-Z = 8.09 pts window strikes 32 delta stored EMC 705.72 EMP 688.76
+  IWM 2026-09-29 cycle 09:36:53 price 280.154 ATR 3.71 IV 0.264 T 6.39 h 1-Z = 2.00 pts window strikes 9 delta rebuilt EMC 282.42 EMP 278.1
+  IWM 2026-09-30 cycle 09:35:09 price 279.75 ATR 3.66 IV 0.258 T 6.41 h 1-Z = 1.95 pts window strikes 9 delta rebuilt EMC 282.27 EMP 278.07
+  IWM 2026-10-01 cycle 09:35:12 price 278.23 ATR 3.60 IV 0.291 T 6.41 h 1-Z = 2.19 pts window strikes 9 delta rebuilt EMC 279.66 EMP 275.06
+  IWM 2026-10-02 cycle 09:36:58 price 283.005 ATR 3.70 IV 0.295 T 6.38 h 1-Z = 2.25 pts window strikes 9 delta rebuilt EMC 284.8 EMP 279.9
+  IWM 2026-10-05 cycle 09:37:01 price 280.97 ATR 3.83 IV 0.243 T 6.38 h 1-Z = 1.84 pts window strikes 9 delta rebuilt EMC 283.96 EMP 279.98
+  IWM 2026-10-06 cycle 09:35:10 price 284.35 ATR 3.85 IV 0.227 T 6.41 h 1-Z = 1.75 pts window strikes 10 delta rebuilt EMC 286.33 EMP 282.47
+  IWM 2026-10-07 cycle 09:35:27 price 278.6 ATR 3.70 IV 0.258 T 6.41 h 1-Z = 1.94 pts window strikes 10 delta rebuilt EMC 280.38 EMP 276.14
+  IWM 2026-10-08 cycle 09:36:25 price 275.92 ATR 3.70 IV 0.250 T 6.39 h 1-Z = 1.87 pts window strikes 9 delta rebuilt EMC 278.32 EMP 274.26
+  IWM 2026-10-09 cycle 09:35:50 price 277.99 ATR 3.73 IV 0.240 T 6.40 h 1-Z = 1.81 pts window strikes 9 delta rebuilt EMC 280.2 EMP 276.2
+  IWM 2026-10-12 cycle 09:35:01 price 278.53 ATR 3.74 IV 0.210 T 6.42 h 1-Z = 1.58 pts window strikes 10 delta rebuilt EMC 280.21 EMP 276.73
+  IWM 2026-10-13 cycle 09:35:14 price 278.29 ATR 3.59 IV 0.206 T 6.41 h 1-Z = 1.55 pts window strikes 9 delta rebuilt EMC 279.67 EMP 276.25
+  IWM 2026-10-14 cycle 09:35:30 price 274.167 ATR 3.44 IV 0.288 T 6.41 h 1-Z = 2.14 pts window strikes 9 delta rebuilt EMC 275.63 EMP 271.03
+  IWM 2026-10-15 cycle 09:35:09 price 271.4 ATR 3.67 IV 0.312 T 6.41 h 1-Z = 2.29 pts window strikes 9 delta rebuilt EMC 273.88 EMP 268.98
+  IWM 2026-10-16 cycle 09:35:24 price 275.37 ATR 3.76 IV 0.244 T 6.41 h 1-Z = 1.81 pts window strikes 10 delta rebuilt EMC 277.52 EMP 273.52
+  IWM 2026-10-19 cycle 09:35:46 price 271.96 ATR 3.96 IV 0.261 T 6.40 h 1-Z = 1.92 pts window strikes 10 delta stored EMC 273.97 EMP 269.63
+  IWM 2026-10-20 cycle 09:35:43 price 272.145 ATR 3.86 IV 0.277 T 6.40 h 1-Z = 2.04 pts window strikes 10 delta stored EMC 273.77 EMP 269.29
+  IWM 2026-10-21 cycle 09:35:21 price 276.94 ATR 4.08 IV 0.269 T 6.41 h 1-Z = 2.02 pts window strikes 11 delta stored EMC 279.05 EMP 274.65
+  IWM 2026-10-22 cycle 09:35:36 price 276.03 ATR 3.88 IV 0.293 T 6.41 h 1-Z = 2.19 pts window strikes 9 delta stored EMC 277.18 EMP 272.44
+  IWM 2026-10-23 cycle 09:36:00 price 274.41 ATR 3.75 IV 0.346 T 6.40 h 1-Z = 2.57 pts window strikes 10 delta stored EMC 277.55 EMP 272.13
+  IWM 2026-10-26 cycle 09:35:30 price 276.15 ATR 3.69 IV 0.295 T 6.41 h 1-Z = 2.21 pts window strikes 9 delta stored EMC 278.56 EMP 273.76
+  IWM 2026-10-27 cycle 09:35:20 price 277.65 ATR 3.63 IV 0.244 T 6.41 h 1-Z = 1.83 pts window strikes 9 delta stored EMC 279.97 EMP 275.95
+  IWM 2026-10-28 cycle 09:35:03 price 280.42 ATR 3.57 IV 0.429 T 6.42 h 1-Z = 3.26 pts window strikes 11 delta stored EMC 283.67 EMP 277.03
+  IWM 2026-10-29 cycle 09:35:00 price 283.36 ATR 3.50 IV 0.304 T 6.42 h 1-Z = 2.33 pts window strikes 11 delta stored EMC 284.89 EMP 279.93
+  IWM 2026-10-30 cycle 09:35:16 price 282.47 ATR 3.61 IV 0.327 T 6.41 h 1-Z = 2.50 pts window strikes 10 delta stored EMC 284.67 EMP 279.25
+
+D1 control: delta reconstruido vs guardado (10-19 a 10-30), top 3 por lado: coinciden 295 de 300 strikes (98%)
+   SPX: 60/60
+   NDX: 58/60
+   SPY: 60/60
+   QQQ: 59/60
+   IWM: 58/60
+
+==============================================================================================================
+1) TASA DE TOQUE POR SÍMBOLO, CAPA Y RANGO (todos los grupos de Z juntos) — n = niveles
+sím  capa   |            1º |            2º |            3º |  resto (base a) | |Z| media 1º / resto
+SPX  delta  |  45.8 % n= 48 |  52.1 % n= 48 |  45.8 % n= 48 |    35.6 % n=689 | 1.04 / 1.22
+SPX  abs    |  68.8 % n= 48 |  64.6 % n= 48 |  56.2 % n= 48 |    32.4 % n=689 | 0.54 / 1.29
+SPX  calls  |  68.8 % n= 48 |  66.7 % n= 48 |  58.3 % n= 48 |    32.1 % n=689 | 0.51 / 1.29
+SPX  puts   |  64.6 % n= 48 |  66.7 % n= 48 |  68.8 % n= 48 |    31.6 % n=689 | 0.63 / 1.29
+NDX  delta  |  58.3 % n= 48 |  47.9 % n= 48 |  41.7 % n= 48 |   34.6 % n=2889 | 0.88 / 1.15
+NDX  abs    |  70.8 % n= 48 |  47.9 % n= 48 |  58.3 % n= 48 |   34.2 % n=2889 | 0.54 / 1.16
+NDX  calls  |  56.2 % n= 48 |  56.2 % n= 48 |  45.8 % n= 48 |   34.5 % n=2889 | 0.73 / 1.15
+NDX  puts   |  64.6 % n= 48 |  60.4 % n= 48 |  52.1 % n= 48 |   34.2 % n=2889 | 0.50 / 1.16
+SPY  delta  |  56.2 % n= 48 |  62.5 % n= 48 |  37.5 % n= 48 |    36.9 % n=271 | 0.83 / 1.24
+SPY  abs    |  77.1 % n= 48 |  70.8 % n= 48 |  58.3 % n= 48 |    28.0 % n=271 | 0.46 / 1.41
+SPY  calls  |  66.7 % n= 48 |  77.1 % n= 48 |  56.2 % n= 48 |    29.2 % n=271 | 0.57 / 1.42
+SPY  puts   |  77.1 % n= 48 |  77.1 % n= 48 |  56.2 % n= 48 |    27.3 % n=271 | 0.52 / 1.41
+QQQ  delta  |  58.3 % n= 48 |  47.9 % n= 48 |  52.1 % n= 48 |    41.4 % n=474 | 0.85 / 1.15
+QQQ  abs    |  72.9 % n= 48 |  52.1 % n= 48 |  60.4 % n= 48 |    38.6 % n=474 | 0.46 / 1.21
+QQQ  calls  |  72.9 % n= 48 |  62.5 % n= 48 |  66.7 % n= 48 |    36.9 % n=474 | 0.52 / 1.24
+QQQ  puts   |  64.6 % n= 48 |  58.3 % n= 48 |  64.6 % n= 48 |    38.4 % n=474 | 0.64 / 1.21
+IWM  delta  |  54.2 % n= 48 |  43.8 % n= 48 |  35.4 % n= 48 |    38.4 % n= 86 | 0.91 / 1.32
+IWM  abs    |  68.8 % n= 48 |  52.1 % n= 48 |  39.6 % n= 48 |    23.3 % n= 86 | 0.55 / 1.70
+IWM  calls  |  68.8 % n= 48 |  52.1 % n= 48 |  37.5 % n= 48 |    24.4 % n= 86 | 0.70 / 1.64
+IWM  puts   |  66.7 % n= 48 |  52.1 % n= 48 |  41.7 % n= 48 |    23.3 % n= 86 | 0.54 / 1.68
+
+==============================================================================================================
+2) CRITERIO PREREGISTRADO: 1º de brillo − base (a) del mismo día, lado y grupo de Z (puntos porcentuales), IC 95 % bootstrap por día
+   'útil' si diferencia ≥ 10 pp y el IC no cruza cero, en ≥ 3 de 5 símbolos (por capa)
+   delta  SPX : pares  47  diferencia  -3.3 pp  IC [-11.0,   5.1]  no cumple
+   delta  NDX : pares  48  diferencia   4.1 pp  IC [ -0.9,   9.9]  no cumple
+   delta  SPY : pares  30  diferencia   3.3 pp  IC [ -7.4,  14.8]  no cumple
+   delta  QQQ : pares  44  diferencia   1.5 pp  IC [ -7.2,   9.5]  no cumple
+   delta  IWM : pares   9  diferencia   0.0 pp  IC [  0.0,   0.0]  no cumple
+   -> delta: 0 de 5 símbolos cumplen  => NO útil según el preregistro
+
+   abs    SPX : pares  45  diferencia   6.1 pp  IC [ -6.4,  18.1]  no cumple
+   abs    NDX : pares  48  diferencia   1.6 pp  IC [ -5.3,   8.0]  no cumple
+   abs    SPY : pares  23  diferencia  -8.7 pp  IC [-28.6,   8.0]  no cumple
+   abs    QQQ : pares  42  diferencia  -4.4 pp  IC [-16.3,   7.9]  no cumple
+   abs    IWM : pares   4  diferencia   0.0 pp  IC [-50.0, 100.0]  no cumple
+   -> abs: 0 de 5 símbolos cumplen  => NO útil según el preregistro
+
+   calls  SPX : pares  44  diferencia   5.5 pp  IC [ -5.3,  17.8]  no cumple
+   calls  NDX : pares  48  diferencia   4.9 pp  IC [ -0.1,  10.6]  no cumple
+   calls  SPY : pares  21  diferencia -16.7 pp  IC [-31.6,  -4.8]  no cumple
+   calls  QQQ : pares  41  diferencia  -2.4 pp  IC [-12.5,   7.7]  no cumple
+   calls  IWM : pares   2  diferencia  50.0 pp  IC [  0.0, 100.0]  no cumple
+   -> calls: 0 de 5 símbolos cumplen  => NO útil según el preregistro
+
+   puts   SPX : pares  45  diferencia   5.6 pp  IC [ -4.4,  17.0]  no cumple
+   puts   NDX : pares  48  diferencia  -0.3 pp  IC [ -6.2,   5.1]  no cumple
+   puts   SPY : pares  18  diferencia  11.1 pp  IC [ -9.5,  29.4]  no cumple
+   puts   QQQ : pares  40  diferencia   0.4 pp  IC [-11.9,  12.8]  no cumple
+   puts   IWM : pares   2  diferencia   0.0 pp  IC [  0.0,   0.0]  no cumple
+   -> puts: 0 de 5 símbolos cumplen  => NO útil según el preregistro
+
+==============================================================================================================
+3) POR GRUPO DE Z Y LADO (todas las capas y símbolos): toque 1º / 2º / 3º / resto
+   arriba Z <0.5  :  86.4 % n= 214 |  91.8 % n= 184 |  96.6 % n= 147 |  90.8 % n=1779
+   arriba Z 0.5-1 :  57.8 % n= 147 |  61.6 % n= 159 |  55.6 % n= 133 |  54.6 % n=1853
+   arriba Z 1-1.5 :  34.8 % n=  89 |  22.1 % n=  86 |  25.2 % n= 115 |  17.1 % n=2018
+   arriba Z >1.5  :  10.0 % n=  30 |   5.9 % n=  51 |   7.1 % n=  85 |   2.4 % n=3202
+   abajo  Z <0.5  :  83.9 % n= 254 |  88.4 % n= 172 |  87.3 % n= 166 |  82.8 % n=1712
+   abajo  Z 0.5-1 :  54.4 % n= 136 |  54.5 % n= 154 |  41.5 % n= 118 |  35.9 % n=1928
+   abajo  Z 1-1.5 :  46.4 % n=  56 |  27.2 % n=  92 |  34.2 % n= 120 |  22.7 % n=2028
+   abajo  Z >1.5  :  23.5 % n=  34 |  19.4 % n=  62 |  13.2 % n=  76 |  13.4 % n=3116
+
+==============================================================================================================
+4) COMO OBJETIVO DE SALIDA de una entrada a las 09:35 (todas las capas): acierto, minutos hasta el objetivo (mediana),
+   peor movimiento en contra antes de llegar (mediana, en ATR), exceso después del toque (mediana, en Z), máx/mín del día cerca (≤ 0,25 ATR)
+  SPX
+   brillo 1º (4 capas)          n= 192 acierto  62.0 %  min   30.2  en contra 0.09 ATR  exceso 0.29 Z  máx/mín cerca  56.2 %
+   brillo 2º (4 capas)          n= 192 acierto  62.5 %  min   19.8  en contra 0.07 ATR  exceso 0.39 Z  máx/mín cerca  54.7 %
+   brillo 3º (4 capas)          n= 192 acierto  57.3 %  min   18.5  en contra 0.07 ATR  exceso 0.41 Z  máx/mín cerca  41.7 %
+   base (a) resto               n=2756 acierto  32.9 %  min   46.0  en contra 0.11 ATR  exceso 0.39 Z  máx/mín cerca  32.3 %
+   base EMC                     n=  24 acierto  29.2 %  min   96.5  en contra 0.14 ATR  exceso 0.36 Z  máx/mín cerca  41.7 %
+   base EMP                     n=  24 acierto  29.2 %  min  105.5  en contra 0.16 ATR  exceso 0.33 Z  máx/mín cerca  41.7 %
+   base fixed 10                n=  48 acierto  91.7 %  min    8.5  en contra 0.08 ATR  exceso 0.46 Z  máx/mín cerca  56.2 %
+   base fixed 20                n=  48 acierto  64.6 %  min   42.9  en contra 0.14 ATR  exceso 0.33 Z  máx/mín cerca  77.1 %
+   base fixed 30                n=  48 acierto  45.8 %  min  101.8  en contra 0.17 ATR  exceso 0.29 Z  máx/mín cerca  56.2 %
+  NDX
+   brillo 1º (4 capas)          n= 192 acierto  62.5 %  min   25.6  en contra 0.07 ATR  exceso 0.32 Z  máx/mín cerca  53.6 %
+   brillo 2º (4 capas)          n= 192 acierto  53.1 %  min   26.0  en contra 0.10 ATR  exceso 0.35 Z  máx/mín cerca  51.0 %
+   brillo 3º (4 capas)          n= 192 acierto  49.5 %  min   22.1  en contra 0.08 ATR  exceso 0.36 Z  máx/mín cerca  52.6 %
+   base (a) resto               n=11556 acierto  34.4 %  min   30.2  en contra 0.10 ATR  exceso 0.41 Z  máx/mín cerca  34.3 %
+   base EMC                     n=  24 acierto  33.3 %  min  120.7  en contra 0.22 ATR  exceso 0.18 Z  máx/mín cerca  54.2 %
+   base EMP                     n=  24 acierto  29.2 %  min  189.9  en contra 0.20 ATR  exceso 0.57 Z  máx/mín cerca  20.8 %
+   base fixed 50                n=  48 acierto  89.6 %  min    4.7  en contra 0.07 ATR  exceso 0.40 Z  máx/mín cerca  62.5 %
+   base fixed 100               n=  48 acierto  75.0 %  min   27.7  en contra 0.13 ATR  exceso 0.30 Z  máx/mín cerca  68.8 %
+   base fixed 150               n=  48 acierto  45.8 %  min   52.8  en contra 0.17 ATR  exceso 0.38 Z  máx/mín cerca  72.9 %
+  SPY
+   brillo 1º (4 capas)          n= 192 acierto  69.3 %  min   14.7  en contra 0.05 ATR  exceso 0.42 Z  máx/mín cerca  57.3 %
+   brillo 2º (4 capas)          n= 192 acierto  71.9 %  min   19.9  en contra 0.09 ATR  exceso 0.41 Z  máx/mín cerca  51.0 %
+   brillo 3º (4 capas)          n= 192 acierto  52.1 %  min   40.3  en contra 0.13 ATR  exceso 0.54 Z  máx/mín cerca  47.4 %
+   base (a) resto               n=1084 acierto  30.4 %  min   85.4  en contra 0.16 ATR  exceso 0.49 Z  máx/mín cerca  28.1 %
+   base EMC                     n=  24 acierto  33.3 %  min  114.0  en contra 0.18 ATR  exceso 0.22 Z  máx/mín cerca  50.0 %
+   base EMP                     n=  24 acierto  41.7 %  min  105.8  en contra 0.22 ATR  exceso 0.60 Z  máx/mín cerca  45.8 %
+   base fixed 1                 n=  48 acierto  91.7 %  min   12.0  en contra 0.07 ATR  exceso 0.56 Z  máx/mín cerca  50.0 %
+   base fixed 2                 n=  48 acierto  70.8 %  min   53.1  en contra 0.16 ATR  exceso 0.45 Z  máx/mín cerca  68.8 %
+   base fixed 3                 n=  48 acierto  52.1 %  min  106.8  en contra 0.18 ATR  exceso 0.43 Z  máx/mín cerca  52.1 %
+  QQQ
+   brillo 1º (4 capas)          n= 192 acierto  67.2 %  min   29.2  en contra 0.11 ATR  exceso 0.58 Z  máx/mín cerca  47.9 %
+   brillo 2º (4 capas)          n= 192 acierto  55.2 %  min   52.1  en contra 0.21 ATR  exceso 0.47 Z  máx/mín cerca  38.0 %
+   brillo 3º (4 capas)          n= 192 acierto  60.9 %  min   26.5  en contra 0.12 ATR  exceso 0.47 Z  máx/mín cerca  37.0 %
+   base (a) resto               n=1896 acierto  38.8 %  min   84.9  en contra 0.22 ATR  exceso 0.56 Z  máx/mín cerca  31.6 %
+   base EMC                     n=  24 acierto  37.5 %  min  127.7  en contra 0.26 ATR  exceso 0.42 Z  máx/mín cerca  54.2 %
+   base EMP                     n=  24 acierto  50.0 %  min  194.2  en contra 0.26 ATR  exceso 0.68 Z  máx/mín cerca  20.8 %
+   base fixed 1                 n=  48 acierto  95.8 %  min    2.4  en contra 0.05 ATR  exceso 0.65 Z  máx/mín cerca  39.6 %
+   base fixed 2                 n=  48 acierto  91.7 %  min   18.6  en contra 0.13 ATR  exceso 0.56 Z  máx/mín cerca  54.2 %
+   base fixed 3                 n=  48 acierto  72.9 %  min   42.6  en contra 0.21 ATR  exceso 0.50 Z  máx/mín cerca  60.4 %
+  IWM
+   brillo 1º (4 capas)          n= 192 acierto  64.6 %  min   23.6  en contra 0.07 ATR  exceso 0.44 Z  máx/mín cerca  49.5 %
+   brillo 2º (4 capas)          n= 192 acierto  50.0 %  min   18.6  en contra 0.07 ATR  exceso 0.69 Z  máx/mín cerca  43.8 %
+   brillo 3º (4 capas)          n= 192 acierto  38.5 %  min   96.1  en contra 0.11 ATR  exceso 0.76 Z  máx/mín cerca  25.5 %
+   base (a) resto               n= 344 acierto  27.3 %  min   77.9  en contra 0.11 ATR  exceso 0.76 Z  máx/mín cerca  20.9 %
+   base EMC                     n=  24 acierto  45.8 %  min  136.4  en contra 0.15 ATR  exceso 0.41 Z  máx/mín cerca  29.2 %
+   base EMP                     n=  24 acierto  37.5 %  min   95.6  en contra 0.11 ATR  exceso 0.94 Z  máx/mín cerca  33.3 %
+   base fixed 1                 n=  48 acierto  66.7 %  min   26.3  en contra 0.14 ATR  exceso 0.66 Z  máx/mín cerca  62.5 %
+   base fixed 2                 n=  48 acierto  39.6 %  min  105.8  en contra 0.14 ATR  exceso 0.69 Z  máx/mín cerca  41.7 %
+   base fixed 3                 n=  48 acierto  20.8 %  min  139.1  en contra 0.14 ATR  exceso 1.02 Z  máx/mín cerca  20.8 %
+
+   Bases (b) y (c) frente al brillo en el MISMO grupo de Z (todas las capas y símbolos):
+   Z <0.5  : brillo 1º  85.0 % (n=468)  base a  86.9 % (n=3491)  EMC/EMP   n/a % (n=0)  fijos  84.5 % (n=362)
+   Z 0.5-1 : brillo 1º  56.2 % (n=283)  base a  45.1 % (n=3781)  EMC/EMP  51.2 % (n=82)  fijos  58.0 % (n=276)
+   Z 1-1.5 : brillo 1º  39.3 % (n=145)  base a  19.9 % (n=4046)  EMC/EMP  29.8 % (n=151)  fijos  27.6 % (n=58)
+   Z >1.5  : brillo 1º  17.2 % (n=64)  base a   7.8 % (n=6318)  EMC/EMP  14.3 % (n=7)  fijos  20.8 % (n=24)
+
+==============================================================================================================
+5) TABLA TIPO PRONÓSTICO: probabilidad de tocar el nivel ANTES de cada hora (todas las capas y símbolos; rango x grupo de Z x lado)
+   celda                          n  10:00  10:30  11:00  12:00  13:00  14:00  15:00  16:00
+   1º arriba Z <0.5             214    57%    73%    77%    80%    82%    86%    86%    86%
+   1º arriba Z 0.5-1            147    10%    19%    28%    46%    50%    55%    58%    58%
+   1º arriba Z 1-1.5             89     0%     6%    10%    20%    20%    25%    33%    35%
+   1º arriba Z >1.5              30     0%     3%     7%     7%     7%     7%     7%    10%
+   1º abajo Z <0.5              254    64%    76%    76%    80%    82%    82%    83%    84%
+   1º abajo Z 0.5-1             136    15%    32%    36%    44%    50%    52%    52%    54%
+   1º abajo Z 1-1.5              56     0%     9%    14%    23%    43%    45%    45%    46%
+   1º abajo Z >1.5               34     0%     0%     0%    12%    12%    21%    21%    24%
+   2º arriba Z <0.5             184    71%    81%    83%    88%    90%    91%    92%    92%
+   2º arriba Z 0.5-1            159     8%    25%    31%    48%    51%    57%    60%    62%
+   2º arriba Z 1-1.5             86     0%     2%     3%     7%     9%    12%    14%    22%
+   2º arriba Z >1.5              51     0%     0%     2%     4%     4%     4%     4%     6%
+   2º abajo Z <0.5              172    74%    83%    84%    86%    86%    87%    87%    88%
+   2º abajo Z 0.5-1             154     8%    23%    24%    37%    45%    45%    49%    55%
+   2º abajo Z 1-1.5              92     0%     2%     3%    12%    18%    21%    25%    27%
+   2º abajo Z >1.5               62     0%     0%     0%     5%     6%    18%    18%    19%
+   3º arriba Z <0.5             147    70%    81%    87%    91%    93%    95%    96%    97%
+   3º arriba Z 0.5-1            133     4%    22%    32%    48%    52%    53%    56%    56%
+   3º arriba Z 1-1.5            115     0%     7%     7%    13%    16%    20%    23%    25%
+   3º arriba Z >1.5              85     0%     1%     1%     1%     1%     1%     1%     7%
+   3º abajo Z <0.5              166    69%    74%    75%    80%    81%    83%    86%    87%
+   3º abajo Z 0.5-1             118     9%    25%    25%    32%    35%    35%    36%    42%
+   3º abajo Z 1-1.5             120     0%     4%     7%    18%    28%    28%    32%    34%
+   3º abajo Z >1.5               76     0%     0%     0%     1%     7%     9%    12%    13%
+   resto arriba Z <0.5         1779    68%    80%    82%    86%    86%    88%    91%    91%
+   resto arriba Z 0.5-1        1853     5%    18%    32%    46%    50%    52%    53%    55%
+   resto arriba Z 1-1.5        2018     0%     5%     5%    10%    11%    13%    14%    17%
+   resto arriba Z >1.5         3202     0%     0%     1%     1%     1%     1%     2%     2%
+   resto abajo Z <0.5          1712    64%    73%    74%    77%    81%    81%    82%    83%
+   resto abajo Z 0.5-1         1928     5%    13%    16%    25%    29%    33%    34%    36%
+   resto abajo Z 1-1.5         2028     0%     0%     1%     6%    15%    17%    21%    23%
+   resto abajo Z >1.5          3116     0%     0%     0%     1%     3%    10%    12%    13%
+
+==============================================================================================================
+6) CALIBRACIÓN (dejar un día fuera): pronóstico por celda rango x grupo de Z x lado vs lo que pasó
+   pronóstico        n    dijo    pasó
+     0- 10 %     3480    2.8%    6.5%
+    10- 20 %     5396   15.2%   16.9%
+    20- 30 %     2129   23.5%   13.4%
+    30- 40 %     2158   35.9%   36.4%
+    40- 50 %      135   43.6%   32.6%
+    50- 60 %     2426   54.8%   56.7%
+    60- 70 %      164   61.7%   31.1%
+    80- 90 %     2485   83.9%   84.3%
+    90-100 %     2143   91.3%   90.8%
+   Brier con celdas de brillo: 0.1473   Brier solo con grupo de Z: 0.1448   (más bajo = mejor; n = 20516)
+
+==============================================================================================================
+7) HORA DEL PRIMER TOQUE (niveles tocados, todas las capas): reparto por tramo
+   1º brillo (n=625): 09:35-10:00   51%  10:00-10:30   18%  10:30-11:00    6%  11:00-12:00   12%  12:00-13:00    5%  13:00-14:00    4%  14:00-15:00    2%  15:00-16:00    2%
+   resto     (n=6037): 09:35-10:00   41%  10:00-10:30   14%  10:30-11:00    7%  11:00-12:00   13%  12:00-13:00    9%  13:00-14:00    7%  14:00-15:00    4%  15:00-16:00    4%
+
+==============================================================================================================
+8) BANDA OSCURA (gamma neta cerca de cero entre verde y rojo) como zona de rebote vs bandas de igual ancho
+   SPX  : oscura n=  71 tocadas   43 rebote  34.9 % cruce  16.3 % | otras  n= 738 tocadas  292 rebote  46.9 % cruce  11.3 % | diferencia rebote -15.9 pp IC [-29.8,  -1.8]
+   NDX  : oscura n= 525 tocadas  188 rebote  58.5 % cruce  25.5 % | otras  n=2484 tocadas  904 rebote  59.1 % cruce  29.4 % | diferencia rebote  -1.0 pp IC [-10.4,   8.6]
+   SPY  : oscura n=  47 tocadas   32 rebote  62.5 % cruce   6.2 % | otras  n= 344 tocadas  153 rebote  55.6 % cruce   3.3 % | diferencia rebote   7.1 pp IC [ -5.7,  21.7]
+   QQQ  : oscura n=  57 tocadas   25 rebote  92.0 % cruce   4.0 % | otras  n= 537 tocadas  231 rebote  68.8 % cruce  14.3 % | diferencia rebote  22.0 pp IC [  2.5,  39.3]
+   IWM  : oscura n=  34 tocadas   24 rebote  87.5 % cruce   0.0 % | otras  n= 172 tocadas   86 rebote  73.3 % cruce   8.1 % | diferencia rebote   8.5 pp IC [-11.1,  32.6]
+   TODOS: oscura n= 734 tocadas  312 rebote  60.6 % cruce  18.6 % | otras  n=4275 tocadas 1666 rebote  58.7 % cruce  20.6 % | diferencia rebote   2.4 pp IC [ -4.7,  10.0]
+
+Fin. Solo lectura; nada se convierte en alerta o señal sin otro sí de Lester.
+
+==============================================================================================================
+DESVÍOS ANOTADOS DESPUÉS DE LA CORRIDA (2026-10-31, escritos al leer la salida; no cambian ningún número de arriba)
+ D10. Exclusión del 2026-09-28 en los 5 símbolos: NO fue por huecos (ningún día tuvo huecos > 10 min entre 09:30 y 10:00), sino porque la
+      foto de cadena del ciclo de las 09:35 no tenía IV ATM utilizable, y sin σ no se puede calcular Z. El preregistro solo preveía excluir
+      por huecos. Quedan 24 sesiones por símbolo (09-29 a 10-30).
+ D11. Base (a) con pocos pares: para que un nivel 1º tenga base hace falta otro strike del mismo día, lado y grupo de Z que no esté en el
+      top 3. IWM guarda ~9-11 strikes en la ventana, así que solo hay 2-9 pares por capa; en IWM el criterio no se puede evaluar (sin
+      conclusión, no "falla"). SPY tiene 18-30 pares.
+ D12. Lectura del criterio: la tabla 1 (1º ~65-77 % vs resto ~23-41 %) NO es la comparación preregistrada, porque los niveles brillantes están
+      mucho más cerca del precio (|Z| media 0,46-1,04 vs 1,15-1,70). La comparación válida es la 2 (mismo día, lado y grupo de Z): ninguna
+      capa cumple en ningún símbolo. La sección 4 al final (por grupo de Z) muestra ventaja del 1º en Z 0,5-1,5, pero mezcla días y lados.
+      No se usa para cambiar el veredicto.
+ D13. En la calibración, los tramos 20-30 %, 40-50 % y 60-70 % fallan (dijo 24/44/62 %, pasó 13/33/31 %). 40-50 y 60-70 son celdas chicas
+      (n 135 y 164); 20-30 es grande (n 2.129) y sobreestima de verdad.
+      El Brier con celdas de brillo (0,1473) NO mejora al de solo grupo de Z (0,1448): el brillo no agrega información de pronóstico.
