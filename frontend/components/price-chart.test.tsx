@@ -1317,17 +1317,6 @@ describe("PriceChart", () => {
     expect(chartMocks.getOrderFlowEvents).not.toHaveBeenCalled();
   });
 
-  it("the heatmap opacity slider fades the map (saved in the template) and the candles get a dark outline while the map is on", async () => {
-    chartMocks.getGammaHeatmap.mockResolvedValue({ schema_version: 1, symbol: "SPY", view: "tactical", metric: "gamma", bucket_seconds: 60, strikes: [550], columns: [], scale_p98: 1 });
-    const user = userEvent.setup();
-    renderWithLanguage(<PriceChart symbol="SPY" candles={candlesWithRange} gamma={gamma} gammaView="tactical" />);
-    await user.click(screen.getByLabelText("Heatmap"));
-    const primitive = chartMocks.attachPrimitive.mock.calls.map((call) => call[0]).find((p) => "opacity" in p && "setOpacity" in p);
-    expect(primitive.opacity).toBe(0.7);
-    fireEvent.change(screen.getAllByLabelText("Opacidad")[0], { target: { value: "40" } });
-    await waitFor(() => expect(primitive.opacity).toBe(0.4));
-  });
-
   it("keeps drawing what it has when a heatmap poll fails", async () => {
     chartMocks.getGammaHeatmap.mockRejectedValue(new Error("409"));
     const user = userEvent.setup();

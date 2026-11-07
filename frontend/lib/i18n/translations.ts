@@ -181,8 +181,6 @@ export type Translations = {
     orderFlowEventsLabel: string;
     orderFlowEventsTitle: string;
     heatmapDayScaleTitle: string;
-    heatmapOpacityLabel: string;
-    heatmapOpacityTitle: string;
     heatmapGrowingScaleLabel: string;
     heatmapGrowingScaleTitle: string;
     expectedMoveRangeLabel: string;
