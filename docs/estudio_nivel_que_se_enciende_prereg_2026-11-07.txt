@@ -1,0 +1,40 @@
+PRE-REGISTRO — "ZONA QUE SE ENCIENDE" (pestaña 0DTE / Volumen) — escrito ANTES de mirar resultados
+Sábado 2026-11-07, ~11:40 ET. Pedido de Lester (11-07): "desde que usamos 0DTE/Volumen pasa todos los días ... el estudio no puede tener una regla
+muy estricta donde tome el nivel per se, el trading se basa en zonas".
+
+IDEA DE LESTER
+Cuando una zona de gamma se vuelve relevante (brillante) durante el día, el precio va hacia ella (11-06: el 7380 se enciende a las 12:32 con el
+precio en 7402; el precio llega 7 minutos después). Al llegar, gira o rebota (11-06: 7445 / 7380).
+
+DATOS (solo lectura)
+- Símbolos: SPX y NDX (principal: él opera ES / NQ); SPY, QQQ, IWM (secundario).
+- Vista 0dte_volume, métrica gamma, columnas del ciclo (60 s) tal como se guardaron: cada minuto solo usa lo que se veía en ese minuto.
+- Precio: máximo / mínimo / cierre por minuto de lo guardado (market_snapshots).
+- Sesiones: todas las que tengan la vista 0dte_volume con >= 100 columnas entre 09:30 y 16:00 (se informa cuántas).
+
+DEFINICIONES (zonas, no strikes)
+- Brillo de un strike en un minuto = |gamma| / p98 de |gamma| de esa columna (la misma escala por columna que dibuja el heatmap).
+- Strike brillante = brillo >= 0,60 (donde el heatmap empieza a ir hacia blanco).
+- Tolerancia T = 0,10 % del precio (SPX ~7,5 pts, NDX ~25, SPY ~0,7, QQQ ~0,6, IWM ~0,25).
+- ZONA = strikes brillantes contiguos (vecinos en la lista de strikes) agrupados; la zona va de su strike más bajo - T a su strike más alto + T.
+- ZONA QUE SE ENCIENDE (evento) en el minuto t (09:45-15:30):
+  * existe una zona en t que en los 10 minutos anteriores NO tenía ningún strike brillante dentro de ella;
+  * el cierre del minuto t está FUERA de la zona, a una distancia entre T y 0,60 % del precio (SPX ~45 pts) del borde más cercano;
+  * la misma zona (solapada) no cuenta otra vez en los 30 minutos siguientes.
+- LLEGADA = el máximo o el mínimo de algún minuto posterior entra en la zona.
+
+HIPÓTESIS PRINCIPAL (H1, SPX + NDX juntos)
+La zona que se enciende se alcanza dentro de 30 minutos MÁS a menudo que un control: la zona espejo (el mismo tamaño y la misma distancia al
+cierre de t, del OTRO lado del precio). Diferencia de proporciones (evento - espejo) con intervalo de confianza 95 % por bootstrap por días
+(5.000 repeticiones). H1 se sostiene solo si el intervalo no incluye el 0.
+
+SECUNDARIAS (no deciden)
+- H1 por símbolo y con 15 y 60 minutos.
+- Tiempo hasta la llegada (mediana).
+- Qué pasa al llegar (15 minutos después de la primera llegada): GIRO = el precio vuelve a salir por el lado por donde entró al menos 2T;
+  RUPTURA = sale por el otro lado al menos 2T; NADA = ninguna de las dos. Comparado con lo mismo en la zona espejo cuando se alcanza.
+- Lado: zonas encendidas arriba vs abajo del precio.
+
+LO QUE NO SE HARÁ
+- No se cambian umbrales (0,60 / T / 0,60 % / 10 / 30 min) después de ver resultados; si se prueba otro, se informa como exploratorio.
+- El order flow de NinjaTrader (absorción / agotamiento al llegar) es el paso 2, aparte.

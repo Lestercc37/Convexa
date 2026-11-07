@@ -1,0 +1,32 @@
+ESTUDIO "ZONA QUE SE ENCIENDE" (0DTE / Volumen) — RESULTADO
+Sábado 2026-11-07. Reglas pre-registradas a las 11:42 (docs/estudio_nivel_que_se_enciende_prereg_2026-11-07.txt, commit ae3d3f0), sin cambios.
+Script: docs/hm_zone_ignition_study.py (modo "lit" = pre-registrado; modo "dominant" = exploratorio, agregado después de ver el resultado).
+Datos: 9 sesiones por símbolo con la vista 0DTE Volumen completa (la vista existe desde fines de octubre). Comparación: zona espejo (mismo
+tamaño y distancia, del otro lado del precio).
+
+1. HIPÓTESIS PRINCIPAL (pre-registrada): NO SE SOSTIENE
+- SPX + NDX, 30 minutos: la zona que se enciende se alcanza el 26,6 % de las veces; la zona espejo el 32,1 % (n = 109 eventos).
+  Diferencia -5,5 puntos, intervalo 95 % [-20,0 ; +8,1]: incluye el 0.
+- 15 / 60 minutos: 16 % vs 17 % / 37 % vs 44 %. Por símbolo: solo QQQ (39 % vs 27 %) e IWM (25 % vs 17 %, n = 12) van a favor, sin intervalo.
+- Al llegar (15 min): giro 40 %, ruptura 8 %, nada 52 % (espejo: 33 / 10 / 56 %).
+
+2. CONTROL DE LA DEFINICIÓN (los ejemplos de Lester)
+- La regla sí detecta las zonas que él marca, pero ANTES: el 7380 del 11-06 ya pasaba el umbral de brillo a las 11:14 y 11:49; él lo ve
+  "encenderse" a las 12:32, cuando pasa a ser de las más blancas. El 7440 del 11-06 a las 10:13 sí coincide (llegada en 4 min, giro).
+- Conclusión: "brillante" (0,60 de la escala de la columna) es más amplio que lo que el ojo llama "relevante".
+
+3. EXPLORATORIO (NO pre-registrado; se informa aparte): zona DOMINANTE
+- Evento = el strike de máxima gamma pasa a una zona nueva y se queda ahí 3 minutos (sin mirar el futuro).
+- SPX + NDX, 30 min: 32,8 % vs espejo 27,6 % (n = 58), diferencia +5,2, intervalo [-13,2 ; +21,0]: incluye el 0.
+  A 60 min: 47 % vs 34 %. Zonas DEBAJO del precio: 42 % vs 30 %; ARRIBA: 11 % vs 22 % (n chicos).
+- No captura el 7380 del 11-06 (a las 12:40 el máximo pasó al 7350, no al 7380): lo que él ve como "la zona relevante" depende también de
+  la cercanía al precio, no solo del máximo.
+
+4. QUÉ SIGNIFICA
+- Con 9 sesiones el margen de error es de ±15-20 puntos: no se puede confirmar ni descartar un efecto de unos 10 puntos.
+- Para un margen de ±8-10 puntos hacen falta unas 30 sesiones de 0DTE Volumen (alrededor del 8 de diciembre).
+
+LO QUE NO PUDE VERIFICAR
+- La "relevancia" que Lester ve a ojo combina brillo, cercanía y quizá el cambio de brillo; ninguna de las dos reglas la reproduce del todo.
+- Solo las columnas del ciclo (60 s); la capa rápida no se usó.
+- El order flow de NinjaTrader al llegar (paso 2) no entra aquí.
