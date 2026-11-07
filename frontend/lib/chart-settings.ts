@@ -18,7 +18,30 @@ let serverLoaded = false;
 let loading: Promise<void> | null = null;
 let saveTimer: ReturnType<typeof setTimeout> | null = null;
 const changedBeforeLoad = new Set<string>();
+// Keys changed in THIS window since its last save: only these are written over the server's copy (2026-11-06, several windows open: each one
+// used to PUT its whole, older copy and wiped what the other windows had just saved).
+const dirty = new Set<string>();
 const listeners = new Set<() => void>();
+let syncingWindows = false;
+
+// Other windows of the app (same browser / desktop app) see a change at once through the browser copy's storage event.
+function listenToOtherWindows(): void {
+  if (syncingWindows || typeof window === "undefined") return;
+  syncingWindows = true;
+  window.addEventListener("storage", (event) => {
+    if (event.key !== LOCAL_KEY || !event.newValue) return;
+    try {
+      const parsed = JSON.parse(event.newValue);
+      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return;
+      const mine: Settings = {};
+      for (const key of dirty) mine[key] = settings[key];
+      settings = { ...parsed, ...mine };
+      emit();
+    } catch {
+      // a broken copy from another window: keep this one
+    }
+  });
+}
 
 function readLocal(): Settings {
   try {
@@ -53,8 +76,30 @@ function scheduleSave(): void {
   if (saveTimer) clearTimeout(saveTimer);
   saveTimer = setTimeout(() => {
     saveTimer = null;
-    void putChartSettings(settings).catch(() => undefined); // a failed write is retried by the next change
+    void saveDirty();
   }, SAVE_DELAY_MS);
+}
+
+// The server's current copy with this window's changed keys on top, so a save never undoes another window's or device's.
+async function saveDirty(): Promise<void> {
+  const keys = [...dirty];
+  if (!keys.length) return;
+  try {
+    const response = await getChartSettings();
+    const fromServer = response.settings && typeof response.settings === "object" ? response.settings : {};
+    const mine: Settings = {};
+    for (const key of keys) mine[key] = settings[key];
+    const merged = { ...fromServer, ...mine };
+    await putChartSettings(merged);
+    for (const key of keys) if (Object.is(settings[key], mine[key])) dirty.delete(key);
+    const pending: Settings = {};
+    for (const key of dirty) pending[key] = settings[key];
+    settings = { ...merged, ...pending };
+    writeLocal();
+    emit();
+  } catch {
+    // a failed write keeps the keys dirty: the next change retries them
+  }
 }
 
 /** Reads the trader's template from the server once per page (later calls share the first). */
@@ -69,6 +114,7 @@ export function loadChartSettings(): Promise<void> {
       serverLoaded = true;
       writeLocal();
       emit();
+      listenToOtherWindows();
       if (changedBeforeLoad.size) scheduleSave();
       changedBeforeLoad.clear();
     })
@@ -84,6 +130,7 @@ export function getChartSetting(key: string): unknown {
 
 export function setChartSetting(key: string, value: unknown): void {
   settings = { ...settings, [key]: value };
+  dirty.add(key);
   if (!serverLoaded) changedBeforeLoad.add(key);
   writeLocal();
   emit();
@@ -96,6 +143,7 @@ export function resetChartSettingsForTests(): void {
   serverLoaded = false;
   loading = null;
   changedBeforeLoad.clear();
+  dirty.clear();
   if (saveTimer) clearTimeout(saveTimer);
   saveTimer = null;
 }
@@ -109,8 +157,13 @@ function sameKind<T>(value: unknown, fallback: T): value is T {
 /**
  * One saved choice of the template: [value, setter], like useState. `fallback` when the template has none (or a value of another kind).
  * `preset` (a shared view link that sets this choice) wins for this chart and is NOT saved: a link must not rewrite the trader's template.
+ * `scope` (a layer window, "Ventanas -> abrir aparte"): the choice is saved under its own key for that kind of window, starting from `preset`
+ * (Lester 2026-11-06: the extra windows lost every change); the main chart's template is untouched.
  */
-export function useChartSetting<T>(key: string, fallback: T, preset?: T): [T, (next: T | ((previous: T) => T)) => void] {
+export function useChartSetting<T>(baseKey: string, baseFallback: T, basePreset?: T, scope?: string | null): [T, (next: T | ((previous: T) => T)) => void] {
+  const key = scope ? `${baseKey}@${scope}` : baseKey;
+  const fallback = scope && basePreset !== undefined ? basePreset : baseFallback;
+  const preset = scope ? undefined : basePreset;
   const stored = useSyncExternalStore(subscribe, () => settings[key], () => undefined);
   const [presetValue, setPresetValue] = useState<T | undefined>(preset);
   const usingPreset = preset !== undefined;

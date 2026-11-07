@@ -83,6 +83,8 @@ type PriceChartProps = {
   streamStatus?: MarketPriceStreamStatus;
   // Which layers start on (the /vista/grafico route: a plain chart, or one layer per desktop-app window). Absent = the dashboard's defaults.
   layers?: ChartLayerPreset;
+  /** A layer window's own saved choices ("Ventanas -> abrir aparte"): its layer name; the main chart passes nothing. */
+  templateScope?: string | null;
   // "v2" = the desktop app's look (docs/maqueta_app_escritorio_v2_2026-10-27.html): a window head and the Niveles / Gamma / Flujo / Dibujo menus instead of the
   // row of checkboxes. The controls and their state are the same; only where they are drawn changes. The web dashboard keeps "classic".
   variant?: "classic" | "v2";
@@ -539,6 +541,7 @@ export function PriceChart({
   candleCountdown = true,
   streamStatus = "connected",
   layers,
+  templateScope,
   variant = "classic",
 }: PriceChartProps) {
   const { t } = useLanguage();
@@ -597,10 +600,10 @@ export function PriceChart({
   const [showExpectedMove, setShowExpectedMove] = useChartSetting("expectedMove", true);
   // The line of time and the live profile of the approved mockup (design 9 and 10): history on the left of AHORA, one live profile (a bar per strike) on its right,
   // aligned with the price axis. On by default; it replaces the old bottom GEX-by-strike view. The Smile dots ride on the same line.
-  const [showProfile, setShowProfile] = useChartSetting("profile", true, layers ? layers.profile : undefined);
-  const [showSmile, setShowSmile] = useChartSetting("smile", true, layers ? layers.smile : undefined);
+  const [showProfile, setShowProfile] = useChartSetting("profile", true, layers ? layers.profile : undefined, templateScope);
+  const [showSmile, setShowSmile] = useChartSetting("smile", true, layers ? layers.smile : undefined, templateScope);
   // The minute flow panes (calls and puts, under the candles, hidden by default): one histogram series each, in its own pane so the time axis and the crosshair are the candles'.
-  const [showFlow, setShowFlow] = useChartSetting("flow", false, layers ? layers.flow : undefined);
+  const [showFlow, setShowFlow] = useChartSetting("flow", false, layers ? layers.flow : undefined, templateScope);
   // NinjaTrader's order-flow events on this symbol's future (order-flow-events-primitive.ts); on by default where a future maps here.
   const orderFlowSymbol = ORDER_FLOW_SYMBOLS.has(symbol.toUpperCase());
   const [showOrderFlowEvents, setShowOrderFlowEvents] = useChartSetting("orderFlowEvents", true);
@@ -631,11 +634,11 @@ export function PriceChart({
   const [fastTailProfile, setFastTailProfile] = useState<ProfileBar[] | null>(null);
   // The width the chart currently keeps free at the right of the time scale for the profile column (0 = none), and whether the column is on.
   const reservedRightPxRef = useRef(0);
-  const profileColumnOnRef = useRef(layers ? layers.profile : true);
+  const profileColumnOnRef = useRef(showProfile);
   const lastCloseRef = useRef<number | null>(candles.at(-1)?.close ?? null);
   const lastCandleTimeRef = useRef<number | null>(candles.at(-1)?.time ?? null);
   // Whale alerts as small squares on the chart (design 12.8 to 12.14); off by default until it is checked against live alerts.
-  const [showAlertCubes, setShowAlertCubes] = useChartSetting("cubes", false, layers ? layers.cubes : undefined);
+  const [showAlertCubes, setShowAlertCubes] = useChartSetting("cubes", false, layers ? layers.cubes : undefined, templateScope);
   // Minimum cube size per symbol (item 12b): the API's suggestion (about 40 cubes a session each, recomputed daily) unless the viewer typed their own, which this browser remembers per symbol.
   const [customCubeMins, setCustomCubeMins] = useState<Record<string, number>>({});
   const [cubeMinsLoaded, setCubeMinsLoaded] = useState(false);
@@ -664,16 +667,17 @@ export function PriceChart({
     [cubeAlerts, cubeMinDeq, cubeShowFar, cubeSizing, showBigTrades, showPackages],
   );
   // Gamma heatmap behind the candles (off by default): strike x time matrix read from /gamma/{symbol}/heatmap.
-  const [showHeatmap, setShowHeatmap] = useChartSetting("heatmap", false, layers ? Boolean(layers.heatmap) : undefined);
+  const [showHeatmap, setShowHeatmap] = useChartSetting("heatmap", false, layers ? Boolean(layers.heatmap) : undefined, templateScope);
   // Each minute coloured against its own distribution (history stays as painted), or one scale for the whole session (the chip "Escala del día").
   const [dayScale, setDayScale] = useChartSetting("heatmapDayScale", false);
   const [heatmapMetric, setHeatmapMetric] = useChartSetting<GammaHeatmapMetric>(
     "heatmapMetric",
     "gamma",
     layers ? (layers.heatmap && layers.heatmap !== "calls" && layers.heatmap !== "puts" ? layers.heatmap : "gamma") : undefined,
+    templateScope,
   );
   // The sides view: call gamma and put gamma drawn apart (green / red, one scale), each switchable. Any side on replaces the single figure above until both are off again.
-  const [sideLayers, setSideLayers] = useChartSetting("heatmapSides", { calls: false, puts: false }, layers ? { calls: layers.heatmap === "calls", puts: layers.heatmap === "puts" } : undefined);
+  const [sideLayers, setSideLayers] = useChartSetting("heatmapSides", { calls: false, puts: false }, layers ? { calls: layers.heatmap === "calls", puts: layers.heatmap === "puts" } : undefined, templateScope);
   const sidesOn = sideLayers.calls || sideLayers.puts;
   const [drawMode, setDrawMode] = useState(false);
   const [trendline, setTrendline] = useState<Trendline | null>(null);

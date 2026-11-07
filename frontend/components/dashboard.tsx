@@ -1075,6 +1075,7 @@ export function Dashboard({ mode = "full", route, onRouteChange }: DashboardProp
                       candleCountdown={!isWeek}
                       streamStatus={streamStatus}
                       layers={isChartOnly && initialRoute?.layer ? layerPreset(initialRoute.layer) : undefined}
+                      templateScope={isChartOnly && initialRoute?.layer ? initialRoute.layer : undefined}
                       variant={isChartOnly ? "v2" : "classic"}
                     />
                   </ChartErrorBoundary>
