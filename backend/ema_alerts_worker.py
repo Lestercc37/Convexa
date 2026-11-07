@@ -124,7 +124,12 @@ async def handle_update(repo, telegram: TelegramClient, update: dict, now: datet
         )
         return
     user_id = await asyncio.to_thread(repo.link, code, int(chat_id), now)
-    if user_id is None:
+    if user_id is None and await asyncio.to_thread(repo.chat_is_linked, int(chat_id)):
+        # the same link tapped twice (Lester 2026-11-07 10:51): the code was already used by this very chat
+        await telegram.send_message(
+            chat_id, "Este chat ya está conectado a Convexa: no hace falta otro código."
+        )
+    elif user_id is None:
         await telegram.send_message(
             chat_id,
             "Ese código no es válido o ya venció (dura 10 minutos). Genera uno nuevo en Convexa.",
