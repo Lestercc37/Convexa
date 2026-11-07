@@ -97,15 +97,21 @@ def normalize_live_future(name: str) -> str | None:
     return root if root in LIVE_FUTURES else None
 
 
+MONTH_CODES = {name: number for number, name in enumerate(("JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"), start=1)}
+
+
 def contract_month(contract: str) -> tuple[int, int] | None:
-    """'ES 12-26' -> (2026, 12); None when the name carries no MM-YY."""
-    parts = contract.strip().split(" ")
-    if len(parts) < 2 or "-" not in parts[1]:
+    """'ES 12-26' or NinjaTrader's own 'ES DEC26' (what Instrument.FullName really sends, 2026-11-06) -> (2026, 12); None otherwise."""
+    parts = contract.strip().upper().split(" ")
+    if len(parts) < 2:
         return None
-    month, _, year = parts[1].partition("-")
-    if not (month.isdigit() and year.isdigit()):
-        return None
-    return 2000 + int(year), int(month)
+    tag = parts[1]
+    if "-" in tag:
+        month, _, year = tag.partition("-")
+        return (2000 + int(year), int(month)) if month.isdigit() and year.isdigit() else None
+    if len(tag) == 5 and tag[:3] in MONTH_CODES and tag[3:].isdigit():
+        return 2000 + int(tag[3:]), MONTH_CODES[tag[:3]]
+    return None
 
 
 def is_front(contract: str, day: date) -> bool:
