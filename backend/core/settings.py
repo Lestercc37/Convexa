@@ -81,7 +81,7 @@ class Settings(BaseSettings):
     # The shared key NinjaTrader's 'Convexa Ancla' indicator sends with the 09:30 ES/NQ bar (POST /api/v1/feeds/futures-anchor, Lester 2026-11-04).
     # Only the PATH lives here; the key itself is in that file (made by backend/scripts/make_ninjatrader_anchor_key.py), never in .env, logs or chat.
     ninjatrader_anchor_key_file: str = Field(default="V:/Convexa/config/ninjatrader_anchor_key.txt")
-    # EMA cross alerts by Telegram (migration 0051, backend/ema_alerts_worker.py). The token is written into the server's .env by Lester himself
+    # EMA cross alerts by Telegram (migration 0058, backend/ema_alerts_worker.py). The token is written into the server's .env by Lester himself
     # (QLL_TELEGRAM_BOT_TOKEN); it is a SecretStr so it never shows in a repr or a log.
     telegram_bot_token: SecretStr | None = Field(default=None)
     telegram_bot_username: str = Field(default="convexa_alertas_bot")

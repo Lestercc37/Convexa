@@ -1,4 +1,4 @@
-"""EMA cross alerts worker (migration 0051; run as its own service: python -m backend.ema_alerts_worker).
+"""EMA cross alerts worker (migration 0058; run as its own service: python -m backend.ema_alerts_worker).
 
 Two loops:
 - evaluation: a few seconds after every minute boundary of the regular session, for each (symbol, timeframe) that has enabled rules and whose candle just closed, reads the
@@ -135,8 +135,19 @@ async def handle_update(repo, telegram: TelegramClient, update: dict, now: datet
         )
 
 
+async def _skip_backlog(telegram: TelegramClient) -> int | None:
+    """The offset after the newest message already waiting, so a (re)start never answers old messages (Telegram keeps them 24 h)."""
+    try:
+        pending = await telegram.get_updates(-1, timeout_seconds=0)
+    except TelegramError as exc:
+        logger.warning("EMA alerts: %s", exc)
+        return None
+    return int(pending[-1].get("update_id", 0)) + 1 if pending else None
+
+
 async def _link_forever(repo, telegram: TelegramClient) -> None:
-    offset = None
+    offset = await _skip_backlog(telegram)
+    logger.info("EMA alerts: waiting for updates (link codes) from Telegram")
     while True:
         try:
             updates = await telegram.get_updates(offset)

@@ -1,4 +1,4 @@
-"""Storage of the EMA cross alerts (migration 0051): rules, Telegram chats and one-time link codes. A SQL version (the server) and an in-memory one (tests, no Postgres)."""
+"""Storage of the EMA cross alerts (migration 0058): rules, Telegram chats and one-time link codes. A SQL version (the server) and an in-memory one (tests, no Postgres)."""
 
 from __future__ import annotations
 

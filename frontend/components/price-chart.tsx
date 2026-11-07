@@ -1857,7 +1857,7 @@ export function PriceChart({
           </label>
           <h4>{t.appV2.movingAverages}</h4>
           <div className="v2-menu-row">
-            <EmaMenu emas={emas} convergingIds={convergingEmas} onChange={setEmas} />
+            <EmaMenu emas={emas} convergingIds={convergingEmas} onChange={setEmas} alertsFor={{ symbol, timeframe }} />
           </div>
         </V2Dropdown>
         <V2Dropdown label={t.appV2.gammaMenu} count={gammaCount}>
@@ -2089,7 +2089,7 @@ export function PriceChart({
                 {t.priceChart.orderFlowEventsLabel}
               </label>
             )}
-            <EmaMenu emas={emas} convergingIds={convergingEmas} onChange={setEmas} />
+            <EmaMenu emas={emas} convergingIds={convergingEmas} onChange={setEmas} alertsFor={{ symbol, timeframe }} />
             <label className="chart-toggle">
               <input
                 type="checkbox"

@@ -1,4 +1,4 @@
-"""EMA cross alerts (migration 0051): the same EMA the price chart draws (frontend/lib/ema.ts emaValues: seeded with the first close, alpha = 2 / (period + 1), over the
+"""EMA cross alerts (migration 0058): the same EMA the price chart draws (frontend/lib/ema.ts emaValues: seeded with the first close, alpha = 2 / (period + 1), over the
 previous sessions' candles plus today's), evaluated on CLOSED candles only, so an alert never fires on a candle that can still change. ES / NQ use SPX / NDX candles: the
 futures are the index shifted by a constant, so their crossings are the same minute.
 
@@ -17,7 +17,8 @@ from backend.domain.use_cases.market_hours import EASTERN_TIME
 TIMEFRAME_SECONDS: dict[str, int] = {"1m": 60, "5m": 300, "15m": 900, "1h": 3600}
 # Warm-up, same as the chart: 5 sessions of 1-minute candles, 10 of the others.
 SEED_SESSIONS: dict[str, int] = {"1m": 5, "5m": 10, "15m": 10, "1h": 10}
-CANDLE_SOURCE_SYMBOL: dict[str, str] = {"ES": "SPX", "NQ": "NDX"}
+# RTY follows IWM times a ratio: both EMAs scale with it, so the crossings are the same minute too.
+CANDLE_SOURCE_SYMBOL: dict[str, str] = {"ES": "SPX", "NQ": "NDX", "RTY": "IWM"}
 LINK_CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"  # no 0/O, 1/I
 LINK_CODE_LENGTH = 6
 LINK_CODE_TTL = timedelta(minutes=10)

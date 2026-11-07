@@ -1,4 +1,4 @@
-"""EMA cross alerts: each logged-in user manages their own rules and links their Telegram chat (migration 0051; the worker is backend/ema_alerts_worker.py)."""
+"""EMA cross alerts: each logged-in user manages their own rules and links their Telegram chat (migration 0058; the worker is backend/ema_alerts_worker.py)."""
 
 from __future__ import annotations
 

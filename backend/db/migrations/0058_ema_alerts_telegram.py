@@ -7,17 +7,17 @@
 
 Additive: new tables only. Read and written by the API (rules, codes) and by backend.ema_alerts_worker (evaluation, linking, sending).
 
-Revision ID: 0051_ema_alerts_telegram
-Revises: 0050_minute_strike_flow
-Create Date: 2026-10-29
+Revision ID: 0058_ema_alerts_telegram
+Revises: 0057_user_chart_settings
+Create Date: 2026-10-29 (renumbered from 0051 on 2026-11-07: 0051 was taken by 0051_invite_purpose)
 """
 
 from __future__ import annotations
 
 from alembic import op
 
-revision = "0051_ema_alerts_telegram"
-down_revision = "0050_minute_strike_flow"
+revision = "0058_ema_alerts_telegram"
+down_revision = "0057_user_chart_settings"
 branch_labels = None
 depends_on = None
 

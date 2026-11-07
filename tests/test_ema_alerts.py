@@ -1,4 +1,4 @@
-"""EMA cross alerts by Telegram (migration 0051): evaluation, linking, the bot client and the routes."""
+"""EMA cross alerts by Telegram (migration 0058): evaluation, linking, the bot client and the routes."""
 
 from __future__ import annotations
 
@@ -186,3 +186,33 @@ def test_the_routes_manage_the_users_own_rules_and_link_code() -> None:
         and code["expires_in_seconds"] == 600
     )
     assert deleted.status_code == 204
+
+
+def test_rules_are_per_user_and_a_user_cannot_remove_another_users_rule() -> None:
+    repo = InMemoryEmaAlertRepository()
+    mine = repo.add_rule(7, "SPX", "5m", 8, 20, "both")
+    theirs = repo.add_rule(8, "SPX", "5m", 8, 20, "up")
+    assert [rule.id for rule in repo.rules(7)] == [mine.id]
+    assert [rule.id for rule in repo.rules(8)] == [theirs.id]
+    assert repo.delete_rule(8, mine.id) is False and repo.rules(7)
+    assert len(repo.rules()) == 2  # the worker sees everyone's
+
+
+def test_rty_reads_iwm_candles() -> None:
+    from backend.domain.use_cases.ema_alerts import CANDLE_SOURCE_SYMBOL
+
+    assert CANDLE_SOURCE_SYMBOL["RTY"] == "IWM"
+
+
+def test_a_restart_skips_the_messages_already_waiting() -> None:
+    class _Pending:
+        def __init__(self) -> None:
+            self.asked: list[tuple[int | None, int]] = []
+
+        async def get_updates(self, offset, timeout_seconds=25):
+            self.asked.append((offset, timeout_seconds))
+            return [{"update_id": 41, "message": {"chat": {"id": 1}, "text": "hola"}}]
+
+    bot = _Pending()
+    assert asyncio.run(worker._skip_backlog(bot)) == 42
+    assert bot.asked == [(-1, 0)]  # only the newest, without waiting

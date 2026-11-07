@@ -124,6 +124,18 @@ export type Translations = {
     emaWidth: (period: number) => string;
     emaWidthOption: (width: number) => string;
     emaRemove: (period: number) => string;
+    emaAlertsTitle: string;
+    emaAlertsConnect: string;
+    emaAlertsLinked: string;
+    emaAlertsCode: (code: string, bot: string) => string;
+    emaAlertsOpenBot: (bot: string) => string;
+    emaAlertsToggle: (symbol: string, timeframe: string) => string;
+    emaAlertsFast: string;
+    emaAlertsSlow: string;
+    emaAlertsError: string;
+    emaAlertsUnsupported: string;
+    emaAlertsRule: (symbol: string, timeframe: string, fast: number, slow: number) => string;
+    emaAlertsRemove: (label: string) => string;
     emaInvalid: (min: number, max: number) => string;
     emaDuplicate: string;
     emaMax: (max: number) => string;
