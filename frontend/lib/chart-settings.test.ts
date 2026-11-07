@@ -39,4 +39,36 @@ describe("trader chart template", () => {
     const profile = renderHook(() => useChartSetting("profile", true));
     expect(profile.result.current[0]).toBe(true);
   });
+
+  it("a layer window starts from its preset and saves its own choices under its own key, never the main chart's", async () => {
+    api.getChartSettings.mockResolvedValue({ schema_version: 1, settings: { heatmap: false } });
+    await loadChartSettings();
+    const { result } = renderHook(() => useChartSetting("heatmap", false, true, "heatmap-abs"));
+    expect(result.current[0]).toBe(true);
+    act(() => result.current[1](false));
+    expect(result.current[0]).toBe(false);
+    expect(getChartSetting("heatmap@heatmap-abs")).toBe(false);
+    expect(getChartSetting("heatmap")).toBe(false);
+    await waitFor(() => expect(api.putChartSettings).toHaveBeenCalledWith({ heatmap: false, "heatmap@heatmap-abs": false }), { timeout: 2000 });
+  });
+
+  it("a save writes only this window's changes over the server's current copy (another window's change survives)", async () => {
+    api.getChartSettings.mockResolvedValueOnce({ schema_version: 1, settings: { heatmap: false, profile: true } });
+    await loadChartSettings();
+    // meanwhile another window switched the profile off and saved it
+    api.getChartSettings.mockResolvedValue({ schema_version: 1, settings: { heatmap: false, profile: false } });
+    act(() => setChartSetting("heatmap", true));
+    await waitFor(() => expect(api.putChartSettings).toHaveBeenCalledWith({ heatmap: true, profile: false }), { timeout: 2000 });
+    await waitFor(() => expect(getChartSetting("profile")).toBe(false));
+  });
+
+  it("another window's change arrives through the browser copy", async () => {
+    api.getChartSettings.mockResolvedValue({ schema_version: 1, settings: { heatmap: false } });
+    await loadChartSettings();
+    const { result } = renderHook(() => useChartSetting("heatmap", false));
+    act(() => {
+      window.dispatchEvent(new StorageEvent("storage", { key: "convexa.chartSettings.v1", newValue: JSON.stringify({ heatmap: true }) }));
+    });
+    expect(result.current[0]).toBe(true);
+  });
 });
