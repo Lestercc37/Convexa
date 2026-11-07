@@ -1,0 +1,42 @@
+﻿EXPLORACIÓN — ORDER FLOW AL LLEGAR A LA ZONA BLANCA MÁS CERCANA (¿por qué gira ahí y no continúa?)
+Sábado 2026-11-07. Pedido de Lester: "en el trading se escala por distancia ... definir con los datos de NT por qué el precio giró allí y no continuó".
+Script: docs/hm_arrival_orderflow_study.py (solo lectura). EXPLORATORIO: 9 sesiones (10-19 .. 11-06) de 0DTE Volumen con footprints de
+NinjaTrader (ES para SPX, NQ para NDX). Lo que se encuentre aquí es una hipótesis para confirmar con días nuevos (8 de diciembre).
+
+DEFINICIONES
+- Zona: strikes con brillo >= 0,85 de la escala de la columna (blancos), agrupados, +- 0,10 % del precio. Se usa la zona más cercana arriba y
+  la más cercana abajo, a <= 0,60 % (lo que se veía en ese minuto).
+- Llegada: el máximo / mínimo del minuto entra en la zona (sin toque en los 15 minutos anteriores), 09:45-15:30.
+- Resultado en los 15 minutos siguientes: GIRO (vuelve a salir por donde entró 2T), CONTINUACIÓN (sale por el otro lado 2T), NADA.
+- Order flow con signo "a favor del viaje" (+ = empujando hacia la zona).
+
+RESULTADOS (307 llegadas: SPX 111, NDX 196; giro 105 = 34 %, continuación 28 = 9 %, nada 174 = 57 %)
+                     giro      continuación   nada     AUC giro vs resto   AUC giro vs continuación
+delta al acercarse   +0,003    -0,004         -0,008        0,54                 0,52
+delta en el toque    +0,009    +0,033         +0,034        0,38                 0,35
+volumen (x media)     0,97      0,98           1,03         0,46                 0,48
+volumen en el borde   0,003     0,003          0,012        0,28                 0,51
+divergencia           0         0              0            0,52                 0,52
+penetración (en T)    0,32      0,55           0,17         0,58                 0,32
+(AUC 0,50 = no separa; lejos de 0,50 hacia arriba o hacia abajo = separa.)
+
+LECTURA (exploratoria)
+1. La señal más clara: en los GIROS el empuje se apaga EN EL TOQUE. El delta a favor del viaje en el minuto del toque y el siguiente es casi
+   cero (+0,009) frente a +0,033 cuando continúa (AUC 0,35, o sea 0,65 a favor de "empuje débil -> giro"). Es la idea de AGOTAMIENTO.
+2. Cuando CONTINÚA, el precio entra más hondo en la zona en el minuto del toque (0,55T vs 0,32T). En parte es mecánico (más cerca de cruzarla).
+3. El volumen alto por sí solo no separa giros de continuaciones. Tampoco la divergencia simple (casi nunca ocurre en 1 minuto).
+4. El 7380 del 11-06 (12:36-12:37): llega con volumen x5,0 y x3,4 la media (clímax), pero el rebote al VWAP fue más lento que 15 minutos y
+   2T, así que la regla lo marca "nada". Para confirmar hace falta también un horizonte de 30 minutos.
+
+HIPÓTESIS A CONFIRMAR CON DÍAS NUEVOS (desde 2026-11-09; escritas ahora, antes de ver esos días)
+- H2a: en la llegada a la zona blanca más cercana, el delta a favor del viaje del minuto del toque y el siguiente es MENOR en los giros que en
+  el resto (AUC giro vs resto < 0,50 con intervalo 95 % por bootstrap por días que no incluya 0,50), a 15 y a 30 minutos.
+- H2b: lo mismo frente a las continuaciones.
+- Secundarias: volumen x media >= 3 en el toque ("clímax") -> más giros a 30 minutos; penetración.
+- Datos: los footprints nuevos los escribe 'Convexa Detector' en Documents\Convexa\nt_export de la laptop; hay que subirlos a
+  V:\Convexa\hist\nt_export antes de correr.
+
+LO QUE NO PUDE VERIFICAR
+- 9 sesiones: con 6 medidas probadas, alguna puede separar por casualidad; por eso se confirma con días nuevos.
+- El resultado a 15 minutos y 2T no recoge rebotes lentos como el del 7380 (11-06).
+- Footprints de 1 minuto: la absorción dentro del minuto (relleno del libro) no se ve aquí.
