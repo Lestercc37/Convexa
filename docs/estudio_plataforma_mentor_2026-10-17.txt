@@ -1,0 +1,147 @@
+ESTUDIO DE LA PLATAFORMA DEL MENTOR (capturas del 2026-07-23) - que sirve y es aplicable a Convexa
+Escrito el 2026-10-17. Solo analisis: no se toco codigo, base de datos ni ThetaData. Todo se hizo con los archivos historicos de la etapa 2 y 3 que ya estaban en el servidor.
+Idea de Lester: la plataforma no da prediccion segura, da CONTEXTO; la decision de operar la toma el trader. Este documento separa lo comprobado de lo no comprobado.
+
+=====================================================================
+1. RESUMEN EN 8 LINEAS
+=====================================================================
+1. Convexa calcula lo mismo que la plataforma del mentor en casi todo lo que se pudo comparar (GEX, DEX, OI, Max Pain, MVS, GEX por expiracion y por strike), con diferencias de 0% a 5%.
+2. Difieren: la regla de Call Wall / Put Wall (la suya es por lado del precio), la IV (su ATM 0DTE ~13% contra ~22% nuestro) y el net vanna.
+3. Su "prediccion" de direccion no mejora una moneda en nuestros datos (60 sesiones, 4 simbolos): acierto 49.5% a 52% a 5, 15 y 30 minutos.
+4. Su cono de volatilidad sale demasiado ancho en nuestros datos (la banda de 1 sigma contiene 84% a 94% de los movimientos; debe ser 68%).
+5. Si hay un efecto util: en short gamma los movimientos son 6% a 25% mas grandes que en long gamma. Sirve como contexto (cuanto puede moverse), no como direccion.
+6. El 23 de julio: SPX cerro 7406.34. Su "Predicted Close" 7397 quedo a 9 puntos; su tarjeta "Cierre" 7341 a 65 puntos; su "Center 7400 +-38" contenia el cierre a 6 puntos del centro.
+7. Ideas aplicables con datos que Convexa ya tiene: walls por lado del precio (a probar), cono calibrado por hora y por regimen, tarjeta de estadisticas por lado (ventana +-10% del precio), actividad inusual por contrato, GEX por expiracion, heatmap strike x expiracion, flujo neto por minuto.
+8. Nada se implementa sin que Lester lo apruebe; cada prueba pendiente (seccion 6) necesita su si.
+
+=====================================================================
+2. QUE COINCIDE CON CONVEXA (lo comprobado, 2026-07-23, SPX, reconstruido con los calculadores de Convexa)
+=====================================================================
+Captura / dato                         Mentor                      Convexa
+-------------------------------------  --------------------------  -----------------------------
+Net GEX 0DTE ~12:45                    -17.70B                     -17.57B
+Net GEX 0DTE 13:30                     -18.07B                     -18.65B
+Net DEX 0DTE ~12:45                    -27.43B                     -27.41B
+Net DEX 0DTE 13:45                     -30.94B                     -30.85B
+Gamma total 0DTE                       22.81B a 23.38B             21.99B a 22.49B
+Flip 13:45 / ~12:45                    7529 / 7529                 7530.0 / 7529.6
+Max Pain                               7515                        7515 (exacto, todas las horas)
+MVS                                    7430 (12:45) / 7400 (13:45) 7430 / 7400 = nuestro Absolute Gamma Strike
+OI por strike (7450 put, 7300, 7350,   2.2K, ~4.9K, ~4.9K, ~5.3K  2,207; 4,898; 4,911; 5,274
+7500 totales)
+OI en la tabla de actividad inusual    18 contratos                18 de 18 exactos
+Tarjeta de lados: OI puts / calls      180.4K / 163.5K             180,428 / 163,487 con ventana +-10% del precio
+Tarjeta de lados: OI premium puts      $296.74M                    $294.99M (OI x 100 x punto medio)
+GEX por expiracion 0d / 1d / 4d (net)  ~-18.5 / ~-14 / ~-3.7B      -18.66 / -13.94 / -3.85B
+Heatmap strike x expiracion (23        -                           error mediano 1.8% (0DTE) y 2.9% (1d, 4d)
+celdas, hora ~10:50)
+Volatilidad realizada (13:35)          ~12.2%                      12.1% a 12.3%
+
+Hechos utiles para Convexa:
+- El Net GEX de su barra superior es SOLO de la expiracion seleccionada (0DTE), no la suma de todas.
+- Su MVS (Most Valuable Strike) es el mismo concepto que nuestro Absolute Gamma Strike (strike con mayor |calls| + |puts|). Es uno de los niveles que Lester considera mas confiables.
+- Su ventana para estadisticas de OI/premium es +-10% del precio.
+
+=====================================================================
+3. QUE DIFIERE
+=====================================================================
+a) Call Wall / Put Wall. Su regla (acierta 3 de 3 horas probadas: 12:45, 13:25, 13:45):
+   Call Wall = strike con MAS gamma de calls, de la posicion del precio hacia arriba (7450).
+   Put Wall  = strike con MAS gamma de puts, de la posicion del precio hacia abajo (7400).
+   La nuestra (neto por strike, PR #176 del 2026-09-24) da Call Wall 7605 y Put Wall 7430. El Put Wall 7430 queda POR ENCIMA del precio (7414), lo que no tiene sentido como soporte.
+   Con la regla por lado del precio no pueden coincidir los dos walls (el de calls siempre arriba, el de puts siempre abajo).
+   Estado: HIPOTESIS (un dia, tres cortes). Falta la prueba de reaccion al precio en las 60 sesiones antes de cambiar nada.
+   Relacionado: el 2026-10-16 nuestro Put Wall fue 7700 contra 7735 de GEXBot todo el dia.
+b) IV. Cerca del precio: ellos ~13%, nosotros ~21.5% a 22.8% (0DTE, 12:45), razon 1.6; en los extremos la razon baja a 1.2 - 1.4, asi que no es un factor constante. Convexa usa la regla de tiempo de ThetaData (ACT/365 hasta las 16:00, piso 1 hora). Nuestra gamma coincide igual porque depende de sigma x raiz(T). Causa de su convencion: NO conocida.
+c) Net vanna: ellos +15 a +16B; nosotros +2.7B a +9B (mismo signo, otra magnitud). Causa no conocida.
+d) GEX por strike en su grafico intradia: sus lineas son ~40% menores que las nuestras en 7400 (-1.0B contra -1.76B); la leyenda de colores no se lee, sin conclusion.
+e) Etiquetas: su "SWEEP" en Actividad Inusual es solo Vol/OI mayor que 3x (no es un sweep real por condicion del trade). Y su "Predicted Close" de arriba es una mezcla de modelos, no la tarjeta "Cierre" (ver 4.4).
+
+=====================================================================
+4. PRUEBAS HECHAS Y RESULTADOS (datos: 60 sesiones 2026-07-13 a 2026-10-05; SPX, SPY, QQQ, NDX; archivos de 5 minutos + OI; scripts en docs/)
+=====================================================================
+4.1 Cono de volatilidad (sigma x raiz(tiempo)): calibracion. Objetivo: 68.3% dentro de 1 sigma, 95.4% dentro de 2.
+    Solo volatilidad realizada: 84% / 98%.  Su mezcla 0.5 realizada + 0.5 IV con nuestro IV: 92% a 94% / 99.4%.  Con IV escalado al suyo: 88% a 91%.
+    Conclusion: sale 1.3 a 1.7 veces mas ancho de lo necesario. La volatilidad realizada "desde la apertura" sobreestima en la tarde (RMS z por hora: 0.91, 0.76, 0.72, 0.61, 0.76, 0.74).
+4.2 Direccion (criterio fijado antes: acierto >= 55% y intervalo por dias sobre 50%). NINGUNA celda cumple.
+    Long gamma (hacia el centroide de gamma) 5 / 15 / 30 min: 50.5 / 50.8 / 49.6% (0-2 DTE) y 50.8 / 50.2 / 48.1% (solo 0DTE).
+    Short gamma (momentum del precio, sustituto del flujo): 51.3 / 51.6 / 49.5% y 52.0 / 52.0 / 49.4%.
+    SPX solo (600 muestras): 47.6% a 53.4%, todos los intervalos incluyen 50%.
+    Formula completa de long gamma E[S_t] = mu + (S0 - mu) e^(-kt) con vidas medias de 5 a 120 min: la pendiente real contra la predicha da entre -0.03 y -0.76 (debe ser 1); usar su deriva empeora el error en las 15 combinaciones.
+    Hasta el cierre desde las 11:00 (una muestra por simbolo y dia): short gamma 36.8% (n 114; 35.4% con 0DTE) = el movimiento previo tiende a REVERTIR hacia el cierre; en SPX solo (n 28 a 32) no se sostiene. Solo hipotesis (una celda entre ~20).
+4.3 Regimen y TAMANO del movimiento (el unico efecto util): movimiento real / volatilidad realizada, short gamma contra long gamma:
+    Todos los simbolos, 0-2 DTE: 5 min 1.16 [1.04-1.32]; 15 min 1.21 [1.02-1.43]; 30 min 1.25 [1.02-1.49].  SPX solo 0DTE: 1.14, 1.24, 1.20 (intervalos rozan 1).
+    Coincide con la teoria (dealers amplifican en short gamma). Sin separar el efecto hora del dia.
+4.4 Captura "Predictions" (23 jul): "Predicted Close $7397 Bajista (-0.054%)" = mezcla de modelos (Gamma 16% -, Delta 100% -0.25%, OI 16% +, Volume 51% -0.07%, Vanna 30% +); "Short-Term $7395 Bajista (Gamma+Delta)"; "Long-Term $7436 Alcista (OI+MaxPain)"; "Center $7400 +-38 (1 sigma)"; "Target 1 $7416 (low 7378)"; "Target 2 $7435 (low 7397)"; Call Wall 7450 resistencia; Put Wall 7400 soporte.
+    Cierre real (barra 16:00): 7406.34. Errores: Predicted Close +9.3; Short-Term +11.3; Long-Term -29.7; Center 7400 a 6.3 puntos (0.17 sigma); tarjeta "Cierre" del cono 7341: +65 (1.6 sigma).
+    Recorrido del dia: apertura ~7438 (primera barra 09:35), maximo 7443.50 (09:45), minimo 7383.05 (11:30), minimo despues de 13:45 7383.55 (15:50). Rango del dia 60.4 puntos; la caida adicional que pronosticaba la tarjeta "Cierre" desde las 13:45 (60.6 puntos) igualaba TODO el rango del dia.
+    El Call Wall (7450) no se toco en todo el dia (maximo 7443.50) y el Put Wall/MVS (7400) quedo a 6 puntos del cierre: un dia consistente con "los strikes grandes atraen el cierre" (estudio del 2026-10-14: cierre cerca del ABS 32% contra 15% azar). Un solo dia, no prueba.
+4.5 Flujo (Net Flow / Net Drift / Actividad Inusual): NO reconstruible para el 23 de julio (no hay operaciones de esa fecha). Net Flow = premium de calls menos puts (sin lado); Net Drift = premium firmado por el lado agresor (calls -3.49M, puts +58.15M, neto -61.64M), ventana movil de largo desconocido.
+
+4.6 PRUEBA DEL MOVIMIENTO ESPERADO PROPIO DE CONVEXA (2026-10-17, docs/hm_expected_move_test.py; calculate_expected_move sobre la cadena 0DTE de los archivos de etapa 2; 2,510 muestras cada 30 min de 10:00 a 15:00, 60 sesiones, SPX/SPY/QQQ/NDX; contra el movimiento real hasta el cierre de las 16:00)
+    Objetivo de una banda de 1 sigma: 68.3% dentro (95.4% dentro de 2 sigma), RMS z 1.00.
+    A  implied_1sd alrededor del precio: 84.8% / 98.9%, RMS z 0.72 (demasiado ancha ~1.4x). SPX: 82.7%.
+    B  remaining_1sd (implied x raiz del tiempo que falta, un segundo escalado por tiempo): 69.7% / 94.1%, RMS z 1.08: CALIBRADA EN PROMEDIO. SPX: 68.8%. Por hora (todos los simbolos): 10:xx 79.7% (ancha), 11:xx 73.4%, 12:xx 73.0%, 13:xx 65.3%, 14:xx 60.5% (RMS z 1.34), 15:xx 56.7% (RMS z 1.78: angosta).
+    C  banda dibujada en el grafico (implied_1sd alrededor del precio de apertura de la sesion): contiene el cierre 57.0% (SPX 59.8%, SPY 61.7%, QQQ 52.6%, NDX 53.9%) contra 68.3% esperado.
+    Por regimen de gamma (largo / corto): A 83.0% / 86.8% y B 69.1% / 70.4%: el movimiento esperado propio NO es mas ancho en short gamma; la IV ya trae el efecto del regimen. El efecto de 6% a 25% de la seccion 4.3 se midio contra la volatilidad realizada desde la apertura, no contra este rango, asi que no hay que ensancharlo otra vez.
+    Lectura: el movimiento esperado de Convexa no esta mal en promedio (B), pero la forma de escalar con la hora no es la correcta (ancho de mas por la manana, de menos desde las 14:00), y la banda anclada a la apertura contiene el cierre solo ~57-60%. Un ajuste por hora (por ejemplo un factor que baje de ~0.8 a ~0.55 sobre implied_1sd) lo mejoraria, pero fue ajustado en esta misma muestra: falta validarlo con dias nuevos antes de cambiar nada.
+
+4.7 CAPA RAPIDA DE GAMMA (prueba fuera de linea, 2026-10-17, docs/hm_fast_gamma_test.py; 2,640 muestras horarias, 60 sesiones, SPX/SPY/QQQ/NDX; cadena 0-2 DTE, +-1.5% del precio, calculadores de produccion)
+    Pregunta de Lester: "2 minutos en scalping es una eternidad". Idea: entre ciclos completos (~56 s el 10-16; 95-140 s otros dias) recalcular la gamma por strike con el precio en vivo y el reloj, manteniendo el OI y la IV del ultimo ciclo (el OI no cambia durante el dia).
+    Comparacion contra la cadena completa del instante siguiente (5 y 10 min despues; el hueco real entre ciclos es ~1 min, asi que es una cota conservadora). RAPIDA = recalculo con precio/reloj nuevos; VIEJA = dejar el ultimo snapshot sin tocar (lo que se ve hoy).
+    +5 min, todos los simbolos: error mediano del net GEX 3.4% (rapida) contra 7.5% (vieja); p90 19.7% contra 53.8%; error del perfil por strike 4.8% contra 10.2%; strike ABS acertado 98% contra 90%; flip: mediana 0.1 pts en ambas, p90 1.5 contra 11.7 pts.
+    +10 min: net GEX 4.0% contra 9.1%; perfil 5.4% contra 13.1%; ABS 98% contra 88%.
+    SPX solo (+5 min): net GEX 3.3% contra 7.6% (p90 18.4% contra 55.4%); perfil 5.1% contra 9.8%; ABS 99% contra 92%; flip mediana 0.2 contra 0.3 pts (p90 4.2 contra 8.0).
+    Lectura: la capa rapida reduce el error a menos de la mitad; el error que queda (3-5%) viene de la IV y las cotizaciones que cambian entre ciclos. No esta probado que mas velocidad mejore decisiones (el rebote a corto plazo no se detecto en el estudio del 2026-10-14): la velocidad da contexto mas fresco. Costo: calculo nuevo en el backend (hoy el heatmap solo lee), hay que decidir si se guarda o solo se muestra, y validar contra el ciclo completo en vivo.
+    Hecho el mismo dia (opcion 1, sin calculo nuevo): columnas de 1 minuto y consulta cada 15 s en #302 (commit c272e78).
+
+4.8 FLUJO FIRMADO DE OPCIONES: SIGUE AL PRECIO O LO ADELANTA? (2026-10-18, docs/hm_flow_lead_test.py + hm_flow_lead_analysis.py; pregunta de Lester: "teniendo esa informacion en tiempo real hace alguna diferencia?")
+    Datos: trade_quote de SPXW y SPY 0DTE (76M + 62M operaciones), 60 sesiones 2026-07-13 .. 2026-10-05, 8,400 barras de 5 minutos, 120 simbolo-dia. Firma por operacion: precio >= ask comprador, <= bid vendedor, dentro del spread sin firmar; cancelaciones fuera. Comprar call / vender put = alcista (+1); vender call / comprar put = bajista (-1). Cuatro series: prima y delta (contratos x |delta|), todas las firmadas y solo condiciones simples (18, 95, 125, 126).
+    Celda principal fijada ANTES: flujo en delta, condiciones simples, ultimos 15 min, contra los PROXIMOS 15 min, correlacion de rangos (rangos dentro de cada dia), intervalo 95% por dias; 'senal' solo si >= 0.05 con intervalo sobre 0 en SPX y en SPY.
+    Misma barra (el flujo sigue al precio): SPX +0.40 (15 min) y +0.78 (la barra de 5 min); SPY +0.38 y +0.67.
+    Proximos 5 min: SPX -0.01 a -0.05, SPY -0.02 a -0.05 (la barra de 5 min: -0.05 en ambos con intervalo bajo 0: reversion minima, posible artefacto de la firma). Proximos 15 min: SPX +0.032 [-0.006, +0.068]; SPY +0.006 [-0.032, +0.047]. LA CELDA PRINCIPAL NO CUMPLE.
+    Parcial (quitando el retorno de los 5 min previos), proximos 15 min: SPX +0.024 [-0.013, +0.058]; SPY 0.000 [-0.040, +0.043].
+    Las barras con el 20% de flujo mas fuerte de cada dia: signo del flujo acierta 54.0% en SPX (n 900) y 51.1% en SPY (n 899); el control (signo del retorno previo de 5 min) 52.4% y 51.5%. No se replica entre simbolos.
+    Lectura: el flujo firmado describe lo que el precio YA hizo; no lo adelanta en estos datos. Sirve como contexto (quien empuja ahora), no como senal. Falta (no probado): operaciones muy grandes, sweeps, flujo solo cerca del precio, divergencias precio/flujo, horizontes menores de 5 minutos (los archivos de precio son de 5 minutos).
+
+=====================================================================
+5. IDEAS APLICABLES A CONVEXA (como contexto para decidir, no como prediccion). Ordenadas por valor / facilidad
+=====================================================================
+Cada una usa datos que Convexa ya guarda o calcula. Ninguna esta aprobada.
+ 1) Walls por lado del precio (Call Wall arriba, Put Wall abajo, por gamma de cada pata). Valor alto: corrige "soporte arriba del precio". Requiere antes la prueba de reaccion al precio (6.1). Riesgo: cambia niveles que los traders ya conocen -> mostrar ambos en el periodo de prueba.
+ 2) Cono de volatilidad calibrado como CONTEXTO (movimiento esperado a 5/15/30 min y al cierre; ancho por hora del dia; 15% a 25% mas ancho en short gamma). Sin direccion. Requiere primero calibrar el ancho base (hoy 1.3 a 1.7 veces demasiado ancho) y validar fuera de muestra. Variante "Sonar" de ellos: distribucion del cierre +-2 sigma alrededor de un centro (su centro ~ el strike grande cercano).
+ 3) Tarjeta de estadisticas por lado (volumen, OI, OI premium, calls contra puts, ventana +-10% del precio). Facil: OI y premium reproducibles; volumen/premium de volumen desde el stream en vivo.
+ 4) Tarjeta "Actividad Inusual" por contrato (Vol/OI, premium, sentimiento por lado). Desde cumulative_volume. Llamar a la etiqueta "Vol/OI alto" y no "sweep".
+ 5) GEX por expiracion (barras call/put/net por vencimiento) y heatmap strike x expiracion: ya reproducidos con nuestros calculadores. Mostrar tambien el Net GEX por expiracion seleccionada (0DTE, 1d...).
+ 6) Flujo neto por minuto (Net Flow / Net Drift con linea del precio, volumen de contratos debajo, convergencia calls - puts). Es la tabla de flujo por minuto ya planeada (seccion 12.16 del diseno del heatmap; su migracion debe renumerarse a 0047). Antes: probar que el flujo firmado de 15 min predice algo (6.2).
+ 7) Max Pain y MVS en el panel de niveles: Max Pain coincide exacto con el suyo; MVS = nuestro Absolute Gamma Strike (nombrarlo asi tambien si ayuda a los traders del grupo).
+ 8) Modos de exposicion por strike: gamma, delta (DEX), vanna (VEX), charm (ya guardamos delta/vanna/charm por strike, migracion 0042); su volga y speed no los tenemos.
+ 9) GEX intradia por strike (lineas de los strikes cercanos en el tiempo) y dispersion GEX contra variacion de precio: de contexto; su dispersion tampoco muestra pendiente.
+10) Indicar la base de tiempo de la IV en el panel de IV/smile (su 13% contra nuestro 22% en 0DTE no son comparables sin aclarar la convencion).
+NO aplicable por evidencia: la parte de direccion de su pestana Predictions (Fuerza & Bias por modelo, Predicted Close). Si algun dia se muestra, que sea como "sesgo de modelos" claramente rotulado, solo despues de probar cada modelo por separado (aqui solo se probaron gamma/centroide y momentum).
+
+=====================================================================
+6. PRUEBAS PENDIENTES (cada una necesita el si de Lester; todas de solo lectura salvo la 6.4)
+=====================================================================
+6.1 Regla de walls: comparar la de Convexa con la del mentor en las 60 sesiones (reaccion del precio al nivel, cierre cerca del nivel, toques).
+6.2 Flujo firmado: premium neto de los 15 min previos contra el movimiento de los siguientes 15, con trade_quote de SPXW y SPY (20 sesiones del 2026-09-08 al 10-05 + 10-07 + 10-16; ~22 sesiones, intervalos anchos).
+6.3 Convencion de tiempo de su IV: buscar el T que reproduce su 13% cerca del precio (y su net vanna).
+6.4 Hipotesis "short gamma revierte hacia el cierre": confirmarla en dias NUEVOS (6 a 16 de octubre en adelante). Requiere bajar datos de ThetaData: pide autorizacion aparte; o esperar a acumular dias propios de Convexa (gamma_aggregates desde septiembre).
+6.5 Efecto de tamano (regimen) separado de la hora del dia, y calibracion del cono por hora (60 sesiones).
+
+=====================================================================
+7. LIMITES (lo que NO se pudo verificar)
+=====================================================================
+- Volumen, premium de volumen y sentimiento por contrato del 2026-07-23: no hay operaciones ni volumen de esa fecha.
+- Expiraciones de mas de 4 dias y la suma total del GEX por expiracion.
+- La hora exacta de cada captura (se dedujo por precio; las capturas no vienen en orden).
+- Sus formulas internas (kappa, regla de flujo, convencion de IV, vanna).
+- Resultados historicos propios del mentor (no hay otras capturas con fecha para compararlas con el cierre real).
+- Muestra: 60 sesiones hasta 2026-10-05; los dias del 6 al 16 de octubre no entraron. Varias celdas se miraron a la vez: lo marginal es hipotesis.
+
+=====================================================================
+8. ARCHIVOS
+=====================================================================
+Scripts (docs/): hm_mentor_0723.py, hm_mentor_0723b.py, hm_wall_rules_0723.py, hm_oi_smile_0723.py, hm_side_stats_0723.py, hm_side_stats_window_0723.py, hm_gex_strike_0723.py, hm_gex_by_exp_0723.py, hm_unusual_oi_0723.py, hm_heat_strike_0723.py, hm_path_0723.py, hm_stage3_inventory.py, hm_cone_tests.py (opcion --zero-dte), hm_cone_analysis.py, hm_expected_move_test.py, hm_fast_gamma_test.py, hm_flow_lead_test.py, hm_flow_lead_analysis.py, hm_flow_inventory.py.
+Datos en el servidor: V:\Convexa\bench\hm_stage2\cone_bars.csv, cone_gamma.csv, cone_gamma_0dte.csv.
+Memoria: mentor_predictions_tab_study_2026_10_17.md.

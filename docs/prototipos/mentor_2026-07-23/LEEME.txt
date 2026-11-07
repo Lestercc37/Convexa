@@ -1,0 +1,6 @@
+Capturas de la plataforma de un mentor (video del 2026-07-23, SPX). Solo para analisis; ver docs/estudio_plataforma_mentor_2026-10-17.txt.
+Horas deducidas por precio (las capturas no traen hora completa y no vienen en orden): 13:45 (01-03), ~12:45 (04-05), ~13:30 (07-10), ~10:50 (12), 06 y 11 sin hora clara.
+01 Predictions: cono por horizonte (30s, 1m, 2m, 5m, 15m, Cierre) | 02 ayuda de la formula (OU, sigma = 0.5 realizada + 0.5 ATM IV)
+03 barra superior + Predictions | 04 DEX calls/puts por strike | 05 OI, Max Pain, Volatility Smile
+06 Contract Side Statistics (volumen, OI, premium) | 07 Net Flow | 08 Net Drift | 09 GEX 0DTE intradia + dispersion GEX vs variacion de precio
+10 GEX por expiracion | 11 Actividad Inusual | 12 GEX Heatmap strike x expiracion | 13 Predictions: Sonar y Fuerza & Bias por modelo
