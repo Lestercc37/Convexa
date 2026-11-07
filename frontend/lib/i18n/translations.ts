@@ -125,6 +125,9 @@ export type Translations = {
     emaWidthOption: (width: number) => string;
     emaRemove: (period: number) => string;
     emaAlertsTitle: string;
+    profileChangeLabel: string;
+    profileChangeTitle: string;
+    profileChangeOptions: Record<"5m" | "15m" | "open", string>;
     emaAlertsConnect: string;
     emaAlertsLinked: string;
     emaAlertsCode: (code: string, bot: string) => string;
