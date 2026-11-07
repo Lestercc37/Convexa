@@ -31,7 +31,7 @@ import { aggregateVwapPoints, type MinuteCandle, type Timeframe, type VwapPoint 
 import { recordChartEvent } from "@/lib/chart-lifecycle";
 import { useLanguage } from "@/lib/i18n/language-context";
 import type { MarketPriceStreamStatus } from "@/lib/market-price-stream";
-import { currentEasternDate, EASTERN_TIME_ZONE, heatmapStartSeconds, mostRecentSessionRange } from "@/lib/market-session";
+import { currentEasternDate, EASTERN_TIME_ZONE, heatmapStartSeconds, mostRecentSessionRange, regularSessionRange } from "@/lib/market-session";
 import { formatDeltaFlow, formatPremium, summarizeOpeningAlerts, summarizeOpeningFlow, type OpeningAlerts, type OpeningFlow } from "@/lib/opening-flow";
 import { emaValues, loadEmas, saveEmas, type EmaConfig } from "@/lib/ema";
 import type {
@@ -55,8 +55,10 @@ import {
   LiveProfilePrimitive,
   profileBarsFromHeatmap,
   profileWidthCssPx,
+  referenceFromHeatmap,
   sideBarsFromHeatmaps,
   type ProfileBar,
+  type ProfileReference,
   type SmilePoint,
 } from "./live-profile-primitive";
 import { HEATMAP_METRIC_TABS } from "@/lib/heatmap-metrics";
@@ -211,6 +213,12 @@ function lastSessionSlot(openSeconds: number, timeframe: Timeframe): number {
 
 // The charts NinjaTrader's futures events are drawn on (backend use_cases/futures_events.py TARGETS).
 const ORDER_FLOW_SYMBOLS = new Set(["SPX", "SPY", "NDX", "QQQ", "IWM"]);
+// The change next to each GEX profile bar: against 5 or 15 minutes ago, or the session's open.
+type ProfileChangeWindow = "5m" | "15m" | "open";
+const PROFILE_CHANGE_WINDOWS: readonly ProfileChangeWindow[] = ["5m", "15m", "open"];
+const PROFILE_CHANGE_SECONDS: Record<Exclude<ProfileChangeWindow, "open">, number> = { "5m": 300, "15m": 900 };
+// Figures in dollars (the gamma family); delta, vanna and charm show plain numbers.
+const MONEY_METRICS = new Set<GammaHeatmapMetric>(["gamma", "absolute_gamma", "total_gamma", "call_gamma", "put_gamma"]);
 
 // The profile's own fast-layer read (heatmap off, 0DTE tab): the last minute of columns, and a minute's pause when the fast layer has nothing.
 const FAST_TAIL_WINDOW_MS = 60_000;
@@ -602,6 +610,8 @@ export function PriceChart({
   // aligned with the price axis. On by default; it replaces the old bottom GEX-by-strike view. The Smile dots ride on the same line.
   const [showProfile, setShowProfile] = useChartSetting("profile", true, layers ? layers.profile : undefined, templateScope);
   const [showSmile, setShowSmile] = useChartSetting("smile", true, layers ? layers.smile : undefined, templateScope);
+  // The change shown next to each profile bar's figure: against 5 or 15 minutes ago, or the open (Lester 2026-11-06: "según entre o salga dinero").
+  const [profileChange, setProfileChange] = useChartSetting<ProfileChangeWindow>("profileChange", "5m");
   // The minute flow panes (calls and puts, under the candles, hidden by default): one histogram series each, in its own pane so the time axis and the crosshair are the candles'.
   const [showFlow, setShowFlow] = useChartSetting("flow", false, layers ? layers.flow : undefined, templateScope);
   // NinjaTrader's order-flow events on this symbol's future (order-flow-events-primitive.ts); on by default where a future maps here.
@@ -1064,6 +1074,55 @@ export function PriceChart({
       window.clearInterval(interval);
     };
   }, [showProfile, symbol, gammaView, profileMetric, profileFromEndpoint, t]);
+
+  // The profile bars carry their figure in dollars (gamma) or plain (delta, vanna, charm), and its change against a reference column read once a minute from the
+  // cycle's stored columns (the same figure and tab; the sides read call and put gamma). Nothing new is calculated on the server.
+  const profileMoney = showHeatmap && sidesOn ? true : MONEY_METRICS.has(profileMetric);
+  useEffect(() => {
+    profilePrimitiveRef.current?.setMoney(profileMoney);
+  }, [showProfile, profileMoney]);
+  useEffect(() => {
+    if (!showProfile) return;
+    const controller = new AbortController();
+    const sides = showHeatmap && sidesOn;
+    const figures: { key: keyof ProfileReference; metric: GammaHeatmapMetric }[] = sides
+      ? [
+          ...(sideLayers.calls ? [{ key: "call" as const, metric: "call_gamma" as const }] : []),
+          ...(sideLayers.puts ? [{ key: "put" as const, metric: "put_gamma" as const }] : []),
+        ]
+      : [{ key: "net", metric: profileMetric }];
+    const refresh = () => {
+      const last = lastCandleTimeRef.current;
+      const session = last === null ? mostRecentSessionRange(Date.now()) : regularSessionRange(last * 1000);
+      const nowSeconds = Math.min(Date.now() / 1000, session.closeSeconds);
+      const fromOpen = profileChange === "open";
+      const referenceSeconds = profileChange === "open" ? session.openSeconds : nowSeconds - PROFILE_CHANGE_SECONDS[profileChange];
+      const start = new Date((fromOpen ? referenceSeconds : referenceSeconds - 180) * 1000);
+      const end = new Date((fromOpen ? referenceSeconds + 600 : referenceSeconds + 60) * 1000);
+      Promise.all(
+        figures.map((figure) =>
+          // through Promise.resolve: a client that throws instead of rejecting still lands in the catch below
+          Promise.resolve()
+            .then(() => getGammaHeatmap(symbol, { view: gammaView, metric: figure.metric, start, end, bucketSeconds: 60 }, controller.signal))
+            .then((response) => [figure.key, referenceFromHeatmap(heatmapFromResponse(response), referenceSeconds, fromOpen) ?? undefined] as const),
+        ),
+      )
+        .then((entries) => {
+          if (controller.signal.aborted) return;
+          profilePrimitiveRef.current?.setReference(Object.fromEntries(entries) as ProfileReference);
+        })
+        .catch(() => {
+          // no reference (a weekend for ES / NQ, a failed read): the figures still show, without the change
+        });
+    };
+    refresh();
+    const interval = window.setInterval(refresh, 60_000);
+    return () => {
+      controller.abort();
+      window.clearInterval(interval);
+      profilePrimitiveRef.current?.setReference(null);
+    };
+  }, [showProfile, symbol, gammaView, profileMetric, profileChange, showHeatmap, sidesOn, sideLayers.calls, sideLayers.puts]);
 
   useEffect(() => {
     if (!showProfile || profileFrom !== "heatmap" || !heatmapProfile) return;
@@ -1866,6 +1925,23 @@ export function PriceChart({
             {t.priceChart.gexHistogramLabel}
           </label>
           {showProfile && (
+            <div className="v2-menu-row">
+              <select
+                className="v2-sel"
+                aria-label={t.priceChart.profileChangeLabel}
+                title={t.priceChart.profileChangeTitle}
+                value={profileChange}
+                onChange={(event) => setProfileChange(event.target.value as ProfileChangeWindow)}
+              >
+                {PROFILE_CHANGE_WINDOWS.map((window) => (
+                  <option key={window} value={window}>
+                    {t.priceChart.profileChangeOptions[window]}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+          {showProfile && (
             <label>
               <input type="checkbox" checked={showSmile} onChange={(event) => setShowSmile(event.target.checked)} />
               {t.priceChart.smileLabel}
@@ -2098,6 +2174,20 @@ export function PriceChart({
               />
               {t.priceChart.gexHistogramLabel}
             </label>
+            {showProfile && (
+              <select
+                aria-label={t.priceChart.profileChangeLabel}
+                title={t.priceChart.profileChangeTitle}
+                value={profileChange}
+                onChange={(event) => setProfileChange(event.target.value as ProfileChangeWindow)}
+              >
+                {PROFILE_CHANGE_WINDOWS.map((window) => (
+                  <option key={window} value={window}>
+                    {t.priceChart.profileChangeOptions[window]}
+                  </option>
+                ))}
+              </select>
+            )}
             {showProfile && (
               <label className="chart-toggle">
                 <input

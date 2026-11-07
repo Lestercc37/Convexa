@@ -1193,8 +1193,8 @@ describe("PriceChart", () => {
 
     const lastCandleSeconds = candlesWithRange.at(-1)!.time;
     const expectedStart = new Date((regularSessionRange(lastCandleSeconds * 1000).openSeconds - 3600) * 1000);
-    await waitFor(() => expect(chartMocks.getGammaHeatmap).toHaveBeenCalled());
-    expect(chartMocks.getGammaHeatmap.mock.calls[0][1].start).toEqual(expectedStart);
+    // the heatmap's own read (the profile's change reads a short window of its own, without the hour before the open)
+    await waitFor(() => expect(chartMocks.getGammaHeatmap.mock.calls.some((call) => call[1].start?.getTime() === expectedStart.getTime())).toBe(true));
   });
 
   it("draws calls and puts apart when their toggles are on: one primitive per side, one shared scale, a green and a red bar per strike in the profile", async () => {

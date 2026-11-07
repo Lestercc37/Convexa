@@ -1,6 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   barThickness,
+  changeText,
+  compactMoney,
+  referenceFromHeatmap,
   smileDotX,
   PROFILE_GUTTER_CSS_PX,
   AHORA_LINE_COLOR,
@@ -324,5 +327,53 @@ describe("smile inside the column", () => {
     expect(primitive.hitSmile(900, 700)).toBeNull();
     primitive.setSmile([{ strike: 100, iv: 0.2, type: "call" }]);
     expect(primitive.hitSmile(900, 700)).toBeNull(); // pane width unknown until it is drawn
+  });
+});
+
+describe("profile figures and their change (Lester 2026-11-06)", () => {
+  it("writes short dollar figures and the change only when it matters", () => {
+    expect(compactMoney(-242.5e9)).toBe("-$242.5B");
+    expect(compactMoney(12.34e6)).toBe("$12.3M");
+    expect(compactMoney(850e3)).toBe("$850.0K");
+    expect(compactMoney(-1200, false)).toBe("-1.2K");
+    expect(changeText(3.1e9, 100e9)).toBe("▲ +$3.1B");
+    expect(changeText(-1.2e9, 100e9)).toBe("▼ -$1.2B");
+    expect(changeText(0.5e9, 100e9)).toBeNull(); // under 1 % of the profile's top
+  });
+
+  it("takes the reference column at or before the time, or the first one at or after the open, skipping all-zero columns", () => {
+    const data = {
+      strikes: [100, 105],
+      scale: 1,
+      columns: [
+        { time: 100, values: [1, 2] },
+        { time: 160, values: [3, null] },
+        { time: 220, values: [0, 0] },
+      ],
+    };
+    expect(referenceFromHeatmap(data, 200)).toEqual(new Map([[100, 3]]));
+    expect(referenceFromHeatmap(data, 130, true)).toEqual(new Map([[100, 3]]));
+    expect(referenceFromHeatmap(data, 50)).toBeNull();
+  });
+
+  it("draws each bar's figure and its change against the reference, in a dark pill", () => {
+    const { primitive } = attached();
+    primitive.setBars(BARS);
+    primitive.setReference({ net: new Map([[105, -90], [100, 50]]) });
+    const { context, ops } = fakeContext();
+    drawView(primitive, 0, context, WIDTH);
+    const texts = ops.filter((entry) => entry.op === "fillText").map((entry) => [entry.args[0], entry.fillStyle]);
+    expect(texts).toContainEqual(["-$100", "rgba(240, 242, 247, 0.96)"]);
+    expect(texts).toContainEqual(["▼ -$10", "#ff5c60"]); // -100 now vs -90 before
+    expect(texts.filter(([text]) => String(text).startsWith("▲") || String(text).startsWith("▼"))).toHaveLength(1); // 100: no change; 110: no reference
+    expect(ops.filter((entry) => entry.op === "fillRect")).toHaveLength(3); // the bars; the pills use roundRect
+  });
+
+  it("writes no figures on rows too thin to read", () => {
+    const { primitive } = attached((price) => 1500 - price * 2); // strikes 10 px apart -> 7.8 px rows
+    primitive.setBars(BARS);
+    const { context, ops } = fakeContext();
+    drawView(primitive, 0, context, WIDTH);
+    expect(ops.filter((entry) => entry.op === "fillText")).toHaveLength(0);
   });
 });

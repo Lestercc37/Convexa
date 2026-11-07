@@ -30,6 +30,42 @@ export type ProfileBar = {
 
 export type SmilePoint = { strike: number; iv: number; type: "call" | "put" };
 
+/** The value of each strike some minutes ago (or at the open), to show how much entered or left: per figure drawn (net, or each side). */
+export type ProfileReference = { net?: Map<number, number>; call?: Map<number, number>; put?: Map<number, number> };
+
+/** Short figure: -$242.5B, $12.3M, $850K (money = false drops the $ for figures that are not dollars). */
+export function compactMoney(value: number, money = true): string {
+  const sign = value < 0 ? "-" : "";
+  const unit = money ? "$" : "";
+  const a = Math.abs(value);
+  if (a >= 1e9) return `${sign}${unit}${(a / 1e9).toFixed(1)}B`;
+  if (a >= 1e6) return `${sign}${unit}${(a / 1e6).toFixed(1)}M`;
+  if (a >= 1e3) return `${sign}${unit}${(a / 1e3).toFixed(1)}K`;
+  return `${sign}${unit}${a.toFixed(a >= 10 ? 0 : 1)}`;
+}
+
+/** "▲ +$3.1B" when the strike's figure grew, "▼ -$1.2B" when it shrank, null for a change too small to matter (under 1 % of the profile's top). */
+export function changeText(change: number, scale: number, money = true): string | null {
+  if (!Number.isFinite(change) || Math.abs(change) < 0.01 * scale) return null;
+  return change > 0 ? `▲ +${compactMoney(change, money)}` : `▼ ${compactMoney(change, money)}`;
+}
+
+/**
+ * Per strike its value in the column nearest the reference time: the last non-zero column at or before `referenceSeconds`, or with `first` the first non-zero column at or after it
+ * (the open). Null when no column qualifies.
+ */
+export function referenceFromHeatmap(data: HeatmapData, referenceSeconds: number, first = false): Map<number, number> | null {
+  const usable = data.columns.filter((column) => column.values.some((value) => value !== null && value !== undefined && Number.isFinite(value) && value !== 0));
+  const column = first ? usable.find((entry) => entry.time >= referenceSeconds) : [...usable].reverse().find((entry) => entry.time <= referenceSeconds);
+  if (!column) return null;
+  const values = new Map<number, number>();
+  data.strikes.forEach((strike, index) => {
+    const value = column.values[index];
+    if (value !== null && value !== undefined && Number.isFinite(value)) values.set(strike, value);
+  });
+  return values;
+}
+
 /** The IV range the dots are spread over: every point's. */
 export function smileIvRange(points: SmilePoint[]): { low: number; high: number } {
   const ivs = points.map((point) => point.iv);
@@ -171,6 +207,50 @@ function place<T extends { strike: number }>(source: LiveProfilePrimitive, items
   return placed;
 }
 
+// The figure of each bar (Lester 2026-11-06: "el valor en dinero de cada strike y el cambio según entre o salga dinero"): a small dark pill so the text reads over any bar
+// colour, white figure and a green ▲ / red ▼ change; inside the bar at its tip when it fits, otherwise just left of it (never past the AHORA gutter). Only on rows tall enough.
+const LABEL_MIN_ROW_CSS_PX = 11;
+const LABEL_FONT_CSS_PX = 10;
+const LABEL_BG = "rgba(10, 12, 18, 0.78)";
+const LABEL_VALUE_COLOR = "rgba(240, 242, 247, 0.96)";
+const LABEL_UP_COLOR = "#22c55e";
+const LABEL_DOWN_COLOR = "#ff5c60";
+
+type BitmapScope = Parameters<Parameters<DrawTarget["useBitmapCoordinateSpace"]>[0]>[0];
+type BarLabel = { left: number; barWidth: number; y: number; value: number; change: number | null };
+
+function textWidth(context: BitmapScope["context"], text: string, fontPx: number): number {
+  const measure = (context as { measureText?: (text: string) => { width: number } }).measureText;
+  return typeof measure === "function" ? measure.call(context, text).width : text.length * fontPx * 0.6;
+}
+
+function drawBarLabel(scope: BitmapScope, label: BarLabel, scale: number, money: boolean, minX: number): void {
+  const { context, horizontalPixelRatio: hr, verticalPixelRatio: vr } = scope;
+  const fontPx = LABEL_FONT_CSS_PX * hr;
+  context.font = `600 ${fontPx}px ${FONT_FAMILY}`;
+  context.textAlign = "left";
+  context.textBaseline = "middle";
+  const value = compactMoney(label.value, money);
+  const change = label.change === null ? null : changeText(label.change, scale, money);
+  const gap = 5 * hr;
+  const pad = 3 * hr;
+  const valueWidth = textWidth(context, value, fontPx);
+  const changeWidth = change ? textWidth(context, change, fontPx) : 0;
+  const pillWidth = pad * 2 + valueWidth + (change ? gap + changeWidth : 0);
+  const pillHeight = (LABEL_FONT_CSS_PX + 3) * vr;
+  const inside = label.barWidth >= pillWidth + 4 * hr;
+  const x = inside ? label.left + 2 * hr : label.left - pillWidth - 3 * hr;
+  if (x < minX) return; // no room between the AHORA line and the bar
+  context.fillStyle = LABEL_BG;
+  fillRounded(context, x, label.y - pillHeight / 2, pillWidth, pillHeight, 3 * hr);
+  context.fillStyle = LABEL_VALUE_COLOR;
+  context.fillText(value, x + pad, label.y + 0.5 * vr);
+  if (change) {
+    context.fillStyle = label.change !== null && label.change > 0 ? LABEL_UP_COLOR : LABEL_DOWN_COLOR;
+    context.fillText(change, x + pad + valueWidth + gap, label.y + 0.5 * vr);
+  }
+}
+
 class ProfileBarsRenderer implements IPrimitivePaneRenderer {
   constructor(private readonly source: LiveProfilePrimitive) {}
 
@@ -196,6 +276,8 @@ class ProfileBarsRenderer implements IPrimitivePaneRenderer {
       const inset = BAR_INSET_CSS_PX * scope.horizontalPixelRatio;
       const maxBar = columnWidth - (PROFILE_GUTTER_CSS_PX * scope.horizontalPixelRatio + inset);
       const rightEdge = width - inset;
+      const labels: BarLabel[] = [];
+      const reference = this.source.reference?.net;
       for (const { y, item } of placed) {
         const barWidth = Math.sqrt(Math.min(1, Math.abs(item.absolute) / largest)) * maxBar;
         if (barWidth < 1) continue;
@@ -203,6 +285,12 @@ class ProfileBarsRenderer implements IPrimitivePaneRenderer {
         scope.context.fillStyle = `rgb(${rgb[0]}, ${rgb[1]}, ${rgb[2]})`;
         // flat side at the price axis, peak towards the candles
         scope.context.fillRect(rightEdge - barWidth, y - rowHeight / 2, barWidth, rowHeight);
+        const before = reference?.get(item.strike);
+        labels.push({ left: rightEdge - barWidth, barWidth, y, value: item.net, change: before === undefined ? null : item.net - before });
+      }
+      if (rowHeight >= LABEL_MIN_ROW_CSS_PX * scope.verticalPixelRatio) {
+        const minX = width - columnWidth + PROFILE_GUTTER_CSS_PX * scope.horizontalPixelRatio;
+        for (const label of labels) drawBarLabel(scope, label, scale, this.source.money, minX);
       }
     });
   }
@@ -224,6 +312,7 @@ class ProfileBarsRenderer implements IPrimitivePaneRenderer {
     const inset = BAR_INSET_CSS_PX * scope.horizontalPixelRatio;
     const maxBar = columnWidth - (PROFILE_GUTTER_CSS_PX * scope.horizontalPixelRatio + inset);
     const rightEdge = width - inset;
+    const labels: BarLabel[] = [];
     for (const { y, item } of placed) {
       for (const [value, upper] of [[item.call, true], [item.put, false]] as const) {
         if (value === undefined) continue;
@@ -234,7 +323,13 @@ class ProfileBarsRenderer implements IPrimitivePaneRenderer {
         const height = both ? half : rowHeight;
         const offset = both ? (upper ? -half - 0.25 * scope.verticalPixelRatio : 0.25 * scope.verticalPixelRatio) : -rowHeight / 2;
         scope.context.fillRect(rightEdge - barWidth, y + offset, barWidth, height);
+        const before = (upper ? this.source.reference?.call : this.source.reference?.put)?.get(item.strike);
+        labels.push({ left: rightEdge - barWidth, barWidth, y: y + offset + height / 2, value, change: before === undefined ? null : value - before });
       }
+    }
+    if ((both ? half : rowHeight) >= LABEL_MIN_ROW_CSS_PX * scope.verticalPixelRatio) {
+      const minX = width - columnWidth + PROFILE_GUTTER_CSS_PX * scope.horizontalPixelRatio;
+      for (const label of labels) drawBarLabel(scope, label, top, true, minX);
     }
   }
 }
@@ -333,6 +428,10 @@ export class LiveProfilePrimitive implements ISeriesPrimitive<Time> {
   label = "PERFIL EN VIVO";
   /** The tag on the line of time: AHORA live, the cursor's time in the Replay. */
   lineTag = "AHORA";
+  /** Each strike's value some minutes ago (or at the open): the bars show the change next to their figure. */
+  reference: ProfileReference | null = null;
+  /** Whether the figure is dollars (gamma) or not (delta, vanna, charm): only the $ sign changes. */
+  money = true;
   private requestUpdate: (() => void) | null = null;
   private readonly views: IPrimitivePaneView[];
 
@@ -363,6 +462,17 @@ export class LiveProfilePrimitive implements ISeriesPrimitive<Time> {
     this.bars = bars;
     this.palette = palette;
     this.label = label;
+    this.requestUpdate?.();
+  }
+
+  setReference(reference: ProfileReference | null): void {
+    this.reference = reference;
+    this.requestUpdate?.();
+  }
+
+  setMoney(money: boolean): void {
+    if (money === this.money) return;
+    this.money = money;
     this.requestUpdate?.();
   }
 
