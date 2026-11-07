@@ -130,6 +130,16 @@ class SqlEmaAlertRepository:
             session.commit()
         return None if user_id is None else int(user_id)
 
+    def chat_is_linked(self, chat_id: int) -> bool:
+        with self._sessions() as session:
+            return (
+                session.execute(
+                    text("SELECT 1 FROM telegram_chats WHERE chat_id = :chat_id LIMIT 1"),
+                    {"chat_id": chat_id},
+                ).scalar()
+                is not None
+            )
+
     def unlink(self, user_id: int) -> None:
         with self._sessions() as session:
             session.execute(
@@ -207,6 +217,9 @@ class InMemoryEmaAlertRepository:
             return None
         self._chats[entry[0]] = chat_id
         return entry[0]
+
+    def chat_is_linked(self, chat_id: int) -> bool:
+        return chat_id in self._chats.values()
 
     def unlink(self, user_id: int) -> None:
         self._chats.pop(user_id, None)

@@ -216,3 +216,15 @@ def test_a_restart_skips_the_messages_already_waiting() -> None:
     bot = _Pending()
     assert asyncio.run(worker._skip_backlog(bot)) == 42
     assert bot.asked == [(-1, 0)]  # only the newest, without waiting
+
+
+def test_tapping_the_link_again_says_the_chat_is_already_linked() -> None:
+    repo, bot, now = InMemoryEmaAlertRepository(), _Bot(), datetime(2026, 11, 7, tzinfo=UTC)
+    repo.new_code(7, "ABC234", now)
+    for _ in range(2):
+        asyncio.run(
+            worker.handle_update(
+                repo, bot, {"message": {"chat": {"id": 555}, "text": "/start ABC234"}}, now
+            )
+        )
+    assert "Listo" in bot.sent[0][1] and "ya está conectado" in bot.sent[1][1]
