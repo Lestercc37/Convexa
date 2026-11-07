@@ -38,3 +38,13 @@ SECUNDARIAS (no deciden)
 LO QUE NO SE HARÁ
 - No se cambian umbrales (0,60 / T / 0,60 % / 10 / 30 min) después de ver resultados; si se prueba otro, se informa como exploratorio.
 - El order flow de NinjaTrader (absorción / agotamiento al llegar) es el paso 2, aparte.
+
+ADDENDUM — TERCERA DEFINICIÓN "BLANCA Y CERCANA" (escrita ANTES de correrla; sábado 2026-11-07 ~12:30 ET, Lester "si")
+Contexto honesto: es la tercera definición sobre las MISMAS 9 sesiones (la pre-registrada y la "dominante" ya se vieron). Si sale positiva, cuenta
+como hipótesis a confirmar con sesiones nuevas (re-correr hacia el 8 de diciembre), no como prueba.
+- Ventana: strikes a no más de 0,60 % del precio (cierre del minuto), a cualquier lado.
+- Zona relevante del minuto = la zona (strikes brillantes contiguos +- T, como antes) que contiene el strike MÁS BLANCO de la ventana, solo si ese
+  strike tiene brillo >= 0,85 de la escala de la columna. Si ninguno llega a 0,85, no hay zona relevante ese minuto.
+- Evento = la zona relevante es NUEVA (no se solapa con la zona relevante de 3 columnas antes) y se mantiene las últimas 3 columnas (sin mirar
+  el futuro); el precio está fuera de ella a distancia >= T. Misma regla anti-repetición de 30 minutos.
+- Medición, control (zona espejo), horizontes, intervalo (bootstrap por días) y criterio de H1: idénticos a la versión pre-registrada.
