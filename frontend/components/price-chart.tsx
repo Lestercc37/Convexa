@@ -213,10 +213,10 @@ function lastSessionSlot(openSeconds: number, timeframe: Timeframe): number {
 
 // The charts NinjaTrader's futures events are drawn on (backend use_cases/futures_events.py TARGETS).
 const ORDER_FLOW_SYMBOLS = new Set(["SPX", "SPY", "NDX", "QQQ", "IWM"]);
-// The change next to each GEX profile bar: against 5 or 15 minutes ago, or the session's open.
-type ProfileChangeWindow = "5m" | "15m" | "open";
-const PROFILE_CHANGE_WINDOWS: readonly ProfileChangeWindow[] = ["5m", "15m", "open"];
-const PROFILE_CHANGE_SECONDS: Record<Exclude<ProfileChangeWindow, "open">, number> = { "5m": 300, "15m": 900 };
+// The change next to each GEX profile bar: against 1, 5 or 15 minutes ago, or the session's open (1 minute by default, Lester 2026-11-07).
+type ProfileChangeWindow = "1m" | "5m" | "15m" | "open";
+const PROFILE_CHANGE_WINDOWS: readonly ProfileChangeWindow[] = ["1m", "5m", "15m", "open"];
+const PROFILE_CHANGE_SECONDS: Record<Exclude<ProfileChangeWindow, "open">, number> = { "1m": 60, "5m": 300, "15m": 900 };
 // Figures in dollars (the gamma family); delta, vanna and charm show plain numbers.
 const MONEY_METRICS = new Set<GammaHeatmapMetric>(["gamma", "absolute_gamma", "total_gamma", "call_gamma", "put_gamma"]);
 
@@ -611,7 +611,7 @@ export function PriceChart({
   const [showProfile, setShowProfile] = useChartSetting("profile", true, layers ? layers.profile : undefined, templateScope);
   const [showSmile, setShowSmile] = useChartSetting("smile", true, layers ? layers.smile : undefined, templateScope);
   // The change shown next to each profile bar's figure: against 5 or 15 minutes ago, or the open (Lester 2026-11-06: "según entre o salga dinero").
-  const [profileChange, setProfileChange] = useChartSetting<ProfileChangeWindow>("profileChange", "5m");
+  const [profileChange, setProfileChange] = useChartSetting<ProfileChangeWindow>("profileChange", "1m");
   // The minute flow panes (calls and puts, under the candles, hidden by default): one histogram series each, in its own pane so the time axis and the crosshair are the candles'.
   const [showFlow, setShowFlow] = useChartSetting("flow", false, layers ? layers.flow : undefined, templateScope);
   // NinjaTrader's order-flow events on this symbol's future (order-flow-events-primitive.ts); on by default where a future maps here.
@@ -1116,7 +1116,8 @@ export function PriceChart({
         });
     };
     refresh();
-    const interval = window.setInterval(refresh, 60_000);
+    // the 1-minute change moves with every new cycle column: its reference is re-read every 15 s
+    const interval = window.setInterval(refresh, profileChange === "1m" ? 15_000 : 60_000);
     return () => {
       controller.abort();
       window.clearInterval(interval);

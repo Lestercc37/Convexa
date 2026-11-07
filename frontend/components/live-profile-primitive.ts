@@ -44,7 +44,10 @@ export function compactMoney(value: number, money = true): string {
   return `${sign}${unit}${a.toFixed(a >= 10 ? 0 : 1)}`;
 }
 
-/** "▲ +$3.1B" when the strike's figure grew, "▼ -$1.2B" when it shrank, null for a change too small to matter (under 1 % of the profile's top). */
+/**
+ * "▲ +$3.1B" when the strike GAINED importance (its size |value| grew, whatever its sign: money came in), "▼ -$1.2B" when it lost it; null for a change too
+ * small to matter (under 1 % of the profile's top). `change` is |now| - |before| (Lester 2026-11-07: a red bar that grows must read ▲, not ▼).
+ */
 export function changeText(change: number, scale: number, money = true): string | null {
   if (!Number.isFinite(change) || Math.abs(change) < 0.01 * scale) return null;
   return change > 0 ? `▲ +${compactMoney(change, money)}` : `▼ ${compactMoney(change, money)}`;
@@ -286,7 +289,7 @@ class ProfileBarsRenderer implements IPrimitivePaneRenderer {
         // flat side at the price axis, peak towards the candles
         scope.context.fillRect(rightEdge - barWidth, y - rowHeight / 2, barWidth, rowHeight);
         const before = reference?.get(item.strike);
-        labels.push({ left: rightEdge - barWidth, barWidth, y, value: item.net, change: before === undefined ? null : item.net - before });
+        labels.push({ left: rightEdge - barWidth, barWidth, y, value: item.net, change: before === undefined ? null : Math.abs(item.net) - Math.abs(before) });
       }
       if (rowHeight >= LABEL_MIN_ROW_CSS_PX * scope.verticalPixelRatio) {
         const minX = width - columnWidth + PROFILE_GUTTER_CSS_PX * scope.horizontalPixelRatio;
@@ -324,7 +327,7 @@ class ProfileBarsRenderer implements IPrimitivePaneRenderer {
         const offset = both ? (upper ? -half - 0.25 * scope.verticalPixelRatio : 0.25 * scope.verticalPixelRatio) : -rowHeight / 2;
         scope.context.fillRect(rightEdge - barWidth, y + offset, barWidth, height);
         const before = (upper ? this.source.reference?.call : this.source.reference?.put)?.get(item.strike);
-        labels.push({ left: rightEdge - barWidth, barWidth, y: y + offset + height / 2, value, change: before === undefined ? null : value - before });
+        labels.push({ left: rightEdge - barWidth, barWidth, y: y + offset + height / 2, value, change: before === undefined ? null : Math.abs(value) - Math.abs(before) });
       }
     }
     if ((both ? half : rowHeight) >= LABEL_MIN_ROW_CSS_PX * scope.verticalPixelRatio) {
