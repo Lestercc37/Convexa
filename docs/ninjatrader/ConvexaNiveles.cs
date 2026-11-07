@@ -80,6 +80,17 @@ namespace NinjaTrader.NinjaScript.Indicators
             new Dictionary<long, KeyValuePair<HeatColumn, SharpDX.Direct2D1.LinearGradientBrush>>();
         private string brushStyleKey = "";
         private SharpDX.Direct2D1.SolidColorBrush ground;
+        // Soft-edged pressure bars: one vertical gradient brush per (side, strength step), re-positioned for every bar.
+        private const int PressureSteps = 8;
+        private const int PressureMinStreak = 3;
+        private readonly Dictionary<int, SharpDX.Direct2D1.LinearGradientBrush> pressureBrushes = new Dictionary<int, SharpDX.Direct2D1.LinearGradientBrush>();
+
+        private class PressureRun
+        {
+            public float X0, X1, Y, Half;
+            public int Sign, Count;
+            public double ShareSum;
+        }
 
         private class HeatColumn
         {
@@ -337,7 +348,7 @@ namespace NinjaTrader.NinjaScript.Indicators
             bandCall = Brush(34, 197, 94, 0.45);
             bandPut = Brush(239, 68, 68, 0.45);
             bandAbs = Brush(29, 78, 216, 0.6);
-            ground = Brush(6, 18, 72, Math.Min(1.0, alpha + 0.25));
+            ground = Brush(3, 9, 36, Math.Min(1.0, alpha + 0.3));
             ClearColumnBrushes();
             bandFlip = Brush(243, 201, 105, 1);
             labelFormat = new SharpDX.DirectWrite.TextFormat(Core.Globals.DirectWriteFactory, "Segoe UI", 11f);
@@ -408,6 +419,9 @@ namespace NinjaTrader.NinjaScript.Indicators
                 ground = null;
             }
             ClearColumnBrushes();
+            foreach (var brush in pressureBrushes.Values)
+                brush.Dispose();
+            pressureBrushes.Clear();
             foreach (var brush in levelBrushes.Values)
                 brush.Dispose();
             levelBrushes.Clear();
@@ -519,14 +533,18 @@ namespace NinjaTrader.NinjaScript.Indicators
                 float y = (float)chartScale.GetYByValue(flip);
                 RenderTarget.DrawLine(new SharpDX.Vector2(left, y), new SharpDX.Vector2(right, y), bandFlip, 2f);
             }
-            // 3. The pressure: per minute the strongest PressureLevelsPerSide strikes above and below that minute's close, with their life.
-            // The state of each level follows its PRICE (strike lists differ from day to day).
+            // 3. The pressure: per minute the strongest PressureLevelsPerSide strikes above and below that minute's close.
+            // Calm (Lester 2026-11-06 21:10, "demasiado picotillo"): a strike LIGHTS only after PressureMinStreak minutes in a row among the
+            // strongest, then stays while its pressure holds (>= p90) and the price has not crossed it for 5 minutes; consecutive minutes are
+            // ONE soft-edged bar, never stretched over a gap between sessions. The state follows the strike's PRICE (lists differ by day).
             if (pressureRows.Count == 0 || pressureP90 <= 0 || ChartBars == null)
                 return;
             var lit = new Dictionary<double, bool>();
+            var streak = new Dictionary<double, int>();
             var side = new Dictionary<double, int>();
             var beyond = new Dictionary<double, int>();
             var cut = new Dictionary<double, bool>();
+            var runs = new Dictionary<double, PressureRun>();
             var ysByStrikes = new Dictionary<double[], float[]>();
             long[] epochs = pressureRows.Keys.ToArray();
             for (int m = 0; m < epochs.Length; m++)
@@ -536,8 +554,8 @@ namespace NinjaTrader.NinjaScript.Indicators
                 if (double.IsNaN(close))
                     continue;
                 float x = XOf(chartControl, epochs[m]);
-                bool last = m == epochs.Length - 1;
-                float next = last ? right : XOf(chartControl, epochs[m + 1]);
+                bool contiguous = m < epochs.Length - 1 && epochs[m + 1] - epochs[m] <= 120;
+                float next = m == epochs.Length - 1 ? right : contiguous ? XOf(chartControl, epochs[m + 1]) : XOf(chartControl, epochs[m] + 60);
                 double[] strikes = row.Strikes, values = row.Values;
                 int n = strikes.Length;
                 float[] ys;
@@ -549,6 +567,7 @@ namespace NinjaTrader.NinjaScript.Indicators
                 var above = Enumerable.Range(0, n).Where(i => strikes[i] > close && Math.Abs(values[i]) >= pressureP90).OrderByDescending(i => Math.Abs(values[i])).Take(PressureLevelsPerSide);
                 var below = Enumerable.Range(0, n).Where(i => strikes[i] <= close && Math.Abs(values[i]) >= pressureP90).OrderByDescending(i => Math.Abs(values[i])).Take(PressureLevelsPerSide);
                 var chosen = new HashSet<int>(above.Concat(below));
+                var drawn = new HashSet<double>();
                 for (int i = 0; i < n; i++)
                 {
                     double k = strikes[i];
@@ -558,6 +577,7 @@ namespace NinjaTrader.NinjaScript.Indicators
                     {
                         cut[k] = false; // faded: fresh pressure may rebuild it later
                         lit[k] = false;
+                        streak[k] = 0;
                         continue;
                     }
                     int now = close >= k ? 1 : -1;
@@ -572,25 +592,77 @@ namespace NinjaTrader.NinjaScript.Indicators
                         count = 0;
                     beyond[k] = count;
                     cut[k] = isCut;
-                    if (!chosen.Contains(i) || isCut)
-                    {
-                        lit[k] = wasLit && !isCut;
-                        continue;
-                    }
-                    if (!wasLit)
+                    int run = chosen.Contains(i) ? (streak.ContainsKey(k) ? streak[k] : 0) + 1 : 0;
+                    streak[k] = run;
+                    bool show = !isCut && (wasLit || run >= PressureMinStreak);
+                    if (show && !wasLit)
                     {
                         side[k] = now;
                         beyond[k] = 0;
                     }
-                    lit[k] = true;
-                    if (next < left || x > right || next <= x)
+                    lit[k] = show;
+                    if (!show || next <= x)
                         continue;
                     double share = pressureP99 > 0 ? Math.Min(1.0, Math.Abs(values[i]) / pressureP99) : 1.0;
-                    var brushes = values[i] >= 0 ? pressureUp : pressureDown;
-                    float half = HalfRow(ys, i);
-                    RenderTarget.FillRectangle(new SharpDX.RectangleF(x, ys[i] - half, next - x, half * 2), brushes[Math.Min(RampSteps - 1, (int)(share * RampSteps))]);
+                    int sign = values[i] >= 0 ? 1 : -1;
+                    PressureRun open;
+                    if (runs.TryGetValue(k, out open) && open.Sign == sign && Math.Abs(open.X1 - x) < 1.5f)
+                    {
+                        open.X1 = next;
+                        open.ShareSum += share;
+                        open.Count++;
+                    }
+                    else
+                    {
+                        if (open != null)
+                            DrawPressureRun(open, left, right);
+                        runs[k] = new PressureRun { X0 = x, X1 = next, Y = ys[i], Half = HalfRow(ys, i), Sign = sign, Count = 1, ShareSum = share };
+                    }
+                    drawn.Add(k);
+                }
+                foreach (double k in runs.Keys.Where(k => !drawn.Contains(k)).ToList())
+                {
+                    DrawPressureRun(runs[k], left, right);
+                    runs.Remove(k);
                 }
             }
+            foreach (PressureRun open in runs.Values)
+                DrawPressureRun(open, left, right);
+        }
+
+        // One pressure bar: transparent at its top and bottom edges, full colour in the middle (no hard tiles).
+        private void DrawPressureRun(PressureRun run, float left, float right)
+        {
+            if (run.X1 < left || run.X0 > right || run.X1 - run.X0 < 1f)
+                return;
+            double share = run.ShareSum / Math.Max(1, run.Count);
+            int step = Math.Min(PressureSteps - 1, (int)(share * PressureSteps));
+            int key = run.Sign * (step + 1);
+            SharpDX.Direct2D1.LinearGradientBrush brush;
+            if (!pressureBrushes.TryGetValue(key, out brush))
+            {
+                double t = (step + 1) / (double)PressureSteps;
+                var color = run.Sign > 0
+                    ? new SharpDX.Color4((float)((20 + 60 * t) / 255), (float)((150 + 105 * t) / 255), (float)((70 + 40 * t) / 255), (float)(0.5 + 0.45 * t))
+                    : new SharpDX.Color4((float)((200 + 55 * t) / 255), (float)((40 + 50 * t) / 255), (float)((35 + 15 * t) / 255), (float)(0.5 + 0.45 * t));
+                var clear = new SharpDX.Color4(color.Red, color.Green, color.Blue, 0f);
+                var stops = new[]
+                {
+                    new SharpDX.Direct2D1.GradientStop { Position = 0f, Color = clear },
+                    new SharpDX.Direct2D1.GradientStop { Position = 0.35f, Color = color },
+                    new SharpDX.Direct2D1.GradientStop { Position = 0.65f, Color = color },
+                    new SharpDX.Direct2D1.GradientStop { Position = 1f, Color = clear },
+                };
+                using (var collection = new SharpDX.Direct2D1.GradientStopCollection(RenderTarget, stops))
+                    brush = new SharpDX.Direct2D1.LinearGradientBrush(RenderTarget,
+                        new SharpDX.Direct2D1.LinearGradientBrushProperties { StartPoint = new SharpDX.Vector2(0, 0), EndPoint = new SharpDX.Vector2(0, 1) }, collection);
+                pressureBrushes[key] = brush;
+            }
+            float half = Math.Max(2f, run.Half);
+            brush.StartPoint = new SharpDX.Vector2(run.X0, run.Y - half);
+            brush.EndPoint = new SharpDX.Vector2(run.X0, run.Y + half);
+            float x0 = Math.Max(left, run.X0), x1 = Math.Min(right, run.X1);
+            RenderTarget.FillRectangle(new SharpDX.RectangleF(x0, run.Y - half, x1 - x0, half * 2), brush);
         }
 
         private void ClearColumnBrushes()
@@ -674,13 +746,14 @@ namespace NinjaTrader.NinjaScript.Indicators
         private SharpDX.Color4 PressureColor(double share, double strike, double priceThen)
         {
             double alpha = Math.Max(0.05, Math.Min(1.0, Opacity / 100.0));
-            if (share < 0.35)
-                return Mix(new[] { 8.0, 24, 86 }, new[] { 28.0, 92, 205 }, share / 0.35, alpha);
-            double t = (share - 0.35) / 0.65;
+            // Weak strikes stay deep navy (2026-11-06 21:10: the royal blue was too light); colour only from 45 % of the column's p98.
+            if (share < 0.45)
+                return Mix(new[] { 3.0, 9, 36 }, new[] { 12.0, 38, 115 }, share / 0.45, alpha);
+            double t = (share - 0.45) / 0.55;
             bool support = !double.IsNaN(priceThen) && strike <= priceThen;
             double[] mid = support ? new[] { 30.0, 190, 90 } : new[] { 235.0, 70, 40 };
             double[] top = support ? new[] { 190.0, 255, 120 } : new[] { 255.0, 205, 60 };
-            return t < 0.6 ? Mix(new[] { 28.0, 92, 205 }, mid, t / 0.6, Math.Min(1.0, alpha + 0.2)) : Mix(mid, top, (t - 0.6) / 0.4, Math.Min(1.0, alpha + 0.3));
+            return t < 0.6 ? Mix(new[] { 12.0, 38, 115 }, mid, t / 0.6, Math.Min(1.0, alpha + 0.2)) : Mix(mid, top, (t - 0.6) / 0.4, Math.Min(1.0, alpha + 0.3));
         }
 
         // Style Clasico: Convexa's ramps (green positive / red negative; blue, purple or orange for the unsigned figures), transparent when weak.
