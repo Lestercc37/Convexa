@@ -1,0 +1,754 @@
+<title>Convexa Heatmap</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap">
+<style>
+/* Layout: scanner column on the left, price chart with a Bookmap-style time line in the middle, dealer panel under the chart. One deliberately dark look, the same tokens Convexa already uses. */
+:root {
+  --bg: #0e111a;
+  --panel: #1e222d;
+  --panel-2: #262b38;
+  --line: #2a2e39;
+  --text: #d1d4dc;
+  --dim: #787b86;
+  --up: #26a69a;
+  --down: #ef5350;
+  --calm: #00dc5a;
+  --calm-soft: #0a3d22;
+  --risk: #fa000a;
+  --risk-soft: #4a0a0d;
+  --accent: #7eb6ff;
+  --warning: #f3c969;
+  --atr: #a78bfa;
+  --font: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  color-scheme: dark;
+}
+html, body { background: var(--bg); color: var(--text); font-family: var(--font); }
+body { padding-inline: 16px; padding-block: 16px 32px; }
+* { box-sizing: border-box; }
+.wrap { max-width: 1480px; margin: 0 auto; display: flex; flex-direction: column; gap: 16px; }
+.cap { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: baseline; justify-content: space-between; }
+.cap h1 { margin: 0; font-size: 18px; font-weight: 600; letter-spacing: -0.01em; }
+.cap p { margin: 0; color: var(--dim); font-size: 13px; }
+.mockscroll { overflow-x: auto; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); }
+.app { min-width: 1120px; display: grid; grid-template-columns: 236px minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); }
+.top { grid-column: 1 / -1; display: flex; align-items: center; gap: 14px; padding: 8px 12px; border-bottom: 1px solid var(--line); background: var(--panel); flex-wrap: wrap; }
+.logo { font-weight: 600; letter-spacing: 0.04em; font-size: 13px; color: var(--calm); margin-right: 4px; }
+.seg { display: inline-flex; background: var(--panel-2); border: 1px solid var(--line); border-radius: 8px; padding: 2px; gap: 2px; }
+.seg button { font: inherit; font-size: 12px; font-weight: 500; color: var(--dim); background: transparent; border: 0; border-radius: 6px; padding: 5px 10px; cursor: pointer; }
+.seg button[aria-pressed="true"] { background: var(--bg); color: var(--text); }
+.seg button:focus-visible, .chip:focus-visible, .tab:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.px { font-variant-numeric: tabular-nums; font-size: 15px; font-weight: 600; }
+.px small { color: var(--dim); font-weight: 400; font-size: 12px; margin-left: 8px; }
+.sp { flex: 1; }
+.side { border-right: 1px solid var(--line); display: flex; flex-direction: column; min-width: 0; }
+.panelhead { display: flex; align-items: center; justify-content: space-between; padding: 10px 12px; border-bottom: 1px solid var(--line); font-size: 12px; font-weight: 600; letter-spacing: 0.02em; }
+.panelhead span { color: var(--dim); font-weight: 400; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; padding: 8px 12px; border-bottom: 1px solid var(--line); }
+.chip { font: inherit; font-size: 11px; color: var(--dim); background: var(--panel-2); border: 1px solid var(--line); border-radius: 999px; padding: 3px 9px; cursor: pointer; }
+.chip[aria-pressed="true"] { color: var(--text); border-color: var(--accent); }
+.rows { display: flex; flex-direction: column; font-variant-numeric: tabular-nums; }
+.row { display: grid; grid-template-columns: 58px 1fr 40px; gap: 8px; align-items: center; padding: 7px 12px; border-bottom: 1px solid var(--line); font-size: 12px; }
+.row b { font-weight: 600; }
+.row i { font-style: normal; font-size: 10px; border-radius: 4px; padding: 1px 5px; margin-left: 4px; }
+.row .c { background: var(--calm-soft); color: var(--calm); }
+.row .p { background: var(--risk-soft); color: #ff6b70; }
+.bar { height: 6px; border-radius: 3px; background: var(--risk-soft); overflow: hidden; }
+.bar span { display: block; height: 100%; background: var(--calm); }
+.row .t { color: var(--dim); text-align: right; }
+.row em.ml { font-style: normal; font-size: 10px; margin-left: 6px; padding: 1px 6px; border-radius: 4px; color: var(--warning); border: 1px solid rgba(243,201,105,0.45); }
+.mlrow .bar span { background: repeating-linear-gradient(90deg, var(--calm) 0 4px, rgba(0,220,90,0.35) 4px 8px); }
+.tabs .sp { flex: 1; }
+.row .pm { color: var(--dim); font-size: 11px; grid-column: 2; margin-top: -4px; }
+.note { padding: 10px 12px; font-size: 11px; color: var(--dim); line-height: 1.5; }
+.main { min-width: 0; display: flex; flex-direction: column; }
+.chartbox { position: relative; border-bottom: 1px solid var(--line); background: var(--bg); }
+canvas { display: block; width: 100%; }
+#tip { position: absolute; z-index: 3; pointer-events: none; background: var(--panel-2); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; font-size: 12px; line-height: 1.5; font-variant-numeric: tabular-nums; min-width: 150px; }
+#tip[hidden] { display: none; }
+.legend { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; padding: 8px 12px; font-size: 11px; color: var(--dim); background: var(--panel); border-top: 1px solid var(--line); }
+.ramp { display: inline-flex; align-items: center; gap: 6px; }
+.ramp b { display: inline-flex; border-radius: 4px; overflow: hidden; border: 1px solid var(--line); }
+.ramp b i { width: 14px; height: 10px; display: block; }
+.tabs { display: flex; gap: 2px; padding: 6px 12px 0; border-bottom: 1px solid var(--line); background: var(--panel); }
+.tab { font: inherit; font-size: 12px; font-weight: 500; color: var(--dim); background: transparent; border: 0; border-bottom: 2px solid transparent; padding: 8px 12px; cursor: pointer; }
+.tab[aria-selected="true"] { color: var(--text); border-bottom-color: var(--calm); }
+.pane { padding: 12px 16px 14px; min-height: 176px; display: grid; grid-template-columns: 190px minmax(0, 1fr) minmax(0, 1fr); gap: 20px; background: var(--panel); }
+.pane[hidden] { display: none; }
+.big { font-size: 38px; font-weight: 600; letter-spacing: -0.02em; line-height: 1; font-variant-numeric: tabular-nums; }
+.lbl { font-size: 11px; color: var(--dim); letter-spacing: 0.03em; text-transform: uppercase; margin-bottom: 8px; }
+.sub { font-size: 12px; color: var(--dim); margin-top: 8px; line-height: 1.5; }
+.kv { display: grid; grid-template-columns: auto auto; gap: 6px 14px; font-size: 12px; margin-top: 14px; font-variant-numeric: tabular-nums; }
+.kv span:nth-child(odd) { color: var(--dim); }
+.kv span:nth-child(even) { text-align: right; }
+.mini { min-width: 0; }
+.mini h4 { margin: 0 0 6px; font-size: 11px; font-weight: 500; color: var(--dim); letter-spacing: 0.03em; text-transform: uppercase; }
+.neg { color: #ff6b70; }
+.pos { color: var(--calm); }
+.notes { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; }
+.notes div { border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; background: var(--panel); font-size: 13px; line-height: 1.55; color: var(--text); }
+.notes h3 { margin: 0 0 6px; font-size: 12px; font-weight: 600; letter-spacing: 0.03em; text-transform: uppercase; color: var(--dim); }
+.regime { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 500; border-radius: 999px; padding: 4px 10px; border: 1px solid var(--line); background: var(--panel-2); font-variant-numeric: tabular-nums; }
+.regime i { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+.regime b { font-weight: 600; }
+.regime span { color: var(--dim); }
+.regime.neg { border-color: rgba(250,0,10,0.55); background: rgba(74,10,13,0.55); } .regime.neg i { background: var(--risk); } .regime.neg b { color: #ff6b70; }
+.regime.pos { border-color: rgba(0,220,90,0.5); background: rgba(10,61,34,0.55); } .regime.pos i { background: var(--calm); } .regime.pos b { color: var(--calm); }
+.tab .tv { margin-left: 6px; font-weight: 600; color: var(--text); font-variant-numeric: tabular-nums; }
+@media (prefers-reduced-motion: reduce) { * { scroll-behavior: auto !important; } }
+</style>
+
+<div class="wrap">
+  <div class="cap">
+    <h1>Convexa Heatmap</h1>
+    <p>Maqueta. El fondo del heatmap es de ejemplo; las velas de 1 minuto y el flujo de opciones de SPX entre las 10:41 y las 11:19 son datos reales del 16 de octubre de 2026. Cambia dónde se ve el flujo por minuto en «Flujo/min».</p>
+  </div>
+
+  <div class="mockscroll">
+    <div class="app">
+      <div class="top">
+        <span class="logo">CONVEXA</span>
+        <div class="seg" role="group" aria-label="Símbolo" id="symSeg"></div>
+        <span class="px" id="pxline">—</span>
+        <div class="seg" role="group" aria-label="Marco temporal" id="tfSeg">
+          <button type="button" aria-pressed="true">1m</button><button type="button" aria-pressed="false">5m</button><button type="button" aria-pressed="false">15m</button>
+        </div>
+        <span class="regime neg" id="regime" title="Régimen de gamma del símbolo (gamma neta de los dealers)"><i></i><b id="regTxt">Gamma negativa</b><span id="regVal">−39.8 B</span></span>
+        <span class="sp"></span>
+        <div class="seg" role="group" aria-label="Métrica del heatmap" id="metSeg">
+          <button type="button" data-m="gamma" aria-pressed="true">Gamma</button><button type="button" data-m="delta" aria-pressed="false">Delta</button>
+        </div>
+        <div class="seg" role="group" aria-label="Vista" id="viewSeg">
+          <button type="button" aria-pressed="false">Estructural</button><button type="button" aria-pressed="true">Táctico</button>
+        </div>
+        <button type="button" class="chip" id="realBtn" aria-pressed="true" title="Velas y flujo reales de SPX, 10:41 a 11:19 del 16 de octubre">Día real</button>
+        <button type="button" class="chip" id="alBtn" aria-pressed="true" title="Alertas de ballenas como cubitos sobre el gráfico">Alertas</button>
+        <div class="seg" role="group" aria-label="Tamaño mínimo de las alertas, en contratos equivalentes en delta" id="minSeg" title="Tamaño mínimo de la alerta: contratos × delta">
+          <button type="button" data-min="100" aria-pressed="false">≥100</button><button type="button" data-min="200" aria-pressed="true">≥200</button><button type="button" data-min="400" aria-pressed="false">≥400</button>
+        </div>
+        <span id="zoneGrp" role="group" aria-label="Zonas de las alertas por delta" style="display:inline-flex;gap:4px;align-items:center;">
+          <button type="button" class="chip" data-z="OTM" aria-pressed="true" title="OTM: delta 0.25 a 0.40">OTM</button><button type="button" class="chip" data-z="ATM" aria-pressed="true" title="ATM: delta 0.40 a 0.60">ATM</button><button type="button" class="chip" data-z="ITM" aria-pressed="true" title="ITM: delta 0.60 a 0.85">ITM</button><button type="button" class="chip" data-z="FAR" aria-pressed="false" title="Fuera de 0.25 a 0.85: OTM lejano (delta menor a 0.25) e ITM profundo (mayor a 0.85)">Lejos</button>
+        </span>
+        <button type="button" class="chip" id="smBtn" aria-pressed="true">Smile</button>
+        <button type="button" class="chip" id="emBtn" aria-pressed="false">Movimiento esperado</button>
+      </div>
+
+      <aside class="side" aria-label="Scanner de flujo">
+        <div class="panelhead">Scanner de flujo <span>ejemplo</span></div>
+        <div class="chips" role="group" aria-label="Filtros">
+          <button type="button" class="chip" aria-pressed="true">0DTE</button>
+          <button type="button" class="chip" aria-pressed="false">Calls</button>
+          <button type="button" class="chip" aria-pressed="false">Puts</button>
+          <button type="button" class="chip" aria-pressed="true">Desde $100k</button>
+        </div>
+        <div class="rows" id="scan"></div>
+        <div class="note">Cada fila es un strike con flujo clasificado (compra o venta contra el bid y el ask). La etiqueta multi-leg marca operaciones que forman parte de una combinación: su compra o venta por pata puede no ser direccional (en la muestra del 7 de octubre fueron cerca del 31 %).</div>
+      </aside>
+
+      <section class="main">
+        <div class="chartbox" id="chartbox">
+          <canvas id="cv" height="640" aria-label="Heatmap de gamma por strike con velas, línea de tiempo y histograma alineado al precio" role="img"></canvas>
+          <div id="tip" hidden></div>
+        </div>
+        <div class="legend">
+          <span class="ramp">Gamma positiva <b id="rampPos"></b></span>
+          <span class="ramp">Gamma negativa <b id="rampNeg"></b></span>
+          <span>Blanco: el 2 % más intenso del día para este símbolo</span>
+          <span id="alLeg" style="display:inline-flex;align-items:center;gap:6px;"><i style="width:8px;height:8px;background:var(--up);display:inline-block;"></i><i style="width:8px;height:8px;background:var(--down);display:inline-block;"></i><i style="width:8px;height:8px;background:var(--warning);display:inline-block;"></i> Alerta: tamaño = contratos × delta (≥200 chico, ≥400 mediano, ≥600 grande); verde = compra, rojo = venta, ámbar = sin lado claro (estimado). Zonas por delta: OTM 0.25–0.40, ATM 0.40–0.60, ITM 0.60–0.85; «Lejos» = fuera de 0.25–0.85. Pasa el mouse para ver el detalle. <b id="alOut" style="color:var(--text);font-weight:500;"></b></span>
+          <span class="sp"></span>
+          <span id="clock" style="font-variant-numeric: tabular-nums;"></span>
+        </div>
+        <div class="tabs" role="tablist" aria-label="Panel de dealers">
+          <button class="tab" role="tab" id="tab-d" aria-selected="true" aria-controls="pane-d" type="button">Dealer impact <b class="tv" id="sum-d">78</b></button>
+          <button class="tab" role="tab" id="tab-b" aria-selected="false" aria-controls="pane-b" type="button">Market bias <b class="tv" id="sum-b">−34</b></button>
+          <button class="tab" role="tab" id="tab-v" aria-selected="false" aria-controls="pane-v" type="button">Volatility regime <b class="tv" id="sum-v">62</b></button>
+          <span class="sp"></span>
+          <button type="button" class="chip" id="colBtn" style="margin: 4px 0 6px;">Ocultar panel</button>
+        </div>
+        <div class="pane" id="pane-d" role="tabpanel" aria-labelledby="tab-d">
+          <div>
+            <div class="lbl">Dealer impact</div>
+            <div class="big" id="di">78</div>
+            <div class="sub">Percentil del gamma neto frente a las 11:42 de las últimas 28 sesiones.</div>
+            <div class="kv"><span>Gamma neto</span><span class="neg" id="ng">−39.8 B</span><span>Alineación</span><span id="sa">71</span><span>Régimen</span><span class="neg">Gamma negativo</span></div>
+          </div>
+          <div class="mini"><h4>Hoy contra la banda histórica</h4><canvas id="c1" height="150"></canvas></div>
+          <div class="mini"><h4>Gamma neto por hora</h4><canvas id="c2" height="150"></canvas></div>
+        </div>
+        <div class="pane" id="pane-b" role="tabpanel" aria-labelledby="tab-b" hidden>
+          <div>
+            <div class="lbl">Market bias</div>
+            <div class="big" id="mb">−34</div>
+            <div class="sub">Sesgo en vivo: skew 25Δ y puts contra calls por volumen, frente a la misma hora de días anteriores. El Smile flota sobre el gráfico.</div>
+            <div class="kv"><span>Skew 25Δ</span><span>+3.1 pts</span><span>P/C volumen</span><span>1.14</span><span>Hora de comparación</span><span>11:42</span></div>
+          </div>
+          <div class="mini"><h4>Skew 25Δ hoy contra la banda</h4><canvas id="c3" height="150"></canvas></div>
+          <div class="mini"><h4>Puts contra calls por volumen</h4><canvas id="c4" height="150"></canvas></div>
+        </div>
+        <div class="pane" id="pane-v" role="tabpanel" aria-labelledby="tab-v" hidden>
+          <div>
+            <div class="lbl">Volatility regime</div>
+            <div class="big" id="vr">62</div>
+            <div class="sub">IV Rank de la IV ATM de 0DTE frente a las últimas 28 sesiones.</div>
+            <div class="kv"><span>IV ATM</span><span>14.8 %</span><span>Mov. esperado</span><span id="emv">±0.55 %</span><span>ATR 14d</span><span id="atrv">64</span></div>
+          </div>
+          <div class="mini"><h4>IV ATM de hoy contra la banda</h4><canvas id="c5" height="150"></canvas></div>
+          <div class="mini"><h4>Rango del día en unidades de ATR</h4><canvas id="c6" height="150"></canvas></div>
+        </div>
+      </section>
+    </div>
+  </div>
+
+  <div class="notes">
+    <div><h3>Línea de tiempo</h3>Como en Bookmap: lo que ya pasó queda a la izquierda de la línea, y a la derecha vive un solo perfil dinámico, de donde sale el histórico. El Smile reproduce tu dibujo: puntos verdes con la IV de los calls y rojos con la de los puts por cada strike, alineados al precio, con el vértice en vivo. El rótulo de abajo lee la forma (arriba fácil, abajo fácil, atascado en el medio, sin desequilibrio) como hipótesis. Arrastra el rótulo para moverlo.</div>
+    <div><h3>Escala de color</h3>Banda continua y difuminada en lugar de cuadros: verde para gamma positiva, rojo para negativa, más claro cuanto mayor la intensidad. El blanco marca el 2 % más alto del día para cada símbolo y métrica.</div>
+    <div><h3>Qué ya tiene datos</h3>Gamma por strike cada ~2 minutos desde el 1 de septiembre, delta con la migración 0041 y dealer impact por hora con 28 sesiones. El bias en vivo necesita más historia fuera de SPX.</div>
+    <div><h3>Flujo por minuto (panel fijo)</h3>Dos barras por vela: izquierda calls, derecha puts, con la misma regla en las dos: hacia arriba es presión alcista (compra de call, venta de put) y hacia abajo es bajista (venta de call, compra de put). El crosshair atraviesa las velas y el panel y resalta el par de barras de esa vela. La marca ▲ señala la secuencia (calls vendidos en los 5 minutos previos y un minuto de puts comprados) solo como descripción: el 16 de octubre apareció 5 veces y en 3 de ellas el SPX estaba más abajo 30 minutos después, en un día que bajó el 73 % del tiempo. Sin tarjeta de alerta hasta tener 20 sesiones en vivo.</div>
+    <div><h3>Alertas como cubitos</h3>Un cubito sin texto por alerta: x = hora, y = strike. Su tamaño es el de la operación en contratos × delta (la misma unidad de las barras de flujo), así una alerta muy dentro del dinero con pocos contratos no pesa como una grande; el mínimo se elige arriba (≥100, ≥200, ≥400). Solo se muestran las alertas con delta entre 0.25 y 0.85, repartidas por zona según su delta (OTM de 0.25 a 0.40, ATM de 0.40 a 0.60, ITM de 0.60 a 0.85), con chips para encender o apagar cada zona; «Lejos» (OTM por debajo de 0.25, como compras de puts de protección, o ITM por encima de 0.85) está apagado y se puede encender. Color: verde compra, rojo venta, ámbar sin lado claro. El detalle (compra o venta, call o put, strike, zona, tamaño y prima) sale al pasar el mouse. Los strikes fuera de la ventana quedan en el borde, más tenues.</div>
+    <div><h3>Panel de dealers plegado</h3>Dealer impact, Market bias y Volatility regime empiezan plegados y muestran su número en la propia pestaña; un clic en cualquiera abre el detalle (baja un poco con el scroll) y «Ocultar panel» lo vuelve a esconder. El régimen de gamma vive junto a las temporalidades, siempre a la vista.</div>
+    <div><h3>Qué mide el flujo</h3>Delta firmado de operaciones simples de SPXW 0DTE, clasificadas contra el bid y el ask de cada operación (≈55 % del volumen; las multi-leg pueden quedar mal firmadas). Es flujo estimado, no la posición del market maker ni su cobertura en futuros. En 59 sesiones el flujo acompaña al precio pero no se adelanta.</div>
+    <div><h3>Por decidir</h3>Si el movimiento esperado se queda como líneas opcionales, y la altura exacta del panel de flujo en pantallas chicas (el gráfico de velas ocupa el alto que sobra).</div>
+  </div>
+</div>
+
+<script>
+(function () {
+  var CSSV = getComputedStyle(document.documentElement);
+  function tok(n) { return CSSV.getPropertyValue(n).trim(); }
+  var C = { bg: tok('--bg'), panel: tok('--panel'), line: tok('--line'), text: tok('--text'), dim: tok('--dim'), up: tok('--up'), down: tok('--down'), calm: tok('--calm'), risk: tok('--risk'), accent: tok('--accent'), warning: tok('--warning'), atr: tok('--atr') };
+  var REDUCED = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  var SYMS = {
+    SPX: { px: 7687.3, atr: 64.1, step: 5, dec: 1, lv: { cw: 7775, pw: 7670, abs: 7700, mp: 7710, gf: 7745.6 }, seed: 11 },
+    NDX: { px: 29526.7, atr: 367, step: 25, dec: 1, lv: { cw: 29900, pw: 29150, abs: 29400, mp: 29450, gf: 29640 }, seed: 23 },
+    NQ: { px: 29745.5, atr: 367, step: 25, dec: 2, lv: { cw: 30119, pw: 29369, abs: 29619, mp: 29669, gf: 29859 }, seed: 23 },
+    SPY: { px: 767.1, atr: 6.36, step: 0.5, dec: 2, lv: { cw: 774, pw: 759, abs: 765, mp: 766, gf: 769.5 }, seed: 31 },
+    QQQ: { px: 720.2, atr: 8.96, step: 0.5, dec: 2, lv: { cw: 728, pw: 711, abs: 718, mp: 719, gf: 722 }, seed: 41 },
+    IWM: { px: 272.8, atr: 3.67, step: 0.5, dec: 2, lv: { cw: 276, pw: 268, abs: 272, mp: 271.5, gf: 274 }, seed: 53 },
+    NVDA: { px: 215.6, atr: 5.63, step: 0.5, dec: 2, lv: { cw: 220, pw: 210, abs: 215, mp: 214, gf: 217 }, seed: 67 }
+  };
+  var state = { sym: 'SPX', metric: 'gamma', em: false, smile: true, smileX: null, flow: 'A', real: true, alerts: true, minDelta: 200, zones: { ITM: true, ATM: true, OTM: true, FAR: false } };
+  var NCOL = 66, NCAN = 132;
+
+  /* Datos reales del 16 de octubre de 2026, SPX. Velas de 1 minuto guardadas por Convexa; flujo = delta firmado de operaciones simples de SPXW 0DTE
+     (compra al ask o más: +1, venta al bid o menos: -1; call +, put -; |delta| de la última instantánea de la cadena). De 10:41 a 10:56 solo hay cierre
+     por minuto (apertura = cierre anterior, mechas aproximadas); de 10:57 a 11:19, apertura, máximo, mínimo y cierre. */
+  var R_CLOSE = [7744.96, 7744.48, 7744.92, 7743.94, 7746.71, 7747.22, 7749.51, 7749.62, 7750.31, 7750.62, 7745.57, 7744.60, 7739.11, 7737.89, 7739.33, 7738.22];
+  var R_CALLS = [-72, -153, 21, -64, 146, 9, 268, 167, -80, -79, -211, -194, -149, -94, 70, -43];
+  var R_PUTS = [-56, -90, 247, -82, 83, 157, 49, 3, -39, 59, 302, -115, -387, -5, -79, 83];
+  var R_REST = [['10:57', 7738.22, 7740.12, 7737.79, 7739.77, -59, -62], ['10:58', 7739.79, 7739.99, 7737.72, 7738.92, 22, 31], ['10:59', 7738.95, 7739.81, 7738.34, 7739.50, -41, 97],
+    ['11:00', 7739.60, 7739.60, 7736.46, 7736.69, -109, -29], ['11:01', 7736.59, 7737.58, 7734.86, 7735.70, -161, 17], ['11:02', 7735.82, 7735.99, 7733.68, 7734.09, -124, -152],
+    ['11:03', 7734.22, 7737.16, 7734.22, 7737.11, 101, -1], ['11:04', 7737.13, 7737.46, 7735.08, 7735.38, -111, 21], ['11:05', 7735.80, 7736.22, 7729.58, 7729.67, -134, -515],
+    ['11:06', 7729.70, 7729.99, 7726.45, 7726.72, -225, -297], ['11:07', 7727.36, 7727.36, 7725.19, 7727.00, -20, -53], ['11:08', 7726.52, 7727.50, 7723.83, 7723.83, -85, -236],
+    ['11:09', 7724.16, 7724.89, 7722.37, 7722.78, -248, -117], ['11:10', 7722.54, 7723.60, 7719.26, 7721.02, -81, -526], ['11:11', 7721.01, 7724.62, 7721.01, 7723.46, 259, -87],
+    ['11:12', 7723.67, 7724.99, 7723.29, 7724.95, -14, 51], ['11:13', 7725.16, 7725.76, 7724.10, 7725.04, -18, 1], ['11:14', 7724.92, 7725.24, 7724.03, 7724.68, -63, -72],
+    ['11:15', 7724.35, 7726.04, 7723.02, 7723.02, -248, -159], ['11:16', 7723.09, 7723.74, 7720.44, 7722.82, -58, -18], ['11:17', 7722.47, 7723.90, 7720.50, 7723.57, -32, 59],
+    ['11:18', 7723.66, 7724.33, 7721.47, 7721.93, 36, 31], ['11:19', 7721.94, 7721.94, 7719.72, 7721.61, -95, 11]];
+  /* La secuencia (calls vendidos <= -250 en los 5 minutos previos y un minuto de puts comprados <= -300) en TODO el día 16 de octubre y lo que hizo el SPX 30 minutos después. */
+  var SEQ_DAY = [['10:10', -545, -315, 13.6], ['10:53', -395, -387, -23.6], ['11:05', -404, -515, -12.6], ['11:10', -712, -526, -2.1], ['14:55', -316, -599, 20.1]];
+  /* Alertas reales de SPX del 16 de octubre, 10:41-11:19: [hora, call/put, strike, tipo, prima $, compra $, venta $, moneyness, etiqueta de cercanía, repeticiones]. */
+  var ALERTS_REAL = [['10:43:03','C',7775,'SUSTAINED_FLOW',511356,212407,298949,'ATM','Gamma Flip',1],['10:44:10','C',7705,'SUSTAINED_FLOW',507375,349427,157948,'ATM','Gamma Flip',1],['10:47:10','P',7800,'SUSTAINED_FLOW',516513,122284,394229,'ATM','Gamma Flip',2],
+    ['10:48:10','C',7705,'SUSTAINED_FLOW',517116,375475,141641,'ATM','Call Wall',2],['10:50:00','P',7725,'UNUSUAL',731186,696039,35147,'ATM','Call Wall',2],['10:51:10','C',7705,'SUSTAINED_FLOW',528439,400725,127714,'ATM','Call Wall',3],
+    ['10:52:02','P',7770,'SUSTAINED_FLOW',534947,237902,297045,'ATM','Gamma Flip',2],['10:52:05','C',7720,'UNUSUAL',1549868,51346,1498522,'ATM','Gamma Flip',2],['10:54:00','P',7730,'UNUSUAL',552130,410801,141329,'ATM','Gamma Flip',2],
+    ['10:54:04','C',7705,'SUSTAINED_FLOW',529610,390513,139097,'ATM','Gamma Flip',4],['10:54:10','P',7775,'SUSTAINED_FLOW',537072,259328,277744,'ATM','Gamma Flip',1],['10:55:06','C',7700,'SUSTAINED_FLOW',529613,277289,252324,'ATM','Gamma Flip',2],
+    ['11:02:00','P',7705,'SUSTAINED_FLOW',540494,235187,305307,'ATM','Gamma Flip',2],['11:02:00','P',7700,'SUSTAINED_FLOW',506184,227238,278946,'ATM','Gamma Flip',2],['11:06:00','P',7725,'UNUSUAL',1024947,558070,466877,'ATM','Gamma Flip',3],
+    ['11:06:11','P',7775,'SUSTAINED_FLOW',624460,322013,302447,'ATM','Gamma Flip',2],['11:07:03','C',7705,'SUSTAINED_FLOW',501507,270497,231010,'ATM','Put Wall',5],['11:08:02','P',7695,'SUSTAINED_FLOW',643051,373555,269496,'ATM','Gamma Flip',2],
+    ['11:10:00','P',7690,'SUSTAINED_FLOW',501306,165659,335647,'ATM','Gamma Flip',1],['11:11:02','C',7710,'SUSTAINED_FLOW',754507,379327,375180,'ATM','Put Wall',2],['11:17:00','P',7680,'SUSTAINED_FLOW',536832,226181,310651,'ATM','Gamma Flip',1],
+    ['11:17:00','P',7685,'SUSTAINED_FLOW',501787,230591,271196,'ATM','Gamma Flip',1],['11:17:01','C',7765,'SUSTAINED_FLOW',546413,142685,403728,'ATM','Gamma Flip',2],['11:17:10','C',7690,'SUSTAINED_FLOW',525428,332854,192574,'ATM','Put Wall',1]];
+  /* |delta| y precio medio de cada alerta real (de la última foto de la cadena), en el mismo orden que ALERTS_REAL. Tamaño del cubito = contratos × |delta|, con contratos = prima / (precio medio × 100): la misma unidad que las barras de flujo. */
+  var ALERT_GREEKS = [[0.13, 1.62], [0.90, 41.95], [0.95, 52.45], [0.95, 46.15], [0.19, 2.85], [0.93, 46.45], [0.82, 25.55], [0.84, 29.35], [0.34, 6.00], [0.88, 38.10], [0.91, 34.90], [0.87, 39.85],
+    [0.14, 2.17], [0.11, 1.73], [0.33, 5.35], [1.00, 38.45], [0.78, 28.60], [0.16, 2.55], [0.14, 2.25], [0.65, 19.45], [0.10, 1.55], [0.12, 1.92], [0.07, 0.93], [0.85, 36.10]];
+  /* Condición del trade de cada alerta real, reconstruida de las operaciones de SPXW del 16 de octubre (la columna whale_alerts.condition_premium empezó a llenarse a las 16:56, después de estas alertas):
+     reparto de la prima por categoría de código OPRA, en el mismo orden que ALERTS_REAL; [reparto %, reconstrucción aproximada (error de 6 a 13 % contra la prima guardada)]. */
+  var ALERT_COND = [[{ 'multi-leg': 54, simple: 43, subasta: 3 }, 0], [{ simple: 55, 'multi-leg': 42, subasta: 3 }, 1], [{ 'multi-leg': 89, simple: 9, subasta: 2 }, 1], [{ simple: 50, 'multi-leg': 49, subasta: 1 }, 1],
+    [{ otra: 90, simple: 6, 'multi-leg': 4 }, 0], [{ simple: 52, 'multi-leg': 48 }, 0], [{ simple: 49, 'multi-leg': 39, subasta: 12 }, 0], [{ 'multi-leg': 96, subasta: 3, simple: 1 }, 0],
+    [{ simple: 73, 'multi-leg': 22, subasta: 4 }, 0], [{ 'multi-leg': 50, simple: 50 }, 1], [{ simple: 72, 'multi-leg': 20, subasta: 7 }, 0], [{ simple: 42, 'multi-leg': 36, subasta: 21 }, 0],
+    [{ simple: 50, 'multi-leg': 46, subasta: 4 }, 0], [{ simple: 64, 'multi-leg': 32, subasta: 5 }, 0], [{ simple: 63, 'multi-leg': 28, subasta: 9, otra: 1 }, 0], [{ 'multi-leg': 56, simple: 31, subasta: 14 }, 1],
+    [{ simple: 80, 'multi-leg': 19, subasta: 1 }, 0], [{ 'multi-leg': 70, simple: 27, subasta: 3 }, 0], [{ 'multi-leg': 51, simple: 41, subasta: 6, otra: 3 }, 0], [{ 'multi-leg': 47, simple: 42, subasta: 11 }, 0],
+    [{ 'multi-leg': 50, simple: 45, subasta: 5 }, 0], [{ simple: 48, 'multi-leg': 46, subasta: 5 }, 0], [{ 'multi-leg': 55, simple: 42, subasta: 3 }, 0], [{ simple: 59, 'multi-leg': 34, subasta: 7 }, 1]];
+  /* Segunda etiqueta (etapa de prueba, opción C): firmando SOLO condiciones simples (18, 95, 125, 126); C compra, V venta, N sin lado claro, X sin lado. Mismo orden que ALERTS_REAL (hm_sign_by_condition_1016.py). */
+  var ALERT_ALT = "XCXNXCNXCXNNNCCXNXXVNCXC".split("");
+  function buildAlerts(candles, flow, S, r) {
+    var out = [], i;
+    if (flow.real) {
+      ALERTS_REAL.forEach(function (a, ai) {
+        var p = a[0].split(':'), pos = (parseInt(p[0], 10) * 60 + parseInt(p[1], 10) - (10 * 60 + 41)) + parseInt(p[2], 10) / 60, g = ALERT_GREEKS[ai];
+        if (pos >= 0 && pos < candles.length) out.push({ pos: pos, t: a[0], right: a[1], strike: a[2], type: a[3], amt: a[4], buy: a[5], sell: a[6], delta: g[0], mid: g[1], deq: Math.round(a[4] / (g[1] * 100) * g[0]), rep: a[9], cond: ALERT_COND[ai][0], approx: ALERT_COND[ai][1] === 1, alt: ALERT_ALT[ai] });
+      });
+    } else {
+      for (i = 0; i < 16; i++) {
+        var dl = 0.08 + 0.85 * r(), mid = 1.5 + 45 * dl * dl + r() * 3, contracts = 120 + Math.round(r() * r() * 3200), amt = Math.round(contracts * mid * 100), bf = r();
+        var st = Math.round((S.px + gauss(r) * S.atr * 0.35) / S.step) * S.step, pos2 = r() * (candles.length - 1), mm = 570 + Math.round(pos2 * 2);
+        out.push({ pos: pos2, t: ('0' + Math.floor(mm / 60)).slice(-2) + ':' + ('0' + (mm % 60)).slice(-2) + ':00', right: r() < 0.5 ? 'C' : 'P', strike: st, type: amt > 1000000 ? 'UNUSUAL' : 'SUSTAINED_FLOW', amt: amt, buy: Math.round(amt * bf), sell: Math.round(amt * (1 - bf)), delta: dl, mid: mid, deq: Math.round(contracts * dl), rep: 1 + Math.floor(r() * 3), cond: (function () { var ml = Math.round(r() * 100); return { simple: 100 - ml, 'multi-leg': ml }; })(), approx: false, alt: null });
+      }
+    }
+    return out;
+  }
+  function realBuild() {
+    var candles = [], calls = [], puts = [], labels = [], i, prev = null;
+    for (i = 0; i < R_CLOSE.length; i++) {
+      var o = prev === null ? 7745.2 : prev, c = R_CLOSE[i];
+      candles.push({ o: o, h: Math.max(o, c) + 0.35, l: Math.min(o, c) - 0.35, c: c }); calls.push(R_CALLS[i]); puts.push(R_PUTS[i]); labels.push('10:' + (41 + i)); prev = c;
+    }
+    R_REST.forEach(function (r) { candles.push({ o: r[1], h: r[2], l: r[3], c: r[4] }); calls.push(r[5]); puts.push(r[6]); labels.push(r[0]); });
+    return { candles: candles, flow: { calls: calls, puts: puts, labels: labels, real: true } };
+  }
+  function seqMarks(calls, puts) {
+    var out = [], k, j, s;
+    for (k = 5; k < calls.length; k++) { s = 0; for (j = k - 5; j < k; j++) s += calls[j]; if (puts[k] <= -300 && s <= -250) out.push(k); }
+    return out;
+  }
+
+  function rng(seed) { var s = seed >>> 0; return function () { s = (s * 1664525 + 1013904223) >>> 0; return s / 4294967296; }; }
+  function gauss(r) { var u = 1 - r(), v = r(); return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v); }
+
+  var data = null, heat = null;
+  var POS = [[10, 61, 34], [8, 120, 60], [0, 168, 70], [0, 220, 90], [110, 255, 160], [255, 255, 255]];
+  var NEG = [[74, 10, 13], [130, 8, 14], [190, 6, 12], [250, 0, 10], [255, 120, 110], [255, 255, 255]];
+  function rampRGB(stops, f) {
+    var n = stops.length - 1, x = Math.max(0, Math.min(1, f)) * n, i = Math.min(n - 1, Math.floor(x)), u = x - i, a = stops[i], b = stops[i + 1];
+    return [Math.round(a[0] + (b[0] - a[0]) * u), Math.round(a[1] + (b[1] - a[1]) * u), Math.round(a[2] + (b[2] - a[2]) * u)];
+  }
+  function ramp(stops, f) { var c = rampRGB(stops, f); return 'rgb(' + c[0] + ',' + c[1] + ',' + c[2] + ')'; }
+  function rgba(v) {
+    var f = Math.min(1, Math.abs(v) / data.q98), c = rampRGB(v >= 0 ? POS : NEG, f >= 0.985 ? 1 : f * 0.96);
+    return [c[0], c[1], c[2], Math.round(Math.min(1, f * 1.35) * 255)];
+  }
+
+  function build() {
+    var S = SYMS[state.sym], r = rng(S.seed + (state.metric === 'delta' ? 7 : 0));
+    var open = S.px - S.atr * 0.7, p = open, candles = [], i;
+    for (i = 0; i < NCAN; i++) {
+      var o = p, drift = (i < 8 ? 0.05 : 0.012) * S.atr * 0.12;
+      var c = o + gauss(r) * S.atr * 0.028 + drift;
+      var h = Math.max(o, c) + Math.abs(gauss(r)) * S.atr * 0.012, l = Math.min(o, c) - Math.abs(gauss(r)) * S.atr * 0.012;
+      candles.push({ o: o, h: h, l: l, c: c }); p = c;
+    }
+    var last = candles[NCAN - 1].c, k = S.px / last;
+    candles.forEach(function (cd) { cd.o *= k; cd.h *= k; cd.l *= k; cd.c *= k; });
+    open = candles[0].o;
+    var lo = open - S.atr * 1.25, hi = open + S.atr * 1.25, flow = null;
+    if (state.real && state.sym === 'SPX') {
+      var rb = realBuild();
+      candles = rb.candles; flow = rb.flow;
+      S = { px: candles[candles.length - 1].c, atr: S.atr, step: 1, dec: 1, lv: { cw: 7750, pw: 7700, abs: 7750, mp: 7740, gf: 7745.1 }, seed: S.seed };
+      open = candles[0].o; lo = 7716; hi = 7754;
+    }
+    if (!flow) {
+      var fc = [], fp = [];
+      candles.forEach(function (cd) { fc.push(Math.round((cd.c - cd.o) / S.atr * 2400 + gauss(r) * 110)); fp.push(Math.round((cd.c - cd.o) / S.atr * 2900 + gauss(r) * 140)); });
+      flow = { calls: fc, puts: fp, labels: null, real: false };
+    }
+    flow.seq = seqMarks(flow.calls, flow.puts);
+    var rows = Math.round((hi - lo) / S.step), strikes = [], j;
+    for (j = 0; j < rows; j++) strikes.push(lo + (j + 0.5) * S.step);
+    var cols = [], t;
+    for (t = 0; t < NCOL; t++) {
+      var col = [], w = t / (NCOL - 1);
+      for (j = 0; j < rows; j++) {
+        var s = strikes[j], v = 0;
+        [[S.lv.cw, 1.0, 0.16], [S.lv.abs, 0.7, 0.12], [S.lv.pw, -1.0, 0.16], [S.lv.gf, -0.35, 0.1], [S.lv.mp, 0.3, 0.1]].forEach(function (g) {
+          var d = (s - g[0]) / (S.atr * g[2] * 1.9);
+          v += g[1] * Math.exp(-d * d) * (0.55 + 0.45 * w);
+        });
+        v += gauss(r) * 0.07;
+        if (state.metric === 'delta') v = -v * 0.8 + (s < S.px ? 0.12 : -0.12) * Math.exp(-Math.pow((s - S.px) / (S.atr * 0.6), 2)) + gauss(r) * 0.05;
+        col.push(v);
+      }
+      cols.push(col);
+    }
+    var all = [];
+    cols.forEach(function (c) { c.forEach(function (v) { all.push(Math.abs(v)); }); });
+    all.sort(function (a, b) { return a - b; });
+    var q98 = all[Math.floor(all.length * 0.98)] || 1;
+    var ivs = strikes.map(function (s) { var x = (s - S.px) / (S.atr * 1.25); return 14.8 + 7.0 * x * x - 1.8 * x + (x < 0 ? 3.6 * x * x : 0); });
+    data = { S: S, candles: candles, lo: lo, hi: hi, rows: rows, strikes: strikes, cols: cols, q98: q98, ivs: ivs, flow: flow, alerts: buildAlerts(candles, flow, S, r), cubes: [] };
+    var off = document.createElement('canvas'); off.width = NCOL; off.height = rows;
+    var og = off.getContext('2d'), img = og.createImageData(NCOL, rows);
+    for (t = 0; t < NCOL; t++) for (j = 0; j < rows; j++) {
+      var cc = rgba(cols[t][j]), idx = ((rows - 1 - j) * NCOL + t) * 4;
+      img.data[idx] = cc[0]; img.data[idx + 1] = cc[1]; img.data[idx + 2] = cc[2]; img.data[idx + 3] = cc[3];
+    }
+    og.putImageData(img, 0, 0); heat = off;
+  }
+
+  var cv = document.getElementById('cv'), ctx = cv.getContext('2d'), L = null, dpr = 1, tick = 0;
+  var SW = 176;
+  function layout() {
+    /* Alto flexible: las velas ocupan lo que sobra de la ventana (entre 420 y 760 px) y el panel de flujo mide siempre 150 px. */
+    var flowH = 150, base = Math.max(420, Math.min(760, Math.round(window.innerHeight - 356)));
+    var w = cv.parentNode.clientWidth, h = base + flowH;
+    dpr = window.devicePixelRatio || 1;
+    cv.width = Math.round(w * dpr); cv.height = Math.round(h * dpr); cv.style.height = h + 'px';
+    var axis = 64, live = 210, top = 16, bottom = 24;
+    L = { w: w, h: h, axis: axis, live: live, top: top, bottom: bottom, nowX: w - axis - live, plotH: base - top - bottom, baseH: base, flowH: flowH };
+    if (state.smileX === null || state.smileX > L.nowX - SW - 4) state.smileX = L.nowX - SW - 14;
+  }
+  function yOf(price) { return L.top + (data.hi - price) / (data.hi - data.lo) * L.plotH; }
+  function fmt(v) { return v.toLocaleString('en-US', { minimumFractionDigits: data.S.dec, maximumFractionDigits: data.S.dec }); }
+
+  function draw() {
+    if (!L) return;
+    var S = data.S, x, j, t;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, L.w, L.h);
+    ctx.fillStyle = C.bg; ctx.fillRect(0, 0, L.w, L.h);
+    var histW = L.nowX, rowH = L.plotH / data.rows;
+    ctx.save();
+    ctx.beginPath(); ctx.rect(0, L.top, histW, L.plotH); ctx.clip();
+    ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = 'high';
+    try { ctx.filter = 'blur(3px)'; } catch (e) {}
+    ctx.drawImage(heat, -6, L.top - 6, histW + 12, L.plotH + 12);
+    try { ctx.filter = 'none'; } catch (e) {}
+    ctx.restore();
+    ctx.fillStyle = 'rgba(14,17,26,0.32)'; ctx.fillRect(0, L.top, histW, L.plotH);
+    ctx.strokeStyle = C.line; ctx.lineWidth = 1; ctx.fillStyle = C.dim; ctx.font = '11px Inter, system-ui, sans-serif'; ctx.textAlign = 'center';
+    var ncan = data.candles.length, real = data.flow.real;
+    var labels = real ? ['10:41', '10:50', '11:00', '11:10', '11:19'] : ['09:30', '10:10', '10:50', '11:30', '12:10'], tix = [0, 9, 19, 29, 38];
+    for (t = 0; t <= 4; t++) {
+      x = real ? Math.round((tix[t] + 0.5) * histW / ncan) + 0.5 : Math.round(t / 4 * (histW - 1)) + 0.5;
+      ctx.beginPath(); ctx.moveTo(x, L.top); ctx.lineTo(x, L.top + L.plotH); ctx.globalAlpha = 0.28; ctx.stroke(); ctx.globalAlpha = 1; ctx.fillText(labels[t], Math.min(Math.max(x, 18), histW - 18), L.baseH - 8);
+    }
+    var cw = histW / ncan;
+    data.candles.forEach(function (cd, i) {
+      var cx = (i + 0.5) * cw, up = cd.c >= cd.o, color = up ? C.up : C.down;
+      ctx.strokeStyle = color; ctx.fillStyle = color; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(cx, yOf(cd.h)); ctx.lineTo(cx, yOf(cd.l)); ctx.stroke();
+      var y1 = yOf(Math.max(cd.o, cd.c)), y2 = yOf(Math.min(cd.o, cd.c));
+      ctx.fillRect(cx - Math.max(1, cw * 0.32), y1, Math.max(2, cw * 0.64), Math.max(1.5, y2 - y1));
+    });
+    if (state.flow === 'A' && L.flowH > 0) drawFlowPane(histW, ncan);
+    drawCubes(histW, ncan);
+    drawCrossV(histW, ncan);
+    if (state.em) {
+      var em = S.px * 0.0055;
+      ctx.setLineDash([2, 4]); ctx.strokeStyle = C.atr; ctx.lineWidth = 1;
+      [S.px + em, S.px - em].forEach(function (pv) { ctx.beginPath(); ctx.moveTo(0, yOf(pv)); ctx.lineTo(histW, yOf(pv)); ctx.stroke(); });
+      ctx.setLineDash([]); ctx.fillStyle = C.atr; ctx.textAlign = 'left'; ctx.fillText('EM', 6, yOf(S.px + em) - 4);
+    }
+    ctx.fillStyle = C.bg; ctx.fillRect(L.nowX, L.top, L.live, L.plotH);
+    var cur = data.cols[NCOL - 1], pw = L.live - 18;
+    ctx.save();
+    try { ctx.filter = 'blur(1.4px)'; } catch (e) {}
+    for (j = 0; j < data.rows; j++) {
+      var v = cur[j] * (1 + (REDUCED ? 0 : 0.10 * Math.sin(tick / 8 + j * 1.7))), f = Math.min(1, Math.abs(v) / data.q98);
+      if (f < 0.04) continue;
+      var c = rampRGB(v >= 0 ? POS : NEG, f >= 0.985 ? 1 : f * 0.96), yy = L.top + (data.rows - 1 - j) * rowH;
+      ctx.fillStyle = 'rgba(' + c[0] + ',' + c[1] + ',' + c[2] + ',' + Math.min(1, 0.35 + f) + ')';
+      ctx.fillRect(L.nowX + 8, yy - 0.5, Math.max(2, f * pw), rowH + 1);
+    }
+    ctx.restore();
+    var lv = [['Call Wall', S.lv.cw, C.calm, [6, 4]], ['Put Wall', S.lv.pw, '#ff4a50', [6, 4]], ['ABS', S.lv.abs, C.accent, [2, 3]], ['Max Pain', S.lv.mp, C.dim, [1, 4]], ['Gamma Flip', S.lv.gf, C.warning, [10, 4]]];
+    lv.forEach(function (a) {
+      if (a[1] < data.lo || a[1] > data.hi) return;
+      var y = yOf(a[1]); ctx.setLineDash(a[3]); ctx.strokeStyle = a[2]; ctx.lineWidth = 1; ctx.globalAlpha = 0.9;
+      ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(L.w - L.axis, y); ctx.stroke(); ctx.globalAlpha = 1; ctx.setLineDash([]);
+    });
+    ctx.strokeStyle = C.text; ctx.lineWidth = 1; ctx.setLineDash([4, 4]); ctx.beginPath(); ctx.moveTo(L.nowX + 0.5, L.top); ctx.lineTo(L.nowX + 0.5, L.top + L.plotH); ctx.stroke(); ctx.setLineDash([]);
+    ctx.fillStyle = C.text; ctx.fillRect(L.nowX - 26, L.top - 14, 52, 14);
+    ctx.fillStyle = C.bg; ctx.font = '600 10px Inter, system-ui, sans-serif'; ctx.textAlign = 'center'; ctx.fillText('AHORA', L.nowX, L.top - 3);
+    ctx.fillStyle = C.dim; ctx.font = '10px Inter, system-ui, sans-serif'; ctx.textAlign = 'left';
+    ctx.fillText('PERFIL ' + (state.metric === 'gamma' ? 'GEX' : 'DELTA') + ' EN VIVO', L.nowX + 8, L.baseH - 8);
+    if (state.smile) drawSmile();
+    ctx.fillStyle = C.panel; ctx.fillRect(L.w - L.axis, 0, L.axis, L.h);
+    ctx.strokeStyle = C.line; ctx.beginPath(); ctx.moveTo(L.w - L.axis + 0.5, 0); ctx.lineTo(L.w - L.axis + 0.5, L.h); ctx.stroke();
+    ctx.font = '11px Inter, system-ui, sans-serif'; ctx.textAlign = 'left'; ctx.fillStyle = C.dim;
+    var span = data.hi - data.lo, tstep = span > 300 ? 100 : (span > 120 ? 25 : (span > 40 ? 10 : (span > 12 ? 2 : 1)));
+    for (var pv = Math.ceil(data.lo / tstep) * tstep; pv < data.hi; pv += tstep) ctx.fillText(fmt(pv), L.w - L.axis + 8, yOf(pv) + 4);
+    lv.forEach(function (a) {
+      if (a[1] < data.lo || a[1] > data.hi) return;
+      var y = yOf(a[1]); ctx.fillStyle = a[2]; ctx.fillRect(L.w - L.axis + 1, y - 8, L.axis - 1, 16);
+      ctx.fillStyle = C.bg; ctx.font = '600 9.5px Inter, system-ui, sans-serif'; ctx.fillText(a[0], L.w - L.axis + 5, y + 3.5);
+    });
+    var ly = yOf(S.px); ctx.fillStyle = C.text; ctx.fillRect(L.w - L.axis + 1, ly - 9, L.axis - 1, 18);
+    ctx.fillStyle = C.bg; ctx.font = '600 11px Inter, system-ui, sans-serif'; ctx.fillText(fmt(S.px), L.w - L.axis + 6, ly + 4);
+    ctx.strokeStyle = C.text; ctx.globalAlpha = 0.45; ctx.setLineDash([1, 3]); ctx.beginPath(); ctx.moveTo(0, ly); ctx.lineTo(L.w - L.axis, ly); ctx.stroke(); ctx.setLineDash([]); ctx.globalAlpha = 1;
+    drawCrossH();
+  }
+
+  function flowMax() { var f = data.flow, m = 600; f.calls.forEach(function (v) { m = Math.max(m, Math.abs(v)); }); f.puts.forEach(function (v) { m = Math.max(m, Math.abs(v)); }); return m; }
+  function drawFlowPane(histW, ncan) {
+    var f = data.flow, y0 = L.baseH, h = L.flowH, cw = histW / ncan, mid = y0 + 20 + (h - 52) / 2, amp = (h - 52) / 2 - 2, mx = flowMax(), i;
+    ctx.fillStyle = C.panel; ctx.fillRect(0, y0, L.w - L.axis, h);
+    ctx.strokeStyle = C.line; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(0, y0 + 0.5); ctx.lineTo(L.w - L.axis, y0 + 0.5); ctx.stroke();
+    ctx.fillStyle = C.dim; ctx.font = '10px Inter, system-ui, sans-serif'; ctx.textAlign = 'left';
+    ctx.fillText('FLUJO POR MINUTO · calls (izq.) y puts (der.)', 8, y0 + 13);
+    ctx.globalAlpha = 0.5; ctx.beginPath(); ctx.moveTo(0, Math.round(mid) + 0.5); ctx.lineTo(histW, Math.round(mid) + 0.5); ctx.stroke(); ctx.globalAlpha = 1;
+    ctx.textAlign = 'right'; ctx.fillText('+' + mx, histW - 4, mid - amp + 8); ctx.fillText('−' + mx, histW - 4, mid + amp - 2);
+    ctx.textAlign = 'left'; ctx.fillStyle = C.up; ctx.fillText('■ compra de call / venta de put', 8, y0 + h - 6); ctx.fillStyle = C.down; ctx.fillText('■ venta de call / compra de put', 200, y0 + h - 6);
+    for (i = 0; i < ncan; i++) {
+      var x = i * cw, bw = Math.max(1, cw * 0.4), vals = [f.calls[i], f.puts[i]], k;
+      for (k = 0; k < 2; k++) {
+        var v = vals[k], hh = Math.max(1, Math.abs(v) / mx * amp), bx = x + cw * (k === 0 ? 0.06 : 0.54);
+        ctx.fillStyle = v >= 0 ? C.up : C.down; ctx.globalAlpha = k === 0 ? 1 : 0.62;
+        ctx.fillRect(bx, v >= 0 ? mid - hh : mid, bw, hh);
+      }
+      ctx.globalAlpha = 1;
+    }
+    f.seq.forEach(function (k) {
+      var x = (k + 0.5) * cw;
+      ctx.setLineDash([2, 3]); ctx.strokeStyle = C.warning; ctx.globalAlpha = 0.55; ctx.beginPath(); ctx.moveTo(x, L.top); ctx.lineTo(x, y0 + h - 30); ctx.stroke(); ctx.setLineDash([]); ctx.globalAlpha = 1;
+      ctx.fillStyle = C.warning; ctx.beginPath(); ctx.moveTo(x, y0 + h - 30); ctx.lineTo(x - 4, y0 + h - 22); ctx.lineTo(x + 4, y0 + h - 22); ctx.closePath(); ctx.fill();
+    });
+    if (f.seq.length) { ctx.fillStyle = C.warning; ctx.textAlign = 'right'; ctx.font = '10px Inter, system-ui, sans-serif'; ctx.fillText('▲ secuencia (descriptiva)', histW - 6, y0 + 13); }
+  }
+
+  /* Alertas como cubitos sin texto: x = hora de la alerta, y = strike del contrato (los strikes fuera de la ventana se pegan al borde, más tenues). Tamaño = prima (más grande si pasa de $1M);
+     color = compra (verde), venta (rojo) o mixta (ámbar), estimado contra el bid y el ask. El detalle sale al pasar el mouse. */
+  function cubeColor(a) { var t = a.buy + a.sell, f = t > 0 ? a.buy / t : 0.5; return f >= 0.6 ? C.up : (f <= 0.4 ? C.down : C.warning); }
+  /* Zonas por |delta| (un solo criterio para todos los símbolos y horas): OTM 0.25–0.40, ATM 0.40–0.60, ITM 0.60–0.85; fuera de 0.25–0.85 = «Lejos» (OTM lejano si menor a 0.25, ITM profundo si mayor a 0.85). */
+  function zoneOf(a) { var d = Math.abs(a.delta); return d < 0.25 ? 'OTM lejano' : (d < 0.40 ? 'OTM' : (d < 0.60 ? 'ATM' : (d <= 0.85 ? 'ITM' : 'ITM profundo'))); }
+  function zoneKey(a) { var z = zoneOf(a); return (z === 'OTM lejano' || z === 'ITM profundo') ? 'FAR' : z; }
+  function cubeSize(a) { return a.deq >= 600 ? 12 : (a.deq >= 400 ? 9 : 6); }
+  function drawCubes(histW, ncan) {
+    data.cubes = []; var out = 0, shown = 0;
+    if (!state.alerts) { document.getElementById('alOut').textContent = ''; return; }
+    var cw = histW / ncan, stack = {};
+    data.alerts.forEach(function (a, idx) {
+      if (a.deq < state.minDelta || !state.zones[zoneKey(a)]) return;
+      shown++;
+      var inside = a.strike >= data.lo && a.strike <= data.hi, y = inside ? yOf(a.strike) : (a.strike > data.hi ? L.top + 8 : L.top + L.plotH - 8), x = a.pos * cw + cw * 0.5, size = cubeSize(a);
+      var key = Math.round(x / 6) + ':' + Math.round(y / 6), n = stack[key] || 0; stack[key] = n + 1; x += n * (size + 2);
+      if (!inside) out++;
+      ctx.save(); ctx.globalAlpha = inside ? 1 : 0.45; ctx.fillStyle = cubeColor(a); ctx.fillRect(x - size / 2, y - size / 2, size, size);
+      ctx.strokeStyle = (hover.cube === idx) ? '#ffffff' : C.bg; ctx.lineWidth = hover.cube === idx ? 2 : 1; ctx.strokeRect(x - size / 2 + 0.5, y - size / 2 + 0.5, size - 1, size - 1); ctx.restore();
+      data.cubes.push({ x: x, y: y, size: size, idx: idx, inside: inside });
+    });
+    document.getElementById('alOut').textContent = '· ' + shown + ' de ' + data.alerts.length + ' alertas (mínimo ' + state.minDelta + ' contratos-delta)' + (out ? ' · ' + out + ' en el borde: su strike queda fuera de la ventana' : '');
+  }
+  function cubeAt(x, y) {
+    var best = null, bd = 1e9;
+    (data.cubes || []).forEach(function (c) { var d = Math.max(Math.abs(c.x - x), Math.abs(c.y - y)); if (d <= c.size / 2 + 4 && d < bd) { bd = d; best = c; } });
+    return best;
+  }
+  function cubeTip(c) {
+    var a = data.alerts[c.idx], tot = a.buy + a.sell, bp = tot > 0 ? a.buy / tot : 0.5, usd = a.amt >= 1000000 ? '$' + (a.amt / 1e6).toFixed(2) + 'M' : '$' + Math.round(a.amt / 1000) + 'k';
+    var tipo = a.type === 'UNUSUAL' ? 'Inusual' : (a.type === 'WHALE' ? 'Ballena' : 'Flujo sostenido'), dist = a.strike - data.S.px;
+    var side = bp >= 0.6 ? '<b style="color:var(--up)">COMPRA</b>' : (bp <= 0.4 ? '<b style="color:#ff6b70">VENTA</b>' : '<b style="color:var(--warning)">SIN LADO CLARO</b>');
+    var money = zoneOf(a) + ', delta ' + Math.abs(a.delta).toFixed(2);
+    var NAMES = { simple: 'simple', subasta: 'subasta (una pata)', 'multi-leg': 'multi-leg', otra: 'piso, una pata (cód. 129)' }, parts = [];
+    Object.keys(a.cond).sort(function (x, y) { return a.cond[y] - a.cond[x]; }).forEach(function (k) { if (a.cond[k] >= 10 && parts.length < 2) parts.push(NAMES[k] + ' ' + a.cond[k] + ' %'); });
+    var condTxt = 'Condición: ' + parts.join(' · ') + (a.approx ? ' <span style="color:var(--dim)">(aprox.)</span>' : '');
+    if ((a.cond['multi-leg'] || 0) >= 50) condTxt += '<br><span style="color:var(--warning)">Mayormente multi-leg: comprar o vender por pata puede no ser direccional</span>';
+    var ALT = { C: '<b style="color:var(--up)">COMPRA</b>', V: '<b style="color:#ff6b70">VENTA</b>', N: '<b style="color:var(--warning)">SIN LADO CLARO</b>', X: '<b style="color:var(--dim)">SIN LADO</b>' };
+    if (a.alt) condTxt += '<br>Etiqueta firmando solo simples: ' + ALT[a.alt] + ' <span style="color:var(--dim)">(prueba)</span>';
+    return '<b>' + a.t + '</b> · ' + tipo + '<br>' + side + ' · ' + (a.right === 'C' ? 'Call ' : 'Put ') + a.strike + ' (' + money + ')<br>Tamaño: ' + a.deq + ' contratos-delta · prima ' + usd + ' · ×' + a.rep + '<br>' + condTxt
+      + '<br><span style="color:var(--dim)">Strike a ' + (dist >= 0 ? '+' : '−') + Math.abs(dist).toFixed(0) + ' pts del precio' + (c.inside ? '' : ' (fuera de la ventana)') + '</span>';
+  }
+  /* Crosshair: la línea vertical atraviesa las velas Y el panel de flujo por el centro de la vela señalada, así las dos barras de ese minuto quedan justo bajo ella. */
+  function drawCrossV(histW, ncan) {
+    if (hover.i < 0 || hover.i >= ncan) return;
+    var cw = histW / ncan, x = (hover.i + 0.5) * cw, bottom = L.baseH + (state.flow === 'A' ? L.flowH : 0);
+    if (state.flow === 'A' && L.flowH > 0) { ctx.fillStyle = 'rgba(209,212,220,0.07)'; ctx.fillRect(hover.i * cw, L.baseH + 1, cw, L.flowH - 1); }
+    ctx.save(); ctx.strokeStyle = 'rgba(209,212,220,0.75)'; ctx.lineWidth = 1; ctx.setLineDash([3, 3]);
+    ctx.beginPath(); ctx.moveTo(Math.round(x) + 0.5, L.top); ctx.lineTo(Math.round(x) + 0.5, bottom); ctx.stroke(); ctx.restore();
+    var lab = data.flow.labels ? data.flow.labels[hover.i] : ('vela ' + (hover.i + 1)), tw = 44;
+    ctx.fillStyle = C.text; ctx.fillRect(Math.min(Math.max(x - tw / 2, 0), histW - tw), L.baseH - 17, tw, 15);
+    ctx.fillStyle = C.bg; ctx.font = '600 10px Inter, system-ui, sans-serif'; ctx.textAlign = 'center'; ctx.fillText(lab, Math.min(Math.max(x, tw / 2), histW - tw / 2), L.baseH - 6);
+  }
+  function drawCrossH() {
+    if (hover.i < 0 || hover.y === null) return;
+    var pv = data.hi - (hover.y - L.top) / L.plotH * (data.hi - data.lo);
+    ctx.save(); ctx.strokeStyle = 'rgba(209,212,220,0.45)'; ctx.lineWidth = 1; ctx.setLineDash([3, 3]);
+    ctx.beginPath(); ctx.moveTo(0, Math.round(hover.y) + 0.5); ctx.lineTo(L.w - L.axis, Math.round(hover.y) + 0.5); ctx.stroke(); ctx.restore();
+    ctx.fillStyle = C.text; ctx.fillRect(L.w - L.axis + 1, hover.y - 9, L.axis - 1, 18);
+    ctx.fillStyle = C.bg; ctx.font = '600 11px Inter, system-ui, sans-serif'; ctx.textAlign = 'left'; ctx.fillText(fmt(pv), L.w - L.axis + 6, hover.y + 4);
+  }
+
+  function drawSmile() {
+    var S = data.S, x0 = state.smileX, j, ivmin = 8, ivmax = 24;
+    var STATES = [
+      { tilt: -3.2, k: 2.2, label: 'Arriba fácil' },
+      { tilt: 0, k: 7.5, label: 'Atascado en el medio' },
+      { tilt: 3.2, k: 2.2, label: 'Abajo fácil' },
+      { tilt: 0, k: 0.5, label: 'Sin desequilibrio' }
+    ];
+    var phase = REDUCED ? 0 : tick / 170, a = Math.floor(phase) % 4, b = (a + 1) % 4, u = phase - Math.floor(phase);
+    u = u * u * (3 - 2 * u);
+    var tilt = STATES[a].tilt + (STATES[b].tilt - STATES[a].tilt) * u, kk = STATES[a].k + (STATES[b].k - STATES[a].k) * u;
+    var label = STATES[u > 0.5 ? b : a].label;
+    var vtx = S.px;
+    function X(iv) { return x0 + 12 + (iv - ivmin) / (ivmax - ivmin) * (SW - 24); }
+    function ivC(st, k) { var x = (st - vtx) / (S.atr * 1.25); return 14 + kk * x * x + tilt * x + 0.15 * Math.sin(tick / 9 + k * 0.9); }
+    function ivP(st, k) { var x = (st - vtx) / (S.atr * 1.25); return 14.9 + kk * x * x + tilt * x + (x < 0 ? 0.6 * -x : 0) + 0.15 * Math.sin(tick / 11 + k); }
+    ctx.fillStyle = C.dim; ctx.font = '600 9.5px Inter, system-ui, sans-serif'; ctx.textAlign = 'left';
+    ctx.fillText('SMILE · IV CALL (verde) y PUT (rojo)', x0 + 4, L.top + 12);
+    var minIv = 99, minSt = vtx;
+    for (j = 0; j < data.rows; j++) {
+      var st = data.strikes[j], c1 = ivC(st, j), p1 = ivP(st, j);
+      if (Math.min(c1, p1) < minIv) { minIv = Math.min(c1, p1); minSt = st; }
+      ctx.fillStyle = 'rgba(250,0,10,0.9)'; ctx.beginPath(); ctx.arc(X(p1), yOf(st), 2.4, 0, 6.3); ctx.fill();
+      ctx.fillStyle = 'rgba(0,220,90,0.9)'; ctx.beginPath(); ctx.arc(X(c1), yOf(st), 2.4, 0, 6.3); ctx.fill();
+    }
+    var yv = yOf(minSt);
+    ctx.strokeStyle = C.text; ctx.globalAlpha = 0.5; ctx.setLineDash([3, 4]); ctx.beginPath(); ctx.moveTo(0, yv); ctx.lineTo(X(minIv) - 8, yv); ctx.stroke(); ctx.setLineDash([]); ctx.globalAlpha = 1;
+    ctx.strokeStyle = '#ffffff'; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(X(minIv), yv, 7, 0, 6.3); ctx.stroke(); ctx.lineWidth = 1;
+    ctx.fillStyle = C.text; ctx.font = '600 10px Inter, system-ui, sans-serif'; ctx.textAlign = 'right';
+    ctx.fillText('vértice ' + fmt(minSt) + ' · IV ' + minIv.toFixed(1) + ' %', X(minIv) - 14, yv - 6);
+    var bw = 168, bx = x0 + 4, by = L.top + 20;
+    ctx.fillStyle = 'rgba(30,34,45,0.88)'; ctx.fillRect(bx, by, bw, 36); ctx.strokeStyle = C.line; ctx.strokeRect(bx + 0.5, by + 0.5, bw - 1, 35);
+    ctx.fillStyle = C.dim; ctx.font = '9.5px Inter, system-ui, sans-serif'; ctx.textAlign = 'left'; ctx.fillText('Camino de menor resistencia (hipótesis)', bx + 8, by + 13);
+    ctx.fillStyle = label === 'Arriba fácil' ? C.calm : (label === 'Abajo fácil' ? '#ff4a50' : C.warning); ctx.font = '600 12px Inter, system-ui, sans-serif'; ctx.fillText(label, bx + 8, by + 29);
+  }
+
+  var tipEl = document.getElementById('tip'), drag = null, hover = { i: -1, y: null, cube: -1 };
+  function inSmile(x, y) { return state.smile && x >= state.smileX && x <= state.smileX + SW && y >= L.top && y <= L.top + 58; }
+  cv.addEventListener('mousedown', function (e) {
+    var rect = cv.getBoundingClientRect(), x = e.clientX - rect.left, y = e.clientY - rect.top;
+    if (inSmile(x, y)) { drag = { dx: x - state.smileX }; cv.style.cursor = 'grabbing'; e.preventDefault(); }
+  });
+  window.addEventListener('mouseup', function () { drag = null; cv.style.cursor = 'default'; });
+  cv.addEventListener('mousemove', function (e) {
+    if (!L) return;
+    var rect = cv.getBoundingClientRect(), x = e.clientX - rect.left, y = e.clientY - rect.top;
+    if (drag) { state.smileX = Math.max(8, Math.min(L.nowX - SW - 4, x - drag.dx)); tipEl.hidden = true; draw(); return; }
+    var cb = state.alerts ? cubeAt(x, y) : null, pcube = hover.cube;
+    hover.cube = cb ? cb.idx : -1;
+    cv.style.cursor = inSmile(x, y) ? 'grab' : (cb ? 'pointer' : 'crosshair');
+    var hn = data.candles.length, pi = hover.i, py = hover.y;
+    if (cb) {
+      hover.i = Math.max(0, Math.min(hn - 1, Math.floor(x / (L.nowX / hn)))); hover.y = null;
+      if (pcube !== hover.cube || pi !== hover.i) draw();
+      tipEl.innerHTML = cubeTip(cb); tipEl.hidden = false;
+      tipEl.style.left = Math.min(x + 14, L.w - L.axis - 250) + 'px'; tipEl.style.top = Math.max(8, Math.min(y + 12, L.h - 130)) + 'px';
+      return;
+    }
+    if (pcube !== hover.cube) draw();
+    if (x < L.nowX && y >= L.top && y <= L.baseH + L.flowH && !inSmile(x, y)) {
+      hover.i = Math.max(0, Math.min(hn - 1, Math.floor(x / (L.nowX / hn))));
+      hover.y = (y >= L.top && y <= L.top + L.plotH) ? y : null;
+    } else { hover.i = -1; hover.y = null; }
+    if (pi !== hover.i || py !== hover.y) draw();
+    if (state.flow === 'A' && L.flowH > 0 && y > L.baseH && x < L.nowX) {
+      var ncan = data.candles.length, ii = Math.max(0, Math.min(ncan - 1, Math.floor(x / (L.nowX / ncan)))), fl = data.flow, cd = data.candles[ii];
+      var lab = fl.labels ? fl.labels[ii] : ('vela ' + (ii + 1)), tot = fl.calls[ii] + fl.puts[ii], isSeq = fl.seq.indexOf(ii) >= 0;
+      var sg = function (v) { return (v >= 0 ? '+' : '−') + Math.abs(v); };
+      tipEl.innerHTML = '<b>' + lab + '</b> · SPX ' + fmt(cd.o) + ' → ' + fmt(cd.c) + '<br>Calls ' + sg(fl.calls[ii]) + '<br>Puts ' + sg(fl.puts[ii]) + '<br>Total ' + sg(tot) + (isSeq ? '<br><span style="color:var(--warning)">▲ secuencia (descriptiva)</span>' : '');
+      tipEl.hidden = false; tipEl.style.left = Math.min(x + 14, L.w - L.axis - 190) + 'px'; tipEl.style.top = Math.max(8, y - 110) + 'px';
+      return;
+    }
+    if (y < L.top || y > L.top + L.plotH || x > L.w - L.axis || inSmile(x, y)) { tipEl.hidden = true; return; }
+    var rowH = L.plotH / data.rows, j = data.rows - 1 - Math.floor((y - L.top) / rowH);
+    if (j < 0 || j >= data.rows) { tipEl.hidden = true; return; }
+    var live = x >= L.nowX, t = live ? NCOL - 1 : Math.min(NCOL - 1, Math.floor(x / (L.nowX / NCOL))), v = data.cols[t][j];
+    var f = Math.min(1, Math.abs(v) / data.q98), mins = 9 * 60 + 30 + Math.round(t * 2.0), hh = Math.floor(mins / 60), mm = ('0' + (mins % 60)).slice(-2);
+    var big = Math.abs(v) / data.q98 * (state.metric === 'gamma' ? 4.1 : 2.6);
+    tipEl.innerHTML = '<b>' + (live ? 'Perfil en vivo' : 'Histórico') + '</b> ' + (live ? 'ahora' : hh + ':' + mm) + '<br>Strike ' + fmt(data.strikes[j]) + '<br>' + (state.metric === 'gamma' ? 'Gamma' : 'Delta') + ' ' + (v >= 0 ? '+' : '−') + big.toFixed(2) + ' B<br>Intensidad ' + Math.round(f * 100) + '%' + (f >= 0.98 ? ' (máxima)' : '')
+      + ((state.flow === 'A' && !live && hover.i >= 0) ? '<br><b>Vela ' + (data.flow.labels ? data.flow.labels[hover.i] : (hover.i + 1)) + '</b><br>Calls ' + (data.flow.calls[hover.i] >= 0 ? '+' : '−') + Math.abs(data.flow.calls[hover.i]) + ' · Puts ' + (data.flow.puts[hover.i] >= 0 ? '+' : '−') + Math.abs(data.flow.puts[hover.i]) : '');
+    tipEl.hidden = false;
+    tipEl.style.left = Math.min(x + 14, L.w - L.axis - 170) + 'px'; tipEl.style.top = Math.max(8, Math.min(y + 12, L.h - 100)) + 'px';
+  });
+  cv.addEventListener('mouseleave', function () { tipEl.hidden = true; hover.i = -1; hover.y = null; hover.cube = -1; draw(); });
+
+  function setupRamps() {
+    function fill(id, stops) { var el = document.getElementById(id), h = ''; for (var i = 0; i <= 6; i++) h += '<i style="background:' + ramp(stops, i / 6) + '"></i>'; el.innerHTML = h; }
+    fill('rampPos', POS); fill('rampNeg', NEG);
+  }
+
+  function sizeSmall(c) { var w = c.parentNode.clientWidth, h = 140, d = window.devicePixelRatio || 1; c.width = Math.round(w * d); c.height = Math.round(h * d); c.style.height = h + 'px'; var g = c.getContext('2d'); g.setTransform(d, 0, 0, d, 0, 0); return { g: g, w: w, h: h }; }
+  function band(c, seed, today, lo, hi, color, unit) {
+    var s = sizeSmall(c), g = s.g, r = rng(seed), n = 40, i;
+    var pad = { l: 34, r: 8, t: 8, b: 18 };
+    function X(i) { return pad.l + i / (n - 1) * (s.w - pad.l - pad.r); }
+    function Y(v) { return pad.t + (1 - (v - lo) / (hi - lo)) * (s.h - pad.t - pad.b); }
+    var mid = [], up = [], dn = [];
+    for (i = 0; i < n; i++) { var m = lo + (hi - lo) * (0.5 + 0.12 * Math.sin(i / 7 + seed)); mid.push(m); up.push(m + (hi - lo) * 0.17); dn.push(m - (hi - lo) * 0.17); }
+    g.strokeStyle = C.line; g.lineWidth = 1; g.fillStyle = C.dim; g.font = '10px Inter, system-ui, sans-serif'; g.textAlign = 'right';
+    for (i = 0; i <= 2; i++) { var v = lo + (hi - lo) * i / 2, y = Y(v) + 0.5; g.beginPath(); g.moveTo(pad.l, y); g.lineTo(s.w - pad.r, y); g.globalAlpha = 0.5; g.stroke(); g.globalAlpha = 1; g.fillText((Math.round(v * 10) / 10) + (unit || ''), pad.l - 4, y + 3); }
+    g.fillStyle = 'rgba(126,182,255,0.14)'; g.beginPath(); g.moveTo(X(0), Y(up[0])); for (i = 1; i < n; i++) g.lineTo(X(i), Y(up[i])); for (i = n - 1; i >= 0; i--) g.lineTo(X(i), Y(dn[i])); g.closePath(); g.fill();
+    g.strokeStyle = C.dim; g.setLineDash([3, 3]); g.beginPath(); for (i = 0; i < n; i++) { if (i) g.lineTo(X(i), Y(mid[i])); else g.moveTo(X(i), Y(mid[i])); } g.stroke(); g.setLineDash([]);
+    var cut = Math.round(n * 0.72), v0 = mid[0];
+    g.strokeStyle = color; g.lineWidth = 2; g.beginPath();
+    for (i = 0; i < cut; i++) { v0 = Math.max(lo, Math.min(hi, mid[i] + (today - mid[cut - 1]) * (i / cut) + (r() - 0.5) * (hi - lo) * 0.06)); if (i) g.lineTo(X(i), Y(v0)); else g.moveTo(X(i), Y(v0)); }
+    g.stroke(); g.fillStyle = color; g.beginPath(); g.arc(X(cut - 1), Y(v0), 3.5, 0, 6.3); g.fill();
+    g.fillStyle = C.dim; g.textAlign = 'center'; ['09:30', '11:42', '16:00'].forEach(function (t, k2) { g.fillText(t, [pad.l + 12, X(cut - 1), s.w - pad.r - 14][k2], s.h - 4); });
+  }
+  function atrBars(c) {
+    var s = sizeSmall(c), g = s.g, pad = { l: 8, r: 8, t: 12, b: 22 };
+    var ex = [0.28, 0.35, 0.22, 0.4, 0.61, 0.52, 0.44, 0.7, 0.39, 0.57, 0.33, 0.9, 0.46, 0.63, 0.74, 0.3, 0.55, 0.41, 0.66, 0.37, 0.8, 0.49, 0.58, 0.31, 0.68, 0.45, 0.53, 0.24];
+    var bw = (s.w - pad.l - pad.r) / ex.length, i;
+    function Y(v) { return pad.t + (1 - v / 1.6) * (s.h - pad.t - pad.b); }
+    g.strokeStyle = C.atr; g.setLineDash([3, 3]); g.beginPath(); g.moveTo(pad.l, Y(1) + 0.5); g.lineTo(s.w - pad.r, Y(1) + 0.5); g.stroke(); g.setLineDash([]);
+    g.fillStyle = C.atr; g.font = '10px Inter, system-ui, sans-serif'; g.textAlign = 'left'; g.fillText('1 ATR', pad.l + 2, Y(1) - 4);
+    for (i = 0; i < ex.length; i++) { g.fillStyle = i === ex.length - 1 ? C.accent : 'rgba(126,182,255,0.38)'; g.fillRect(pad.l + i * bw + 1, Y(ex[i]), Math.max(1, bw - 2), s.h - pad.b - Y(ex[i])); }
+    g.fillStyle = C.dim; g.textAlign = 'center'; g.fillText('últimas 28 sesiones (la última, hoy)', s.w / 2, s.h - 4);
+  }
+  function smalls() {
+    var pane = ['pane-d', 'pane-b', 'pane-v'].filter(function (id) { return !document.getElementById(id).hidden; })[0];
+    if (pane === 'pane-d') { band(document.getElementById('c1'), 3, 78, 0, 100, C.calm, ''); band(document.getElementById('c2'), 9, -39.8, -60, 20, C.risk, 'B'); }
+    if (pane === 'pane-b') { band(document.getElementById('c3'), 5, 3.1, -2, 6, C.warning, ''); band(document.getElementById('c4'), 21, 1.14, 0.6, 1.6, C.accent, ''); }
+    if (pane === 'pane-v') { band(document.getElementById('c5'), 13, 14.8, 10, 22, C.accent, '%'); atrBars(document.getElementById('c6')); }
+  }
+
+  var SCAN = [['7700', 'P', 'Compra 71%', 71, '$1.84M', '11:41', 0], ['7745', 'C', 'Compra 64%', 64, '$1.12M', '11:39', 1], ['7670', 'P', 'Venta 58%', 42, '$940k', '11:36', 0], ['7710', 'C', 'Compra 88%', 88, '$826k', '11:35', 0], ['7775', 'C', 'Compra 52%', 52, '$703k', '11:31', 1], ['7680', 'P', 'Compra 61%', 61, '$655k', '11:28', 0], ['7740', 'C', 'Venta 66%', 34, '$512k', '11:26', 1], ['7690', 'P', 'Compra 79%', 79, '$488k', '11:22', 0], ['7760', 'C', 'Compra 57%', 57, '$431k', '11:19', 0], ['7720', 'P', 'Venta 63%', 37, '$392k', '11:15', 0]];
+  function scanner() {
+    var h = '';
+    SCAN.forEach(function (r) {
+      var ml = r[6] ? '<em class="ml" title="Operación parte de una combinación: la compra o venta de esta pata puede no ser direccional">multi-leg</em>' : '';
+      h += '<div class="row' + (r[6] ? ' mlrow' : '') + '"><span><b>' + r[0] + '</b><i class="' + (r[1] === 'C' ? 'c' : 'p') + '">' + r[1] + '</i></span><span><div class="bar"><span style="width:' + r[3] + '%"></span></div></span><span class="t">' + r[5] + '</span><span class="pm">' + r[2] + ml + '</span><span class="pm" style="text-align:right">' + r[4] + '</span></div>';
+    });
+    document.getElementById('scan').innerHTML = h;
+  }
+
+  function symButtons() {
+    var seg = document.getElementById('symSeg'), h = '';
+    Object.keys(SYMS).forEach(function (k) { h += '<button type="button" data-s="' + k + '" aria-pressed="' + (k === state.sym) + '">' + k + '</button>'; });
+    seg.innerHTML = h;
+  }
+  function header() {
+    var S = data.S;
+    document.getElementById('pxline').innerHTML = fmt(S.px) + '<small>O ' + fmt(data.candles[0].o) + '  H ' + fmt(Math.max.apply(null, data.candles.map(function (c) { return c.h; }))) + '  L ' + fmt(Math.min.apply(null, data.candles.map(function (c) { return c.l; }))) + '</small>';
+    document.getElementById('atrv').textContent = fmt(S.atr);
+    document.getElementById('emv').textContent = '±0.55 %';
+    document.getElementById('clock').textContent = 'Ventana: ±1.25 ATR alrededor de la apertura (' + fmt(data.lo) + ' a ' + fmt(data.hi) + ')';
+  }
+  function refresh() {
+    var rb = document.getElementById('realBtn'); rb.disabled = state.sym !== 'SPX'; rb.style.opacity = rb.disabled ? 0.45 : 1;
+    build(); layout(); header(); regime(); draw(); smalls();
+  }
+  /* Régimen de gamma junto a las temporalidades + los números de las pestañas del panel plegado (datos de ejemplo por símbolo). */
+  var SUMS = { SPX: [78, -34, 62, -39.8], NDX: [64, -21, 55, -12.4], NQ: [64, -21, 55, -12.4], SPY: [41, 8, 48, 3.1], QQQ: [57, -12, 51, -1.8], IWM: [35, 15, 44, 0.6], NVDA: [52, -9, 70, -0.9] };
+  function regime() {
+    var s = SUMS[state.sym], neg = s[3] < 0, el = document.getElementById('regime');
+    el.className = 'regime ' + (neg ? 'neg' : 'pos');
+    document.getElementById('regTxt').textContent = neg ? 'Gamma negativa' : 'Gamma positiva';
+    document.getElementById('regVal').textContent = (neg ? '−' : '+') + Math.abs(s[3]).toFixed(1) + ' B';
+    document.getElementById('sum-d').textContent = s[0]; document.getElementById('sum-b').textContent = (s[1] < 0 ? '−' : '+') + Math.abs(s[1]); document.getElementById('sum-v').textContent = s[2];
+  }
+  document.getElementById('realBtn').addEventListener('click', function () { if (this.disabled) return; state.real = !state.real; this.setAttribute('aria-pressed', state.real); refresh(); });
+
+  document.getElementById('symSeg').addEventListener('click', function (e) { var b = e.target.closest('button'); if (!b) return; state.sym = b.dataset.s; symButtons(); refresh(); });
+  document.getElementById('metSeg').addEventListener('click', function (e) { var b = e.target.closest('button'); if (!b) return; state.metric = b.dataset.m; Array.prototype.forEach.call(document.querySelectorAll('#metSeg button'), function (x) { x.setAttribute('aria-pressed', x === b); }); refresh(); });
+  ['tfSeg', 'viewSeg'].forEach(function (id) { document.getElementById(id).addEventListener('click', function (e) { var b = e.target.closest('button'); if (!b) return; Array.prototype.forEach.call(document.querySelectorAll('#' + id + ' button'), function (x) { x.setAttribute('aria-pressed', x === b); }); }); });
+  document.getElementById('emBtn').addEventListener('click', function () { state.em = !state.em; this.setAttribute('aria-pressed', state.em); draw(); });
+  document.getElementById('zoneGrp').addEventListener('click', function (e) {
+    var b = e.target.closest('button'); if (!b) return; state.zones[b.dataset.z] = !state.zones[b.dataset.z]; b.setAttribute('aria-pressed', state.zones[b.dataset.z]); hover.cube = -1; draw();
+  });
+  document.getElementById('minSeg').addEventListener('click', function (e) {
+    var b = e.target.closest('button'); if (!b) return; state.minDelta = parseInt(b.dataset.min, 10); hover.cube = -1;
+    Array.prototype.forEach.call(document.querySelectorAll('#minSeg button'), function (x) { x.setAttribute('aria-pressed', x === b); }); draw();
+  });
+  document.getElementById('alBtn').addEventListener('click', function () { state.alerts = !state.alerts; this.setAttribute('aria-pressed', state.alerts); hover.cube = -1; draw(); });
+  document.getElementById('smBtn').addEventListener('click', function () { state.smile = !state.smile; this.setAttribute('aria-pressed', state.smile); draw(); });
+  Array.prototype.forEach.call(document.querySelectorAll('.chips .chip'), function (b) { b.addEventListener('click', function () { b.setAttribute('aria-pressed', b.getAttribute('aria-pressed') !== 'true'); }); });
+  var panelOpen = true;
+  function setPanes(show) {
+    panelOpen = show; document.getElementById('colBtn').textContent = show ? 'Ocultar panel' : 'Mostrar panel';
+    Array.prototype.forEach.call(document.querySelectorAll('.pane'), function (p) { p.hidden = true; });
+    if (show) { var sel = document.querySelector('.tab[aria-selected="true"]'); document.getElementById(sel.getAttribute('aria-controls')).hidden = false; }
+    smalls();
+  }
+  document.getElementById('colBtn').addEventListener('click', function () { setPanes(!panelOpen); });
+  Array.prototype.forEach.call(document.querySelectorAll('.tab'), function (b) {
+    b.addEventListener('click', function () {
+      if (!panelOpen) { panelOpen = true; document.getElementById('colBtn').textContent = 'Ocultar panel'; }
+      Array.prototype.forEach.call(document.querySelectorAll('.tab'), function (x) { var on = x === b; x.setAttribute('aria-selected', on); document.getElementById(x.getAttribute('aria-controls')).hidden = !on || !panelOpen; });
+      smalls();
+    });
+  });
+  window.addEventListener('resize', function () { layout(); draw(); smalls(); });
+
+  symButtons(); scanner(); setupRamps(); refresh(); setPanes(false);
+  if (!REDUCED) { setInterval(function () { tick++; draw(); }, 140); }
+})();
+</script>
+
