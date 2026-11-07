@@ -31,7 +31,7 @@ DEDUPE_MIN = 30
 HORIZONS = (15, 30, 60)
 REACTION_MIN = 15
 MIN_COLUMNS = 100
-MODE = sys.argv[1] if len(sys.argv) > 1 else "lit"  # "lit" = pre-registered; "dominant" = exploratory
+MODE = sys.argv[1] if len(sys.argv) > 1 else "lit"  # "lit" = pre-registered; "dominant" = exploratory; "nearwhite" = addendum 11:58
 
 
 def utc(d: date, h: int, m: int) -> datetime:
@@ -134,6 +134,7 @@ def main():
                 close_utc = utc(d, 16, 0)
                 bright_history: list[tuple[datetime, list[float]]] = []
                 tops: list[float] = []
+                relevant_zones: list = []
                 recent: list[tuple[datetime, float, float]] = []
                 for t, values in cols:
                     bar = bars.get(t) or bars.get(t - timedelta(minutes=1))
@@ -159,6 +160,21 @@ def main():
                             zone = next(((zlo, zhi) for zlo, zhi in zones if zlo <= top <= zhi), (top - tol, top + tol))
                             if all(zone[0] <= k <= zone[1] for k in tops[-3:]) and not (zone[0] <= tops[-4] <= zone[1]):
                                 candidates = [zone]
+                    if MODE == "nearwhite":
+                        # THIRD definition (addendum 11:58, written before running): the zone of the whitest strike within 0.60 % of the price, only if
+                        # that strike is >= 0.85 of the column scale; new = not overlapping the relevant zone of 3 columns ago, held the last 3 columns.
+                        near = [(strikes[i], abs(v) / scale) for i, v in enumerate(values) if v is not None and abs(strikes[i] - price) <= MAX_DIST * price]
+                        best = max(near, key=lambda p: p[1]) if near else None
+                        relevant = None
+                        if best and best[1] >= 0.85:
+                            relevant = next(((zlo, zhi) for zlo, zhi in zones if zlo <= best[0] <= zhi), (best[0] - tol, best[0] + tol))
+                        relevant_zones.append(relevant)
+                        candidates = []
+                        if len(relevant_zones) >= 4 and relevant is not None:
+                            held = all(z is not None and not (z[1] < relevant[0] or z[0] > relevant[1]) for z in relevant_zones[-3:])
+                            before = relevant_zones[-4]
+                            if held and (before is None or before[1] < relevant[0] or before[0] > relevant[1]):
+                                candidates = [relevant]
                     for lo, hi in candidates:
                         if MODE == "lit" and any(lo <= k <= hi for strikes_then in window for k in strikes_then):
                             continue  # not new

@@ -30,3 +30,17 @@ LO QUE NO PUDE VERIFICAR
 - La "relevancia" que Lester ve a ojo combina brillo, cercanía y quizá el cambio de brillo; ninguna de las dos reglas la reproduce del todo.
 - Solo las columnas del ciclo (60 s); la capa rápida no se usó.
 - El order flow de NinjaTrader al llegar (paso 2) no entra aquí.
+
+5. TERCERA DEFINICIÓN "BLANCA Y CERCANA" (addendum escrito a las 11:58, antes de correrla)
+- SPX + NDX, 30 min: 30,1 % vs espejo 30,1 % (n = 73), diferencia 0,0, intervalo [-10,6 ; +11,1]: sin efecto.
+  15 / 60 min: 19 % vs 22 % / 47 % vs 40 %. Debajo del precio 36 % vs 31 %; arriba 21 % vs 29 %.
+- Por símbolo: SPY 75 % vs 0 % (n = 12) e IWM 42 % vs 8 % (n = 12) a favor; QQQ 34 % vs 46 % en contra. Con n tan chicos y tres
+  definiciones probadas, no se puede leer nada en ellos.
+- Ejemplos de Lester: capta el 7450 del 11-06 a las 09:57 (llegada en 7 min, giro). NO capta el 7380 de las 12:32: dentro de la ventana el
+  strike más blanco por la escala de la columna era el 7350, no el 7380. Lo que el ojo elige parece ser la banda blanca MÁS CERCANA, no la más blanca.
+
+CONCLUSIÓN DE LAS TRES DEFINICIONES
+- Con 9 sesiones, en SPX y NDX la zona relevante se alcanza tan seguido como una zona cualquiera a la misma distancia del otro lado: el precio
+  llega a sus zonas, pero también llega igual de seguido a zonas sin gamma. No hay evidencia todavía de un efecto imán propio de la zona.
+- Siguiente paso honesto: re-correr las tres definiciones (más una "banda blanca más cercana") SOLO con sesiones nuevas (después del 11-07),
+  hacia el 8 de diciembre, para que no estén contaminadas por lo ya visto.
